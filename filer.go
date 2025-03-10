@@ -1,0 +1,22 @@
+package filer
+
+import (
+	// Package imports
+	server "github.com/mutablelogic/go-server"
+)
+
+///////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+type filer struct {
+	server.Task
+}
+
+var _ server.Task = (*filer)(nil)
+
+///////////////////////////////////////////////////////////////////////////////
+// LIFECYCLE
+
+func New() *filer {
+	return &filer{}
+}
