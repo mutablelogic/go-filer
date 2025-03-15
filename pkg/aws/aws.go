@@ -2,30 +2,30 @@ package aws
 
 import (
 	"context"
-	"net/url"
 
 	// Packages
-	aws "github.com/aws/aws-sdk-go-v2/aws"
 	config "github.com/aws/aws-sdk-go-v2/config"
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type Config struct {
-	S3endpoint *url.URL `name:"s3-endpoint" env:"S3_ENDPOINT" help:"S3 endpoint"`
+type aws struct {
+	region string
+	s3     *s3.Client
 }
-
-var _ server.Plugin = Config{}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func (c Config) New(ctx context.Context) (server.Task, error) {
-	self := new(task)
+func New(ctx context.Context, opt ...Opt) (*aws, error) {
+	aws := new(aws)
+	opts, err := applyOpts(opt...)
+	if err != nil {
+		return nil, err
+	}
 
 	// Load the default configuration
 	cfg, err := config.LoadDefaultConfig(ctx)
@@ -41,29 +41,36 @@ func (c Config) New(ctx context.Context) (server.Task, error) {
 		if o.Region == "" {
 			o.Credentials = nil
 			o.Region = "none"
+		} else {
+			aws.region = o.Region
 		}
 
 		// We set the endpoint if it is not empty
-		if c.S3endpoint != nil {
-			o.BaseEndpoint = aws.String(c.S3endpoint.String())
+		if opts.s3endpoint != nil {
+			o.BaseEndpoint = opts.s3endpoint
 		}
 	}); s3 == nil {
 		return nil, httpresponse.ErrInternalError.Withf("Invalid S3 client")
 	} else {
-		self.s3 = s3
+		aws.s3 = s3
 	}
 
 	// Return success
-	return self, nil
+	return aws, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// MODULE
+// PUBLIC METHODS
 
-func (Config) Name() string {
-	return "aws"
+func (*aws) Run(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
 }
 
-func (Config) Description() string {
-	return "AWS services"
+func (aws *aws) S3() *s3.Client {
+	return aws.s3
+}
+
+func (aws *aws) Region() string {
+	return aws.region
 }

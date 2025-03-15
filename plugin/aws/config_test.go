@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	// Packages
-	"github.com/mutablelogic/go-filer/pkg/aws"
+	"github.com/mutablelogic/go-filer/plugin/aws"
 	"github.com/stretchr/testify/assert"
 )
 
