@@ -28,7 +28,10 @@ func main() {
 	)
 
 	// Create the app
-	app := NewApp(cli.Globals, kong.Model.Vars())
+	app, err := NewApp(cli.Globals, kong.Model.Vars())
+	if err != nil {
+		kong.FatalIfErrorf(err)
+	}
 	defer app.Close()
 
 	// Run

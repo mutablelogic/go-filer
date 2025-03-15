@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"time"
 
 	// Packages
@@ -11,10 +12,14 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
+type BucketMeta struct {
+	Name   string  `json:"name,omitempty" name:"name" help:"Name of the bucket"`
+	Region *string `json:"region,omitempty" name:"region" help:"Region of the bucket"`
+}
+
 type Bucket struct {
-	Name   string    `json:"name,omitempty" name:"name" help:"Name of the bucket"`
-	Ts     time.Time `json:"ts,omitzero" name:"ts" help:"Creation date of the bucket"`
-	Region *string   `json:"region,omitempty" name:"region" help:"Region of the bucket"`
+	BucketMeta
+	Ts time.Time `json:"ts,omitzero" name:"ts" help:"Creation date of the bucket"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -22,8 +27,29 @@ type Bucket struct {
 
 func BucketFromAWS(bucket *s3types.Bucket) *Bucket {
 	return &Bucket{
-		Name:   types.PtrString(bucket.Name),
-		Ts:     types.PtrTime(bucket.CreationDate),
-		Region: bucket.BucketRegion,
+		BucketMeta: BucketMeta{
+			Name:   types.PtrString(bucket.Name),
+			Region: bucket.BucketRegion,
+		},
+		Ts: types.PtrTime(bucket.CreationDate),
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// STRINGIFY
+
+func (b Bucket) String() string {
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
+func (b BucketMeta) String() string {
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
 }

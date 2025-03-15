@@ -6,4 +6,5 @@ package main
 type CLI struct {
 	Globals
 	ServiceCommands
+	FilerCommands
 }

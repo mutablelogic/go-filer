@@ -17,7 +17,7 @@ import (
 
 func BucketCreate(w http.ResponseWriter, r *http.Request, client plugin.AWS) error {
 	// Read request
-	var req schema.Bucket
+	var req schema.BucketMeta
 	if err := httprequest.Read(r, &req); err != nil {
 		return httpresponse.Error(w, err)
 	}
