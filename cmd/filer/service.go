@@ -5,12 +5,14 @@ import (
 	"net/http"
 
 	// Packages
-	filerplugins "github.com/mutablelogic/go-filer/plugin"
-	"github.com/mutablelogic/go-filer/plugin/aws"
-	filer "github.com/mutablelogic/go-filer/plugin/filer"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	provider "github.com/mutablelogic/go-server/pkg/provider"
+
+	// Plugins
+	plugins "github.com/mutablelogic/go-filer/plugin"
+	aws "github.com/mutablelogic/go-filer/plugin/aws"
+	filer "github.com/mutablelogic/go-filer/plugin/filer"
 	httprouter "github.com/mutablelogic/go-server/plugin/httprouter"
 	httpserver "github.com/mutablelogic/go-server/plugin/httpserver"
 )
@@ -63,7 +65,7 @@ func (cmd *ServiceRunCommand) Run(app App) error {
 			config := plugin.(filer.Config)
 
 			// AWS
-			aws, ok := provider.Provider(ctx).Task(ctx, "aws").(filerplugins.AWS)
+			aws, ok := provider.Provider(ctx).Task(ctx, "aws").(plugins.AWS)
 			if !ok || aws == nil {
 				return nil, httpresponse.ErrInternalError.Withf("Invalid AWS %q", label)
 			} else {
