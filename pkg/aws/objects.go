@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 
 	// Packages
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -102,43 +102,9 @@ func (aws *Client) DeleteObject(ctx context.Context, bucket, key string) error {
 }
 
 // PutObject creates or updates an object in the specified bucket with the specified
-// key. The object is created from the specified reader. Content type, length
-// and additional metadata can be specified in the options.
-func (aws *Client) PutObject(ctx context.Context, bucket, key string, r io.Reader, opts ...Opt) (*s3types.Object, error) {
-	// Parse options
-	opt, err := applyOpts(opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	// Insert the object into S3
-	response, err := aws.S3().PutObject(ctx, &s3.PutObjectInput{
-		Bucket:             types.StringPtr(bucket),
-		Key:                types.StringPtr(key),
-		Body:               r,
-		ContentType:        opt.contentType,
-		ContentDisposition: types.StringPtr(fmt.Sprintf("inline; filename=%q", filepath.Base(key))),
-		ContentLength:      opt.contentLength,
-		Metadata:           opt.metadata,
-	}, s3.WithAPIOptions(
-		v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware,
-	))
-	if err != nil {
-		return nil, Err(err)
-	}
-
-	// Return the etag and size of the object that was put
-	return &s3types.Object{
-		Key:  types.StringPtr(key),
-		ETag: response.ETag,
-		Size: response.Size,
-	}, nil
-}
-
-// PutObject2 creates or updates an object in the specified bucket with the specified
 // key. The object is created from the specified reader. Content Type and additional
 // metadata can be specified in the options.
-func (aws *Client) PutObject2(ctx context.Context, bucket, key string, r io.Reader, opts ...Opt) (*s3types.Object, error) {
+func (aws *Client) PutObject(ctx context.Context, bucket, key string, r io.Reader, opts ...Opt) (*s3types.Object, error) {
 	// Parse options
 	opt, err := applyOpts(opts...)
 	if err != nil {
@@ -198,7 +164,6 @@ func (aws *Client) PutObject2(ctx context.Context, bucket, key string, r io.Read
 		},
 	})
 	if err != nil {
-		fmt.Println("    Error:", err, result)
 		return nil, Err(err)
 	}
 

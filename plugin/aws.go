@@ -35,5 +35,4 @@ type AWS interface {
 	GetObjectMeta(context.Context, string, string) (*s3types.Object, url.Values, error)
 	DeleteObject(context.Context, string, string) error
 	PutObject(context.Context, string, string, io.Reader, ...aws.Opt) (*s3types.Object, error)
-	PutObject2(context.Context, string, string, io.Reader, ...aws.Opt) (*s3types.Object, error)
 }

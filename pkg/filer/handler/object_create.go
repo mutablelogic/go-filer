@@ -125,7 +125,7 @@ func uploadPart(ctx context.Context, part *multipart.Part, client plugin.AWS, bu
 	}
 
 	// Insert the object into S3
-	object, err := client.PutObject2(ctx, bucket, filename, part,
+	object, err := client.PutObject(ctx, bucket, filename, part,
 		aws.WithContentType(contentType),
 		aws.WithContentLength(contentLength),
 		aws.WithMeta(params),
