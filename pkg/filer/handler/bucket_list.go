@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	// Packages
-	aws "github.com/mutablelogic/go-filer/pkg/aws"
+
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	plugin "github.com/mutablelogic/go-filer/plugin"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
@@ -15,7 +15,7 @@ import (
 // PUBLIC METHODS
 
 func BucketList(w http.ResponseWriter, r *http.Request, client plugin.AWS) error {
-	buckets, err := aws.ListBuckets(r.Context(), client.S3())
+	buckets, err := client.ListBuckets(r.Context())
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}

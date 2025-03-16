@@ -21,9 +21,9 @@ func main() {
 		kong.UsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true}),
 		kong.Vars{
-			"HOST":   hostName(),
-			"USER":   userName(),
-			"PREFIX": "/",
+			"HOST":        hostName(),
+			"USER":        userName(),
+			"FILERPREFIX": "filer/v1",
 		},
 	)
 

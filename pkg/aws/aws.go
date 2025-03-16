@@ -12,7 +12,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type aws struct {
+type Client struct {
 	region string
 	s3     *s3.Client
 }
@@ -20,8 +20,8 @@ type aws struct {
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func New(ctx context.Context, opt ...Opt) (*aws, error) {
-	aws := new(aws)
+func New(ctx context.Context, opt ...Opt) (*Client, error) {
+	aws := new(Client)
 	opts, err := applyOpts(opt...)
 	if err != nil {
 		return nil, err
@@ -62,15 +62,10 @@ func New(ctx context.Context, opt ...Opt) (*aws, error) {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (*aws) Run(ctx context.Context) error {
-	<-ctx.Done()
-	return nil
-}
-
-func (aws *aws) S3() *s3.Client {
+func (aws *Client) S3() *s3.Client {
 	return aws.s3
 }
 
-func (aws *aws) Region() string {
+func (aws *Client) Region() string {
 	return aws.region
 }

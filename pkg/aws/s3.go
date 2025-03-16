@@ -12,15 +12,14 @@ import (
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
 // ListBuckets lists all S3 buckets in the account
 // TODO: up to the specified limit.
-func ListBuckets(ctx context.Context, client *s3.Client) ([]s3types.Bucket, error) {
-	if client == nil {
-		return nil, httpresponse.ErrInternalError.Withf("S3 client is nil")
-	}
-
+func (aws *Client) ListBuckets(ctx context.Context) ([]s3types.Bucket, error) {
 	var result []s3types.Bucket
-	if err := listBuckets(ctx, client, func(buckets []s3types.Bucket) error {
+	if err := listBuckets(ctx, aws.S3(), func(buckets []s3types.Bucket) error {
 		result = append(result, buckets...)
 		return nil
 	}); err != nil {
@@ -32,11 +31,7 @@ func ListBuckets(ctx context.Context, client *s3.Client) ([]s3types.Bucket, erro
 }
 
 // CreateBucket creates a new S3 bucket
-func CreateBucket(ctx context.Context, client *s3.Client, name string, opt ...Opt) (*s3types.Bucket, error) {
-	if client == nil {
-		return nil, httpresponse.ErrInternalError.Withf("S3 client is nil")
-	}
-
+func (aws *Client) CreateBucket(ctx context.Context, name string, opt ...Opt) (*s3types.Bucket, error) {
 	opts, err := applyOpts(opt...)
 	if err != nil {
 		return nil, httpresponse.ErrBadRequest.With(err.Error())
@@ -48,7 +43,7 @@ func CreateBucket(ctx context.Context, client *s3.Client, name string, opt ...Op
 	}
 
 	// Create the bucket
-	_, err = client.CreateBucket(ctx, &s3.CreateBucketInput{
+	_, err = aws.S3().CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: types.StringPtr(name),
 		CreateBucketConfiguration: &s3types.CreateBucketConfiguration{
 			LocationConstraint: s3types.BucketLocationConstraint(types.PtrString(opts.region)),
@@ -59,15 +54,11 @@ func CreateBucket(ctx context.Context, client *s3.Client, name string, opt ...Op
 	}
 
 	// Return the bucket
-	return GetBucket(ctx, client, name)
+	return aws.GetBucket(ctx, name)
 }
 
 // GetBucket returns an S3 bucket
-func GetBucket(ctx context.Context, client *s3.Client, name string) (*s3types.Bucket, error) {
-	if client == nil {
-		return nil, httpresponse.ErrInternalError.Withf("S3 client is nil")
-	}
-
+func (aws *Client) GetBucket(ctx context.Context, name string) (*s3types.Bucket, error) {
 	// The name must be an identifier
 	if !types.IsIdentifier(name) {
 		return nil, httpresponse.ErrBadRequest.Withf("Invalid bucket name: %q", name)
@@ -75,7 +66,7 @@ func GetBucket(ctx context.Context, client *s3.Client, name string) (*s3types.Bu
 
 	// Match the bucket by name
 	var result s3types.Bucket
-	if err := listBuckets(ctx, client, func(buckets []s3types.Bucket) error {
+	if err := listBuckets(ctx, aws.S3(), func(buckets []s3types.Bucket) error {
 		for _, bucket := range buckets {
 			if *bucket.Name == name {
 				result = bucket
@@ -95,19 +86,15 @@ func GetBucket(ctx context.Context, client *s3.Client, name string) (*s3types.Bu
 	return nil, httpresponse.ErrNotFound.Withf("Bucket %q not found", name)
 }
 
-// DeleteBucket returns an S3 bucket
-func DeleteBucket(ctx context.Context, client *s3.Client, name string) error {
-	if client == nil {
-		return httpresponse.ErrInternalError.Withf("S3 client is nil")
-	}
-
+// DeleteBucket deletes an S3 bucket
+func (aws *Client) DeleteBucket(ctx context.Context, name string) error {
 	// The name must be an identifier
 	if !types.IsIdentifier(name) {
 		return httpresponse.ErrBadRequest.Withf("Invalid bucket name: %q", name)
 	}
 
 	// Perform the delete
-	_, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{
+	_, err := aws.S3().DeleteBucket(ctx, &s3.DeleteBucketInput{
 		Bucket: types.StringPtr(name),
 	})
 

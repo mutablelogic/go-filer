@@ -19,13 +19,10 @@ func Test_s3_001(t *testing.T) {
 	}
 
 	t.Run("ListBuckets_1", func(t *testing.T) {
-		s3 := client.S3()
-		assert.NotNil(s3)
-
-		buckets, err := s3.ListBuckets(context.TODO(), nil)
+		buckets, err := client.ListBuckets(context.TODO())
 		if assert.NoError(err) {
 			assert.NotNil(buckets)
-			for _, bucket := range buckets.Buckets {
+			for _, bucket := range buckets {
 				assert.NotNil(bucket)
 				assert.NotEmpty(bucket.Name)
 				assert.NotEmpty(bucket.CreationDate)
@@ -35,10 +32,7 @@ func Test_s3_001(t *testing.T) {
 	})
 
 	t.Run("ListBuckets_2", func(t *testing.T) {
-		s3 := client.S3()
-		assert.NotNil(s3)
-
-		buckets, err := aws.ListBuckets(context.TODO(), s3)
+		buckets, err := client.ListBuckets(context.TODO())
 		if assert.NoError(err) {
 			assert.NotNil(buckets)
 			for _, bucket := range buckets {

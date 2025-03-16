@@ -5,8 +5,7 @@ import (
 	"net/url"
 
 	// Packages
-
-	"github.com/mutablelogic/go-filer/pkg/aws"
+	aws "github.com/mutablelogic/go-filer/pkg/aws"
 	server "github.com/mutablelogic/go-server"
 )
 
@@ -19,9 +18,6 @@ type Config struct {
 
 var _ server.Plugin = Config{}
 
-///////////////////////////////////////////////////////////////////////////////
-// MODULE
-
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
@@ -32,8 +28,14 @@ func (c Config) New(ctx context.Context) (server.Task, error) {
 		opts = append(opts, aws.WithS3Endpoint(c.S3endpoint.String()))
 	}
 
+	// Create a new AWS client
+	client, err := aws.New(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
 	// Return an AWS task
-	return aws.New(ctx, opts...)
+	return taskWithClient(client), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	// Packages
 	kong "github.com/alecthomas/kong"
 	"github.com/mutablelogic/go-client"
 	filer "github.com/mutablelogic/go-filer/pkg/filer/client"
+	"github.com/mutablelogic/go-llm/pkg/version"
+	"github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -29,10 +33,12 @@ type Globals struct {
 
 type App interface {
 	Context() context.Context
-	GetEndpoint() *url.URL
+	GetEndpoint(paths ...string) *url.URL
 	GetDebug() bool
 	GetClient() *filer.Client
 }
+
+var _ App = (*Globals)(nil)
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -72,17 +78,46 @@ func (app *Globals) Context() context.Context {
 	return app.ctx
 }
 
-func (app *Globals) GetEndpoint() *url.URL {
-	if url, err := url.Parse(app.Endpoint); err == nil {
-		return url
-	}
-	return nil
-}
-
 func (app *Globals) GetDebug() bool {
 	return app.Debug || app.Trace
 }
 
 func (app *Globals) GetClient() *filer.Client {
 	return app.client
+}
+
+func (app *Globals) GetEndpoint(paths ...string) *url.URL {
+	url, err := url.Parse(app.Endpoint)
+	if err != nil {
+		return nil
+	}
+	for _, path := range paths {
+		url.Path = types.JoinPath(url.Path, os.Expand(path, func(key string) string {
+			return app.vars[key]
+		}))
+	}
+	return url
+}
+
+func (app *Globals) ClientOpts() []client.ClientOpt {
+	opts := []client.ClientOpt{}
+
+	// Trace mode
+	if app.Debug || app.Trace {
+		opts = append(opts, client.OptTrace(os.Stderr, app.Trace))
+	}
+
+	// Append user agent
+	source := version.GitSource
+	version := version.GitTag
+	if source == "" {
+		source = "go-service"
+	}
+	if version == "" {
+		version = "v0.0.0"
+	}
+	opts = append(opts, client.OptUserAgent(fmt.Sprintf("%v/%v", filepath.Base(source), version)))
+
+	// Return options
+	return opts
 }

@@ -8,6 +8,10 @@ import (
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
 
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+// Transform the error into an httpresponse error
 func Err(err error) error {
 	var awserr *awshttp.ResponseError
 	if errors.As(err, &awserr) {

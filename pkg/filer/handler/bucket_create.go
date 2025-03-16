@@ -4,12 +4,12 @@ import (
 	"net/http"
 
 	// Packages
-	"github.com/mutablelogic/go-filer/pkg/aws"
-	"github.com/mutablelogic/go-filer/pkg/filer/schema"
-	"github.com/mutablelogic/go-filer/plugin"
-	"github.com/mutablelogic/go-server/pkg/httprequest"
-	"github.com/mutablelogic/go-server/pkg/httpresponse"
-	"github.com/mutablelogic/go-server/pkg/types"
+	aws "github.com/mutablelogic/go-filer/pkg/aws"
+	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
+	plugin "github.com/mutablelogic/go-filer/plugin"
+	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -31,7 +31,7 @@ func BucketCreate(w http.ResponseWriter, r *http.Request, client plugin.AWS) err
 	}
 
 	// Create bucket
-	bucket, err := aws.CreateBucket(r.Context(), client.S3(), req.Name, opts...)
+	bucket, err := client.CreateBucket(r.Context(), req.Name, opts...)
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
