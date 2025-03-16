@@ -6,6 +6,7 @@ package aws
 type opt struct {
 	s3endpoint *string
 	region     *string
+	prefix     *string
 }
 
 // Opt represents a function that modifies the options
@@ -41,6 +42,13 @@ func WithS3Endpoint(endpoint string) Opt {
 func WithRegion(region string) Opt {
 	return func(o *opt) error {
 		o.region = &region
+		return nil
+	}
+}
+
+func WithPrefix(v string) Opt {
+	return func(o *opt) error {
+		o.prefix = &v
 		return nil
 	}
 }

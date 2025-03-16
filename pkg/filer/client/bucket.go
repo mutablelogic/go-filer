@@ -6,7 +6,7 @@ import (
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
-	"github.com/mutablelogic/go-filer/pkg/filer/schema"
+	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -21,7 +21,7 @@ func (c *Client) CreateBucket(ctx context.Context, bucket schema.BucketMeta) (*s
 
 	// Perform request
 	var response schema.Bucket
-	if err := c.DoWithContext(ctx, req, &response); err != nil {
+	if err := c.DoWithContext(ctx, req, &response, client.OptPath("bucket")); err != nil {
 		return nil, err
 	}
 
@@ -35,7 +35,7 @@ func (c *Client) ListBuckets(ctx context.Context) ([]schema.Bucket, error) {
 
 	// Perform request
 	var response []schema.Bucket
-	if err := c.DoWithContext(ctx, req, &response); err != nil {
+	if err := c.DoWithContext(ctx, req, &response, client.OptPath("bucket")); err != nil {
 		return nil, err
 	}
 
@@ -48,7 +48,7 @@ func (c *Client) DeleteBucket(ctx context.Context, bucket string) error {
 	req := client.NewRequestEx(http.MethodDelete, "")
 
 	// Perform request
-	if err := c.DoWithContext(ctx, req, nil, client.OptPath(bucket)); err != nil {
+	if err := c.DoWithContext(ctx, req, nil, client.OptPath("bucket", bucket)); err != nil {
 		return err
 	}
 
@@ -62,7 +62,7 @@ func (c *Client) GetBucket(ctx context.Context, bucket string) (*schema.Bucket, 
 
 	// Perform request
 	var response schema.Bucket
-	if err := c.DoWithContext(ctx, req, &response, client.OptPath(bucket)); err != nil {
+	if err := c.DoWithContext(ctx, req, &response, client.OptPath("bucket", bucket)); err != nil {
 		return nil, err
 	}
 

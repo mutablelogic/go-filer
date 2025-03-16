@@ -36,6 +36,7 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws plugi
 
 	// Register HTTP handlers
 	self.RegisterBucketHandlers(ctx, prefix, router)
+	self.RegisterObjectHandlers(ctx, prefix, router)
 
 	// Return success
 	return self, nil

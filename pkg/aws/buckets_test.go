@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_s3_001(t *testing.T) {
+func Test_Buckets_001(t *testing.T) {
 	assert := assert.New(t)
 	client, err := aws.New(context.TODO())
 	if assert.NoError(err) {

@@ -11,10 +11,10 @@ import (
 
 	// Packages
 	kong "github.com/alecthomas/kong"
-	"github.com/mutablelogic/go-client"
+	client "github.com/mutablelogic/go-client"
 	filer "github.com/mutablelogic/go-filer/pkg/filer/client"
-	"github.com/mutablelogic/go-llm/pkg/version"
-	"github.com/mutablelogic/go-server/pkg/types"
+	version "github.com/mutablelogic/go-llm/pkg/version"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

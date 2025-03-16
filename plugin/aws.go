@@ -25,4 +25,5 @@ type AWS interface {
 	CreateBucket(context.Context, string, ...aws.Opt) (*s3types.Bucket, error)
 	GetBucket(context.Context, string) (*s3types.Bucket, error)
 	DeleteBucket(context.Context, string) error
+	ListObjects(context.Context, string, ...aws.Opt) ([]s3types.Object, error)
 }

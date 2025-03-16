@@ -2,6 +2,9 @@ package client
 
 import (
 	"net/url"
+
+	// Packages
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -29,6 +32,10 @@ func applyOpts(opts ...Opt) (*opt, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // OPTIONS
+
+func WithPrefix(v *string) Opt {
+	return OptSet("prefix", types.PtrString(v))
+}
 
 func OptSet(k, v string) Opt {
 	return func(o *opt) error {
