@@ -72,7 +72,14 @@ func (aws *Client) GetObject(ctx context.Context, bucket, key string) (*s3types.
 // DeleteObject deletes the object with the specified key in the specified
 // bucket.
 func (aws *Client) DeleteObject(ctx context.Context, bucket, key string) error {
-	_, err := aws.S3().DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err := aws.S3().HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: types.StringPtr(bucket),
+		Key:    types.StringPtr(key),
+	})
+	if err != nil {
+		return Err(err)
+	}
+	_, err = aws.S3().DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: types.StringPtr(bucket),
 		Key:    types.StringPtr(key),
 	})
