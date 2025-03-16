@@ -12,9 +12,14 @@ import (
 
 type opt struct {
 	url.Values
+	fn ProgressFunc
 }
 
+// An Option to set on the client
 type Opt func(*opt) error
+
+// Uploader progress function
+type ProgressFunc func(cur, total uint64)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -33,8 +38,17 @@ func applyOpts(opts ...Opt) (*opt, error) {
 ////////////////////////////////////////////////////////////////////////////////
 // OPTIONS
 
+// Set prefix for listing objects
 func WithPrefix(v *string) Opt {
 	return OptSet("prefix", types.PtrString(v))
+}
+
+// Set progress function for uploader
+func WithProgress(fn ProgressFunc) Opt {
+	return func(o *opt) error {
+		o.fn = fn
+		return nil
+	}
 }
 
 func OptSet(k, v string) Opt {

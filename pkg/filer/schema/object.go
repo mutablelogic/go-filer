@@ -2,6 +2,8 @@ package schema
 
 import (
 	"encoding/json"
+	"net/url"
+	"strings"
 	"time"
 
 	// Packages
@@ -13,7 +15,8 @@ import (
 // TYPES
 
 type ObjectMeta struct {
-	Key string `json:"key,omitempty" name:"key" help:"Object key"`
+	Key  string `json:"key,omitempty" name:"key" help:"Object key"`
+	Type string `json:"type,omitempty" name:"type" help:"Type of the object"`
 }
 
 type Object struct {
@@ -24,15 +27,28 @@ type Object struct {
 	Ts     time.Time `json:"ts,omitzero" name:"ts" help:"Creation date of the object"`
 }
 
+type ObjectList struct {
+	Count uint64   `json:"count" name:"count" help:"Number of objects"`
+	Body  []Object `json:"body,omitempty" name:"body" help:"List of objects"`
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// GLOBAL VARIABLES
+
+const (
+	PathSeparator = string('/')
+)
+
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func ObjectFromAWS(object *s3types.Object, bucket string) *Object {
+func ObjectFromAWS(object *s3types.Object, bucket string, meta url.Values) *Object {
 	return &Object{
 		ObjectMeta: ObjectMeta{
-			Key: types.PtrString(object.Key),
+			Key:  types.PtrString(object.Key),
+			Type: meta.Get(strings.ToLower(types.ContentTypeHeader)),
 		},
-		Hash:   object.ETag,
+		Hash:   unquote(object.ETag),
 		Bucket: bucket,
 		Size:   types.PtrInt64(object.Size),
 		Ts:     types.PtrTime(object.LastModified),
@@ -56,4 +72,22 @@ func (o ObjectMeta) String() string {
 		return err.Error()
 	}
 	return string(data)
+}
+
+func (o ObjectList) String() string {
+	data, err := json.MarshalIndent(o, "", "  ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+func unquote(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	return types.StringPtr(types.Unquote(*s))
 }

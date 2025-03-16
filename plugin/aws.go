@@ -2,6 +2,8 @@ package plugin
 
 import (
 	"context"
+	"io"
+	"net/url"
 
 	// Packages
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -21,9 +23,16 @@ type AWS interface {
 
 	// S3
 	S3() *s3.Client
+
+	// Buckets
 	ListBuckets(context.Context) ([]s3types.Bucket, error)
 	CreateBucket(context.Context, string, ...aws.Opt) (*s3types.Bucket, error)
 	GetBucket(context.Context, string) (*s3types.Bucket, error)
 	DeleteBucket(context.Context, string) error
+
+	// Objects
 	ListObjects(context.Context, string, ...aws.Opt) ([]s3types.Object, error)
+	CreateObject(context.Context, string, string, io.Reader, ...aws.Opt) (*s3types.Object, error)
+	GetObject(context.Context, string, string) (*s3types.Object, url.Values, error)
+	DeleteObject(context.Context, string, string) error
 }

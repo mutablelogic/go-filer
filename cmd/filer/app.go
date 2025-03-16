@@ -34,8 +34,8 @@ type Globals struct {
 type App interface {
 	Context() context.Context
 	GetEndpoint(paths ...string) *url.URL
+	GetClientOpts() []client.ClientOpt
 	GetDebug() bool
-	GetClient() *filer.Client
 }
 
 var _ App = (*Globals)(nil)
@@ -50,17 +50,6 @@ func NewApp(app Globals, vars kong.Vars) (*Globals, error) {
 	// Create the context
 	// This context is cancelled when the process receives a SIGINT or SIGTERM
 	app.ctx, app.cancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-
-	// Create the client
-	opts := []client.ClientOpt{}
-	if app.Debug {
-		opts = append(opts, client.OptTrace(os.Stderr, app.Trace))
-	}
-	if client, err := filer.New(app.Endpoint, opts...); err != nil {
-		return nil, err
-	} else {
-		app.client = client
-	}
 
 	// Return the app
 	return &app, nil
@@ -82,10 +71,6 @@ func (app *Globals) GetDebug() bool {
 	return app.Debug || app.Trace
 }
 
-func (app *Globals) GetClient() *filer.Client {
-	return app.client
-}
-
 func (app *Globals) GetEndpoint(paths ...string) *url.URL {
 	url, err := url.Parse(app.Endpoint)
 	if err != nil {
@@ -99,7 +84,7 @@ func (app *Globals) GetEndpoint(paths ...string) *url.URL {
 	return url
 }
 
-func (app *Globals) ClientOpts() []client.ClientOpt {
+func (app *Globals) GetClientOpts() []client.ClientOpt {
 	opts := []client.ClientOpt{}
 
 	// Trace mode
@@ -111,7 +96,7 @@ func (app *Globals) ClientOpts() []client.ClientOpt {
 	source := version.GitSource
 	version := version.GitTag
 	if source == "" {
-		source = "go-service"
+		source = "go-filer"
 	}
 	if version == "" {
 		version = "v0.0.0"

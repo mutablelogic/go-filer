@@ -31,7 +31,7 @@ func (filer *filer) RegisterBucketHandlers(ctx context.Context, prefix string, r
 	})
 
 	// Get or delete bucket
-	router.HandleFunc(ctx, types.JoinPath(prefix, "bucket/{bucket...}"), func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc(ctx, types.JoinPath(prefix, "bucket/{bucket}"), func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodDelete)
 

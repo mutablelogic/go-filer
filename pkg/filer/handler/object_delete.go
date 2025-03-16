@@ -6,15 +6,16 @@ import (
 	// Packages
 	plugin "github.com/mutablelogic/go-filer/plugin"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	"github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func BucketDelete(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucket string) error {
-	err := client.DeleteBucket(r.Context(), bucket)
+func ObjectDelete(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucket, key string) error {
+	err := client.DeleteObject(r.Context(), bucket, key)
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, err, types.JoinPath(bucket, key))
 	}
 
 	return httpresponse.Empty(w, http.StatusOK)

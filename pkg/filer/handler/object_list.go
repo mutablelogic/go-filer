@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"net/url"
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
@@ -16,13 +17,13 @@ import (
 func ObjectList(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucket string) error {
 	objects, err := client.ListObjects(r.Context(), bucket)
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, err, bucket)
 	}
 
 	// Create response
 	result := make([]*schema.Object, len(objects))
 	for i, object := range objects {
-		result[i] = schema.ObjectFromAWS(&object, bucket)
+		result[i] = schema.ObjectFromAWS(&object, bucket, url.Values{})
 	}
 
 	// Return response
