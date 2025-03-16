@@ -17,6 +17,5 @@ func ObjectDelete(w http.ResponseWriter, r *http.Request, client plugin.AWS, buc
 	if err != nil {
 		return httpresponse.Error(w, err, types.JoinPath(bucket, key))
 	}
-
 	return httpresponse.Empty(w, http.StatusOK)
 }

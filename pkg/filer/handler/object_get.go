@@ -15,7 +15,7 @@ import (
 // PUBLIC METHODS
 
 func ObjectGet(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucket, key string) error {
-	object, meta, err := client.GetObject(r.Context(), bucket, key)
+	object, meta, err := client.GetObjectMeta(r.Context(), bucket, key)
 	if err != nil {
 		return httpresponse.Error(w, err, types.JoinPath(bucket, key))
 	}

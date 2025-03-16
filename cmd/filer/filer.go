@@ -6,7 +6,9 @@ import (
 	"time"
 
 	// Packages
+
 	"github.com/mutablelogic/go-filer/pkg/filer/client"
+	"github.com/mutablelogic/go-filer/pkg/filer/schema"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -58,8 +60,32 @@ type UploadObjectsCommand struct {
 	Path string `arg:"" type:"path" help:"File or path of files to upload"`
 }
 
-///////////////////////////////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+func (cmd *CreateBucketCommand) Run(app App) error {
+	return run(app, func(ctx context.Context, filer *client.Client) error {
+		bucket, err := filer.CreateBucket(ctx, schema.BucketMeta{
+			Name: cmd.Bucket,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Println(bucket)
+		return nil
+	})
+}
+
+func (cmd *GetBucketCommand) Run(app App) error {
+	return run(app, func(ctx context.Context, filer *client.Client) error {
+		bucket, err := filer.GetBucket(ctx, cmd.Bucket)
+		if err != nil {
+			return err
+		}
+		fmt.Println(bucket)
+		return nil
+	})
+}
 
 func (cmd *ListBucketsCommand) Run(app App) error {
 	return run(app, func(ctx context.Context, filer *client.Client) error {
@@ -97,6 +123,12 @@ func (cmd *GetObjectCommand) Run(app App) error {
 func (cmd *DeleteObjectCommand) Run(app App) error {
 	return run(app, func(ctx context.Context, filer *client.Client) error {
 		return filer.DeleteObject(ctx, cmd.Bucket, cmd.Key)
+	})
+}
+
+func (cmd *DeleteBucketCommand) Run(app App) error {
+	return run(app, func(ctx context.Context, filer *client.Client) error {
+		return filer.DeleteBucket(ctx, cmd.Bucket)
 	})
 }
 

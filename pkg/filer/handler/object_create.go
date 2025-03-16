@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	// Packages
-
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	aws "github.com/mutablelogic/go-filer/pkg/aws"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
@@ -126,7 +125,7 @@ func uploadPart(ctx context.Context, part *multipart.Part, client plugin.AWS, bu
 	}
 
 	// Insert the object into S3
-	object, err := client.CreateObject(ctx, bucket, filename, part,
+	object, err := client.PutObject2(ctx, bucket, filename, part,
 		aws.WithContentType(contentType),
 		aws.WithContentLength(contentLength),
 		aws.WithMeta(params),
@@ -136,7 +135,7 @@ func uploadPart(ctx context.Context, part *multipart.Part, client plugin.AWS, bu
 	}
 
 	// Retrieve the object
-	object, meta, err := client.GetObject(ctx, bucket, types.PtrString(object.Key))
+	object, meta, err := client.GetObjectMeta(ctx, bucket, types.PtrString(object.Key))
 	if err != nil {
 		return nil, err
 	}
