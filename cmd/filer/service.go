@@ -11,7 +11,7 @@ import (
 	types "github.com/mutablelogic/go-server/pkg/types"
 
 	// Plugins
-	plugins "github.com/mutablelogic/go-filer/plugin"
+	plugins "github.com/mutablelogic/go-filer"
 	aws "github.com/mutablelogic/go-filer/plugin/aws"
 	filer "github.com/mutablelogic/go-filer/plugin/filer"
 	pg "github.com/mutablelogic/go-filer/plugin/pg"

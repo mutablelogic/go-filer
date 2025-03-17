@@ -79,6 +79,56 @@ func (aws *Client) GetObjectMeta(ctx context.Context, bucket, key string) (*s3ty
 	}, metadata, nil
 }
 
+// GetObject returns the metadata and writes the object data with the specified key. If w is nil, no
+// data is written. If meta is nil, the metadata function is not called. The object is
+// returned after the data is written.
+func (aws *Client) GetObject(ctx context.Context, w io.Writer, meta func(url.Values) error, bucket, key string) (*s3types.Object, error) {
+	// Get the object metadata
+	result, err := aws.S3().HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: types.StringPtr(bucket),
+		Key:    types.StringPtr(key),
+	})
+	if err != nil {
+		return nil, Err(err)
+	}
+
+	// Metadata
+	if meta != nil {
+		// Convert the metadata to a url.Values
+		metadata := make(url.Values)
+		for k, v := range result.Metadata {
+			metadata.Set(k, v)
+		}
+		if err := meta(metadata); err != nil {
+			return nil, err
+		}
+	}
+
+	// Data
+	if w != nil {
+		// Get the object data
+		result, err := aws.S3().GetObject(ctx, &s3.GetObjectInput{
+			Bucket: types.StringPtr(bucket),
+			Key:    types.StringPtr(key),
+		})
+		if err != nil {
+			return nil, Err(err)
+		}
+		defer result.Body.Close()
+		if _, err := io.Copy(w, result.Body); err != nil {
+			return nil, err
+		}
+	}
+
+	// Return the object metadata
+	return &s3types.Object{
+		Key:          types.StringPtr(key),
+		ETag:         result.ETag,
+		LastModified: result.LastModified,
+		Size:         result.ContentLength,
+	}, nil
+}
+
 // DeleteObject deletes the object with the specified key in the specified
 // bucket.
 func (aws *Client) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -126,7 +176,7 @@ func (aws *Client) PutObject(ctx context.Context, bucket, key string, r io.Reade
 	var completedParts []s3types.CompletedPart
 	var partNumber int32
 	var size int64
-	buf := make([]byte, minPartSize)
+	var buf = make([]byte, minPartSize)
 	for {
 		partNumber++
 		part, n, err := uploadPart(ctx, r, aws.S3(), bucket, key, types.PtrString(uploader.UploadId), partNumber, buf)
@@ -137,7 +187,7 @@ func (aws *Client) PutObject(ctx context.Context, bucket, key string, r io.Reade
 				Key:      types.StringPtr(key),
 				UploadId: uploader.UploadId,
 			})
-			return nil, errors.Join(err, Err(err2))
+			return nil, errors.Join(Err(err), Err(err2))
 		}
 
 		// Append the completed part
@@ -183,10 +233,8 @@ func uploadPart(ctx context.Context, r io.Reader, client *s3.Client, bucket, key
 	n, err := io.ReadFull(r, buf)
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, 0, err
-	}
-
-	// Translate the error to EOF
-	if errors.Is(err, io.ErrUnexpectedEOF) {
+	} else if errors.Is(err, io.ErrUnexpectedEOF) {
+		// Translate the error to EOF
 		err = io.EOF
 	}
 

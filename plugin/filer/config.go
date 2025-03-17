@@ -4,8 +4,8 @@ import (
 	"context"
 
 	// Packages
+	plugin "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/pkg/filer"
-	plugin "github.com/mutablelogic/go-filer/plugin"
 	server "github.com/mutablelogic/go-server"
 )
 

@@ -13,9 +13,9 @@ import (
 
 	// Packages
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	plugin "github.com/mutablelogic/go-filer"
 	aws "github.com/mutablelogic/go-filer/pkg/aws"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
-	plugin "github.com/mutablelogic/go-filer/plugin"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"

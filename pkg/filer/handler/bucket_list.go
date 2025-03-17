@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	// Packages
+	plugin "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
-	plugin "github.com/mutablelogic/go-filer/plugin"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )

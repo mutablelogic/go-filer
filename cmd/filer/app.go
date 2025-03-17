@@ -12,7 +12,6 @@ import (
 	// Packages
 	kong "github.com/alecthomas/kong"
 	client "github.com/mutablelogic/go-client"
-	filer "github.com/mutablelogic/go-filer/pkg/filer/client"
 	version "github.com/mutablelogic/go-llm/pkg/version"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -28,7 +27,6 @@ type Globals struct {
 	vars   kong.Vars `kong:"-"` // Variables for kong
 	ctx    context.Context
 	cancel context.CancelFunc
-	client *filer.Client
 }
 
 type App interface {

@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	// Packages
-	plugin "github.com/mutablelogic/go-filer/plugin"
+	plugin "github.com/mutablelogic/go-filer"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
 

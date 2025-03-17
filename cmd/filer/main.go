@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	// Packages
-	"github.com/alecthomas/kong"
+	kong "github.com/alecthomas/kong"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

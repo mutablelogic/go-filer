@@ -6,9 +6,8 @@ import (
 	"time"
 
 	// Packages
-
-	"github.com/mutablelogic/go-filer/pkg/filer/client"
-	"github.com/mutablelogic/go-filer/pkg/filer/schema"
+	client "github.com/mutablelogic/go-filer/pkg/filer/client"
+	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
