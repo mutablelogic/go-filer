@@ -34,7 +34,7 @@ func (c *Client) ListObjects(ctx context.Context, bucket string, opts ...Opt) ([
 
 func (c *Client) GetObject(ctx context.Context, bucket, key string) (*schema.Object, error) {
 	// Make request
-	req := client.NewRequest()
+	req := client.NewRequestEx(http.MethodHead, "")
 
 	// Perform request
 	var response schema.Object
