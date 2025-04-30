@@ -12,9 +12,9 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 
 type Config struct {
-	AWS    plugin.AWS        `kong:"-"`                                    // AWS configuration
-	Router server.HTTPRouter `kong:"-"`                                    // HTTP Router
-	Prefix string            `default:"${FILERPREFIX}" help:"Path prefix"` // HTTP Path Prefix
+	AWS    plugin.AWS        `kong:"-"`                                     // AWS configuration
+	Router server.HTTPRouter `kong:"-"`                                     // HTTP Router
+	Prefix string            `default:"${FILER_PREFIX}" help:"Path prefix"` // HTTP Path Prefix
 }
 
 var _ server.Plugin = Config{}
