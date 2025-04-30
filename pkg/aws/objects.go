@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 
 	// Packages
-
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	types "github.com/mutablelogic/go-server/pkg/types"

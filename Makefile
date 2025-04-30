@@ -42,13 +42,27 @@ all: clean build
 ###############################################################################
 # BUILD
 
-# Build the commands in the cmd directory
+# Compile NPM and build the commands in the cmd directory
 .PHONY: build
-build: tidy $(CMD_DIR) $(PLUGIN_DIR)
+build: build-docker
 
+# Build the commands in the cmd directory
+.PHONY: build-docker
+build-docker: tidy $(PLUGIN_DIR) $(CMD_DIR)
+
+# Build the commands
 $(CMD_DIR): go-dep mkdir
 	@echo Build command $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
 	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
+
+# Build the plugins
+.PHONY: plugins
+plugins: $(NPM_DIR) $(PLUGIN_DIR) 
+
+# Build the plugins
+$(PLUGIN_DIR): go-dep mkdir
+	@echo Build plugin $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
+	@GOOS=${OS} GOARCH=${ARCH} ${GO} build -buildmode=plugin ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@).plugin ./$@
 
 # Build the docker image
 .PHONY: docker
@@ -67,6 +81,12 @@ docker: docker-dep
 docker-push: docker-dep 
 	@echo push docker image: ${DOCKER_TAG}
 	@${DOCKER} push ${DOCKER_TAG}
+
+# Print out the version
+.PHONY: docker-version
+docker-version: docker-dep 
+	@echo "tag=${VERSION}"
+
 
 ###############################################################################
 # TEST
