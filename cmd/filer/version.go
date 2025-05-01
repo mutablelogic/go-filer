@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	// Packages
+	version "github.com/mutablelogic/go-filer/pkg/version"
 	server "github.com/mutablelogic/go-server"
-	version "github.com/mutablelogic/go-server/pkg/version"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

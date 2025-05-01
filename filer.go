@@ -9,6 +9,7 @@ import (
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	aws "github.com/mutablelogic/go-filer/pkg/aws"
+	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -34,4 +35,13 @@ type AWS interface {
 	GetObject(context.Context, io.Writer, func(url.Values) error, string, string) (*s3types.Object, error)
 	DeleteObject(context.Context, string, string) error
 	PutObject(context.Context, string, string, io.Reader, ...aws.Opt) (*s3types.Object, error)
+}
+
+// Filer is the interface for the Filer plugin
+type Filer interface {
+	// Buckets
+	ListBuckets(context.Context, schema.BucketListRequest) (*schema.BucketList, error)
+	CreateBucket(context.Context, schema.BucketMeta) (*schema.Bucket, error)
+	GetBucket(context.Context, string) (*schema.Bucket, error)
+	DeleteBucket(context.Context, string) error
 }

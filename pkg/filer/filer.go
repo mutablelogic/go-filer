@@ -6,6 +6,7 @@ import (
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
 	handler "github.com/mutablelogic/go-filer/pkg/filer/handler"
+	"github.com/mutablelogic/go-filer/pkg/filer/schema"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
@@ -38,4 +39,11 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 
 	// Return success
 	return self, nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - BUCKETS
+
+func (self *Manager) ListBuckets(ctx context.Context, req schema.BucketListRequest) (*schema.BucketList, error) {
+	return nil, httpresponse.ErrNotImplemented.With("ListBuckets")
 }
