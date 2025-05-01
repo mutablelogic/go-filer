@@ -14,7 +14,7 @@ import (
 // TYPES
 
 type BucketMeta struct {
-	Name   string  `json:"name,omitempty" name:"name" help:"Name of the bucket"`
+	Name   string  `json:"name,omitempty" arg:"" name:"name" help:"Name of the bucket"`
 	Region *string `json:"region,omitempty" name:"region" help:"Region of the bucket"`
 }
 
@@ -29,7 +29,7 @@ type BucketListRequest struct {
 
 type BucketList struct {
 	Count uint64    `json:"count"`
-	Body  []*Bucket `json:"body"`
+	Body  []*Bucket `json:"body,omitempty"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////

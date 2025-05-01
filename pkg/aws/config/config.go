@@ -13,6 +13,7 @@ import (
 // TYPES
 
 type Config struct {
+	Region     string   `name:"region" env:"AWS_REGION" help:"AWS region"`
 	S3endpoint *url.URL `name:"s3-endpoint" env:"S3_ENDPOINT" help:"S3 endpoint"`
 }
 

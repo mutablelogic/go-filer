@@ -38,23 +38,21 @@ func registerBucketHandlers(ctx context.Context, prefix string, router server.HT
 		}
 	})
 
-	/*
-		// Get or delete bucket
-		router.HandleFunc(ctx, types.JoinPath(prefix, "bucket/{bucket}"), func(w http.ResponseWriter, r *http.Request) {
-			defer r.Body.Close()
-			httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodDelete)
+	// Get or delete bucket
+	router.HandleFunc(ctx, types.JoinPath(prefix, "bucket/{bucket}"), func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodDelete)
 
-			switch r.Method {
-			case http.MethodGet:
-				_ = bucketGet(w, r, filer, r.PathValue("bucket"))
-			case http.MethodDelete:
-				_ = bucketDelete(w, r, filer, r.PathValue("bucket"))
-			default:
-				_ = httpresponse.Error(w, httpresponse.Err(http.StatusMethodNotAllowed), r.Method)
-			}
+		switch r.Method {
+		case http.MethodGet:
+			_ = bucketGet(w, r, filer, r.PathValue("bucket"))
+		case http.MethodDelete:
+			_ = bucketDelete(w, r, filer, r.PathValue("bucket"))
+		default:
+			_ = httpresponse.Error(w, httpresponse.Err(http.StatusMethodNotAllowed), r.Method)
+		}
 
-		})
-	*/
+	})
 }
 
 ////////////////////////////////////////////////////////////////////////////////

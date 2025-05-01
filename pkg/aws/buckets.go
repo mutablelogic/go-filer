@@ -37,6 +37,12 @@ func (aws *Client) CreateBucket(ctx context.Context, name string, opt ...Opt) (*
 		return nil, httpresponse.ErrBadRequest.With(err.Error())
 	}
 
+	// Set region for the bucket
+	region := aws.region
+	if opts.region != nil {
+		region = types.PtrString(opts.region)
+	}
+
 	// The name must be an identifier
 	if !types.IsIdentifier(name) {
 		return nil, httpresponse.ErrBadRequest.Withf("Invalid bucket name: %q", name)
@@ -46,7 +52,7 @@ func (aws *Client) CreateBucket(ctx context.Context, name string, opt ...Opt) (*
 	_, err = aws.S3().CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: types.StringPtr(name),
 		CreateBucketConfiguration: &s3types.CreateBucketConfiguration{
-			LocationConstraint: s3types.BucketLocationConstraint(types.PtrString(opts.region)),
+			LocationConstraint: s3types.BucketLocationConstraint(region),
 		},
 	})
 	if err != nil {

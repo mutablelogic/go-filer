@@ -43,5 +43,5 @@ type Filer interface {
 	ListBuckets(context.Context, schema.BucketListRequest) (*schema.BucketList, error)
 	CreateBucket(context.Context, schema.BucketMeta) (*schema.Bucket, error)
 	GetBucket(context.Context, string) (*schema.Bucket, error)
-	DeleteBucket(context.Context, string) error
+	DeleteBucket(context.Context, string) (*schema.Bucket, error)
 }
