@@ -26,7 +26,7 @@ type BucketListCommand struct {
 
 func (cmd *BucketListCommand) Run(app server.Cmd) error {
 	return run(app, func(ctx context.Context, filer *client.Client) error {
-		buckets, err := filer.ListBuckets(ctx, cmd.BucketListRequest)
+		buckets, err := filer.ListBuckets(ctx, client.WithOffsetLimit(cmd.Offset, cmd.Limit))
 		if err != nil {
 			return err
 		}

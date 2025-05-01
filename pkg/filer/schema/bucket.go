@@ -6,6 +6,7 @@ import (
 
 	// Packages
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/djthorpe/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -22,11 +23,13 @@ type Bucket struct {
 	Ts time.Time `json:"ts,omitzero" name:"ts" help:"Creation date of the bucket"`
 }
 
-type BucketListRequest struct{}
+type BucketListRequest struct {
+	pg.OffsetLimit
+}
 
 type BucketList struct {
-	Count uint64   `json:"count"`
-	Body  []Bucket `json:"body"`
+	Count uint64    `json:"count"`
+	Body  []*Bucket `json:"body"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,6 +57,22 @@ func (b Bucket) String() string {
 }
 
 func (b BucketMeta) String() string {
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
+func (b BucketListRequest) String() string {
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
+func (b BucketList) String() string {
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return err.Error()

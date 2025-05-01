@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"net/url"
 
 	// Packages
@@ -37,6 +38,19 @@ func applyOpts(opts ...Opt) (*opt, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // OPTIONS
+
+// Set offset and limit
+func WithOffsetLimit(offset uint64, limit *uint64) Opt {
+	return func(o *opt) error {
+		if offset > 0 {
+			o.Set("offset", fmt.Sprint(offset))
+		}
+		if limit != nil {
+			o.Set("limit", fmt.Sprint(*limit))
+		}
+		return nil
+	}
+}
 
 // Set prefix for listing objects
 func WithPrefix(v *string) Opt {

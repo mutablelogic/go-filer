@@ -13,17 +13,18 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func bucketList(w http.ResponseWriter, r *http.Request, filer filer.AWS) error {
-	buckets, err := filer.ListBuckets(r.Context())
+func bucketList(w http.ResponseWriter, r *http.Request, filer filer.Filer) error {
+	// Request
+	var req schema.BucketListRequest
+	if err := httprequest.Query(r.URL.Query(), &req); err != nil {
+		return httpresponse.Error(w, err)
+	}
+
+	// List buckets
+	buckets, err := filer.ListBuckets(r.Context(), req)
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
 
-	// Return the list of buckets
-	result := make([]*schema.Bucket, len(buckets))
-	for i, bucket := range buckets {
-		result[i] = schema.BucketFromAWS(&bucket)
-	}
-
-	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), result)
+	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), buckets)
 }

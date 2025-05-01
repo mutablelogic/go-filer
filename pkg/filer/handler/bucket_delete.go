@@ -11,7 +11,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func bucketDelete(w http.ResponseWriter, r *http.Request, filer filer.AWS, bucket string) error {
+func bucketDelete(w http.ResponseWriter, r *http.Request, filer filer.Filer, bucket string) error {
 	err := filer.DeleteBucket(r.Context(), bucket)
 	if err != nil {
 		return httpresponse.Error(w, err)

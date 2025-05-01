@@ -29,14 +29,19 @@ func (c *Client) CreateBucket(ctx context.Context, bucket schema.BucketMeta) (*s
 	return &response, nil
 }
 
-func (c *Client) ListBuckets(ctx context.Context, meta schema.BucketListRequest) (*schema.BucketList, error) {
+func (c *Client) ListBuckets(ctx context.Context, opts ...Opt) (*schema.BucketList, error) {
 	// Make request
-	// TODO: Add metadata into request
 	req := client.NewRequest()
+
+	// Apply options
+	opt, err := applyOpts(opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	// Perform request
 	var response schema.BucketList
-	if err := c.DoWithContext(ctx, req, &response, client.OptPath("bucket")); err != nil {
+	if err := c.DoWithContext(ctx, req, &response, client.OptPath("bucket"), client.OptQuery(opt.Values)); err != nil {
 		return nil, err
 	}
 
