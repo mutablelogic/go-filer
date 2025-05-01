@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	// Packages
-	plugin "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
@@ -13,8 +13,8 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func BucketList(w http.ResponseWriter, r *http.Request, client plugin.AWS) error {
-	buckets, err := client.ListBuckets(r.Context())
+func bucketList(w http.ResponseWriter, r *http.Request, filer filer.AWS) error {
+	buckets, err := filer.ListBuckets(r.Context())
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}

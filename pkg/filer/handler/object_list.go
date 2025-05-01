@@ -5,7 +5,7 @@ import (
 	"net/url"
 
 	// Packages
-	plugin "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer"
 	aws "github.com/mutablelogic/go-filer/pkg/aws"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
@@ -15,7 +15,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func ObjectList(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucket string) error {
+func objectList(w http.ResponseWriter, r *http.Request, filer filer.AWS, bucket string) error {
 	// Request options
 	var req req
 	if err := httprequest.Query(r.URL.Query(), &req); err != nil {
@@ -23,7 +23,7 @@ func ObjectList(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucke
 	}
 
 	// List objects
-	objects, err := client.ListObjects(r.Context(), bucket, req.Opts()...)
+	objects, err := filer.ListObjects(r.Context(), bucket, req.Opts()...)
 	if err != nil {
 		return httpresponse.Error(w, err, bucket)
 	}

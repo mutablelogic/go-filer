@@ -24,7 +24,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func ObjectCreate(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucket string) error {
+func objectCreate(w http.ResponseWriter, r *http.Request, filer plugin.AWS, bucket string) error {
 	ctx := r.Context()
 
 	// Parse the body
@@ -42,14 +42,14 @@ func ObjectCreate(w http.ResponseWriter, r *http.Request, client plugin.AWS, buc
 	}
 
 	// Check that the bucket exists
-	if _, err := client.S3().HeadBucket(ctx, &s3.HeadBucketInput{
+	if _, err := filer.S3().HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: types.StringPtr(bucket),
 	}); err != nil {
 		return httpresponse.Error(w, aws.Err(err))
 	}
 
 	// Read the multipart form, and create the objects
-	objects, err := uploadParts(ctx, multipart.NewReader(r.Body, boundary), client, bucket)
+	objects, err := uploadParts(ctx, multipart.NewReader(r.Body, boundary), filer, bucket)
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
@@ -64,7 +64,7 @@ func ObjectCreate(w http.ResponseWriter, r *http.Request, client plugin.AWS, buc
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func uploadParts(ctx context.Context, reader *multipart.Reader, client plugin.AWS, bucket string) ([]schema.Object, error) {
+func uploadParts(ctx context.Context, reader *multipart.Reader, filer plugin.AWS, bucket string) ([]schema.Object, error) {
 	var objects []schema.Object
 
 	// Read parts
@@ -75,22 +75,22 @@ func uploadParts(ctx context.Context, reader *multipart.Reader, client plugin.AW
 			return objects, nil
 		} else if err != nil {
 			// Rollback, return an error
-			return nil, errors.Join(err, deleteObjects(ctx, client, bucket, objects))
+			return nil, errors.Join(err, deleteObjects(ctx, filer, bucket, objects))
 		}
 
-		if object, err := uploadPart(context.Background(), part, client, bucket); err != nil {
+		if object, err := uploadPart(context.Background(), part, filer, bucket); err != nil {
 			// Rollback, return an error
-			return nil, errors.Join(err, deleteObjects(ctx, client, bucket, objects))
+			return nil, errors.Join(err, deleteObjects(ctx, filer, bucket, objects))
 		} else {
 			objects = append(objects, *object)
 		}
 	}
 }
 
-func deleteObjects(ctx context.Context, client plugin.AWS, bucket string, objects []schema.Object) error {
+func deleteObjects(ctx context.Context, filer plugin.AWS, bucket string, objects []schema.Object) error {
 	var result error
 	for _, object := range objects {
-		if err := client.DeleteObject(ctx, bucket, object.Key); err != nil {
+		if err := filer.DeleteObject(ctx, bucket, object.Key); err != nil {
 			result = errors.Join(result, err)
 		}
 	}
@@ -99,7 +99,7 @@ func deleteObjects(ctx context.Context, client plugin.AWS, bucket string, object
 	return result
 }
 
-func uploadPart(ctx context.Context, part *multipart.Part, client plugin.AWS, bucket string) (*schema.Object, error) {
+func uploadPart(ctx context.Context, part *multipart.Part, filer plugin.AWS, bucket string) (*schema.Object, error) {
 	defer part.Close()
 
 	// Get the content type and filename
@@ -125,7 +125,7 @@ func uploadPart(ctx context.Context, part *multipart.Part, client plugin.AWS, bu
 	}
 
 	// Insert the object into S3
-	object, err := client.PutObject(ctx, bucket, filename, part,
+	object, err := filer.PutObject(ctx, bucket, filename, part,
 		aws.WithContentType(contentType),
 		aws.WithContentLength(contentLength),
 		aws.WithMeta(params),
@@ -135,7 +135,7 @@ func uploadPart(ctx context.Context, part *multipart.Part, client plugin.AWS, bu
 	}
 
 	// Retrieve the object
-	object, meta, err := client.GetObjectMeta(ctx, bucket, types.PtrString(object.Key))
+	object, meta, err := filer.GetObjectMeta(ctx, bucket, types.PtrString(object.Key))
 	if err != nil {
 		return nil, err
 	}

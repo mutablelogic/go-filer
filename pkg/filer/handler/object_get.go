@@ -5,8 +5,7 @@ import (
 	"net/url"
 
 	// Packages
-
-	plugin "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
@@ -16,7 +15,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func ObjectHead(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucket, key string) error {
+func objectHead(w http.ResponseWriter, r *http.Request, filer filer.AWS, bucket, key string) error {
 	var meta url.Values
 
 	// Callback for metadata
@@ -26,7 +25,7 @@ func ObjectHead(w http.ResponseWriter, r *http.Request, client plugin.AWS, bucke
 	}
 
 	// Get object metadata
-	object, err := client.GetObject(r.Context(), nil, metafn, bucket, key)
+	object, err := filer.GetObject(r.Context(), nil, metafn, bucket, key)
 	if err != nil {
 		return httpresponse.Error(w, err, types.JoinPath(bucket, key))
 	}

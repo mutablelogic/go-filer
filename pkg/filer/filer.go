@@ -4,7 +4,8 @@ import (
 	"context"
 
 	// Packages
-	plugin "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer"
+	handler "github.com/mutablelogic/go-filer/pkg/filer/handler"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
@@ -12,40 +13,29 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type filer struct {
-	aws plugin.AWS
+type Manager struct {
+	aws filer.AWS
 }
-
-var _ server.Task = (*filer)(nil)
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func New(ctx context.Context, prefix string, router server.HTTPRouter, aws plugin.AWS) (*filer, error) {
-	self := new(filer)
+func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer.AWS) (*Manager, error) {
+	self := new(Manager)
 
 	// Check arguments
-	if router == nil {
-		return nil, httpresponse.ErrInternalError.With("Invalid plugin.HTTPRouter")
-	}
 	if aws == nil {
-		return nil, httpresponse.ErrInternalError.With("Invalid plugin.AWS")
+		return nil, httpresponse.ErrInternalError.With("Invalid filer.AWS")
 	} else {
 		self.aws = aws
 	}
-
-	// Register HTTP handlers
-	self.RegisterBucketHandlers(ctx, prefix, router)
-	self.RegisterObjectHandlers(ctx, prefix, router)
+	if router == nil {
+		return nil, httpresponse.ErrInternalError.With("Invalid plugin.HTTPRouter")
+	} else {
+		// Register HTTP handlers
+		handler.RegisterHandlers(ctx, prefix, router, self.aws)
+	}
 
 	// Return success
 	return self, nil
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// TASK
-
-func (*filer) Run(ctx context.Context) error {
-	<-ctx.Done()
-	return nil
 }

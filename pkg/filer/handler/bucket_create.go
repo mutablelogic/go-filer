@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	// Packages
-	plugin "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer"
 	aws "github.com/mutablelogic/go-filer/pkg/aws"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
@@ -15,7 +15,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func BucketCreate(w http.ResponseWriter, r *http.Request, client plugin.AWS) error {
+func bucketCreate(w http.ResponseWriter, r *http.Request, filer filer.AWS) error {
 	// Read request
 	var req schema.BucketMeta
 	if err := httprequest.Read(r, &req); err != nil {
@@ -25,13 +25,13 @@ func BucketCreate(w http.ResponseWriter, r *http.Request, client plugin.AWS) err
 	// Set region
 	opts := []aws.Opt{}
 	if region := types.PtrString(req.Region); region == "" {
-		opts = append(opts, aws.WithRegion(client.Region()))
+		opts = append(opts, aws.WithRegion(filer.Region()))
 	} else {
 		opts = append(opts, aws.WithRegion(region))
 	}
 
 	// Create bucket
-	bucket, err := client.CreateBucket(r.Context(), req.Name, opts...)
+	bucket, err := filer.CreateBucket(r.Context(), req.Name, opts...)
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}

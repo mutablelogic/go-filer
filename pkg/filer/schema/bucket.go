@@ -22,6 +22,13 @@ type Bucket struct {
 	Ts time.Time `json:"ts,omitzero" name:"ts" help:"Creation date of the bucket"`
 }
 
+type BucketListRequest struct{}
+
+type BucketList struct {
+	Count uint64   `json:"count"`
+	Body  []Bucket `json:"body"`
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 

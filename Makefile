@@ -57,7 +57,11 @@ $(CMD_DIR): go-dep mkdir
 
 # Build the plugins
 .PHONY: plugins
-plugins: $(NPM_DIR) $(PLUGIN_DIR) 
+plugins: $(PLUGIN_DIR) 
+	@for plugin in log httprouter httpserver; do \
+		echo "Build plugin $$plugin GOOS=${OS} GOARCH=${ARCH}"; \
+		GOOS=${OS} GOARCH=${ARCH} ${GO} build -buildmode=plugin ${BUILD_FLAGS} -o ${BUILD_DIR}/$$plugin.plugin github.com/mutablelogic/go-server/plugin/$$plugin; \
+	done
 
 # Build the plugins
 $(PLUGIN_DIR): go-dep mkdir
