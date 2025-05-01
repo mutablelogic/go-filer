@@ -15,6 +15,7 @@ import (
 	// Plugins
 	plugin "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/pkg/filer/config"
+	version "github.com/mutablelogic/go-filer/pkg/version"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter/config"
 	httpserver "github.com/mutablelogic/go-server/pkg/httpserver/config"
 	logger "github.com/mutablelogic/go-server/pkg/logger/config"
@@ -24,7 +25,6 @@ import (
 // TYPES
 
 type ServiceCommands struct {
-	//	Run  ServiceRunCommand  `cmd:"" group:"SERVICE" help:"Run the service"`
 	Run    ServiceRunCommand    `cmd:"" group:"SERVICE" help:"Run the service with plugins"`
 	Config ServiceConfigCommand `cmd:"" group:"SERVICE" help:"Output the plugin configuration"`
 }
@@ -110,6 +110,8 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 	if err != nil {
 		return err
 	}
+
+	provider.(server.Logger).Print(context.TODO(), "go-filer ", version.Version())
 
 	// Run the provider
 	return provider.Run(app.Context())
