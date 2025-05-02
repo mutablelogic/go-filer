@@ -4,13 +4,17 @@ import (
 	"context"
 	"io"
 	"strings"
+	"time"
 
 	// Packages
+	pg "github.com/djthorpe/go-pg"
 	filer "github.com/mutablelogic/go-filer"
 	handler "github.com/mutablelogic/go-filer/pkg/filer/handler"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
+	task "github.com/mutablelogic/go-filer/pkg/filer/task"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	queue_schema "github.com/mutablelogic/go-server/pkg/pgqueue/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -18,7 +22,9 @@ import (
 // TYPES
 
 type Manager struct {
-	aws filer.AWS
+	aws   filer.AWS
+	conn  pg.PoolConn
+	queue server.PGQueue
 }
 
 var _ filer.Filer = (*Manager)(nil)
@@ -26,7 +32,7 @@ var _ filer.Filer = (*Manager)(nil)
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer.AWS) (*Manager, error) {
+func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer.AWS, queue server.PGQueue) (*Manager, error) {
 	self := new(Manager)
 
 	// AWS
@@ -41,6 +47,22 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 		return nil, httpresponse.ErrInternalError.With("Invalid server.HTTPRouter")
 	} else {
 		handler.RegisterHandlers(ctx, prefix, router, self)
+	}
+
+	// Queue - optional
+	if queue != nil {
+		self.queue = queue
+		self.conn = queue.Conn()
+
+		// Register a queue for objects
+		if _, err := self.queue.RegisterQueue(ctx, queue_schema.QueueMeta{
+			Queue:      task.TaskNameRegisterObject,
+			TTL:        types.DurationPtr(time.Hour),
+			Retries:    types.Uint64Ptr(3),
+			RetryDelay: types.DurationPtr(time.Minute),
+		}, task.RegisterObject); err != nil {
+			return nil, err
+		}
 	}
 
 	// Return success

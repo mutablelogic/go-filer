@@ -15,6 +15,7 @@ import (
 type Config struct {
 	AWS    plugin.AWS        `kong:"-"` // AWS configuration
 	Router server.HTTPRouter `kong:"-"` // HTTP Router
+	Queue  server.PGQueue    `kong:"-"` // Task Queue
 }
 
 type task struct {
@@ -28,7 +29,7 @@ var _ server.Task = task{}
 // MODULE
 
 func (c Config) New(ctx context.Context) (server.Task, error) {
-	manager, err := filer.New(ctx, schema.APIPrefix, c.Router, c.AWS)
+	manager, err := filer.New(ctx, schema.APIPrefix, c.Router, c.AWS, c.Queue)
 	if err != nil {
 		return nil, err
 	}
