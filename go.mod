@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
 	github.com/djthorpe/go-pg v1.0.5
-	github.com/mutablelogic/go-client v1.0.12
+	github.com/mutablelogic/go-client v1.1.1
 	github.com/mutablelogic/go-llm v0.0.10
 	github.com/mutablelogic/go-server v1.5.9
 	github.com/stretchr/testify v1.10.0

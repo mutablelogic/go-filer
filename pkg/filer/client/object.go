@@ -2,11 +2,14 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -37,13 +40,13 @@ func (c *Client) GetObject(ctx context.Context, bucket, key string) (*schema.Obj
 	req := client.NewRequestEx(http.MethodHead, "")
 
 	// Perform request
-	var response schema.Object
+	var response getobjectresponse
 	if err := c.DoWithContext(ctx, req, &response, client.OptPath("object", bucket, key)); err != nil {
 		return nil, err
 	}
 
 	// Return the responses
-	return &response, nil
+	return &response.Object, nil
 }
 
 func (c *Client) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -79,4 +82,21 @@ func (c *Client) CreateObjects(ctx context.Context, bucket string, path []string
 
 	// Return the responses
 	return &response, nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// Response object to get the X-Object-Meta header
+type getobjectresponse struct {
+	schema.Object
+}
+
+func (r *getobjectresponse) Unmarshal(header http.Header, _ io.Reader) error {
+	// Check for X-Object-Meta header
+	meta := header.Get("X-Object-Meta")
+	if meta == "" {
+		return httpresponse.ErrInternalError.With("missing meta header")
+	}
+	return json.Unmarshal([]byte(meta), &r.Object)
 }
