@@ -34,6 +34,7 @@ type S3 interface {
 	GetObjectMeta(context.Context, string, string) (*s3types.Object, url.Values, error)
 	GetObject(context.Context, io.Writer, func(url.Values) error, string, string) (*s3types.Object, error)
 	DeleteObject(context.Context, string, string) error
+	DeleteObjects(context.Context, string, func(*s3types.Object) bool, ...Opt) error
 	PutObject(context.Context, string, string, io.Reader, ...Opt) (*s3types.Object, error)
 	WriteObject(context.Context, io.Writer, string, string, ...Opt) (int64, error)
 }
@@ -44,7 +45,7 @@ type Filer interface {
 	ListBuckets(context.Context, schema.BucketListRequest) (*schema.BucketList, error)
 	CreateBucket(context.Context, schema.BucketMeta) (*schema.Bucket, error)
 	GetBucket(context.Context, string) (*schema.Bucket, error)
-	DeleteBucket(context.Context, string) (*schema.Bucket, error)
+	DeleteBucket(context.Context, string, ...Opt) (*schema.Bucket, error)
 
 	// Objects
 	ListObjects(context.Context, string, schema.ObjectListRequest) (*schema.ObjectList, error)

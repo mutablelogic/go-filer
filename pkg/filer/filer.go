@@ -21,6 +21,8 @@ type Manager struct {
 	aws filer.AWS
 }
 
+var _ filer.Filer = (*Manager)(nil)
+
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
@@ -108,11 +110,26 @@ func (manager *Manager) GetBucket(ctx context.Context, name string) (*schema.Buc
 }
 
 // DeleteBucket deletes the specified bucket and returns it
-func (manager *Manager) DeleteBucket(ctx context.Context, name string) (*schema.Bucket, error) {
+func (manager *Manager) DeleteBucket(ctx context.Context, name string, opt ...filer.Opt) (*schema.Bucket, error) {
+	opts, err := filer.ApplyOpts(opt...)
+	if err != nil {
+		return nil, err
+	}
+
 	bucket, err := manager.aws.GetBucket(ctx, name)
 	if err != nil {
 		return nil, err
-	} else if err := manager.aws.DeleteBucket(ctx, name); err != nil {
+	}
+
+	// If force is set then delete all objects in the bucket
+	if opts.Force() {
+		if err := manager.aws.DeleteObjects(ctx, name, nil); err != nil {
+			return nil, err
+		}
+	}
+
+	// Delete the bucket
+	if err := manager.aws.DeleteBucket(ctx, name); err != nil {
 		return nil, err
 	}
 

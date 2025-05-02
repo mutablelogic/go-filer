@@ -34,6 +34,7 @@ type BucketGetCommand struct {
 
 type BucketDeleteCommand struct {
 	BucketGetCommand
+	Force bool `help:"Force delete the bucket and all objects in it"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -74,6 +75,6 @@ func (cmd *BucketGetCommand) Run(app server.Cmd) error {
 
 func (cmd *BucketDeleteCommand) Run(app server.Cmd) error {
 	return run(app, func(ctx context.Context, filer *client.Client) error {
-		return filer.DeleteBucket(ctx, cmd.Name)
+		return filer.DeleteBucket(ctx, cmd.Name, cmd.Force)
 	})
 }

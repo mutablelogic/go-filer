@@ -12,6 +12,7 @@ import (
 // TYPES
 
 type opt struct {
+	force         bool
 	s3endpoint    *string
 	region        *string
 	prefix        *string
@@ -44,6 +45,10 @@ func ApplyOpts(opts ...Opt) (*opt, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - GET
+
+func (o *opt) Force() bool {
+	return o.force
+}
 
 func (o *opt) S3Endpoint() *string {
 	return o.s3endpoint
@@ -142,6 +147,14 @@ func WithContentLength(v int64) Opt {
 func WithMeta(v url.Values) Opt {
 	return func(o *opt) error {
 		o.meta = v
+		return nil
+	}
+}
+
+// Apply additional metadata to the PutObject request
+func WithForce(v bool) Opt {
+	return func(o *opt) error {
+		o.force = v
 		return nil
 	}
 }

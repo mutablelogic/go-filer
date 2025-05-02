@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -74,6 +75,7 @@ func uploadParts(ctx context.Context, reader *multipart.Reader, filer filer.File
 		}
 
 		if object, err := uploadPart(context.Background(), part, filer, bucket); err != nil {
+			fmt.Println("Error uploading part:", err)
 			// Rollback, return an error
 			return nil, errors.Join(err, deleteObjects(ctx, filer, bucket, objects))
 		} else {

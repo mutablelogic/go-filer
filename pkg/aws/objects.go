@@ -13,6 +13,7 @@ import (
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	filer "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -174,6 +175,72 @@ func (aws *Client) DeleteObject(ctx context.Context, bucket, key string) error {
 	})
 	if err != nil {
 		return Err(err)
+	}
+
+	// Return success
+	return nil
+}
+
+// DeleteObjects deletes objects in a bucket, based on a callabck filter, and with additional
+// filtering options
+func (aws *Client) DeleteObjects(ctx context.Context, bucket string, fn func(*s3types.Object) bool, opts ...filer.Opt) error {
+	var result []s3types.ObjectIdentifier
+
+	// Parse options
+	opt, err := filer.ApplyOpts(opts...)
+	if err != nil {
+		return err
+	}
+
+	// Iterate through the objects and add them to the list of objects to delete
+	if err := listObjects(ctx, aws.S3(), bucket, opt.Prefix(), func(objects []s3types.Object) error {
+		for _, object := range objects {
+			if fn == nil || fn(&object) {
+				result = append(result, s3types.ObjectIdentifier{
+					Key: object.Key,
+				})
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Iterate through the objects and delete them
+	offset := 0
+	for {
+		if offset >= len(result) {
+			break
+		}
+
+		// Calculate the end index for the current batch
+		end := offset + schema.ObjectListLimit
+		if end > len(result) {
+			end = len(result)
+		}
+
+		// Get the batch slice
+		batch := result[offset:end]
+
+		// Ensure batch is not empty before calling delete
+		if len(batch) == 0 {
+			break // Should not happen if limit < len(result), but good practice
+		}
+
+		// Delete objects up to the specified limit
+		_, err := aws.S3().DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: types.StringPtr(bucket),
+			Delete: &s3types.Delete{
+				Objects: batch,
+				Quiet:   types.BoolPtr(true),
+			},
+		})
+		if err != nil {
+			return Err(err)
+		}
+
+		// Move the limit to the start of the next batch
+		offset = end
 	}
 
 	// Return success

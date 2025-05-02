@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -49,12 +50,17 @@ func (c *Client) ListBuckets(ctx context.Context, opts ...Opt) (*schema.BucketLi
 	return &response, nil
 }
 
-func (c *Client) DeleteBucket(ctx context.Context, bucket string) error {
+func (c *Client) DeleteBucket(ctx context.Context, bucket string, force bool) error {
+	q := url.Values{}
+
 	// Make request
 	req := client.NewRequestEx(http.MethodDelete, "")
+	if force {
+		q.Set("force", "true")
+	}
 
 	// Perform request
-	if err := c.DoWithContext(ctx, req, nil, client.OptPath("bucket", bucket)); err != nil {
+	if err := c.DoWithContext(ctx, req, nil, client.OptPath("bucket", bucket), client.OptQuery(q)); err != nil {
 		return err
 	}
 
