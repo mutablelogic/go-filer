@@ -79,6 +79,35 @@ func (aws *Client) GetObjectMeta(ctx context.Context, bucket, key string) (*s3ty
 	}, metadata, nil
 }
 
+// WriteObject write an object to an io.Writer, expecting the caller to close
+// the writer. The return value is the number of bytes written.
+func (aws *Client) WriteObject(ctx context.Context, w io.Writer, bucket, key string, opts ...filer.Opt) (int64, error) {
+	// Parse range option
+	opt, err := filer.ApplyOpts(opts...)
+	if err != nil {
+		return -1, err
+	}
+
+	// Get the object data
+	result, err := aws.S3().GetObject(ctx, &s3.GetObjectInput{
+		Bucket: types.StringPtr(bucket),
+		Key:    types.StringPtr(key),
+		Range:  opt.RangeHeader(),
+	})
+	if err != nil {
+		return -1, Err(err)
+	}
+
+	// Copy the object data to the writer
+	n, err := io.Copy(w, result.Body)
+
+	// Close the response body
+	err = errors.Join(err, result.Body.Close())
+
+	// Return the number of bytes written and any error
+	return n, err
+}
+
 // GetObject returns the metadata and writes the object data with the specified key. If w is nil, no
 // data is written. If meta is nil, the metadata function is not called. The object is
 // returned after the data is written.

@@ -81,16 +81,18 @@ func registerObjectHandlers(ctx context.Context, prefix string, router server.HT
 		}
 	})
 
-	// Delete object
+	// Get or Delete object
 	router.HandleFunc(ctx, types.JoinPath(prefix, "object/{bucket}/{key...}"), func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
-		httpresponse.Cors(w, r, router.Origin(), http.MethodHead, http.MethodDelete)
+		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodHead, http.MethodDelete)
 
 		switch r.Method {
 		case http.MethodOptions:
 			_ = httpresponse.Empty(w, http.StatusOK)
 		case http.MethodHead:
 			_ = objectHead(w, r, filer, r.PathValue("bucket"), r.PathValue("key"))
+		case http.MethodGet:
+			_ = objectGet(w, r, filer, r.PathValue("bucket"), r.PathValue("key"))
 		case http.MethodDelete:
 			_ = objectDelete(w, r, filer, r.PathValue("bucket"), r.PathValue("key"))
 		default:

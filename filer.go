@@ -35,6 +35,7 @@ type S3 interface {
 	GetObject(context.Context, io.Writer, func(url.Values) error, string, string) (*s3types.Object, error)
 	DeleteObject(context.Context, string, string) error
 	PutObject(context.Context, string, string, io.Reader, ...Opt) (*s3types.Object, error)
+	WriteObject(context.Context, io.Writer, string, string, ...Opt) (int64, error)
 }
 
 // Filer is the higher-level interface for the Filer plugin
@@ -50,4 +51,5 @@ type Filer interface {
 	PutObject(context.Context, string, string, io.Reader, ...Opt) (*schema.Object, error)
 	DeleteObject(context.Context, string, string) (*schema.Object, error)
 	GetObject(context.Context, string, string) (*schema.Object, error)
+	WriteObject(context.Context, io.Writer, string, string, ...Opt) (int64, error)
 }

@@ -176,6 +176,11 @@ func (manager *Manager) ListObjects(ctx context.Context, bucket string, req sche
 }
 
 func (manager *Manager) GetObject(ctx context.Context, bucket, key string) (*schema.Object, error) {
+	key, err := normalizeKey(key)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get object
 	object, meta, err := manager.aws.GetObjectMeta(ctx, bucket, key)
 	if err != nil {
@@ -187,6 +192,11 @@ func (manager *Manager) GetObject(ctx context.Context, bucket, key string) (*sch
 }
 
 func (manager *Manager) DeleteObject(ctx context.Context, bucket, key string) (*schema.Object, error) {
+	key, err := normalizeKey(key)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get object
 	object, meta, err := manager.aws.GetObjectMeta(ctx, bucket, key)
 	if err != nil {
@@ -200,6 +210,16 @@ func (manager *Manager) DeleteObject(ctx context.Context, bucket, key string) (*
 
 	// Return success
 	return schema.ObjectFromAWS(object, bucket, meta), nil
+}
+
+func (manager *Manager) WriteObject(ctx context.Context, w io.Writer, bucket, key string, opt ...filer.Opt) (int64, error) {
+	key, err := normalizeKey(key)
+	if err != nil {
+		return -1, err
+	}
+
+	// Write the object
+	return manager.aws.WriteObject(ctx, w, bucket, key, opt...)
 }
 
 ///////////////////////////////////////////////////////////////////////////////

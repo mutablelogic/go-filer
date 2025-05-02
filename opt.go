@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"fmt"
 	"net/url"
 
 	"github.com/mutablelogic/go-server/pkg/httpresponse"
@@ -17,6 +18,7 @@ type opt struct {
 	contenttype   *string
 	contentlength *int64
 	meta          url.Values
+	offset, limit *uint64
 }
 
 // Opt represents a function that modifies the options
@@ -74,6 +76,17 @@ func (o *opt) Meta() map[string]string {
 	return result
 }
 
+func (o *opt) RangeHeader() *string {
+	if o.offset == nil {
+		return nil
+	}
+	bytes := fmt.Sprintf("bytes=%v-", types.PtrUint64(o.offset))
+	if o.limit != nil {
+		bytes += fmt.Sprint(types.PtrUint64(o.limit) + types.PtrUint64(o.offset) - 1)
+	}
+	return types.StringPtr(bytes)
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - SET
 
@@ -129,6 +142,15 @@ func WithContentLength(v int64) Opt {
 func WithMeta(v url.Values) Opt {
 	return func(o *opt) error {
 		o.meta = v
+		return nil
+	}
+}
+
+// Indidate what range of bytes to return
+func WithOffsetLimit(offset, limit uint64) Opt {
+	return func(o *opt) error {
+		o.offset = types.Uint64Ptr(offset)
+		o.limit = types.Uint64Ptr(limit)
 		return nil
 	}
 }

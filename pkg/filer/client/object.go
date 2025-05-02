@@ -15,6 +15,7 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
+// Enumerate the objects in a bucket, optionally with a prefix
 func (c *Client) ListObjects(ctx context.Context, bucket string, opts ...Opt) (*schema.ObjectList, error) {
 	// Make request
 	req := client.NewRequest()
@@ -35,6 +36,7 @@ func (c *Client) ListObjects(ctx context.Context, bucket string, opts ...Opt) (*
 	return &response, nil
 }
 
+// Get object metadata
 func (c *Client) GetObject(ctx context.Context, bucket, key string) (*schema.Object, error) {
 	// Make request
 	req := client.NewRequestEx(http.MethodHead, "")
@@ -49,12 +51,22 @@ func (c *Client) GetObject(ctx context.Context, bucket, key string) (*schema.Obj
 	return &response.Object, nil
 }
 
+// Delete an object
 func (c *Client) DeleteObject(ctx context.Context, bucket, key string) error {
 	// Make request
 	req := client.NewRequestEx(http.MethodDelete, "")
 
 	// Perform request
 	return c.DoWithContext(ctx, req, nil, client.OptPath("object", bucket, key))
+}
+
+// Write (download) the contents of an object
+func (c *Client) WriteObject(ctx context.Context, w io.Writer, bucket, key string) error {
+	// Make request
+	req := client.NewRequest()
+
+	// Perform request
+	return c.DoWithContext(ctx, req, w, client.OptPath("object", bucket, key))
 }
 
 // Create objects from a file or directory

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	// Packages
@@ -15,10 +16,11 @@ import (
 // TYPES
 
 type ObjectCommands struct {
-	UploadObjects CreateObjectsCommand `cmd:"" group:"FILER" help:"Upload files"`
-	Objects       ListObjectsCommand   `cmd:"" group:"FILER" help:"List objects"`
-	Object        GetObjectCommand     `cmd:"" group:"FILER" help:"Get object metadata"`
-	DeleteObject  DeleteObjectCommand  `cmd:"" group:"FILER" help:"Delete object"`
+	UploadObjects  CreateObjectsCommand `cmd:"" group:"FILER" help:"Upload files"`
+	DownloadObject WriteObjectCommand   `cmd:"" group:"FILER" help:"Download object"`
+	Objects        ListObjectsCommand   `cmd:"" group:"FILER" help:"List objects"`
+	Object         GetObjectCommand     `cmd:"" group:"FILER" help:"Get object metadata"`
+	DeleteObject   DeleteObjectCommand  `cmd:"" group:"FILER" help:"Delete object"`
 }
 
 type CreateObjectsCommand struct {
@@ -34,6 +36,10 @@ type ListObjectsCommand struct {
 type GetObjectCommand struct {
 	Bucket string `arg:"" name:"bucket" help:"Name of the bucket"`
 	Key    string `arg:"" name:"key" help:"Object key"`
+}
+
+type WriteObjectCommand struct {
+	GetObjectCommand
 }
 
 type DeleteObjectCommand struct {
@@ -92,5 +98,11 @@ func (cmd *GetObjectCommand) Run(app server.Cmd) error {
 		}
 		fmt.Println(object)
 		return nil
+	})
+}
+
+func (cmd *WriteObjectCommand) Run(app server.Cmd) error {
+	return run(app, func(ctx context.Context, filer *client.Client) error {
+		return filer.WriteObject(ctx, os.Stdout, cmd.Bucket, cmd.Key)
 	})
 }
