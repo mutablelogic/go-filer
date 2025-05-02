@@ -3,18 +3,17 @@ module github.com/mutablelogic/go-filer
 go 1.24.0
 
 require (
-	github.com/alecthomas/kong v1.10.0
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
 	github.com/djthorpe/go-pg v1.0.5
 	github.com/mutablelogic/go-client v1.1.1
-	github.com/mutablelogic/go-llm v0.0.10
-	github.com/mutablelogic/go-server v1.5.9
+	github.com/mutablelogic/go-server v1.5.10
 	github.com/stretchr/testify v1.10.0
 )
 
 require (
+	github.com/alecthomas/kong v1.10.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.10 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.30 // indirect
