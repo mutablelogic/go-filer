@@ -30,11 +30,8 @@ func (t *taskrunner) RegisterObject(ctx context.Context, object *schema.Object) 
 	go func() {
 		defer wg.Done()
 		defer pw.Close()
-		fmt.Println("RegisterObject: object=", object)
-		if n, err := t.filer.WriteObject(ctx, pw, object.Bucket, object.Key); err != nil {
+		if _, err := t.filer.WriteObject(ctx, pw, object.Bucket, object.Key); err != nil {
 			errs = errors.Join(errs, err)
-		} else {
-			fmt.Println("RegisterObject: wrote=", n)
 		}
 	}()
 
@@ -55,6 +52,7 @@ func (t *taskrunner) RegisterObject(ctx context.Context, object *schema.Object) 
 // PRIVATE METHODS
 
 func (t *taskrunner) registerObjectMedia(ctx context.Context, object *schema.Object, media *ffmpeg.Reader) error {
+	fmt.Println(media)
 	for _, metadata := range media.Metadata() {
 		log.Print(metadata.Key(), " => ", metadata.Value())
 	}

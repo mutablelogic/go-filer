@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"time"
@@ -222,12 +223,12 @@ func (manager *Manager) PutObject(ctx context.Context, bucket, key string, r io.
 	if manager.queue != nil {
 		if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
 			// Insert the object into the database
-			if err := conn.Insert(ctx, object_, object_); err != nil {
+			if err := conn.With("queue", task.TaskNameRegisterObject).Insert(ctx, object_, object_); err != nil {
 				return err
 			}
 			return nil
 		}); err != nil {
-			return nil, manager.aws.DeleteObject(ctx, bucket, key)
+			return nil, errors.Join(err, manager.aws.DeleteObject(ctx, bucket, key))
 		}
 	}
 

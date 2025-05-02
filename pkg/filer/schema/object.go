@@ -102,14 +102,31 @@ func (o ObjectListRequest) String() string {
 // READER
 
 func (o *Object) Scan(row pg.Row) error {
-	return row.Scan(&o.Bucket, &o.Key, &o.Hash, &o.Size, &o.Ts)
+	return row.Scan(&o.Bucket, &o.Key, &o.Type, &o.Hash, &o.Size, &o.Ts)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // WRITER
 
 func (o Object) Insert(bind *pg.Bind) (string, error) {
-	return "", httpresponse.ErrNotImplemented.With("Object.Insert not implemented")
+	if o.Bucket == "" {
+		return "", httpresponse.ErrBadRequest.With("missing bucket")
+	} else if o.Key == "" {
+		return "", httpresponse.ErrBadRequest.With("missing key")
+	} else if o.Type == "" {
+		return "", httpresponse.ErrBadRequest.With("missing type")
+	}
+
+	// Bind
+	bind.Set("bucket", o.Bucket)
+	bind.Set("key", o.Key)
+	bind.Set("type", o.Type)
+	bind.Set("hash", o.Hash)
+	bind.Set("size", o.Size)
+	bind.Set("ts", o.Ts)
+
+	// Return success
+	return objectInsert, nil
 }
 
 func (o Object) Update(bind *pg.Bind) error {
@@ -148,12 +165,13 @@ func bootstrapObject(ctx context.Context, conn pg.Conn) error {
 const (
 	objectCreateTable = `
 		CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
-			"bucket" TEXT NOT NULL,
-			"key" TEXT NOT NULL,
+			"bucket"        TEXT NOT NULL,
+			"key"           TEXT NOT NULL,
 			-- object metadata
-			"hash" TEXT,
-			"size" BIGINT NOT NULL,
-			"ts" TIMESTAMP WITH TIME ZONE,
+			"type"          TEXT NOT NULL,
+			"hash"          TEXT,
+			"size"          BIGINT NOT NULL,
+			"ts"            TIMESTAMP WITH TIME ZONE,
 			-- primary key
 			PRIMARY KEY ("bucket", "key")
 		)
@@ -166,7 +184,7 @@ const (
 			"duration"      INTERVAL,
 			"meta"          JSONB DEFAULT '{}'::JSONB,
 			-- foreign key
-			FOREIGN KEY ("bucket", "key") REFERENCES ${"schema"}.object("bucket", "key") ON DELETE CASCADE
+			FOREIGN KEY ("bucket", "key") REFERENCES ${"schema"}."object" ("bucket", "key") ON DELETE CASCADE
 		)
 	`
 	objectCreateTriggerFunction = `
@@ -179,28 +197,29 @@ const (
 	`
 	objectCreateTrigger = `
 		CREATE OR REPLACE TRIGGER 
-			object_update AFTER INSERT OR UPDATE ON ${"schema"}.object
+			object_update AFTER INSERT OR UPDATE ON ${"schema"}."object"
 		FOR EACH ROW EXECUTE PROCEDURE
 			${"schema"}.object_create() 
 	`
 	objectInsert = `
-		INSERT INTO ${"schema"}.queue (
-			bucket, key, hash, size, ts
+		INSERT INTO ${"schema"}."object" (
+			"bucket", "key", "type", "hash", "size", "ts"
 		) VALUES (
-		 	@bucket, @key, @hash, @size, @ts
+		 	@bucket, @key, @type, @hash, @size, @ts
 		) ON CONFLICT (bucket,key) DO UPDATE SET
+		 	type = EXCLUDED.type,
 			hash = EXCLUDED.hash,
 			size = EXCLUDED.size,
 			ts = EXCLUDED.ts 
 		RETURNING 
-			bucket, key, hash, size, ts
+			"bucket", "key", "type", "hash", "size", "ts"
 	`
 	objectMediaInsert = `
-		INSERT INTO ${"schema"}.queue (
-			bucket, key, duration, meta
+		INSERT INTO ${"schema"}."media" (
+			"bucket", "key", "duration", "meta"
 		) VALUES (
 		 	@bucket, @key, @duration, @meta
 		) RETURNING 
-			bucket, key, duration, meta
+			"bucket", "key", "duration", "meta"
 	`
 )
