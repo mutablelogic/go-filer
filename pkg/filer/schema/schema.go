@@ -1,7 +1,8 @@
 package schema
 
 const (
-	APIPrefix = "/filer/v1"
+	APIPrefix     = "/filer/v1"
+	HeaderMetaKey = "X-Object-Meta"
 )
 
 const (

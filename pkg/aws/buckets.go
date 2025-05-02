@@ -8,6 +8,7 @@ import (
 	// Packages
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	filer "github.com/mutablelogic/go-filer"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -31,16 +32,16 @@ func (aws *Client) ListBuckets(ctx context.Context) ([]s3types.Bucket, error) {
 }
 
 // CreateBucket creates a new S3 bucket
-func (aws *Client) CreateBucket(ctx context.Context, name string, opt ...Opt) (*s3types.Bucket, error) {
-	opts, err := applyOpts(opt...)
+func (aws *Client) CreateBucket(ctx context.Context, name string, opt ...filer.Opt) (*s3types.Bucket, error) {
+	opts, err := filer.ApplyOpts(opt...)
 	if err != nil {
 		return nil, httpresponse.ErrBadRequest.With(err.Error())
 	}
 
 	// Set region for the bucket
 	region := aws.region
-	if opts.region != nil {
-		region = types.PtrString(opts.region)
+	if opts.Region() != "" {
+		region = opts.Region()
 	}
 
 	// The name must be an identifier

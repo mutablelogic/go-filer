@@ -12,6 +12,7 @@ import (
 	// Packages
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	filer "github.com/mutablelogic/go-filer"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -30,17 +31,17 @@ const (
 // options will limit the objects to those with a key that starts with the
 // specified prefix.
 // TODO: up to the specified limit.
-func (aws *Client) ListObjects(ctx context.Context, bucket string, opts ...Opt) ([]s3types.Object, error) {
+func (aws *Client) ListObjects(ctx context.Context, bucket string, opts ...filer.Opt) ([]s3types.Object, error) {
 	var result []s3types.Object
 
 	// Parse options
-	opt, err := applyOpts(opts...)
+	opt, err := filer.ApplyOpts(opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	// Iterate through the objects
-	if err := listObjects(ctx, aws.S3(), bucket, opt.prefix, func(objects []s3types.Object) error {
+	if err := listObjects(ctx, aws.S3(), bucket, opt.Prefix(), func(objects []s3types.Object) error {
 		result = append(result, objects...)
 		return nil
 	}); err != nil {
@@ -153,9 +154,9 @@ func (aws *Client) DeleteObject(ctx context.Context, bucket, key string) error {
 // PutObject creates or updates an object in the specified bucket with the specified
 // key. The object is created from the specified reader. Content Type and additional
 // metadata can be specified in the options.
-func (aws *Client) PutObject(ctx context.Context, bucket, key string, r io.Reader, opts ...Opt) (*s3types.Object, error) {
+func (aws *Client) PutObject(ctx context.Context, bucket, key string, r io.Reader, opts ...filer.Opt) (*s3types.Object, error) {
 	// Parse options
-	opt, err := applyOpts(opts...)
+	opt, err := filer.ApplyOpts(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -164,9 +165,9 @@ func (aws *Client) PutObject(ctx context.Context, bucket, key string, r io.Reade
 	uploader, err := aws.S3().CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket:             types.StringPtr(bucket),
 		Key:                types.StringPtr(key),
-		ContentType:        opt.contentType,
+		ContentType:        opt.ContentType(),
 		ContentDisposition: types.StringPtr(fmt.Sprintf("inline; filename=%q", filepath.Base(key))),
-		Metadata:           opt.metadata,
+		Metadata:           opt.Meta(),
 	})
 	if err != nil {
 		return nil, Err(err)

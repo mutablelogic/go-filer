@@ -5,6 +5,7 @@ import (
 	"net/url"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer"
 	aws "github.com/mutablelogic/go-filer/pkg/aws"
 	server "github.com/mutablelogic/go-server"
 )
@@ -24,9 +25,9 @@ var _ server.Plugin = Config{}
 
 func (c Config) New(ctx context.Context) (server.Task, error) {
 	// Set options
-	opts := []aws.Opt{}
+	opts := []filer.Opt{}
 	if c.S3endpoint != nil {
-		opts = append(opts, aws.WithS3Endpoint(c.S3endpoint.String()))
+		opts = append(opts, filer.WithS3Endpoint(c.S3endpoint.String()))
 	}
 
 	// Create a new AWS client

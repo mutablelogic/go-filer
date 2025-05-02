@@ -16,7 +16,7 @@ import (
 
 func RegisterHandlers(ctx context.Context, prefix string, router server.HTTPRouter, filer filer.Filer) {
 	registerBucketHandlers(ctx, prefix, router, filer)
-	// registerObjectHandlers(ctx, prefix, router, filer)
+	registerObjectHandlers(ctx, prefix, router, filer)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -29,6 +29,8 @@ func registerBucketHandlers(ctx context.Context, prefix string, router server.HT
 		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodPost)
 
 		switch r.Method {
+		case http.MethodOptions:
+			_ = httpresponse.Empty(w, http.StatusOK)
 		case http.MethodPost:
 			_ = bucketCreate(w, r, filer)
 		case http.MethodGet:
@@ -44,6 +46,8 @@ func registerBucketHandlers(ctx context.Context, prefix string, router server.HT
 		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodDelete)
 
 		switch r.Method {
+		case http.MethodOptions:
+			_ = httpresponse.Empty(w, http.StatusOK)
 		case http.MethodGet:
 			_ = bucketGet(w, r, filer, r.PathValue("bucket"))
 		case http.MethodDelete:
@@ -58,7 +62,7 @@ func registerBucketHandlers(ctx context.Context, prefix string, router server.HT
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS - OBJECTS
 
-func registerObjectHandlers(ctx context.Context, prefix string, router server.HTTPRouter, filer filer.AWS) {
+func registerObjectHandlers(ctx context.Context, prefix string, router server.HTTPRouter, filer filer.Filer) {
 	// List objects in a bucket
 	// Create or update objects in a bucket
 	router.HandleFunc(ctx, types.JoinPath(prefix, "object/{bucket}"), func(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +70,8 @@ func registerObjectHandlers(ctx context.Context, prefix string, router server.HT
 		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodPost)
 
 		switch r.Method {
+		case http.MethodOptions:
+			_ = httpresponse.Empty(w, http.StatusOK)
 		case http.MethodGet:
 			_ = objectList(w, r, filer, r.PathValue("bucket"))
 		case http.MethodPost:
@@ -75,13 +81,15 @@ func registerObjectHandlers(ctx context.Context, prefix string, router server.HT
 		}
 	})
 
-	// Get or delete object
+	// Delete object
 	router.HandleFunc(ctx, types.JoinPath(prefix, "object/{bucket}/{key...}"), func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
-		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodDelete)
+		httpresponse.Cors(w, r, router.Origin(), http.MethodHead, http.MethodDelete)
 
 		switch r.Method {
-		case http.MethodGet:
+		case http.MethodOptions:
+			_ = httpresponse.Empty(w, http.StatusOK)
+		case http.MethodHead:
 			_ = objectHead(w, r, filer, r.PathValue("bucket"), r.PathValue("key"))
 		case http.MethodDelete:
 			_ = objectDelete(w, r, filer, r.PathValue("bucket"), r.PathValue("key"))

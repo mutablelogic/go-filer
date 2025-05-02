@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	// Packages
-	"github.com/mutablelogic/go-filer/pkg/aws"
-	"github.com/stretchr/testify/assert"
+	aws "github.com/mutablelogic/go-filer/pkg/aws"
+	assert "github.com/stretchr/testify/assert"
 )
 
 func Test_Objects_001(t *testing.T) {

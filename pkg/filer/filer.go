@@ -2,15 +2,16 @@ package filer
 
 import (
 	"context"
+	"io"
+	"strings"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
-	"github.com/mutablelogic/go-filer/pkg/aws"
 	handler "github.com/mutablelogic/go-filer/pkg/filer/handler"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
-	"github.com/mutablelogic/go-server/pkg/types"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -82,9 +83,9 @@ func (manager *Manager) ListBuckets(ctx context.Context, req schema.BucketListRe
 
 // CreateBucket creates a new bucket with the specified metadata
 func (manager *Manager) CreateBucket(ctx context.Context, meta schema.BucketMeta) (*schema.Bucket, error) {
-	opts := []aws.Opt{}
+	opts := []filer.Opt{}
 	if meta.Region != nil {
-		opts = append(opts, aws.WithRegion(*meta.Region))
+		opts = append(opts, filer.WithRegion(*meta.Region))
 	}
 	bucket, err := manager.aws.CreateBucket(ctx, meta.Name, opts...)
 	if err != nil {
@@ -117,4 +118,99 @@ func (manager *Manager) DeleteBucket(ctx context.Context, name string) (*schema.
 
 	// Return success
 	return schema.BucketFromAWS(bucket), nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - OBJECT
+
+// PutObject creates or updates an object in the specified bucket with the specified
+// key. The object is created from the specified reader.
+func (manager *Manager) PutObject(ctx context.Context, bucket, key string, r io.Reader, opt ...filer.Opt) (*schema.Object, error) {
+	key, err := normalizeKey(key)
+	if err != nil {
+		return nil, err
+	}
+
+	// Put the object
+	if _, err := manager.aws.PutObject(ctx, bucket, key, r, opt...); err != nil {
+		return nil, err
+	}
+
+	// Retrieve the object with metadata
+	object, meta, err := manager.aws.GetObjectMeta(ctx, bucket, key)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return schema.ObjectFromAWS(object, bucket, meta), nil
+}
+
+func (manager *Manager) ListObjects(ctx context.Context, bucket string, req schema.ObjectListRequest) (*schema.ObjectList, error) {
+	var opts []filer.Opt
+	var resp schema.ObjectList
+
+	// Normalize prefix
+	if req.Prefix != nil {
+		if prefix, err := normalizeKey(types.PtrString(req.Prefix)); err != nil {
+			return nil, err
+		} else {
+			opts = append(opts, filer.WithPrefix(prefix))
+		}
+	}
+
+	// Enumerate objects
+	objects, err := manager.aws.ListObjects(ctx, bucket, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Allocate body
+	resp.Body = make([]*schema.Object, 0, len(objects))
+	for _, object := range objects {
+		resp.Body = append(resp.Body, schema.ObjectFromAWS(&object, bucket, nil))
+	}
+
+	// Return success
+	return &resp, nil
+}
+
+func (manager *Manager) GetObject(ctx context.Context, bucket, key string) (*schema.Object, error) {
+	// Get object
+	object, meta, err := manager.aws.GetObjectMeta(ctx, bucket, key)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return schema.ObjectFromAWS(object, bucket, meta), nil
+}
+
+func (manager *Manager) DeleteObject(ctx context.Context, bucket, key string) (*schema.Object, error) {
+	// Get object
+	object, meta, err := manager.aws.GetObjectMeta(ctx, bucket, key)
+	if err != nil {
+		return nil, err
+	}
+
+	// Delete object
+	if err := manager.aws.DeleteObject(ctx, bucket, key); err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return schema.ObjectFromAWS(object, bucket, meta), nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+func normalizeKey(key string) (string, error) {
+	if strings.HasPrefix(key, schema.PathSeparator) {
+		key = key[1:]
+	}
+	if strings.HasSuffix(key, schema.PathSeparator) {
+		return key, httpresponse.ErrBadRequest.With("object key cannot end with a separator")
+	}
+	return key, nil
 }

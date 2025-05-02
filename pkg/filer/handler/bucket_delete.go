@@ -16,6 +16,5 @@ func bucketDelete(w http.ResponseWriter, r *http.Request, filer filer.Filer, buc
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
-
 	return httpresponse.Empty(w, http.StatusOK)
 }

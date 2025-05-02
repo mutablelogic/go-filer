@@ -15,6 +15,7 @@ import (
 type CLI struct {
 	ServiceCommands
 	filer.BucketCommands
+	filer.ObjectCommands
 	VersionCommands
 }
 

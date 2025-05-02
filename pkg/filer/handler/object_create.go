@@ -12,9 +12,7 @@ import (
 	"strings"
 
 	// Packages
-	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	plugin "github.com/mutablelogic/go-filer"
-	aws "github.com/mutablelogic/go-filer/pkg/aws"
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
@@ -24,7 +22,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func objectCreate(w http.ResponseWriter, r *http.Request, filer plugin.AWS, bucket string) error {
+func objectCreate(w http.ResponseWriter, r *http.Request, filer filer.Filer, bucket string) error {
 	ctx := r.Context()
 
 	// Parse the body
@@ -42,10 +40,8 @@ func objectCreate(w http.ResponseWriter, r *http.Request, filer plugin.AWS, buck
 	}
 
 	// Check that the bucket exists
-	if _, err := filer.S3().HeadBucket(ctx, &s3.HeadBucketInput{
-		Bucket: types.StringPtr(bucket),
-	}); err != nil {
-		return httpresponse.Error(w, aws.Err(err))
+	if _, err := filer.GetBucket(ctx, bucket); err != nil {
+		return err
 	}
 
 	// Read the multipart form, and create the objects
@@ -56,16 +52,15 @@ func objectCreate(w http.ResponseWriter, r *http.Request, filer plugin.AWS, buck
 
 	// Return the objects
 	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), schema.ObjectList{
-		Count: uint64(len(objects)),
-		Body:  objects,
+		Body: objects,
 	})
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func uploadParts(ctx context.Context, reader *multipart.Reader, filer plugin.AWS, bucket string) ([]schema.Object, error) {
-	var objects []schema.Object
+func uploadParts(ctx context.Context, reader *multipart.Reader, filer filer.Filer, bucket string) ([]*schema.Object, error) {
+	var objects []*schema.Object
 
 	// Read parts
 	for {
@@ -82,15 +77,15 @@ func uploadParts(ctx context.Context, reader *multipart.Reader, filer plugin.AWS
 			// Rollback, return an error
 			return nil, errors.Join(err, deleteObjects(ctx, filer, bucket, objects))
 		} else {
-			objects = append(objects, *object)
+			objects = append(objects, object)
 		}
 	}
 }
 
-func deleteObjects(ctx context.Context, filer plugin.AWS, bucket string, objects []schema.Object) error {
+func deleteObjects(ctx context.Context, filer filer.Filer, bucket string, objects []*schema.Object) error {
 	var result error
 	for _, object := range objects {
-		if err := filer.DeleteObject(ctx, bucket, object.Key); err != nil {
+		if _, err := filer.DeleteObject(ctx, bucket, object.Key); err != nil {
 			result = errors.Join(result, err)
 		}
 	}
@@ -99,49 +94,25 @@ func deleteObjects(ctx context.Context, filer plugin.AWS, bucket string, objects
 	return result
 }
 
-func uploadPart(ctx context.Context, part *multipart.Part, filer plugin.AWS, bucket string) (*schema.Object, error) {
+func uploadPart(ctx context.Context, part *multipart.Part, client filer.Filer, bucket string) (*schema.Object, error) {
 	defer part.Close()
 
 	// Get the content type and filename
-	contentType, filename, params, err := parseContentDisposition(part)
+	contentType, filename, meta, err := parseContentDisposition(part)
 	if err != nil {
 		return nil, err
 	}
 	var contentLength int64
-	if params.Has(types.ContentLengthHeader) {
-		if length, err := strconv.ParseInt(params.Get(types.ContentLengthHeader), 10, 64); err != nil {
+	if meta.Has(types.ContentLengthHeader) {
+		if length, err := strconv.ParseInt(meta.Get(types.ContentLengthHeader), 10, 64); err != nil {
 			return nil, httpresponse.ErrBadRequest.With("invalid content length")
 		} else {
 			contentLength = length
 		}
 	}
 
-	// We always remove the first '/' from the filename
-	if strings.HasPrefix(filename, schema.PathSeparator) {
-		filename = filename[1:]
-	}
-	if strings.HasSuffix(filename, schema.PathSeparator) {
-		return nil, httpresponse.ErrBadRequest.With("object key cannot end with a separator")
-	}
-
 	// Insert the object into S3
-	object, err := filer.PutObject(ctx, bucket, filename, part,
-		aws.WithContentType(contentType),
-		aws.WithContentLength(contentLength),
-		aws.WithMeta(params),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Retrieve the object
-	object, meta, err := filer.GetObjectMeta(ctx, bucket, types.PtrString(object.Key))
-	if err != nil {
-		return nil, err
-	}
-
-	// Return the object uploaded
-	return schema.ObjectFromAWS(object, bucket, meta), nil
+	return client.PutObject(ctx, bucket, filename, part, filer.WithContentType(contentType), filer.WithContentLength(contentLength), filer.WithMeta(meta))
 }
 
 // Returns the content type, filename and metadata

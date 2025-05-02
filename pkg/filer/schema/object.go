@@ -8,6 +8,7 @@ import (
 
 	// Packages
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	pg "github.com/djthorpe/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -28,8 +29,13 @@ type Object struct {
 }
 
 type ObjectList struct {
-	Count uint64   `json:"count" name:"count" help:"Number of objects"`
-	Body  []Object `json:"body,omitempty" name:"body" help:"List of objects"`
+	// TODO: We don't support a count yet
+	Body []*Object `json:"body,omitempty" name:"body" help:"List of objects"`
+}
+
+type ObjectListRequest struct {
+	Prefix *string `json:"prefix,omitempty" name:"prefix" help:"Prefix of the object key"`
+	pg.OffsetLimit
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -75,6 +81,14 @@ func (o ObjectMeta) String() string {
 }
 
 func (o ObjectList) String() string {
+	data, err := json.MarshalIndent(o, "", "  ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
+func (o ObjectListRequest) String() string {
 	data, err := json.MarshalIndent(o, "", "  ")
 	if err != nil {
 		return err.Error()

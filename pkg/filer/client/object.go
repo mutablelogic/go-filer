@@ -12,7 +12,7 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (c *Client) ListObjects(ctx context.Context, bucket string, opts ...Opt) ([]schema.Object, error) {
+func (c *Client) ListObjects(ctx context.Context, bucket string, opts ...Opt) (*schema.ObjectList, error) {
 	// Make request
 	req := client.NewRequest()
 
@@ -23,13 +23,13 @@ func (c *Client) ListObjects(ctx context.Context, bucket string, opts ...Opt) ([
 	}
 
 	// Perform request
-	var response []schema.Object
+	var response schema.ObjectList
 	if err := c.DoWithContext(ctx, req, &response, client.OptPath("object", bucket), client.OptQuery(opt.Values)); err != nil {
 		return nil, err
 	}
 
 	// Return the responses
-	return response, nil
+	return &response, nil
 }
 
 func (c *Client) GetObject(ctx context.Context, bucket, key string) (*schema.Object, error) {
@@ -55,12 +55,18 @@ func (c *Client) DeleteObject(ctx context.Context, bucket, key string) error {
 }
 
 // Create objects from a file or directory
-func (c *Client) CreateObjects(ctx context.Context, bucket, path string, opts ...Opt) (*schema.ObjectList, error) {
+func (c *Client) CreateObjects(ctx context.Context, bucket string, path []string, opts ...Opt) (*schema.ObjectList, error) {
 	// Make the uploader request
 	uploader := NewUploader(opts...)
-	if err := uploader.Add("file", path); err != nil {
-		return nil, err
+
+	// Add paths
+	for _, path := range path {
+		if err := uploader.Add("file", path); err != nil {
+			return nil, err
+		}
 	}
+
+	// Indicate ready to upload
 	if err := uploader.Close(); err != nil {
 		return nil, err
 	}

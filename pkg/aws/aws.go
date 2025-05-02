@@ -6,6 +6,7 @@ import (
 	// Packages
 	config "github.com/aws/aws-sdk-go-v2/config"
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	filer "github.com/mutablelogic/go-filer"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
 
@@ -20,9 +21,9 @@ type Client struct {
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func New(ctx context.Context, opt ...Opt) (*Client, error) {
+func New(ctx context.Context, opt ...filer.Opt) (*Client, error) {
 	aws := new(Client)
-	opts, err := applyOpts(opt...)
+	opts, err := filer.ApplyOpts(opt...)
 	if err != nil {
 		return nil, err
 	}
@@ -31,6 +32,8 @@ func New(ctx context.Context, opt ...Opt) (*Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
+	} else if opts.Region() != "" {
+		cfg.Region = opts.Region()
 	}
 
 	// Create the S3 client
@@ -46,8 +49,8 @@ func New(ctx context.Context, opt ...Opt) (*Client, error) {
 		}
 
 		// We set the endpoint if it is not empty
-		if opts.s3endpoint != nil {
-			o.BaseEndpoint = opts.s3endpoint
+		if opts.S3Endpoint() != nil {
+			o.BaseEndpoint = opts.S3Endpoint()
 		}
 	}); s3 == nil {
 		return nil, httpresponse.ErrInternalError.Withf("Invalid S3 client")
