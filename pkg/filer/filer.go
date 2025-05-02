@@ -50,31 +50,53 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 	}
 
 	// Task runner
-	taskrunner, err := task.NewTaskRunner()
+	taskrunner, err := task.NewTaskRunner(self)
 	if err != nil {
 		return nil, err
 	}
 
 	// Queue - optional
-	if queue != nil {
+	if queue == nil {
+		return self, nil
+	} else {
 		self.queue = queue
-		self.conn = queue.Conn()
+		self.conn = queue.Conn().With(
+			"schema", schema.SchemaName,
+			"pgqueue_schema", queue_schema.SchemaName,
+			"queue_registerobject", task.TaskNameRegisterObject,
+		).(pg.PoolConn)
+	}
 
-		// Register a queue for objects
-		if _, err := self.queue.RegisterQueue(ctx, queue_schema.QueueMeta{
-			Queue:      task.TaskNameRegisterObject,
-			TTL:        types.DurationPtr(time.Hour),
-			Retries:    types.Uint64Ptr(3),
-			RetryDelay: types.DurationPtr(time.Minute),
-		}, func(ctx context.Context, in any) error {
-			var object schema.Object
-			if err := self.queue.UnmarshalPayload(&object, in); err != nil {
-				return err
-			}
-			return taskrunner.RegisterObject(ctx, &object)
-		}); err != nil {
+	// Create the schema
+	if exists, err := pg.SchemaExists(ctx, self.conn, schema.SchemaName); err != nil {
+		return nil, err
+	} else if !exists {
+		if err := pg.SchemaCreate(ctx, self.conn, schema.SchemaName); err != nil {
 			return nil, err
 		}
+	}
+
+	// Bootstrap the schema
+	if err := self.conn.Tx(ctx, func(conn pg.Conn) error {
+		return schema.Bootstrap(ctx, conn)
+	}); err != nil {
+		return nil, err
+	}
+
+	// Register a task for analysing objects
+	if _, err := self.queue.RegisterQueue(ctx, queue_schema.QueueMeta{
+		Queue:      task.TaskNameRegisterObject,
+		TTL:        types.DurationPtr(time.Hour),
+		Retries:    types.Uint64Ptr(3),
+		RetryDelay: types.DurationPtr(time.Minute),
+	}, func(ctx context.Context, in any) error {
+		var object schema.Object
+		if err := self.queue.UnmarshalPayload(&object, in); err != nil {
+			return err
+		}
+		return taskrunner.RegisterObject(ctx, &object)
+	}); err != nil {
+		return nil, err
 	}
 
 	// Return success
@@ -196,9 +218,17 @@ func (manager *Manager) PutObject(ctx context.Context, bucket, key string, r io.
 	// Translate the object to the schema
 	object_ := schema.ObjectFromAWS(object, bucket, meta)
 
-	// Enqueue the object for processing
+	// Insert the object into the database and create a task
 	if manager.queue != nil {
-		manager.queue.CreateTask(ctx, task.TaskNameRegisterObject, object_, 0)
+		if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
+			// Insert the object into the database
+			if err := conn.Insert(ctx, object_, object_); err != nil {
+				return err
+			}
+			return nil
+		}); err != nil {
+			return nil, manager.aws.DeleteObject(ctx, bucket, key)
+		}
 	}
 
 	// Return success

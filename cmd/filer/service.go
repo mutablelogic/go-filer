@@ -96,10 +96,12 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 		// Set trace
 		if app.GetDebug() == server.Trace {
 			pgpool.Trace = func(ctx context.Context, query string, args any, err error) {
-				if err != nil {
-					ref.Log(ctx).With("args", args).Print(ctx, err, " ON ", query)
-				} else {
-					ref.Log(ctx).With("args", args).Debug(ctx, query)
+				if ref.Log(ctx) != nil {
+					if err != nil {
+						ref.Log(ctx).With("args", args).Print(ctx, err, " ON ", query)
+					} else {
+						ref.Log(ctx).With("args", args).Debug(ctx, query)
+					}
 				}
 			}
 		}

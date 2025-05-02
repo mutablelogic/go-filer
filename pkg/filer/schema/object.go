@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	// Packages
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	pg "github.com/djthorpe/go-pg"
+	"github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -97,6 +99,24 @@ func (o ObjectListRequest) String() string {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// READER
+
+func (o *Object) Scan(row pg.Row) error {
+	return row.Scan(&o.Bucket, &o.Key, &o.Hash, &o.Size, &o.Ts)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// WRITER
+
+func (o Object) Insert(bind *pg.Bind) (string, error) {
+	return "", httpresponse.ErrNotImplemented.With("Object.Insert not implemented")
+}
+
+func (o Object) Update(bind *pg.Bind) error {
+	return httpresponse.ErrNotImplemented.With("Object.Update not implemented")
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
 func unquote(s *string) *string {
@@ -105,3 +125,82 @@ func unquote(s *string) *string {
 	}
 	return types.StringPtr(types.Unquote(*s))
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// SQL
+
+// Create objects in the schema
+func bootstrapObject(ctx context.Context, conn pg.Conn) error {
+	q := []string{
+		objectCreateTable,
+		objectCreateTriggerFunction,
+		objectCreateTrigger,
+		objectMediaCreateTable,
+	}
+	for _, query := range q {
+		if err := conn.Exec(ctx, query); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const (
+	objectCreateTable = `
+		CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
+			"bucket" TEXT NOT NULL,
+			"key" TEXT NOT NULL,
+			-- object metadata
+			"hash" TEXT,
+			"size" BIGINT NOT NULL,
+			"ts" TIMESTAMP WITH TIME ZONE,
+			-- primary key
+			PRIMARY KEY ("bucket", "key")
+		)
+	`
+	objectMediaCreateTable = `
+		CREATE TABLE IF NOT EXISTS ${"schema"}."media" (
+			"bucket"        TEXT NOT NULL,
+			"key"           TEXT NOT NULL,
+			-- object media metadata
+			"duration"      INTERVAL,
+			"meta"          JSONB DEFAULT '{}'::JSONB,
+			-- foreign key
+			FOREIGN KEY ("bucket", "key") REFERENCES ${"schema"}.object("bucket", "key") ON DELETE CASCADE
+		)
+	`
+	objectCreateTriggerFunction = `
+		CREATE OR REPLACE FUNCTION ${"schema"}.object_create() RETURNS TRIGGER AS $$
+		BEGIN
+			PERFORM ${"pgqueue_schema"}.queue_insert(${'ns'}, ${'queue_registerobject'}, row_to_json(NEW)::JSONB, NULL);
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql
+	`
+	objectCreateTrigger = `
+		CREATE OR REPLACE TRIGGER 
+			object_update AFTER INSERT OR UPDATE ON ${"schema"}.object
+		FOR EACH ROW EXECUTE PROCEDURE
+			${"schema"}.object_create() 
+	`
+	objectInsert = `
+		INSERT INTO ${"schema"}.queue (
+			bucket, key, hash, size, ts
+		) VALUES (
+		 	@bucket, @key, @hash, @size, @ts
+		) ON CONFLICT (bucket,key) DO UPDATE SET
+			hash = EXCLUDED.hash,
+			size = EXCLUDED.size,
+			ts = EXCLUDED.ts 
+		RETURNING 
+			bucket, key, hash, size, ts
+	`
+	objectMediaInsert = `
+		INSERT INTO ${"schema"}.queue (
+			bucket, key, duration, meta
+		) VALUES (
+		 	@bucket, @key, @duration, @meta
+		) RETURNING 
+			bucket, key, duration, meta
+	`
+)

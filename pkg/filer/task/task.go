@@ -1,7 +1,7 @@
 package task
 
 import (
-	media "github.com/mutablelogic/go-media/pkg/ffmpeg"
+	filer "github.com/mutablelogic/go-filer"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -13,22 +13,14 @@ const (
 )
 
 type taskrunner struct {
-	manager *media.Manager
+	filer filer.Filer
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func NewTaskRunner() (*taskrunner, error) {
+func NewTaskRunner(filer filer.Filer) (*taskrunner, error) {
 	self := new(taskrunner)
-
-	// Create a media manager
-	manager, err := media.NewManager()
-	if err != nil {
-		return nil, err
-	} else {
-		self.manager = manager
-	}
-
+	self.filer = filer
 	return self, nil
 }
