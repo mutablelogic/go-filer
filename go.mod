@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
 	github.com/djthorpe/go-pg v1.0.5
 	github.com/mutablelogic/go-client v1.1.1
+	github.com/mutablelogic/go-media v1.6.13
 	github.com/mutablelogic/go-server v1.5.10
 	github.com/stretchr/testify v1.10.0
 )
@@ -31,6 +32,9 @@ require (
 	github.com/aws/smithy-go v1.22.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/djthorpe/go-errors v1.0.3 // indirect
+	github.com/djthorpe/go-marshaler v0.0.15 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.7.4 // indirect

@@ -49,6 +49,12 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 		handler.RegisterHandlers(ctx, prefix, router, self)
 	}
 
+	// Task runner
+	taskrunner, err := task.NewTaskRunner()
+	if err != nil {
+		return nil, err
+	}
+
 	// Queue - optional
 	if queue != nil {
 		self.queue = queue
@@ -60,7 +66,13 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 			TTL:        types.DurationPtr(time.Hour),
 			Retries:    types.Uint64Ptr(3),
 			RetryDelay: types.DurationPtr(time.Minute),
-		}, task.RegisterObject); err != nil {
+		}, func(ctx context.Context, in any) error {
+			var object schema.Object
+			if err := self.queue.UnmarshalPayload(&object, in); err != nil {
+				return err
+			}
+			return taskrunner.RegisterObject(ctx, &object)
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -181,8 +193,16 @@ func (manager *Manager) PutObject(ctx context.Context, bucket, key string, r io.
 		return nil, err
 	}
 
+	// Translate the object to the schema
+	object_ := schema.ObjectFromAWS(object, bucket, meta)
+
+	// Enqueue the object for processing
+	if manager.queue != nil {
+		manager.queue.CreateTask(ctx, task.TaskNameRegisterObject, object_, 0)
+	}
+
 	// Return success
-	return schema.ObjectFromAWS(object, bucket, meta), nil
+	return object_, nil
 }
 
 func (manager *Manager) ListObjects(ctx context.Context, bucket string, req schema.ObjectListRequest) (*schema.ObjectList, error) {
