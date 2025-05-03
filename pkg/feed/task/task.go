@@ -5,7 +5,7 @@ import (
 	"time"
 
 	// Packages
-	"github.com/djthorpe/go-pg"
+
 	client "github.com/mutablelogic/go-client"
 	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/feed/schema"
@@ -18,12 +18,13 @@ import (
 // TYPES
 
 const (
-	TaskNameRegisterUrl = "register_url"
+	TaskNameRegisterUrl   = "register_url"
+	TaskNameFetchFeed     = "fetch_feed"
+	TimerNameRefreshFeeds = "refresh_feeds"
 )
 
 type taskrunner struct {
 	queue  server.PGQueue
-	conn   pg.PoolConn
 	feed   filer.Feed
 	client *client.Client
 }
@@ -44,8 +45,9 @@ func NewTaskRunner(ctx context.Context, feed filer.Feed, queue server.PGQueue) (
 	}
 
 	// Register tasks
-	taskMap := map[string]func(context.Context, *schema.Url) error{
+	taskMap := map[string]func(context.Context, any) error{
 		TaskNameRegisterUrl: self.RegisterUrl,
+		TaskNameFetchFeed:   self.FetchFeed,
 	}
 
 	for task, fn := range taskMap {
@@ -54,13 +56,21 @@ func NewTaskRunner(ctx context.Context, feed filer.Feed, queue server.PGQueue) (
 			TTL:        types.DurationPtr(time.Hour),
 			Retries:    types.Uint64Ptr(3),
 			RetryDelay: types.DurationPtr(5 * time.Minute),
-		}, func(ctx context.Context, in any) error {
-			var object schema.Url
-			if err := self.queue.UnmarshalPayload(&object, in); err != nil {
-				return err
-			}
-			return fn(ctx, &object)
-		}); err != nil {
+		}, fn); err != nil {
+			return nil, err
+		}
+	}
+
+	// Register timers
+	timerMap := map[string]func(context.Context, any) error{
+		TimerNameRefreshFeeds: self.RefreshFeeds,
+	}
+
+	for task, fn := range timerMap {
+		if _, err := self.queue.RegisterTicker(ctx, queue_schema.TickerMeta{
+			Ticker:   task,
+			Interval: types.DurationPtr(15 * time.Second),
+		}, fn); err != nil {
 			return nil, err
 		}
 	}
@@ -72,8 +82,8 @@ func NewTaskRunner(ctx context.Context, feed filer.Feed, queue server.PGQueue) (
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (t *taskrunner) queueTask(ctx context.Context, task string, url *schema.Url) error {
-	if _, err := t.queue.CreateTask(ctx, task, url, 0); err != nil {
+func (t *taskrunner) queueFetchFeed(ctx context.Context, url *schema.Url) error {
+	if _, err := t.queue.CreateTask(ctx, TaskNameFetchFeed, url, 0); err != nil {
 		return err
 	}
 	return nil

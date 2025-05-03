@@ -156,7 +156,15 @@ func (manager *Manager) CreateFeed(ctx context.Context, id uint64, rss rss.Feed)
 }
 
 func (manager *Manager) ListFeeds(ctx context.Context, req schema.FeedListRequest) (*schema.FeedList, error) {
-	return nil, httpresponse.ErrNotImplemented.With("Feed.ListFeeds not implemented")
+	var response schema.FeedList
+
+	// List the feeds
+	if err := manager.conn.List(ctx, &response, req); err != nil {
+		return nil, httperr(err)
+	}
+
+	// Return success
+	return &response, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

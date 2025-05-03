@@ -49,6 +49,7 @@ type FeedHash struct {
 }
 
 type FeedListRequest struct {
+	Stale bool `json:"stale,omitempty" help:"List stale feeds"`
 	pg.OffsetLimit
 }
 
@@ -101,6 +102,29 @@ func (f FeedList) String() string {
 }
 
 //////////////////////////////////////////////////////////////////////////////////
+// SELECTOR
+
+func (f FeedListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	// Where and Orderby
+	bind.Set("where", "")
+	bind.Set("orderby", `ORDER BY "ts" DESC`)
+
+	// Bind offset and limit
+	f.OffsetLimit.Bind(bind, ItemListLimit)
+
+	switch op {
+	case pg.List:
+		if f.Stale {
+			return feedListStale, nil
+		} else {
+			return feedList, nil
+		}
+	default:
+		return "", httpresponse.ErrNotImplemented.Withf("FeedListRequest operation: %q", op)
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////
 // READER
 
 func (f *Feed) Scan(row pg.Row) error {
@@ -109,6 +133,19 @@ func (f *Feed) Scan(row pg.Row) error {
 
 func (f *FeedHash) Scan(row pg.Row) error {
 	return row.Scan(&f.Id, &f.Ts, &f.Period, &f.Hash)
+}
+
+func (f *FeedList) Scan(row pg.Row) error {
+	var feed Feed
+	if err := feed.Scan(row); err != nil {
+		return err
+	}
+	f.Body = append(f.Body, feed)
+	return nil
+}
+
+func (f *FeedList) ScanCount(row pg.Row) error {
+	return row.Scan(&f.Count)
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -312,4 +349,25 @@ const (
 		RETURNING
 			"id", "ts", "period", "hash"
 	`
+	feedSelect = `
+		SELECT
+			"id", "ts", "title", "author",  "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
+		FROM
+			${"schema"}."feed"
+    `
+	feedGet         = feedSelect + `WHERE "id" = @id`
+	feedList        = `WITH q AS (` + feedSelect + `) SELECT * FROM q ${where} ${orderby}`
+	feedSelectStale = `
+		SELECT
+			F."id", F."ts", F."title", F."author",  F."link", F."lang", F."desc", F."type", F."skip_days", F."skip_hours", F."builddate", F."pubdate", F."ttl", F."block", F."complete", F."meta"
+		FROM
+			${"schema"}."feed" F
+		JOIN
+			${"schema"}."feed_hash" H ON F.id = H.id
+		WHERE
+			H."ts" IS NULL OR H."ts" + H."period" < CURRENT_TIMESTAMP
+		ORDER BY
+			H."ts" NULLS FIRST
+	`
+	feedListStale = `WITH q AS (` + feedSelectStale + `) SELECT * FROM q ${where}`
 )

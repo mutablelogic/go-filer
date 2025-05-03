@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -13,25 +14,27 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (t *taskrunner) RegisterUrl(ctx context.Context, in any) error {
+func (t *taskrunner) FetchFeed(ctx context.Context, payload any) error {
 	var rss rss.Feed
 
 	// Decode the payload
 	var url schema.Url
-	if err := t.queue.UnmarshalPayload(&url, in); err != nil {
+	if err := t.queue.UnmarshalPayload(&url, payload); err != nil {
+		return err
+	}
+
+	// Refetch the url in case it has changed
+	url2, err := t.feed.GetUrl(ctx, url.Id)
+	if err != nil {
 		return err
 	}
 
 	// Read the RSS feed
-	if err := t.client.DoWithContext(ctx, nil, &rss, client.OptReqEndpoint(types.PtrString(url.Url))); err != nil {
+	if err := t.client.DoWithContext(ctx, nil, &rss, client.OptReqEndpoint(types.PtrString(url2.Url))); err != nil {
 		return err
 	}
 
-	// Insert the feed
-	_, err := t.feed.CreateFeed(ctx, url.Id, rss)
-	if err != nil {
-		return err
-	}
+	fmt.Println("UpdateFeed", rss)
 
 	// Return sucess
 	return nil
