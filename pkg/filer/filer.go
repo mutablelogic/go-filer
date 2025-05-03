@@ -51,7 +51,7 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 	}
 
 	// Task runner
-	taskrunner, err := task.NewTaskRunner(self)
+	taskrunner, err := task.NewTaskRunner(ctx, self)
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +310,33 @@ func (manager *Manager) WriteObject(ctx context.Context, w io.Writer, bucket, ke
 
 	// Write the object
 	return manager.aws.WriteObject(ctx, w, bucket, key, opt...)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - MEDIA
+
+func (manager *Manager) CreateMedia(ctx context.Context, bucket, key string, meta schema.MediaMeta) (*schema.Media, error) {
+	var media schema.Media
+
+	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
+		// Insert the media into the database
+		if err := manager.conn.With("bucket", bucket, "key", key).Insert(ctx, &media, meta); err != nil {
+			return err
+		}
+		// Insert the images into the database
+		for _, image := range meta.Images {
+			if err := conn.Insert(ctx, nil, image); err != nil {
+				return err
+			}
+		}
+		// TODO: Link images to the media
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return &media, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////

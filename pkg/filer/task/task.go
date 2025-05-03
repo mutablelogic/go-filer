@@ -1,7 +1,12 @@
 package task
 
 import (
+	"context"
+
+	// Packages
 	filer "github.com/mutablelogic/go-filer"
+	ffmpeg "github.com/mutablelogic/go-media/pkg/ffmpeg"
+	"github.com/mutablelogic/go-server/pkg/ref"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -19,8 +24,11 @@ type taskrunner struct {
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func NewTaskRunner(filer filer.Filer) (*taskrunner, error) {
+func NewTaskRunner(ctx context.Context, filer filer.Filer) (*taskrunner, error) {
 	self := new(taskrunner)
 	self.filer = filer
+	ffmpeg.SetLogging(false, func(text string) {
+		ref.Log(ctx).Printf(ctx, "ffmpeg: %s", text)
+	})
 	return self, nil
 }

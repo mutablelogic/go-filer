@@ -10,7 +10,7 @@ import (
 	// Packages
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	pg "github.com/djthorpe/go-pg"
-	"github.com/mutablelogic/go-server/pkg/httpresponse"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -152,7 +152,6 @@ func bootstrapObject(ctx context.Context, conn pg.Conn) error {
 		objectCreateTable,
 		objectCreateTriggerFunction,
 		objectCreateTrigger,
-		objectMediaCreateTable,
 	}
 	for _, query := range q {
 		if err := conn.Exec(ctx, query); err != nil {
@@ -174,17 +173,6 @@ const (
 			"ts"            TIMESTAMP WITH TIME ZONE,
 			-- primary key
 			PRIMARY KEY ("bucket", "key")
-		)
-	`
-	objectMediaCreateTable = `
-		CREATE TABLE IF NOT EXISTS ${"schema"}."media" (
-			"bucket"        TEXT NOT NULL,
-			"key"           TEXT NOT NULL,
-			-- object media metadata
-			"duration"      INTERVAL,
-			"meta"          JSONB DEFAULT '{}'::JSONB,
-			-- foreign key
-			FOREIGN KEY ("bucket", "key") REFERENCES ${"schema"}."object" ("bucket", "key") ON DELETE CASCADE
 		)
 	`
 	objectCreateTriggerFunction = `
@@ -213,13 +201,5 @@ const (
 			ts = EXCLUDED.ts 
 		RETURNING 
 			"bucket", "key", "type", "hash", "size", "ts"
-	`
-	objectMediaInsert = `
-		INSERT INTO ${"schema"}."media" (
-			"bucket", "key", "duration", "meta"
-		) VALUES (
-		 	@bucket, @key, @duration, @meta
-		) RETURNING 
-			"bucket", "key", "duration", "meta"
 	`
 )

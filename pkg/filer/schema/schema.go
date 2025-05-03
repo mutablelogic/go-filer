@@ -26,8 +26,12 @@ func Bootstrap(ctx context.Context, conn pg.Conn) error {
 	if err := pg.SchemaCreate(ctx, conn, SchemaName); err != nil {
 		return err
 	}
+
 	// Create types, tables, ...
 	if err := bootstrapObject(ctx, conn); err != nil {
+		return err
+	}
+	if err := bootstrapMedia(ctx, conn); err != nil {
 		return err
 	}
 

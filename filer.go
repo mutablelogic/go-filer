@@ -53,4 +53,7 @@ type Filer interface {
 	DeleteObject(context.Context, string, string) (*schema.Object, error)
 	GetObject(context.Context, string, string) (*schema.Object, error)
 	WriteObject(context.Context, io.Writer, string, string, ...Opt) (int64, error)
+
+	// Media
+	CreateMedia(context.Context, string, string, schema.MediaMeta) (*schema.Media, error)
 }
