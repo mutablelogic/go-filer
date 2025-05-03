@@ -10,6 +10,7 @@ import (
 	handler "github.com/mutablelogic/go-filer/pkg/feed/handler"
 	schema "github.com/mutablelogic/go-filer/pkg/feed/schema"
 	task "github.com/mutablelogic/go-filer/pkg/feed/task"
+	"github.com/mutablelogic/go-filer/pkg/rss"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	queue_schema "github.com/mutablelogic/go-server/pkg/pgqueue/schema"
@@ -110,6 +111,52 @@ func (manager *Manager) DeleteUrl(ctx context.Context, id uint64) (*schema.Url, 
 	}
 	// Return success
 	return &url, nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - FEED
+
+func (manager *Manager) CreateFeed(ctx context.Context, id uint64, rss rss.Feed) (*schema.Feed, error) {
+	var feed schema.Feed
+	var hash schema.FeedHash
+
+	// Set the schedule TTL based on the feed TTL
+	hash.Period = schema.DefaultFeedTTL
+	if ttl := rss.Channel.TTL; ttl != nil {
+		if period, err := ttl.Seconds(); err == nil && period > 0 {
+			hash.Period = period
+		}
+	}
+
+	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
+		// Insert the hash
+		if err := manager.conn.With("meta", rss).Insert(ctx, &hash, schema.FeedHash{
+			Id:     id,
+			Period: hash.Period,
+		}); err != nil {
+			return httperr(err)
+		}
+
+		// Remove the items from the feed so we don't insert them into the database
+		rss.Channel.Items = nil
+
+		// Insert the feed into the database
+		if err := manager.conn.With("id", id).Insert(ctx, &feed, schema.RSSFeed(rss)); err != nil {
+			return httperr(err)
+		}
+
+		// Return success
+		return nil
+	}); err != nil {
+		return nil, httperr(err)
+	}
+
+	// Return success
+	return &feed, nil
+}
+
+func (manager *Manager) ListFeeds(ctx context.Context, req schema.FeedListRequest) (*schema.FeedList, error) {
+	return nil, httpresponse.ErrNotImplemented.With("Feed.ListFeeds not implemented")
 }
 
 ////////////////////////////////////////////////////////////////////////////////

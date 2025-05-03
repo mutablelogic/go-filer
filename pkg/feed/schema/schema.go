@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"time"
 
 	// Packages
 	pg "github.com/djthorpe/go-pg"
@@ -12,9 +13,10 @@ import (
 // GLOBALS
 
 const (
-	SchemaName    = "feed"
-	ItemListLimit = 1000
-	APIPrefix     = "/feed/v1"
+	SchemaName     = "feed"
+	ItemListLimit  = 1000
+	APIPrefix      = "/feed/v1"
+	DefaultFeedTTL = time.Hour * 6
 )
 
 var (

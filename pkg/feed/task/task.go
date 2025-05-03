@@ -5,6 +5,8 @@ import (
 	"time"
 
 	// Packages
+	"github.com/djthorpe/go-pg"
+	client "github.com/mutablelogic/go-client"
 	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/feed/schema"
 	server "github.com/mutablelogic/go-server"
@@ -20,8 +22,10 @@ const (
 )
 
 type taskrunner struct {
-	queue server.PGQueue
-	feed  filer.Feed
+	queue  server.PGQueue
+	conn   pg.PoolConn
+	feed   filer.Feed
+	client *client.Client
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -31,6 +35,13 @@ func NewTaskRunner(ctx context.Context, feed filer.Feed, queue server.PGQueue) (
 	self := new(taskrunner)
 	self.feed = feed
 	self.queue = queue
+
+	// Make a client
+	if client, err := client.New(client.OptEndpoint("http://localhost/")); err != nil {
+		return nil, err
+	} else {
+		self.client = client
+	}
 
 	// Register tasks
 	taskMap := map[string]func(context.Context, *schema.Url) error{

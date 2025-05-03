@@ -9,6 +9,7 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	feed "github.com/mutablelogic/go-filer/pkg/feed/schema"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
+	rss "github.com/mutablelogic/go-filer/pkg/rss"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -67,4 +68,8 @@ type Feed interface {
 	ListUrls(context.Context, feed.UrlListRequest) (*feed.UrlList, error)
 	GetUrl(context.Context, uint64) (*feed.Url, error)
 	DeleteUrl(context.Context, uint64) (*feed.Url, error)
+
+	// Feed
+	CreateFeed(context.Context, uint64, rss.Feed) (*feed.Feed, error)
+	ListFeeds(context.Context, feed.FeedListRequest) (*feed.FeedList, error)
 }
