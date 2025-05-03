@@ -20,10 +20,10 @@ func urlCreate(w http.ResponseWriter, r *http.Request, feed filer.Feed) error {
 		return httpresponse.Error(w, err)
 	}
 
-	// Create bucket
+	// Create url
 	url, err := feed.CreateUrl(r.Context(), req)
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, err, req)
 	}
 
 	// Return success

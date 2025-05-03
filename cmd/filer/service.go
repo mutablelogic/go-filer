@@ -162,11 +162,11 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 			feed.Router = router
 		}
 
-		// Set connection pool
-		if conn, ok := provider.Task(ctx, "pgpool.main").(server.PG); !ok || conn == nil {
-			return httpresponse.ErrInternalError.With("Invalid connection pool")
+		// Set queue
+		if queue, ok := provider.Task(ctx, "pgqueue.main").(server.PGQueue); !ok || queue == nil {
+			return httpresponse.ErrInternalError.With("Invalid or missing task queue")
 		} else {
-			feed.Conn = conn
+			feed.Queue = queue
 		}
 
 		// Return success

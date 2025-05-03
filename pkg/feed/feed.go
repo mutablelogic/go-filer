@@ -6,18 +6,21 @@ import (
 
 	// Packages
 	pg "github.com/djthorpe/go-pg"
-	"github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer"
 	handler "github.com/mutablelogic/go-filer/pkg/feed/handler"
 	schema "github.com/mutablelogic/go-filer/pkg/feed/schema"
+	task "github.com/mutablelogic/go-filer/pkg/feed/task"
 	server "github.com/mutablelogic/go-server"
-	"github.com/mutablelogic/go-server/pkg/httpresponse"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	queue_schema "github.com/mutablelogic/go-server/pkg/pgqueue/schema"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
 type Manager struct {
-	conn pg.PoolConn
+	queue server.PGQueue
+	conn  pg.PoolConn
 }
 
 var _ filer.Feed = (*Manager)(nil)
@@ -25,12 +28,20 @@ var _ filer.Feed = (*Manager)(nil)
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func NewManager(ctx context.Context, conn pg.PoolConn, router server.HTTPRouter) (*Manager, error) {
+func NewManager(ctx context.Context, queue server.PGQueue, router server.HTTPRouter) (*Manager, error) {
 	self := new(Manager)
-	self.conn = conn.With(
-		"schema", schema.SchemaName,
-	).(pg.PoolConn)
 
+	// Queue
+	if queue == nil {
+		return nil, httpresponse.ErrInternalError.With("Queue is nil")
+	} else {
+		self.queue = queue
+		self.conn = queue.Conn().With(
+			"schema", schema.SchemaName,
+			"pgqueue_schema", queue_schema.SchemaName,
+			"taskname_create_url", task.TaskNameRegisterUrl,
+		).(pg.PoolConn)
+	}
 	// Create the schema
 	if exists, err := pg.SchemaExists(ctx, self.conn, schema.SchemaName); err != nil {
 		return nil, err
@@ -52,6 +63,12 @@ func NewManager(ctx context.Context, conn pg.PoolConn, router server.HTTPRouter)
 		return nil, err
 	}
 
+	// Task runner
+	_, err := task.NewTaskRunner(ctx, self, self.queue)
+	if err != nil {
+		return nil, err
+	}
+
 	// Return success
 	return self, nil
 }
@@ -62,7 +79,7 @@ func NewManager(ctx context.Context, conn pg.PoolConn, router server.HTTPRouter)
 func (manager *Manager) CreateUrl(ctx context.Context, meta schema.UrlMeta) (*schema.Url, error) {
 	var url schema.Url
 	if err := manager.conn.Insert(ctx, &url, meta); err != nil {
-		return nil, err
+		return nil, httperr(err)
 	}
 	// Return success
 	return &url, nil

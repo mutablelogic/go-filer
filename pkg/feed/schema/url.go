@@ -154,6 +154,8 @@ func (u UrlMeta) Update(bind *pg.Bind) error {
 func bootstrapUrl(ctx context.Context, conn pg.Conn) error {
 	q := []string{
 		urlCreateTable,
+		urlCreateTriggerFunction,
+		urlCreateTrigger,
 	}
 	for _, query := range q {
 		if err := conn.Exec(ctx, query); err != nil {
@@ -169,9 +171,22 @@ const (
 			"id"       BIGSERIAL PRIMARY KEY,    			         -- Identifier
 			"ts"       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Added/updated timestamp                             
 			"url"      TEXT NOT NULL,                                -- URL
-			UNIQUE("url")                                            -- Ensure the URL is unique                            
-                                                                              
+			UNIQUE("url")                                            -- Ensure the URL is unique
 		)
+	`
+	urlCreateTriggerFunction = `
+		CREATE OR REPLACE FUNCTION ${"schema"}.url_create() RETURNS TRIGGER AS $$
+		BEGIN
+			PERFORM ${"pgqueue_schema"}.queue_insert(${'ns'}, ${'taskname_create_url'}, row_to_json(NEW)::JSONB, NULL);
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql
+	`
+	urlCreateTrigger = `
+		CREATE OR REPLACE TRIGGER 
+			url_create AFTER INSERT OR UPDATE ON ${"schema"}."url"
+		FOR EACH ROW EXECUTE PROCEDURE
+			${"schema"}.url_create() 
 	`
 	urlInsert = `
 		INSERT INTO ${"schema"}."url" 

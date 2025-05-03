@@ -12,7 +12,7 @@ import (
 
 type Config struct {
 	Router server.HTTPRouter `kong:"-"` // HTTP Router
-	Conn   server.PG         `kong:"-"` // Connection Pool
+	Queue  server.PGQueue    `kong:"-"` // Task Queue
 }
 
 type task struct {
@@ -26,7 +26,7 @@ var _ server.Task = task{}
 // MODULE
 
 func (c Config) New(ctx context.Context) (server.Task, error) {
-	manager, err := feed.NewManager(ctx, c.Conn.Conn(), c.Router)
+	manager, err := feed.NewManager(ctx, c.Queue, c.Router)
 	if err != nil {
 		return nil, err
 	}
