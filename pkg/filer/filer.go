@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"time"
 
 	// Packages
 	pg "github.com/djthorpe/go-pg"
@@ -50,12 +49,6 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 		handler.RegisterHandlers(ctx, prefix, router, self)
 	}
 
-	// Task runner
-	taskrunner, err := task.NewTaskRunner(ctx, self)
-	if err != nil {
-		return nil, err
-	}
-
 	// Queue - optional
 	if queue == nil {
 		return self, nil
@@ -84,19 +77,9 @@ func New(ctx context.Context, prefix string, router server.HTTPRouter, aws filer
 		return nil, err
 	}
 
-	// Register a task for analysing objects
-	if _, err := self.queue.RegisterQueue(ctx, queue_schema.QueueMeta{
-		Queue:      task.TaskNameRegisterObject,
-		TTL:        types.DurationPtr(time.Hour),
-		Retries:    types.Uint64Ptr(3),
-		RetryDelay: types.DurationPtr(time.Minute),
-	}, func(ctx context.Context, in any) error {
-		var object schema.Object
-		if err := self.queue.UnmarshalPayload(&object, in); err != nil {
-			return err
-		}
-		return taskrunner.RegisterObject(ctx, &object)
-	}); err != nil {
+	// Task runner
+	_, err := task.NewTaskRunner(ctx, self, self.queue)
+	if err != nil {
 		return nil, err
 	}
 
@@ -293,8 +276,20 @@ func (manager *Manager) DeleteObject(ctx context.Context, bucket, key string) (*
 		return nil, err
 	}
 
-	// Delete object
-	if err := manager.aws.DeleteObject(ctx, bucket, key); err != nil {
+	// Delete object from the database
+	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
+		// Delete the object from the database
+		if err := manager.conn.Delete(ctx, nil, schema.ObjectKey{Bucket: bucket, Key: types.PtrString(object.Key)}); err != nil {
+			return err
+		}
+		// Delete object
+		if err := manager.aws.DeleteObject(ctx, bucket, key); err != nil {
+			return err
+		}
+
+		// Success
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
@@ -323,13 +318,30 @@ func (manager *Manager) CreateMedia(ctx context.Context, bucket, key string, met
 		if err := manager.conn.With("bucket", bucket, "key", key).Insert(ctx, &media, meta); err != nil {
 			return err
 		}
+
+		// Delete existing image mapppings
+		if err := conn.Delete(ctx, nil, schema.MediaImageMap{
+			Bucket: media.Bucket,
+			Key:    media.Key,
+		}); err != nil {
+			return err
+		}
+
 		// Insert the images into the database
 		for _, image := range meta.Images {
 			if err := conn.Insert(ctx, nil, image); err != nil {
 				return err
 			}
+
+			// Insert the mappings
+			if err := conn.Insert(ctx, nil, schema.MediaImageMap{
+				Bucket: media.Bucket,
+				Key:    media.Key,
+				Hash:   image.Hash,
+			}); err != nil {
+				return err
+			}
 		}
-		// TODO: Link images to the media
 		return nil
 	}); err != nil {
 		return nil, err
@@ -337,6 +349,53 @@ func (manager *Manager) CreateMedia(ctx context.Context, bucket, key string, met
 
 	// Return success
 	return &media, nil
+}
+
+func (manager *Manager) CreateMediaFragments(ctx context.Context, bucket, key string, meta []schema.MediaFragmentMeta) (*schema.MediaFragmentList, error) {
+	var typ string
+	var list schema.MediaFragmentList
+
+	// We need at least one fragment
+	if len(meta) == 0 {
+		return nil, httpresponse.ErrBadRequest.With("missing media fragment metadata")
+	}
+
+	// All types need to be the same
+	for i, meta := range meta {
+		if i == 0 {
+			typ = meta.Type
+		} else if meta.Type != typ {
+			return nil, httpresponse.ErrBadRequest.With("media fragment types do not match")
+		}
+	}
+
+	// Replace fragments in the database
+	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
+		// Delete fragments into the database
+		if err := manager.conn.With("bucket", bucket, "key", key).Delete(ctx, nil, schema.MediaFragmentMeta{
+			Type: typ,
+		}); err != nil {
+			return err
+		}
+
+		// Insert the fragments into the database
+		for _, meta := range meta {
+			var fragment schema.MediaFragment
+			if err := manager.conn.With("bucket", bucket, "key", key).Insert(ctx, &fragment, meta); err != nil {
+				return err
+			} else {
+				list = append(list, fragment)
+			}
+		}
+
+		// Return success
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return &list, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////

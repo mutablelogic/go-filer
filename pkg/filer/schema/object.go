@@ -17,17 +17,22 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
+type ObjectKey struct {
+	Bucket string `json:"bucket" help:"Bucket in which the object is stored"`
+	Key    string `json:"key" help:"Object key"`
+}
+
 type ObjectMeta struct {
-	Key  string `json:"key,omitempty" name:"key" help:"Object key"`
-	Type string `json:"type,omitempty" name:"type" help:"Type of the object"`
+	Key  string `json:"key"  help:"Object key"`
+	Type string `json:"type"  help:"Type of the object"`
 }
 
 type Object struct {
 	ObjectMeta
-	Hash   *string   `json:"hash,omitempty" name:"hash" help:"Hash of the object"`
-	Bucket string    `json:"bucket,omitempty" name:"bucket" help:"Bucket in which the object is stored"`
-	Size   int64     `json:"size" name:"size" help:"Size of the object in bytes"`
-	Ts     time.Time `json:"ts,omitzero" name:"ts" help:"Creation date of the object"`
+	Hash   *string   `json:"hash,omitempty" help:"Hash of the object"`
+	Bucket string    `json:"bucket"  help:"Bucket in which the object is stored"`
+	Size   int64     `json:"size" help:"Size of the object in bytes"`
+	Ts     time.Time `json:"ts,omitzero" help:"Creation date of the object"`
 }
 
 type ObjectList struct {
@@ -96,6 +101,29 @@ func (o ObjectListRequest) String() string {
 		return err.Error()
 	}
 	return string(data)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SELECTOR
+
+func (o ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	if o.Bucket == "" {
+		return "", httpresponse.ErrBadRequest.With("missing bucket")
+	} else if o.Key == "" {
+		return "", httpresponse.ErrBadRequest.With("missing key")
+	}
+
+	// Bind
+	bind.Set("bucket", o.Bucket)
+	bind.Set("key", o.Key)
+
+	// Select
+	switch op {
+	case pg.Delete:
+		return objectDelete, nil
+	default:
+		return "", httpresponse.ErrBadRequest.Withf("unsupported ObjectKey operation: %q", op)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -201,5 +229,8 @@ const (
 			ts = EXCLUDED.ts 
 		RETURNING 
 			"bucket", "key", "type", "hash", "size", "ts"
+	`
+	objectDelete = `
+		DELETE FROM ${"schema"}."object" WHERE "bucket" = @bucket AND "key" = @key RETURNING "bucket", "key", "type", "hash", "size", "ts"
 	`
 )

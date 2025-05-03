@@ -56,4 +56,5 @@ type Filer interface {
 
 	// Media
 	CreateMedia(context.Context, string, string, schema.MediaMeta) (*schema.Media, error)
+	CreateMediaFragments(context.Context, string, string, []schema.MediaFragmentMeta) (*schema.MediaFragmentList, error)
 }
