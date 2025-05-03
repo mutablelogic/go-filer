@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"net/http"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -11,7 +12,7 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Enumerate the objects in a bucket, optionally with a prefix
+// Enumerate the urls
 func (c *Client) ListUrls(ctx context.Context, opts ...Opt) (*schema.UrlList, error) {
 	// Make request
 	req := client.NewRequest()
@@ -28,11 +29,11 @@ func (c *Client) ListUrls(ctx context.Context, opts ...Opt) (*schema.UrlList, er
 		return nil, err
 	}
 
-	// Return the responses
+	// Return the response
 	return &response, nil
 }
 
-// Create objects from a file or directory
+// Create url
 func (c *Client) CreateUrl(ctx context.Context, meta schema.UrlMeta) (*schema.Url, error) {
 	req, err := client.NewJSONRequest(meta)
 	if err != nil {
@@ -45,6 +46,28 @@ func (c *Client) CreateUrl(ctx context.Context, meta schema.UrlMeta) (*schema.Ur
 		return nil, err
 	}
 
-	// Return the responses
+	// Return the response
 	return &response, nil
+}
+
+// Delete url
+func (c *Client) DeleteUrl(ctx context.Context, id string) error {
+	// Make request
+	req := client.NewRequestEx(http.MethodDelete, "")
+
+	// Perform request
+	return c.DoWithContext(ctx, req, nil, client.OptPath("url", id))
+}
+
+// Get url
+func (c *Client) GetUrl(ctx context.Context, id string) (*schema.Url, error) {
+	var url schema.Url
+
+	// Perform request
+	if err := c.DoWithContext(ctx, nil, &url, client.OptPath("url", id)); err != nil {
+		return nil, err
+	}
+
+	// Return the response
+	return &url, nil
 }
