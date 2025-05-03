@@ -2,7 +2,6 @@ package task
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -74,8 +73,14 @@ func (t *taskrunner) RegisterObject(ctx context.Context, object *schema.Object) 
 
 	// Plain text
 	if major == "text" && minor == "plain" {
-		fmt.Println("Text file", object)
 		if err := t.queueTask(ctx, TaskNameAnalyseText, object); err != nil {
+			return err
+		}
+	}
+
+	// HTML
+	if major == "text" && minor == "html" {
+		if err := t.queueTask(ctx, TaskNameAnalyseHTML, object); err != nil {
 			return err
 		}
 	}

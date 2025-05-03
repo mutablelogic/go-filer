@@ -7,6 +7,7 @@ import (
 
 	// Packages
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	feed "github.com/mutablelogic/go-filer/pkg/feed/schema"
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 )
 
@@ -57,4 +58,13 @@ type Filer interface {
 	// Media
 	CreateMedia(context.Context, string, string, schema.MediaMeta) (*schema.Media, error)
 	CreateMediaFragments(context.Context, string, string, []schema.MediaFragmentMeta) (*schema.MediaFragmentList, error)
+}
+
+// Feed is the higher-level interface for Feeds
+type Feed interface {
+	// Urls
+	CreateUrl(context.Context, feed.UrlMeta) (*feed.Url, error)
+	ListUrls(context.Context, feed.UrlListRequest) (*feed.UrlList, error)
+	GetUrl(context.Context, uint64) (*feed.Url, error)
+	DeleteUrl(context.Context, uint64) (*feed.Url, error)
 }

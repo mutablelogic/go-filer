@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+    <channel>
+        <item>
+            <itunes:duration>1079</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>1024</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>3627</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>2434</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>13:24</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>929</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>1440</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>839</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>1399</itunes:duration>
+        </item>
+        <item>
+            <itunes:duration>13:29:45</itunes:duration>
+        </item>
+    </channel>
+</rss>

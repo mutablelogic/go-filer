@@ -1,0 +1,12 @@
+{
+    "version": "2.0",
+    "channel": {
+        "item": [
+            {
+                "image": {
+                    "href": "http://example.com/podcasts/everything/AllAboutEverything/Episode2.jpg"
+                }
+            }
+        ]
+    }
+}

@@ -1,0 +1,15 @@
+{
+    "version": "2.0",
+    "channel": {
+        "category": [
+            {
+                "domain": "http://www.example.org/cat/1",
+                "value": "\u0026lt;p\u0026gt;Feed Category 1\u0026lt;/p\u0026gt;"
+            },
+            {
+                "domain": "http://www.example.org/cat/2",
+                "value": "\u0026lt;p\u0026gt;Feed Category 2\u0026lt;/p\u0026gt;"
+            }
+        ]
+    }
+}

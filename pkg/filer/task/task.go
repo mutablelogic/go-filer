@@ -24,6 +24,7 @@ const (
 	TaskNameAnalyseImageEXIF = "analyzeimage_exif"
 	TaskNameAnalysePDF       = "analyzepdf"
 	TaskNameAnalyseText      = "analyzetext"
+	TaskNameAnalyseHTML      = "analyzehtml"
 )
 
 type taskrunner struct {
@@ -49,6 +50,7 @@ func NewTaskRunner(ctx context.Context, filer filer.Filer, queue server.PGQueue)
 		TaskNameAnalyseImageEXIF: self.AnalyseImageEXIF,
 		TaskNameAnalysePDF:       self.AnalysePDF,
 		TaskNameAnalyseText:      self.AnalyseText,
+		TaskNameAnalyseHTML:      self.AnalyseHTML,
 	}
 
 	for task, fn := range taskMap {
@@ -68,6 +70,7 @@ func NewTaskRunner(ctx context.Context, filer filer.Filer, queue server.PGQueue)
 		}
 	}
 
+	// Return success
 	return self, nil
 }
 

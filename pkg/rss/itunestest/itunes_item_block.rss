@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- https://support.google.com/podcast-publishers/answer/9889544?hl=en -->
+<rss version="2.0"
+    xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+    <channel>
+        <item>
+            <itunes:block>Yes</itunes:block>
+        </item>
+    </channel>
+</rss>

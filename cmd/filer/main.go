@@ -5,6 +5,7 @@ import (
 	"os"
 
 	// Packages
+	feed "github.com/mutablelogic/go-filer/pkg/feed/cmd"
 	filer "github.com/mutablelogic/go-filer/pkg/filer/cmd"
 	cmd "github.com/mutablelogic/go-server/pkg/cmd"
 )
@@ -16,6 +17,7 @@ type CLI struct {
 	ServiceCommands
 	filer.BucketCommands
 	filer.ObjectCommands
+	feed.UrlCommands
 	VersionCommands
 }
 

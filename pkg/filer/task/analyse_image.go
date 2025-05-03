@@ -14,6 +14,11 @@ import (
 	schema "github.com/mutablelogic/go-filer/pkg/filer/schema"
 	ref "github.com/mutablelogic/go-server/pkg/ref"
 	types "github.com/mutablelogic/go-server/pkg/types"
+
+	// Image formats
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -1,0 +1,20 @@
+{
+    "version": "2.0",
+    "channel": {
+        "item": [
+            {
+                "link": [
+                    {
+                        "value": "http://example.org"
+                    },
+                    {
+                        "value": "http://example2.org"
+                    },
+                    {
+                        "href": "http://example3.org"
+                    }
+                ]
+            }
+        ]
+    }
+}

@@ -1,0 +1,8 @@
+{
+    "version": "2.0",
+    "channel": {
+        "ttl": {
+            "value": "60"
+        }
+    }
+}

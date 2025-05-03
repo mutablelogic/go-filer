@@ -3,6 +3,7 @@ module github.com/mutablelogic/go-filer
 go 1.24.0
 
 require (
+	github.com/antchfx/xpath v1.3.4
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
@@ -13,6 +14,7 @@ require (
 	github.com/mutablelogic/go-server v1.5.11
 	github.com/pdfcpu/pdfcpu v0.10.2
 	github.com/stretchr/testify v1.10.0
+	golang.org/x/net v0.39.0
 )
 
 require (
@@ -53,7 +55,6 @@ require (
 	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/image v0.26.0 // indirect
-	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
