@@ -21,9 +21,12 @@ func (t *taskrunner) FetchItem(ctx context.Context, payload any) error {
 	item, err := t.feed.GetItem(ctx, key.Feed, key.Guid)
 	if err != nil {
 		return err
+	} else if item.Block {
+		ref.Log(ctx).With("item", item).Debug(ctx, "Item is blocked, not updating")
+		return nil
 	}
 
-	ref.Log(ctx).With("item", item).Debug(ctx, "Fetched item")
+	ref.Log(ctx).With("item", item).Print(ctx, "Fetched item")
 
 	// Return sucess
 	return nil
