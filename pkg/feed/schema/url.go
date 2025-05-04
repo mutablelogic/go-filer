@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	// Packages
@@ -16,15 +17,17 @@ import (
 // TYPES
 
 type UrlMeta struct {
-	Url *string `json:"url" arg:"" help:"Feed URL to be added"`
+	Period time.Duration `json:"period,omitempty" help:"Fetch period"`
 }
 
 type UrlId uint64
 
 type Url struct {
-	Id uint64 `json:"id"`
+	Id     uint64     `json:"id"`
+	Ts     time.Time  `json:"ts,omitzero" help:"Url created/updated timestamp"`
+	Update *time.Time `json:"update,omitzero" help:"Feed updated timestamp"`
+	Url    *string    `json:"url" arg:"" help:"Feed URL"`
 	UrlMeta
-	Ts time.Time `json:"ts,omitzero"`
 }
 
 type UrlListRequest struct {
@@ -86,15 +89,19 @@ func (u UrlId) Select(bind *pg.Bind, op pg.Op) (string, error) {
 		return urlGet, nil
 	case pg.Delete:
 		return urlDelete, nil
+	case pg.Update:
+		return urlUpdate, nil
 	default:
 		return "", httpresponse.ErrNotImplemented.Withf("UrlId operation: %q", op)
 	}
 }
 
 func (u UrlListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
-	// Where and Orderby
+	// Where
 	bind.Set("where", "")
-	bind.Set("orderby", "ORDER BY ts DESC")
+
+	// Order by the feeds which are most recently updated
+	bind.Set("orderby", "ORDER BY update DESC NULLS FIRST")
 
 	// Bind offset and limit
 	u.OffsetLimit.Bind(bind, ItemListLimit)
@@ -111,7 +118,7 @@ func (u UrlListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 // READER
 
 func (u *Url) Scan(row pg.Row) error {
-	return row.Scan(&u.Id, &u.Ts, &u.Url)
+	return row.Scan(&u.Id, &u.Ts, &u.Update, &u.Url, &u.Period)
 }
 
 func (u *UrlList) Scan(row pg.Row) error {
@@ -130,13 +137,13 @@ func (n *UrlList) ScanCount(row pg.Row) error {
 //////////////////////////////////////////////////////////////////////////////////
 // WRITER
 
-// Insert
 func (u UrlMeta) Insert(bind *pg.Bind) (string, error) {
-	// Queue name
-	if url, err := url.Parse(*u.Url); err != nil || !slices.Contains(acceptableSchemes, url.Scheme) {
-		return "", httpresponse.ErrBadRequest.Withf("invalid url: %q", url)
+	if feedurl := bind.Get("url"); feedurl == nil {
+		return "", httpresponse.ErrBadRequest.With("Missing url")
+	} else if feedurl, err := url.Parse(feedurl.(string)); err != nil || !slices.Contains(acceptableSchemes, feedurl.Scheme) {
+		return "", httpresponse.ErrBadRequest.Withf("invalid url: %q", feedurl)
 	} else {
-		bind.Set("url", url.String())
+		bind.Set("url", feedurl.String())
 	}
 
 	// Return the insert query
@@ -144,7 +151,22 @@ func (u UrlMeta) Insert(bind *pg.Bind) (string, error) {
 }
 
 func (u UrlMeta) Update(bind *pg.Bind) error {
-	return httpresponse.ErrNotImplemented
+	var patch []string
+
+	// Period
+	if period := u.Period; period > 0 {
+		patch = append(patch, `"period" = `+bind.Set("period", period))
+	}
+
+	// Patch - if nothing to patch, we flag to update the feed
+	if len(patch) == 0 {
+		bind.Set("patch", `"update" = NULL`)
+	} else {
+		bind.Set("patch", strings.Join(patch, ", "))
+	}
+
+	// Return success
+	return nil
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -169,8 +191,10 @@ const (
 	urlCreateTable = `
 		CREATE TABLE IF NOT EXISTS ${"schema"}."url" (
 			"id"       BIGSERIAL PRIMARY KEY,    			         -- Identifier
-			"ts"       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Added/updated timestamp                             
+			"ts"       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Added/updated timestamp
+			"update"   TIMESTAMP, 			                         -- Last fetched timestamp
 			"url"      TEXT NOT NULL,                                -- URL
+			"period"   INTERVAL NOT NULL DEFAULT INTERVAL '1 hour',  -- Fetch period
 			UNIQUE("url")                                            -- Ensure the URL is unique
 		)
 	`
@@ -184,20 +208,42 @@ const (
 	`
 	urlCreateTrigger = `
 		CREATE OR REPLACE TRIGGER 
-			url_create AFTER INSERT OR UPDATE ON ${"schema"}."url"
+			url_create AFTER INSERT ON ${"schema"}."url"
 		FOR EACH ROW EXECUTE PROCEDURE
 			${"schema"}.url_create() 
 	`
 	urlInsert = `
 		INSERT INTO ${"schema"}."url" 
-			("ts", "url") 
+			("ts", "url", "period") 
 		VALUES 
-			(DEFAULT, @url)	
+			(DEFAULT, @url, DEFAULT)	
 		RETURNING
-			"id", "ts", "url"
+			"id", "ts", "update", "url", "period"
 	`
-	urlSelect = `SELECT "id", "ts", "url" FROM ${"schema"}."url"`
-	urlGet    = urlSelect + ` WHERE id = @id`
-	urlList   = `WITH q AS (` + urlSelect + `) SELECT * FROM q ${where} ${orderby}`
-	urlDelete = `DELETE FROM ${"schema"}."url" WHERE id = @id RETURNING "id", "ts", "url"`
+	urlUpdate = `
+		 UPDATE 
+		 	${"schema"}."url"
+		SET
+			"ts" = CURRENT_TIMESTAMP, ${patch} 
+		WHERE
+			"id" = @id
+		RETURNING
+			"id", "ts", "update", "url", "period"
+	`
+	urlDelete = `
+		DELETE FROM 
+			${"schema"}."url" 
+		WHERE 
+			id = @id 
+		RETURNING 
+			"id", "ts", "update", "url", "period"
+	`
+	urlSelect = `
+		SELECT 
+			"id", "ts", "update", "url", "period" 
+		FROM 
+			${"schema"}."url"
+	`
+	urlGet  = urlSelect + ` WHERE id = @id`
+	urlList = `WITH q AS (` + urlSelect + `) SELECT * FROM q ${where} ${orderby}`
 )

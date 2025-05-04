@@ -61,15 +61,19 @@ type Filer interface {
 	CreateMediaFragments(context.Context, string, string, []schema.MediaFragmentMeta) (*schema.MediaFragmentList, error)
 }
 
-// Feed is the higher-level interface for Feeds
+// Feed is the higher-level interface for the Feed plugin
 type Feed interface {
-	// Urls
-	CreateUrl(context.Context, feed.UrlMeta) (*feed.Url, error)
-	ListUrls(context.Context, feed.UrlListRequest) (*feed.UrlList, error)
+	// Url
 	GetUrl(context.Context, uint64) (*feed.Url, error)
+	ListUrls(context.Context, feed.UrlListRequest) (*feed.UrlList, error)
+	CreateUrl(context.Context, string, feed.UrlMeta) (*feed.Url, error)
+	UpdateUrl(context.Context, uint64, feed.UrlMeta) (*feed.Url, error)
 	DeleteUrl(context.Context, uint64) (*feed.Url, error)
 
 	// Feed
-	CreateFeed(context.Context, uint64, rss.Feed) (*feed.Feed, error)
+	UpsertFeed(context.Context, uint64, rss.Feed, *bool) (*feed.Feed, error)
 	ListFeeds(context.Context, feed.FeedListRequest) (*feed.FeedList, error)
+
+	// Item
+	UpsertItems(context.Context, uint64, rss.Feed) (*feed.ItemList, error)
 }

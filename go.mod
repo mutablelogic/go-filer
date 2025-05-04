@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
-	github.com/djthorpe/go-pg v1.0.5
+	github.com/djthorpe/go-pg v1.0.6
 	github.com/dsoprea/go-exif/v3 v3.0.1
 	github.com/mutablelogic/go-client v1.1.1
 	github.com/mutablelogic/go-media v1.6.13

@@ -15,10 +15,11 @@ import (
 // Get list of stale feeds and queue them for refresh
 func (t *taskrunner) RefreshFeeds(ctx context.Context, _ any) error {
 	feeds, err := t.feed.ListFeeds(ctx, schema.FeedListRequest{
-		Stale: true,
+		Enabled: true,
+		Stale:   true,
 		OffsetLimit: pg.OffsetLimit{
 			Offset: 0,
-			Limit:  types.Uint64Ptr(1),
+			Limit:  types.Uint64Ptr(2),
 		},
 	})
 	if err != nil {

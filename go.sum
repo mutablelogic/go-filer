@@ -71,8 +71,8 @@ github.com/djthorpe/go-errors v1.0.3 h1:GZeMPkC1mx2vteXLI/gvxZS0Ee9zxzwD1mcYyKU5
 github.com/djthorpe/go-errors v1.0.3/go.mod h1:HtfrZnMd6HsX75Mtbv9Qcnn0BqOrrFArvCaj3RMnZhY=
 github.com/djthorpe/go-marshaler v1.0.0 h1:dLIjr2vXXUi8VF93LIQPHfBjW3USbtYjqKt+b2WTf2M=
 github.com/djthorpe/go-marshaler v1.0.0/go.mod h1:xCXhTzj52UL3YStRsqUSfrKses7ofmfTXYQfVedn8Lw=
-github.com/djthorpe/go-pg v1.0.5 h1:UYCV5fSXOJEFTafem1wB57RK2J0V7Nr9nCquC5sO+ZE=
-github.com/djthorpe/go-pg v1.0.5/go.mod h1:XHl/w8+66Hs746nOYd+gdjqPImNuLVZ5UsXLI47rb4c=
+github.com/djthorpe/go-pg v1.0.6 h1:v/ZcMhtgULa301LPYyUEo7fJJwuseOaAdpCyKid0qbU=
+github.com/djthorpe/go-pg v1.0.6/go.mod h1:XHl/w8+66Hs746nOYd+gdjqPImNuLVZ5UsXLI47rb4c=
 github.com/docker/docker v27.1.1+incompatible h1:hO/M4MtV36kzKldqnA37IWhebRA+LnqqcqDja6kVaKY=
 github.com/docker/docker v27.1.1+incompatible/go.mod h1:eEKB0N0r5NX/I1kEveEz05bcu8tLC/8azJZsviup8Sk=
 github.com/docker/go-connections v0.5.0 h1:USnMq7hx7gwdVZq1L49hLXaFtUdTADjXGp+uj1Br63c=

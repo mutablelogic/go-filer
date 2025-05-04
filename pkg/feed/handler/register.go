@@ -41,10 +41,10 @@ func registerUrlHandlers(ctx context.Context, router server.HTTPRouter, prefix s
 		}
 	})
 
-	// Get or delete url
+	// Get, update or delete url
 	router.HandleFunc(ctx, types.JoinPath(prefix, "url/{id}"), func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
-		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodDelete)
+		httpresponse.Cors(w, r, router.Origin(), http.MethodGet, http.MethodDelete, http.MethodPatch)
 
 		id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -59,6 +59,8 @@ func registerUrlHandlers(ctx context.Context, router server.HTTPRouter, prefix s
 			_ = urlGet(w, r, feed, id)
 		case http.MethodDelete:
 			_ = urlDelete(w, r, feed, id)
+		case http.MethodPatch:
+			_ = urlUpdate(w, r, feed, id)
 		default:
 			_ = httpresponse.Error(w, httpresponse.Err(http.StatusMethodNotAllowed), r.Method)
 		}

@@ -39,6 +39,9 @@ func Bootstrap(ctx context.Context, conn pg.Conn) error {
 	if err := bootstrapFeed(ctx, conn); err != nil {
 		return err
 	}
+	if err := bootstrapItem(ctx, conn); err != nil {
+		return err
+	}
 
 	// Commit the transaction
 	return nil

@@ -34,8 +34,15 @@ func (c *Client) ListUrls(ctx context.Context, opts ...Opt) (*schema.UrlList, er
 }
 
 // Create url
-func (c *Client) CreateUrl(ctx context.Context, meta schema.UrlMeta) (*schema.Url, error) {
-	req, err := client.NewJSONRequest(meta)
+func (c *Client) CreateUrl(ctx context.Context, url string, meta schema.UrlMeta) (*schema.Url, error) {
+	type createUrl struct {
+		Url string `json:"url"`
+		schema.UrlMeta
+	}
+	req, err := client.NewJSONRequest(createUrl{
+		Url:     url,
+		UrlMeta: meta,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +72,23 @@ func (c *Client) GetUrl(ctx context.Context, id string) (*schema.Url, error) {
 
 	// Perform request
 	if err := c.DoWithContext(ctx, nil, &url, client.OptPath("url", id)); err != nil {
+		return nil, err
+	}
+
+	// Return the response
+	return &url, nil
+}
+
+// Update url
+func (c *Client) UpdateUrl(ctx context.Context, id string, meta schema.UrlMeta) (*schema.Url, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPatch, meta, "")
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform request
+	var url schema.Url
+	if err := c.DoWithContext(ctx, req, &url, client.OptPath("url", id)); err != nil {
 		return nil, err
 	}
 

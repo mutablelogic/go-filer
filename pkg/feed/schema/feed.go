@@ -18,6 +18,8 @@ import (
 
 type RSSFeed rss.Feed
 
+type FeedId uint64
+
 type FeedMeta struct {
 	Title     *string        `json:"title,omitempty"`
 	Author    *string        `json:"author,omitempty"`
@@ -36,20 +38,15 @@ type FeedMeta struct {
 }
 
 type Feed struct {
-	Id uint64    `json:"id,omitempty"`
-	Ts time.Time `json:"ts,omitzero"`
+	Id   uint64    `json:"id,omitempty"`
+	Ts   time.Time `json:"ts,omitzero"`
+	Hash *string   `json:"hash,omitempty"`
 	FeedMeta
 }
 
-type FeedHash struct {
-	Id     uint64        `json:"id"`
-	Ts     *time.Time    `json:"ts,omitzero"`
-	Period time.Duration `json:"period"`
-	Hash   *string       `json:"hash,omitempty"`
-}
-
 type FeedListRequest struct {
-	Stale bool `json:"stale,omitempty" help:"List stale feeds"`
+	Enabled bool `json:"enabled,omitempty" help:"List feeds which are not marked as complete"`
+	Stale   bool `json:"stale,omitempty" help:"List stale feeds"`
 	pg.OffsetLimit
 }
 
@@ -77,14 +74,6 @@ func (f Feed) String() string {
 	return string(data)
 }
 
-func (f FeedHash) String() string {
-	data, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err.Error()
-	}
-	return string(data)
-}
-
 func (f FeedListRequest) String() string {
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
@@ -104,10 +93,37 @@ func (f FeedList) String() string {
 //////////////////////////////////////////////////////////////////////////////////
 // SELECTOR
 
+func (u FeedId) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	if u == 0 {
+		return "", httpresponse.ErrBadRequest.Withf("invalid id: %v", u)
+	} else {
+		bind.Set("id", u)
+	}
+
+	switch op {
+	case pg.Get:
+		return feedGet, nil
+	case pg.Update:
+		return feedUpdate, nil
+	default:
+		return "", httpresponse.ErrNotImplemented.Withf("FeedId operation: %q", op)
+	}
+}
+
 func (f FeedListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
-	// Where and Orderby
-	bind.Set("where", "")
+	// Orderby
 	bind.Set("orderby", `ORDER BY "ts" DESC`)
+
+	// Where
+	var where []string
+	if f.Enabled {
+		where = append(where, `"complete" IS FALSE`)
+	}
+	if len(where) > 0 {
+		bind.Set("where", "WHERE "+strings.Join(where, " AND "))
+	} else {
+		bind.Set("where", "")
+	}
 
 	// Bind offset and limit
 	f.OffsetLimit.Bind(bind, ItemListLimit)
@@ -128,11 +144,7 @@ func (f FeedListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 // READER
 
 func (f *Feed) Scan(row pg.Row) error {
-	return row.Scan(&f.Id, &f.Ts, &f.Title, &f.Author, &f.Link, &f.Lang, &f.Desc, &f.Type, &f.SkipDays, &f.SkipHours, &f.BuildDate, &f.PubDate, &f.TTL, &f.Block, &f.Complete, &f.Meta)
-}
-
-func (f *FeedHash) Scan(row pg.Row) error {
-	return row.Scan(&f.Id, &f.Ts, &f.Period, &f.Hash)
+	return row.Scan(&f.Id, &f.Ts, &f.Hash, &f.Title, &f.Author, &f.Link, &f.Lang, &f.Desc, &f.Type, &f.SkipDays, &f.SkipHours, &f.BuildDate, &f.PubDate, &f.TTL, &f.Block, &f.Complete, &f.Meta)
 }
 
 func (f *FeedList) Scan(row pg.Row) error {
@@ -151,37 +163,22 @@ func (f *FeedList) ScanCount(row pg.Row) error {
 //////////////////////////////////////////////////////////////////////////////////
 // WRITER
 
-func (f FeedHash) Insert(bind *pg.Bind) (string, error) {
-	if f.Id == 0 {
-		return "", httpresponse.ErrBadRequest.Withf("missing id")
-	} else {
-		bind.Set("id", f.Id)
-	}
-	if !bind.Has("meta") {
-		return "", httpresponse.ErrBadRequest.With("missing meta")
-	}
-	if f.Period == 0 {
-		return "", httpresponse.ErrBadRequest.With("missing period")
-	} else {
-		bind.Set("period", f.Period)
-	}
-
-	// Return success
-	return feedHashInsert, nil
-}
-
-func (f FeedHash) Update(bind *pg.Bind) error {
-	return httpresponse.ErrNotImplemented.With("FeedHash.Update not implemented")
-}
-
 func (r RSSFeed) Insert(bind *pg.Bind) (string, error) {
+	return feedInsert, r.bind(bind)
+}
+
+func (r RSSFeed) Update(bind *pg.Bind) error {
+	return r.bind(bind)
+}
+
+func (r RSSFeed) bind(bind *pg.Bind) error {
 	if !bind.Has("id") {
-		return "", httpresponse.ErrBadRequest.With("missing id")
+		return httpresponse.ErrBadRequest.With("missing id")
 	}
 
 	// Title
 	if title := strings.TrimSpace(r.Channel.Title); title == "" {
-		return "", httpresponse.ErrBadRequest.Withf("missing title")
+		return httpresponse.ErrBadRequest.Withf("missing title")
 	} else {
 		bind.Set("title", title)
 	}
@@ -237,7 +234,7 @@ func (r RSSFeed) Insert(bind *pg.Bind) (string, error) {
 	// TTL
 	if ttl := r.Channel.TTL; ttl != nil {
 		if secs, err := ttl.Seconds(); err != nil {
-			return "", httpresponse.ErrBadRequest.Withf("error parsing TTL value")
+			return httpresponse.ErrBadRequest.Withf("error parsing TTL value")
 		} else if secs > 0 {
 			bind.Set("ttl", secs)
 		}
@@ -252,15 +249,24 @@ func (r RSSFeed) Insert(bind *pg.Bind) (string, error) {
 	bind.Set("block", rss.ParseBool(r.Channel.Block))
 	bind.Set("complete", rss.ParseBool(r.Channel.Complete))
 
-	// Metadata
-	bind.Set("meta", r.Channel)
+	// Hash - contains the hash of the whole feed
+	if data, err := json.Marshal(r.Channel); err != nil {
+		return httpresponse.ErrBadRequest.Withf("error marshalling channel: %v", err)
+	} else {
+		bind.Set("hash", json.RawMessage(string(data)))
+	}
+
+	// Metadata - but remove the items from the feed
+	channel := *r.Channel
+	channel.Items = nil
+	if data, err := json.Marshal(channel); err != nil {
+		return httpresponse.ErrBadRequest.Withf("error marshalling channel: %v", err)
+	} else {
+		bind.Set("meta", json.RawMessage(string(data)))
+	}
 
 	// Return success
-	return feedInsert, nil
-}
-
-func (rss RSSFeed) Update(bind *pg.Bind) error {
-	return httpresponse.ErrNotImplemented.With("Feed.Update not implemented")
+	return nil
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -270,7 +276,6 @@ func (rss RSSFeed) Update(bind *pg.Bind) error {
 func bootstrapFeed(ctx context.Context, conn pg.Conn) error {
 	q := []string{
 		feedCreateTable,
-		feedHashCreateTable,
 	}
 	for _, query := range q {
 		if err := conn.Exec(ctx, query); err != nil {
@@ -285,7 +290,8 @@ const (
 		CREATE TABLE IF NOT EXISTS ${"schema"}."feed" (
 			-- Identifier
 			"id"            BIGSERIAL NOT NULL REFERENCES ${"schema"}."url" ON DELETE CASCADE,  
-			"ts"            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Added/updated timestamp                             
+			"ts"            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Added/updated timestamp       
+			"hash" 	        TEXT, 			                              -- Hash of the feed                      
 			"title"         TEXT NOT NULL,                                -- Title
 			"author"        TEXT,                                         -- Author
 			"link"          TEXT,                                         -- Link
@@ -303,22 +309,14 @@ const (
 			PRIMARY KEY ("id")                                			  -- Ensure ID constraint
 		)
 	`
-	feedHashCreateTable = `
-		CREATE TABLE IF NOT EXISTS ${"schema"}."feed_hash" (
-			-- Identifier
-			"id"        BIGSERIAL NOT NULL REFERENCES ${"schema"}."url" ON DELETE CASCADE,
-			"ts"        TIMESTAMP, 			-- Last fetched timestamp
-			"period"    INTERVAL NOT NULL,  -- Fetch period
-			"hash" 	    TEXT, 			    -- Hash of the feed
-			PRIMARY KEY ("id") 			    -- Ensure ID constraint
-		)
-	`
 	feedInsert = `
 		INSERT INTO ${"schema"}."feed" (
-			"id", "title", "author", "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
+			"id", "hash", "title", "author", "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
 		) VALUES (
-		 	@id, @title, @author, @link, @lang, @desc, @type, @skip_days, @skip_hours, @builddate, @pubdate, @ttl, @block, @complete, @meta
+		 	@id, MD5(@hash::TEXT), @title, @author, @link, @lang, @desc, @type, @skip_days, @skip_hours, @builddate, @pubdate, @ttl, @block, @complete, @meta::JSONB
 		) ON CONFLICT ("id") DO UPDATE SET
+			"ts" = CURRENT_TIMESTAMP,
+			"hash" = MD5(@hash::TEXT),
 		 	"title" = @title,
 			"author" = @author,
 			"link" = @link,
@@ -332,42 +330,32 @@ const (
 			"ttl" = @ttl,
 			"block" = @block,
 			"complete" = @complete,
-			"meta" = @meta,
-			"ts" = CURRENT_TIMESTAMP
+			"meta" = @meta::JSONB
+		WHERE
+			${"schema"}."feed"."hash" IS DISTINCT FROM MD5(@hash::TEXT) -- This condition ensures update only happens if hash differs			
 		RETURNING
-			"id", "ts", "title", "author", "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
+			"id", "ts", "hash", "title", "author", "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
 	`
-	feedHashInsert = `
-		INSERT INTO ${"schema"}."feed_hash" (
-			"id", "period", "hash"
-		) VALUES (
-		 	@id, @period, MD5(@meta::TEXT)
-		) ON CONFLICT ("id") DO UPDATE SET
-		 	"period" = @period,
-			"hash" = MD5(@meta::TEXT),
-			"ts" = CURRENT_TIMESTAMP
-		RETURNING
-			"id", "ts", "period", "hash"
-	`
+	feedUpdate = feedInsert
 	feedSelect = `
 		SELECT
-			"id", "ts", "title", "author",  "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
+			"id", "ts", "hash", "title", "author",  "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
 		FROM
 			${"schema"}."feed"
     `
 	feedGet         = feedSelect + `WHERE "id" = @id`
-	feedList        = `WITH q AS (` + feedSelect + `) SELECT * FROM q ${where} ${orderby}`
+	feedList        = feedSelect + `${where} ${orderby}`
 	feedSelectStale = `
-		SELECT
-			F."id", F."ts", F."title", F."author",  F."link", F."lang", F."desc", F."type", F."skip_days", F."skip_hours", F."builddate", F."pubdate", F."ttl", F."block", F."complete", F."meta"
+		WITH "inner" AS (` + feedSelect + ` ${where}) SELECT
+			F.*
 		FROM
-			${"schema"}."feed" F
+			"inner" F
 		JOIN
-			${"schema"}."feed_hash" H ON F.id = H.id
+			${"schema"}."url" U ON F.id = U.id
 		WHERE
-			H."ts" IS NULL OR H."ts" + H."period" < CURRENT_TIMESTAMP
+			U."update" IS NULL OR U."update" + U."period" < CURRENT_TIMESTAMP
 		ORDER BY
-			H."ts" NULLS FIRST
+			U."update" NULLS FIRST
 	`
 	feedListStale = `WITH q AS (` + feedSelectStale + `) SELECT * FROM q ${where}`
 )

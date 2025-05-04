@@ -10,7 +10,7 @@ import (
 	handler "github.com/mutablelogic/go-filer/pkg/feed/handler"
 	schema "github.com/mutablelogic/go-filer/pkg/feed/schema"
 	task "github.com/mutablelogic/go-filer/pkg/feed/task"
-	"github.com/mutablelogic/go-filer/pkg/rss"
+	rss "github.com/mutablelogic/go-filer/pkg/rss"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	queue_schema "github.com/mutablelogic/go-server/pkg/pgqueue/schema"
@@ -77,13 +77,13 @@ func NewManager(ctx context.Context, queue server.PGQueue, router server.HTTPRou
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - URL
 
-func (manager *Manager) CreateUrl(ctx context.Context, meta schema.UrlMeta) (*schema.Url, error) {
-	var url schema.Url
-	if err := manager.conn.Insert(ctx, &url, meta); err != nil {
+func (manager *Manager) CreateUrl(ctx context.Context, url string, meta schema.UrlMeta) (*schema.Url, error) {
+	var resp schema.Url
+	if err := manager.conn.With("url", url).Insert(ctx, &resp, meta); err != nil {
 		return nil, httperr(err)
 	}
 	// Return success
-	return &url, nil
+	return &resp, nil
 }
 
 func (manager *Manager) ListUrls(ctx context.Context, req schema.UrlListRequest) (*schema.UrlList, error) {
@@ -113,36 +113,53 @@ func (manager *Manager) DeleteUrl(ctx context.Context, id uint64) (*schema.Url, 
 	return &url, nil
 }
 
+func (manager *Manager) UpdateUrl(ctx context.Context, id uint64, meta schema.UrlMeta) (*schema.Url, error) {
+	var url schema.Url
+	if err := manager.conn.Update(ctx, &url, schema.UrlId(id), meta); err != nil {
+		return nil, httperr(err)
+	}
+	// Return success
+	return &url, nil
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - FEED
 
-func (manager *Manager) CreateFeed(ctx context.Context, id uint64, rss rss.Feed) (*schema.Feed, error) {
+// Create a new feed or replace it. The feed is created with the given id and RSS feed.
+// The changed flag is set to true if the feed was updated and changed.
+func (manager *Manager) UpsertFeed(ctx context.Context, id uint64, rss rss.Feed, changed *bool) (*schema.Feed, error) {
 	var feed schema.Feed
-	var hash schema.FeedHash
 
-	// Set the schedule TTL based on the feed TTL
-	hash.Period = schema.DefaultFeedTTL
-	if ttl := rss.Channel.TTL; ttl != nil {
-		if period, err := ttl.Seconds(); err == nil && period > 0 {
-			hash.Period = period
+	/*
+		hashPeriod := schema.DefaultFeedTTL
+		if ttl := rss.Channel.TTL; ttl != nil {
+			if period, err := ttl.Seconds(); err == nil && period > 0 {
+				hashPeriod = period
+			}
 		}
-	}
+	*/
 
 	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
-		// Insert the hash
-		if err := manager.conn.With("meta", rss).Insert(ctx, &hash, schema.FeedHash{
-			Id:     id,
-			Period: hash.Period,
-		}); err != nil {
-			return httperr(err)
-		}
-
-		// Remove the items from the feed so we don't insert them into the database
-		rss.Channel.Items = nil
-
 		// Insert the feed into the database
-		if err := manager.conn.With("id", id).Insert(ctx, &feed, schema.RSSFeed(rss)); err != nil {
-			return httperr(err)
+		if err := manager.conn.With("id", id).Insert(ctx, &feed, schema.RSSFeed(rss)); errors.Is(err, pg.ErrNotFound) {
+			// The feed was not updated - get the feed
+			if err := manager.conn.Get(ctx, &feed, schema.FeedId(id)); err != nil {
+				return err
+			}
+
+			// Update url table to indicate  we've fetched the feed
+			if err := manager.conn.Update(ctx, nil, schema.UrlId(id), schema.UrlMeta{}); err != nil {
+				return err
+			}
+			if changed != nil {
+				*changed = false
+			}
+		} else if err != nil {
+			return err
+		} else {
+			if changed != nil {
+				*changed = true
+			}
 		}
 
 		// Return success
@@ -165,6 +182,38 @@ func (manager *Manager) ListFeeds(ctx context.Context, req schema.FeedListReques
 
 	// Return success
 	return &response, nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - ITEM
+
+// Insert or replace items in the database from an RSS feed. The items which
+// have been changed are returned.
+func (manager *Manager) UpsertItems(ctx context.Context, id uint64, rss rss.Feed) (*schema.ItemList, error) {
+	var list schema.ItemList
+
+	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
+		// TODO: Update all the items in the feed to set 'live' as false for this feed
+		var errs error
+		for _, rssitem := range rss.Channel.Items {
+			var item schema.Item
+			if err := manager.conn.With("feed", id).Insert(ctx, &item, schema.RSSItem(*rssitem)); errors.Is(err, pg.ErrNotFound) {
+				// Skip if not found, this means the item was not changed
+			} else if err != nil {
+				errs = errors.Join(errs, err)
+			} else {
+				list.Body = append(list.Body, item)
+			}
+		}
+
+		// Return success
+		return errs
+	}); err != nil {
+		return nil, httperr(err)
+	}
+
+	// Return success
+	return &list, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

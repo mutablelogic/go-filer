@@ -28,7 +28,7 @@ func (t *taskrunner) RegisterUrl(ctx context.Context, in any) error {
 	}
 
 	// Insert the feed
-	_, err := t.feed.CreateFeed(ctx, url.Id, rss)
+	_, err := t.feed.UpsertFeed(ctx, url.Id, rss, nil)
 	if err != nil {
 		return err
 	}
