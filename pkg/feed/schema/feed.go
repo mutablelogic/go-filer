@@ -313,8 +313,13 @@ const (
 		INSERT INTO ${"schema"}."feed" (
 			"id", "hash", "title", "author", "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
 		) VALUES (
-		 	@id, MD5(@hash::TEXT), @title, @author, @link, @lang, @desc, @type, @skip_days, @skip_hours, @builddate, @pubdate, @ttl, @block, @complete, @meta::JSONB
-		) ON CONFLICT ("id") DO UPDATE SET
+		 	@id, NULL, @title, @author, @link, @lang, @desc, @type, @skip_days, @skip_hours, @builddate, @pubdate, @ttl, @block, @complete, @meta::JSONB
+		)	
+		RETURNING
+			"id", "ts", "hash", "title", "author", "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
+	`
+	feedUpdate = `
+		UPDATE ${"schema"}."feed" SET
 			"ts" = CURRENT_TIMESTAMP,
 			"hash" = MD5(@hash::TEXT),
 		 	"title" = @title,
@@ -332,11 +337,10 @@ const (
 			"complete" = @complete,
 			"meta" = @meta::JSONB
 		WHERE
-			${"schema"}."feed"."hash" IS DISTINCT FROM MD5(@hash::TEXT) -- This condition ensures update only happens if hash differs			
+			"id" = @id AND "hash" IS DISTINCT FROM MD5(@hash::TEXT) -- This condition ensures update only happens if hash differs			
 		RETURNING
 			"id", "ts", "hash", "title", "author", "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"
 	`
-	feedUpdate = feedInsert
 	feedSelect = `
 		SELECT
 			"id", "ts", "hash", "title", "author",  "link", "lang", "desc", "type", "skip_days", "skip_hours", "builddate", "pubdate", "ttl", "block", "complete", "meta"

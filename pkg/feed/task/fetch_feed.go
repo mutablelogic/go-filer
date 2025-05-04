@@ -7,7 +7,7 @@ import (
 	client "github.com/mutablelogic/go-client"
 	schema "github.com/mutablelogic/go-filer/pkg/feed/schema"
 	rss "github.com/mutablelogic/go-filer/pkg/rss"
-	"github.com/mutablelogic/go-server/pkg/ref"
+	ref "github.com/mutablelogic/go-server/pkg/ref"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 

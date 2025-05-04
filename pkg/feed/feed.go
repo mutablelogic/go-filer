@@ -41,6 +41,7 @@ func NewManager(ctx context.Context, queue server.PGQueue, router server.HTTPRou
 			"schema", schema.SchemaName,
 			"pgqueue_schema", queue_schema.SchemaName,
 			"taskname_create_url", task.TaskNameRegisterUrl,
+			"taskname_fetch_item", task.TaskNameFetchItem,
 		).(pg.PoolConn)
 	}
 	// Create the schema
@@ -130,35 +131,53 @@ func (manager *Manager) UpdateUrl(ctx context.Context, id uint64, meta schema.Ur
 func (manager *Manager) UpsertFeed(ctx context.Context, id uint64, rss rss.Feed, changed *bool) (*schema.Feed, error) {
 	var feed schema.Feed
 
-	/*
-		hashPeriod := schema.DefaultFeedTTL
-		if ttl := rss.Channel.TTL; ttl != nil {
-			if period, err := ttl.Seconds(); err == nil && period > 0 {
-				hashPeriod = period
-			}
-		}
-	*/
-
 	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
-		// Insert the feed into the database
-		if err := manager.conn.With("id", id).Insert(ctx, &feed, schema.RSSFeed(rss)); errors.Is(err, pg.ErrNotFound) {
-			// The feed was not updated - get the feed
-			if err := manager.conn.Get(ctx, &feed, schema.FeedId(id)); err != nil {
+		var insert bool
+		// Get the feed
+		if err := conn.Get(ctx, &feed, schema.FeedId(id)); errors.Is(err, pg.ErrNotFound) {
+			// Insert the feed
+			if err := manager.conn.With("id", id).Insert(ctx, &feed, schema.RSSFeed(rss)); err != nil {
 				return err
 			}
-
-			// Update url table to indicate  we've fetched the feed
-			if err := manager.conn.Update(ctx, nil, schema.UrlId(id), schema.UrlMeta{}); err != nil {
-				return err
+			// Set changed flag
+			insert = true
+			if changed != nil {
+				*changed = true
 			}
+		} else if err != nil {
+			return err
+		} else if err := conn.Update(ctx, &feed, schema.FeedId(id), schema.RSSFeed(rss)); errors.Is(err, pg.ErrNotFound) {
+			// Feed was not updated
 			if changed != nil {
 				*changed = false
 			}
 		} else if err != nil {
 			return err
 		} else {
+			// Feed was updated
 			if changed != nil {
 				*changed = true
+			}
+		}
+
+		// When inserting, we set the period to the channel TTL,
+		// and when updating, we update to the current timestamp
+		switch insert {
+		case true:
+			hashPeriod := schema.DefaultFeedTTL
+			if ttl := rss.Channel.TTL; ttl != nil {
+				if period, err := ttl.Seconds(); err == nil && period > 0 {
+					hashPeriod = period
+				}
+			}
+			if err := manager.conn.Update(ctx, nil, schema.UrlId(id), schema.UrlMeta{
+				Period: hashPeriod,
+			}); err != nil {
+				return err
+			}
+		case false:
+			if err := manager.conn.With("update", true).Update(ctx, nil, schema.UrlId(id), schema.UrlMeta{}); err != nil {
+				return err
 			}
 		}
 
@@ -189,7 +208,7 @@ func (manager *Manager) ListFeeds(ctx context.Context, req schema.FeedListReques
 
 // Insert or replace items in the database from an RSS feed. The items which
 // have been changed are returned.
-func (manager *Manager) UpsertItems(ctx context.Context, id uint64, rss rss.Feed) (*schema.ItemList, error) {
+func (manager *Manager) UpsertItems(ctx context.Context, feed uint64, rss rss.Feed) (*schema.ItemList, error) {
 	var list schema.ItemList
 
 	if err := manager.conn.Tx(ctx, func(conn pg.Conn) error {
@@ -197,7 +216,7 @@ func (manager *Manager) UpsertItems(ctx context.Context, id uint64, rss rss.Feed
 		var errs error
 		for _, rssitem := range rss.Channel.Items {
 			var item schema.Item
-			if err := manager.conn.With("feed", id).Insert(ctx, &item, schema.RSSItem(*rssitem)); errors.Is(err, pg.ErrNotFound) {
+			if err := manager.conn.With("feed", feed).Insert(ctx, &item, schema.RSSItem(*rssitem)); errors.Is(err, pg.ErrNotFound) {
 				// Skip if not found, this means the item was not changed
 			} else if err != nil {
 				errs = errors.Join(errs, err)
@@ -214,6 +233,15 @@ func (manager *Manager) UpsertItems(ctx context.Context, id uint64, rss rss.Feed
 
 	// Return success
 	return &list, nil
+}
+
+func (manager *Manager) GetItem(ctx context.Context, feed uint64, guid string) (*schema.Item, error) {
+	var item schema.Item
+	if err := manager.conn.Get(ctx, &item, schema.ItemId{Guid: guid, Feed: feed}); err != nil {
+		return nil, httperr(err)
+	}
+	// Return success
+	return &item, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

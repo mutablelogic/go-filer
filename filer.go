@@ -76,4 +76,5 @@ type Feed interface {
 
 	// Item
 	UpsertItems(context.Context, uint64, rss.Feed) (*feed.ItemList, error)
+	GetItem(context.Context, uint64, string) (*feed.Item, error)
 }

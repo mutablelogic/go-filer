@@ -158,6 +158,11 @@ func (u UrlMeta) Update(bind *pg.Bind) error {
 		patch = append(patch, `"period" = `+bind.Set("period", period))
 	}
 
+	// Update
+	if update, ok := bind.Get("update").(bool); ok && update {
+		patch = append(patch, `"update" = CURRENT_TIMESTAMP`)
+	}
+
 	// Patch - if nothing to patch, we flag to update the feed
 	if len(patch) == 0 {
 		bind.Set("patch", `"update" = NULL`)

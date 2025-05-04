@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 
 	// Packages
 	pg "github.com/djthorpe/go-pg"
@@ -27,17 +28,16 @@ func (t *taskrunner) RefreshFeeds(ctx context.Context, _ any) error {
 	}
 
 	// For each feed, fetch the feed
+	var errs error
 	for _, feed := range feeds.Body {
 		url, err := t.feed.GetUrl(ctx, feed.Id)
 		if err != nil {
-			return err
+			errs = errors.Join(errs, err)
 		} else if err := t.queueFetchFeed(ctx, url); err != nil {
-			return err
+			errs = errors.Join(errs, err)
 		}
-		// TODO: Update the timestamp so we consider other feeds
-		// in preference order
 	}
 
-	// Return sucess
-	return nil
+	// Return any errors
+	return errs
 }

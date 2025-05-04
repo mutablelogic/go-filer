@@ -5,7 +5,6 @@ import (
 	"time"
 
 	// Packages
-
 	client "github.com/mutablelogic/go-client"
 	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/feed/schema"
@@ -21,6 +20,7 @@ const (
 	TaskNameRegisterUrl   = "register_url"
 	TaskNameFetchFeed     = "fetch_feed"
 	TimerNameRefreshFeeds = "refresh_feeds"
+	TaskNameFetchItem     = "fetch_item"
 )
 
 type taskrunner struct {
@@ -48,6 +48,7 @@ func NewTaskRunner(ctx context.Context, feed filer.Feed, queue server.PGQueue) (
 	taskMap := map[string]func(context.Context, any) error{
 		TaskNameRegisterUrl: self.RegisterUrl,
 		TaskNameFetchFeed:   self.FetchFeed,
+		TaskNameFetchItem:   self.FetchItem,
 	}
 
 	for task, fn := range taskMap {

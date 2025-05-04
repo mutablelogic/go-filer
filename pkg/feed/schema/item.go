@@ -82,6 +82,29 @@ func (i ItemList) String() string {
 }
 
 //////////////////////////////////////////////////////////////////////////////////
+// SELECTOR
+
+func (i ItemId) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	if i.Guid == "" {
+		return "", httpresponse.ErrBadRequest.With("Missing guid")
+	} else {
+		bind.Set("guid", i.Guid)
+	}
+	if i.Feed == 0 {
+		return "", httpresponse.ErrBadRequest.With("Missing feed")
+	} else {
+		bind.Set("feed", i.Feed)
+	}
+
+	switch op {
+	case pg.Get:
+		return itemGet, nil
+	default:
+		return "", httpresponse.ErrBadRequest.Withf("ItemId: Invalid operation %q", op)
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////
 // READER
 
 func (i *Item) Scan(row pg.Row) error {
@@ -174,6 +197,8 @@ func (i RSSItem) Update(bind *pg.Bind) error {
 func bootstrapItem(ctx context.Context, conn pg.Conn) error {
 	q := []string{
 		itemCreateTable,
+		itemUpsertTriggerFunction,
+		itemUpsertTrigger,
 	}
 	for _, query := range q {
 		if err := conn.Exec(ctx, query); err != nil {
@@ -228,4 +253,34 @@ const (
 		RETURNING
 			"guid", "feed",  "hash", "ts", "title", "pubdate", "author", "link", "desc", "type", "duration", "block", "meta"
 	`
+	itemUpsertTriggerFunction = `
+		CREATE OR REPLACE FUNCTION ${"schema"}.item_upsert() RETURNS TRIGGER AS $$
+		DECLARE
+        	payload JSONB;		
+		BEGIN
+			-- Create a JSON object containing only guid and feed
+            payload := jsonb_build_object(
+                'guid', NEW.guid,
+                'feed', NEW.feed
+            );
+			-- Insert the payload into the queue
+			PERFORM ${"pgqueue_schema"}.queue_insert(${'ns'}, ${'taskname_fetch_item'}, payload, NULL);
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql
+	`
+	itemUpsertTrigger = `
+		CREATE OR REPLACE TRIGGER 
+			item_upsert AFTER INSERT OR UPDATE ON ${"schema"}."item"
+		FOR EACH ROW EXECUTE PROCEDURE
+			${"schema"}.item_upsert() 
+	`
+	itemSelect = `
+		SELECT
+			"guid", "feed",  "hash", "ts", "title", "pubdate", "author", "link", "desc", "type", "duration", "block", "meta"		
+		FROM
+			${"schema"}."item"
+    `
+	itemGet  = feedSelect + `WHERE "guid" = @guid AND "feed" = @feed`
+	itemList = feedSelect + `${where} ${orderby}`
 )
