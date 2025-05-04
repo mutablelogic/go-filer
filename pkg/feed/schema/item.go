@@ -281,6 +281,6 @@ const (
 		FROM
 			${"schema"}."item"
     `
-	itemGet  = feedSelect + `WHERE "guid" = @guid AND "feed" = @feed`
-	itemList = feedSelect + `${where} ${orderby}`
+	itemGet  = itemSelect + `WHERE "guid" = @guid AND "feed" = @feed`
+	itemList = itemSelect + `${where} ${orderby}`
 )
