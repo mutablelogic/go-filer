@@ -173,6 +173,11 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 		return nil
 	}))
 
+	err = errors.Join(err, provider.Load("llm", "main", func(ctx context.Context, label string, config server.Plugin) error {
+		// Return success
+		return nil
+	}))
+
 	if err != nil {
 		return err
 	}
