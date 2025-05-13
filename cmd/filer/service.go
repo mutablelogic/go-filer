@@ -61,6 +61,12 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 		return err
 	}
 
+	// Get endpoint
+	endpoint, err := app.GetEndpoint()
+	if err != nil {
+		return err
+	}
+
 	// Set the configuration
 	err = errors.Join(err, provider.Load("log", "main", func(ctx context.Context, label string, config server.Plugin) error {
 		logger := config.(*logger.Config)
@@ -70,7 +76,7 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 
 	err = errors.Join(err, provider.Load("httprouter", "main", func(ctx context.Context, label string, config server.Plugin) error {
 		httprouter := config.(*httprouter.Config)
-		httprouter.Prefix = types.NormalisePath(app.GetEndpoint().Path)
+		httprouter.Prefix = types.NormalisePath(endpoint.Path)
 		httprouter.Origin = "*"
 		httprouter.Middleware = []string{"log.main"}
 		return nil
@@ -78,7 +84,7 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 
 	err = errors.Join(err, provider.Load("httpserver", "main", func(ctx context.Context, label string, config server.Plugin) error {
 		httpserver := config.(*httpserver.Config)
-		httpserver.Listen = app.GetEndpoint()
+		httpserver.Listen = endpoint
 
 		// Set router
 		if router, ok := provider.Task(ctx, "httprouter.main").(http.Handler); !ok || router == nil {

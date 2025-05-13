@@ -10,6 +10,7 @@ require (
 	github.com/djthorpe/go-pg v1.0.6
 	github.com/dsoprea/go-exif/v3 v3.0.1
 	github.com/mutablelogic/go-client v1.1.1
+	github.com/mutablelogic/go-llm v0.0.10
 	github.com/mutablelogic/go-media v1.6.13
 	github.com/mutablelogic/go-server v1.5.11
 	github.com/pdfcpu/pdfcpu v0.10.2
@@ -89,7 +90,6 @@ require (
 	github.com/testcontainers/testcontainers-go v0.35.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
-	github.com/yinyin/go-ldap-schema-parser v0.0.0-20190716182935-542aadd3dcb5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.49.0 // indirect
 	go.opentelemetry.io/otel v1.24.0 // indirect
