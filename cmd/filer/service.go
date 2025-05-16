@@ -16,8 +16,8 @@ import (
 
 	// Plugins
 	plugin "github.com/mutablelogic/go-filer"
-	feed "github.com/mutablelogic/go-filer/pkg/feed/config"
 	filer "github.com/mutablelogic/go-filer/pkg/filer/config"
+	llm "github.com/mutablelogic/go-filer/pkg/llm/config"
 	version "github.com/mutablelogic/go-filer/pkg/version"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter/config"
 	httpserver "github.com/mutablelogic/go-server/pkg/httpserver/config"
@@ -158,28 +158,38 @@ func (cmd *ServiceRunCommand) Run(app server.Cmd) error {
 		return nil
 	}))
 
-	err = errors.Join(err, provider.Load("feed", "main", func(ctx context.Context, label string, config server.Plugin) error {
-		feed := config.(*feed.Config)
+	/*
+		err = errors.Join(err, provider.Load("feed", "main", func(ctx context.Context, label string, config server.Plugin) error {
+			feed := config.(*feed.Config)
+
+			// Set router
+			if router, ok := provider.Task(ctx, "httprouter.main").(server.HTTPRouter); !ok || router == nil {
+				return httpresponse.ErrInternalError.With("Invalid router")
+			} else {
+				feed.Router = router
+			}
+
+			// Set queue
+			if queue, ok := provider.Task(ctx, "pgqueue.main").(server.PGQueue); !ok || queue == nil {
+				return httpresponse.ErrInternalError.With("Invalid or missing task queue")
+			} else {
+				feed.Queue = queue
+			}
+
+			// Return success
+			return nil
+		}))
+	*/
+
+	err = errors.Join(err, provider.Load("llm", "main", func(ctx context.Context, label string, config server.Plugin) error {
+		llm := config.(*llm.Config)
 
 		// Set router
 		if router, ok := provider.Task(ctx, "httprouter.main").(server.HTTPRouter); !ok || router == nil {
 			return httpresponse.ErrInternalError.With("Invalid router")
 		} else {
-			feed.Router = router
+			llm.Router = router
 		}
-
-		// Set queue
-		if queue, ok := provider.Task(ctx, "pgqueue.main").(server.PGQueue); !ok || queue == nil {
-			return httpresponse.ErrInternalError.With("Invalid or missing task queue")
-		} else {
-			feed.Queue = queue
-		}
-
-		// Return success
-		return nil
-	}))
-
-	err = errors.Join(err, provider.Load("llm", "main", func(ctx context.Context, label string, config server.Plugin) error {
 		// Return success
 		return nil
 	}))

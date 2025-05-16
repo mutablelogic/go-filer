@@ -7,6 +7,7 @@ import (
 	// Packages
 	feed "github.com/mutablelogic/go-filer/pkg/feed/cmd"
 	filer "github.com/mutablelogic/go-filer/pkg/filer/cmd"
+	llm "github.com/mutablelogic/go-filer/pkg/llm/cmd"
 	cmd "github.com/mutablelogic/go-server/pkg/cmd"
 )
 
@@ -18,6 +19,7 @@ type CLI struct {
 	filer.BucketCommands
 	filer.ObjectCommands
 	feed.UrlCommands
+	llm.ModelCommands
 	VersionCommands
 }
 

@@ -6,7 +6,7 @@ import (
 
 	// Packages
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/djthorpe/go-pg"
+	pg "github.com/djthorpe/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
