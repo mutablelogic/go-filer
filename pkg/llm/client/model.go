@@ -6,7 +6,7 @@ import (
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	schema "github.com/mutablelogic/go-filer/pkg/llm/schema"
-	"github.com/mutablelogic/go-server/pkg/httpresponse"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
