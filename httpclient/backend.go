@@ -12,11 +12,11 @@ import (
 // PUBLIC METHODS
 
 // ListBackends returns a list of backend URLs from the filer API.
-func (c *Client) ListBackends(ctx context.Context) (*schema.ListResponse, error) {
+func (c *Client) ListBackends(ctx context.Context) (*schema.BackendListResponse, error) {
 	req := client.NewRequest()
 
 	// Perform request
-	var response schema.ListResponse
+	var response schema.BackendListResponse
 	if err := c.DoWithContext(ctx, req, &response); err != nil {
 		return nil, err
 	}
