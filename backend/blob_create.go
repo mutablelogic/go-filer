@@ -7,6 +7,7 @@ import (
 	"time"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	blob "gocloud.dev/blob"
@@ -24,10 +25,11 @@ func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectR
 	}
 
 	// Validate the URL matches this backend
-	key := b.Path(u)
+	key := b.Key(u)
 	if key == "" {
 		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
 	}
+	sk := b.storageKey(key)
 
 	// Build metadata, including modtime if set
 	meta := req.Meta
@@ -35,26 +37,26 @@ func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectR
 		if meta == nil {
 			meta = make(schema.ObjectMeta)
 		}
-		meta[AttrLastModified] = req.ModTime.Format(time.RFC3339)
+		meta[filer.AttrLastModified] = req.ModTime.Format(time.RFC3339)
 	}
 
 	// Write the object
-	if w, err := b.bucket.NewWriter(ctx, key, &blob.WriterOptions{
+	if w, err := b.bucket.NewWriter(ctx, sk, &blob.WriterOptions{
 		ContentType: req.ContentType,
 		Metadata:    meta,
 	}); err != nil {
 		return nil, blobErr(err, req.URL)
 	} else if _, err := io.Copy(w, req.Body); err != nil {
 		w.Close()
-		b.bucket.Delete(ctx, key)
+		b.bucket.Delete(ctx, sk)
 		return nil, blobErr(err, req.URL)
 	} else if err := w.Close(); err != nil {
-		b.bucket.Delete(ctx, key)
+		b.bucket.Delete(ctx, sk)
 		return nil, blobErr(err, req.URL)
 	}
 
 	// Get attributes to return
-	attrs, err := b.bucket.Attributes(ctx, key)
+	attrs, err := b.bucket.Attributes(ctx, sk)
 	if err != nil {
 		return nil, blobErr(err, req.URL)
 	}

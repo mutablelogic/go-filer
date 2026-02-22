@@ -27,8 +27,10 @@ type Filer interface {
 	// URL returns the URL for the filer root
 	URL() *url.URL
 
-	// Path returns the path for the filer for a given URL or an empty string if the URL is not handled by this filer
-	Path(url *url.URL) string
+	// Key returns the storage key for a given URL within this filer.
+	// Returns empty string if the URL is not handled by this filer.
+	// Returns "/" for the root of the filer.
+	Key(url *url.URL) string
 
 	// Handles returns true if this filer handles the given URL
 	Handles(url *url.URL) bool
@@ -47,4 +49,7 @@ type Filer interface {
 
 	// Delete objects in the backend (single object or prefix)
 	DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error)
+
+	// Delete a single object from the filer
+	DeleteObject(context.Context, schema.DeleteObjectRequest) (*schema.Object, error)
 }

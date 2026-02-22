@@ -25,19 +25,20 @@ func (b *blobbackend) DeleteObject(ctx context.Context, req schema.DeleteObjectR
 	}
 
 	// Validate the URL matches this backend
-	key := b.Path(u)
+	key := b.Key(u)
 	if key == "" {
 		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
 	}
+	sk := b.storageKey(key)
 
 	// Attributes may not exist, continue with delete
-	attrs, err := b.bucket.Attributes(ctx, key)
+	attrs, err := b.bucket.Attributes(ctx, sk)
 	if err != nil {
 		attrs = nil
 	}
 
 	// Perform delete
-	if err := b.bucket.Delete(ctx, key); err != nil {
+	if err := b.bucket.Delete(ctx, sk); err != nil {
 		return nil, blobErr(err, req.URL)
 	} else if attrs != nil {
 		return b.attrsToObject(req.URL, attrs), nil
@@ -57,8 +58,12 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 		return nil, err
 	}
 
-	// Get the relative path within this backend
-	key := b.Path(u)
+	// Validate the URL matches this backend
+	key := b.Key(u)
+	if key == "" {
+		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
+	}
+	sk := b.storageKey(key)
 
 	// Response
 	response := schema.DeleteObjectsResponse{
@@ -67,8 +72,8 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 
 	// If key is non-empty and doesn't end with /, check if object exists at this exact path
 	// Also check it's not a "phantom directory" (size=0 pseudo-object created by some S3 implementations)
-	if key != "" && !strings.HasSuffix(key, "/") {
-		if attrs, err := b.bucket.Attributes(ctx, key); err == nil {
+	if sk != "" && !strings.HasSuffix(sk, "/") {
+		if attrs, err := b.bucket.Attributes(ctx, sk); err == nil {
 			// If object has content (size > 0), delete just this one regardless of children
 			// If size is 0, it might be a phantom directory - check for children
 			if attrs.Size > 0 {
@@ -82,7 +87,7 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 
 			// Size is 0 - check if there are objects with this key as a prefix
 			iter := b.bucket.List(&blob.ListOptions{
-				Prefix: key + "/",
+				Prefix: sk + "/",
 			})
 			if _, err := iter.Next(ctx); err == io.EOF {
 				// No children - this is a real (empty) object, delete it
@@ -97,13 +102,8 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 		}
 	}
 
-	// Validate this backend handles the URL (key is empty only for root of this backend)
-	if key == "" && u.Host != b.url.Host {
-		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
-	}
-
 	// Object doesn't exist (or key is empty for root), treat as prefix
-	prefix := strings.TrimSuffix(key, "/")
+	prefix := strings.TrimSuffix(sk, "/")
 	if prefix != "" {
 		prefix = prefix + "/"
 	}
@@ -136,11 +136,7 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 			}
 
 			// Build the full URL for the object
-			fullPath := obj.Key
-			if b.prefix != "" {
-				fullPath = b.prefix + "/" + obj.Key
-			}
-			objURL := fmt.Sprintf("%s://%s/%s", b.url.Scheme, b.url.Host, fullPath)
+			objURL := fmt.Sprintf("%s://%s/%s", b.url.Scheme, b.url.Host, obj.Key)
 
 			// Delete the object
 			if err := b.bucket.Delete(ctx, obj.Key); err != nil {

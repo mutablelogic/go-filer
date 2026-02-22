@@ -21,9 +21,9 @@ func (b *blobbackend) GetObject(ctx context.Context, req schema.GetObjectRequest
 	}
 
 	// Validate the URL matches this backend, then get and return attributes
-	if key := b.Path(u); key == "" {
+	if key := b.Key(u); key == "" {
 		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
-	} else if attrs, err := b.bucket.Attributes(ctx, key); err != nil {
+	} else if attrs, err := b.bucket.Attributes(ctx, b.storageKey(key)); err != nil {
 		return nil, blobErr(err, req.URL)
 	} else {
 		return b.attrsToObject(req.URL, attrs), nil

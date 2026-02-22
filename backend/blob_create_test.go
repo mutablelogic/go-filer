@@ -9,6 +9,7 @@ import (
 	"time"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer"
 	"github.com/mutablelogic/go-filer/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,7 +125,7 @@ func TestCreateObject_Mem(t *testing.T) {
 			}
 
 			if !tt.modTime.IsZero() {
-				assert.Equal(tt.modTime.Format(time.RFC3339), obj.Meta[AttrLastModified])
+				assert.Equal(tt.modTime.Format(time.RFC3339), obj.Meta[filer.AttrLastModified])
 			}
 		})
 	}
@@ -134,7 +135,7 @@ func TestCreateObject_File(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	backend, err := NewBlobBackend(ctx, "file://"+tempDir, WithCreateDir())
+	backend, err := NewBlobBackend(ctx, "file://testfiles"+tempDir, WithCreateDir())
 	require.NoError(t, err)
 	defer backend.Close()
 
@@ -168,7 +169,7 @@ func TestCreateObject_File(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
-			reqURL := "file://" + tempDir + "/" + tt.key
+			reqURL := "file://testfiles/" + tt.key
 
 			obj, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
 				URL:         reqURL,
@@ -275,7 +276,7 @@ func TestCreateObject_S3(t *testing.T) {
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 		assert.Equal("test-value", obj.Meta["test-key"])
-		assert.Equal(modTime.Format(time.RFC3339), obj.Meta[AttrLastModified])
+		assert.Equal(modTime.Format(time.RFC3339), obj.Meta[filer.AttrLastModified])
 
 		// Cleanup: delete the test object
 		_, err = backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})

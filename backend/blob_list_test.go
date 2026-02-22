@@ -221,13 +221,13 @@ func TestListObjects_File(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	backend, err := NewBlobBackend(ctx, "file://"+tempDir, WithCreateDir())
+	backend, err := NewBlobBackend(ctx, "file://testfiles"+tempDir, WithCreateDir())
 	require.NoError(t, err)
 	defer backend.Close()
 
 	// Create test files
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "file://" + tempDir + "/test.txt",
+		URL:         "file://testfiles/test.txt",
 		Body:        bytes.NewReader([]byte("hello")),
 		ContentType: "text/plain",
 	})
@@ -238,7 +238,7 @@ func TestListObjects_File(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "file://" + tempDir + "/",
+			URL: "file://testfiles/",
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -249,7 +249,7 @@ func TestListObjects_File(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "file://" + tempDir + "/test.txt",
+			URL: "file://testfiles/test.txt",
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))

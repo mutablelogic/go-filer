@@ -2,25 +2,26 @@ package backend
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 
 	// Packages
 	"github.com/stretchr/testify/assert"
 )
 
-func TestBlobBackendPath(t *testing.T) {
+func TestBlobBackendKey(t *testing.T) {
 	tests := []struct {
 		name       string
 		backendURL string
 		inputURL   string
 		want       string
 	}{
-		// S3 tests
+		// S3 tests (no prefix)
 		{
 			name:       "s3 exact bucket match",
 			backendURL: "s3://mybucket",
 			inputURL:   "s3://mybucket/path/to/file.txt",
-			want:       "path/to/file.txt",
+			want:       "/path/to/file.txt",
 		},
 		{
 			name:       "s3 bucket mismatch",
@@ -38,16 +39,36 @@ func TestBlobBackendPath(t *testing.T) {
 			name:       "s3 root path",
 			backendURL: "s3://mybucket",
 			inputURL:   "s3://mybucket/",
-			want:       "",
+			want:       "/",
 		},
+		{
+			name:       "s3 root no trailing slash",
+			backendURL: "s3://mybucket",
+			inputURL:   "s3://mybucket",
+			want:       "/",
+		},
+
+		// S3 with prefix (prefix as discriminator, stripped in Key)
 		{
 			name:       "s3 with prefix match",
 			backendURL: "s3://mybucket/data",
 			inputURL:   "s3://mybucket/data/file.txt",
-			want:       "file.txt",
+			want:       "/file.txt",
 		},
 		{
-			name:       "s3 with prefix no match",
+			name:       "s3 with prefix root",
+			backendURL: "s3://mybucket/data",
+			inputURL:   "s3://mybucket/data/",
+			want:       "/",
+		},
+		{
+			name:       "s3 with prefix exact",
+			backendURL: "s3://mybucket/data",
+			inputURL:   "s3://mybucket/data",
+			want:       "/",
+		},
+		{
+			name:       "s3 with prefix mismatch",
 			backendURL: "s3://mybucket/data",
 			inputURL:   "s3://mybucket/other/file.txt",
 			want:       "",
@@ -56,39 +77,39 @@ func TestBlobBackendPath(t *testing.T) {
 			name:       "s3 with nested prefix",
 			backendURL: "s3://mybucket/data/subdir",
 			inputURL:   "s3://mybucket/data/subdir/nested/file.txt",
-			want:       "nested/file.txt",
+			want:       "/nested/file.txt",
 		},
 
-		// File tests
+		// File tests (scheme+host matching only, path is bucket root dir)
 		{
-			name:       "file empty host match",
-			backendURL: "file:///tmp/storage",
-			inputURL:   "file:///tmp/storage/myfile.txt",
-			want:       "myfile.txt",
+			name:       "file with name and path",
+			backendURL: "file://mystore/tmp/storage",
+			inputURL:   "file://mystore/test.txt",
+			want:       "/test.txt",
 		},
 		{
-			name:       "file with host match",
-			backendURL: "file://myhost/tmp/storage",
-			inputURL:   "file://myhost/tmp/storage/myfile.txt",
-			want:       "myfile.txt",
-		},
-		{
-			name:       "file host mismatch",
-			backendURL: "file://host1/tmp/storage",
-			inputURL:   "file://host2/tmp/storage/myfile.txt",
-			want:       "",
-		},
-		{
-			name:       "file path prefix mismatch",
-			backendURL: "file:///tmp/storage",
-			inputURL:   "file:///var/data/myfile.txt",
+			name:       "file name mismatch",
+			backendURL: "file://mystore/tmp/storage",
+			inputURL:   "file://other/test.txt",
 			want:       "",
 		},
 		{
 			name:       "file nested path",
-			backendURL: "file:///tmp/storage",
-			inputURL:   "file:///tmp/storage/dir1/dir2/file.txt",
-			want:       "dir1/dir2/file.txt",
+			backendURL: "file://mystore/data/dir",
+			inputURL:   "file://mystore/dir1/dir2/file.txt",
+			want:       "/dir1/dir2/file.txt",
+		},
+		{
+			name:       "file root",
+			backendURL: "file://mystore/data",
+			inputURL:   "file://mystore/",
+			want:       "/",
+		},
+		{
+			name:       "file root no trailing slash",
+			backendURL: "file://mystore/data",
+			inputURL:   "file://mystore",
+			want:       "/",
 		},
 
 		// Mem tests
@@ -96,13 +117,13 @@ func TestBlobBackendPath(t *testing.T) {
 			name:       "mem empty host",
 			backendURL: "mem://",
 			inputURL:   "mem:///path/to/file.txt",
-			want:       "path/to/file.txt",
+			want:       "/path/to/file.txt",
 		},
 		{
 			name:       "mem with host match",
 			backendURL: "mem://testbucket",
 			inputURL:   "mem://testbucket/file.txt",
-			want:       "file.txt",
+			want:       "/file.txt",
 		},
 		{
 			name:       "mem host mismatch",
@@ -111,10 +132,16 @@ func TestBlobBackendPath(t *testing.T) {
 			want:       "",
 		},
 		{
-			name:       "mem with prefix",
+			name:       "mem with prefix match",
 			backendURL: "mem://bucket/prefix",
 			inputURL:   "mem://bucket/prefix/subdir/file.txt",
-			want:       "subdir/file.txt",
+			want:       "/subdir/file.txt",
+		},
+		{
+			name:       "mem with prefix mismatch",
+			backendURL: "mem://bucket/prefix",
+			inputURL:   "mem://bucket/other/file.txt",
+			want:       "",
 		},
 
 		// Edge cases
@@ -124,17 +151,25 @@ func TestBlobBackendPath(t *testing.T) {
 			inputURL:   "",
 			want:       "",
 		},
+
+		// NewFileBackend-style tests (file://name/dir)
 		{
-			name:       "exact prefix match returns empty path",
-			backendURL: "s3://mybucket/data",
-			inputURL:   "s3://mybucket/data",
-			want:       "",
+			name:       "file backend with name and dir",
+			backendURL: "file://mybackend/var/data",
+			inputURL:   "file://mybackend/doc.txt",
+			want:       "/doc.txt",
 		},
 		{
-			name:       "prefix with trailing slash",
-			backendURL: "s3://mybucket/data/",
-			inputURL:   "s3://mybucket/data/file.txt",
-			want:       "file.txt",
+			name:       "file backend root",
+			backendURL: "file://mybackend/var/data",
+			inputURL:   "file://mybackend/",
+			want:       "/",
+		},
+		{
+			name:       "file backend name mismatch",
+			backendURL: "file://mybackend/var/data",
+			inputURL:   "file://other/doc.txt",
+			want:       "",
 		},
 	}
 
@@ -150,7 +185,7 @@ func TestBlobBackendPath(t *testing.T) {
 				opt: &opt{
 					url: backendURL,
 				},
-				prefix: trimPrefix(backendURL.Path),
+				prefix: strings.TrimSuffix(backendURL.Path, "/"),
 			}
 
 			// Parse input URL (handle empty string case)
@@ -160,16 +195,8 @@ func TestBlobBackendPath(t *testing.T) {
 				assert.NoError(err)
 			}
 
-			got := b.Path(inputURL)
+			got := b.Key(inputURL)
 			assert.Equal(tt.want, got)
 		})
 	}
-}
-
-// trimPrefix mimics the prefix logic in NewBlobBackend
-func trimPrefix(path string) string {
-	if len(path) > 0 && path[0] == '/' {
-		return path[1:]
-	}
-	return path
 }

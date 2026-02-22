@@ -102,14 +102,14 @@ func TestDeleteObject_File(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	backend, err := NewBlobBackend(ctx, "file://"+tempDir, WithCreateDir())
+	backend, err := NewBlobBackend(ctx, "file://testfiles"+tempDir, WithCreateDir())
 	require.NoError(t, err)
 	defer backend.Close()
 
 	// Helper to create test files
 	createTestObject := func(t *testing.T, key, content string) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "file://" + tempDir + "/" + key,
+			URL:         "file://testfiles/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
@@ -155,7 +155,7 @@ func TestDeleteObject_File(t *testing.T) {
 
 			tt.setup(t)
 
-			reqURL := "file://" + tempDir + "/" + tt.key
+			reqURL := "file://testfiles/" + tt.key
 			obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
 
 			if tt.wantErr {
@@ -541,7 +541,7 @@ func TestDeleteObjects_File(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	backend, err := NewBlobBackend(ctx, "file://"+tempDir, WithCreateDir())
+	backend, err := NewBlobBackend(ctx, "file://testfiles"+tempDir, WithCreateDir())
 	require.NoError(t, err)
 	defer backend.Close()
 
@@ -549,7 +549,7 @@ func TestDeleteObjects_File(t *testing.T) {
 	files := []string{"a.txt", "b.txt", "dir/c.txt", "dir/d.txt"}
 	for _, f := range files {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "file://" + tempDir + "/" + f,
+			URL:         "file://testfiles/" + f,
 			Body:        strings.NewReader("content"),
 			ContentType: "text/plain",
 		})
@@ -561,7 +561,7 @@ func TestDeleteObjects_File(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL:       "file://" + tempDir + "/dir/",
+			URL:       "file://testfiles/dir/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -569,11 +569,11 @@ func TestDeleteObjects_File(t *testing.T) {
 		assert.Len(resp.Body, 2)
 
 		// Verify deleted
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "file://" + tempDir + "/dir/c.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "file://testfiles/dir/c.txt"})
 		assert.Error(err)
 
 		// Verify root files still exist
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "file://" + tempDir + "/a.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "file://testfiles/a.txt"})
 		assert.NoError(err)
 	})
 }

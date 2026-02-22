@@ -108,14 +108,14 @@ func TestGetObject_File(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	backend, err := NewBlobBackend(ctx, "file://"+tempDir, WithCreateDir())
+	backend, err := NewBlobBackend(ctx, "file://testfiles"+tempDir, WithCreateDir())
 	require.NoError(t, err)
 	defer backend.Close()
 
 	// Create test files
 	createTestObject := func(t *testing.T, key, content string) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "file://" + tempDir + "/" + key,
+			URL:         "file://testfiles/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
@@ -154,7 +154,7 @@ func TestGetObject_File(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			reqURL := "file://" + tempDir + "/" + tt.key
+			reqURL := "file://testfiles/" + tt.key
 			obj, err := backend.GetObject(ctx, schema.GetObjectRequest{URL: reqURL})
 
 			if tt.wantErr {

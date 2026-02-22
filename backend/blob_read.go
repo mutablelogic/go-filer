@@ -22,11 +22,11 @@ func (b *blobbackend) ReadObject(ctx context.Context, req schema.ReadObjectReque
 	}
 
 	// Validate the URL matches this backend, then get and return reader and attributes
-	if key := b.Path(u); key == "" {
+	if key := b.Key(u); key == "" {
 		return nil, nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
-	} else if attrs, err := b.bucket.Attributes(ctx, key); err != nil {
+	} else if attrs, err := b.bucket.Attributes(ctx, b.storageKey(key)); err != nil {
 		return nil, nil, blobErr(err, req.URL)
-	} else if r, err := b.bucket.NewReader(ctx, key, nil); err != nil {
+	} else if r, err := b.bucket.NewReader(ctx, b.storageKey(key), nil); err != nil {
 		return nil, nil, blobErr(err, req.URL)
 	} else {
 		return r, b.attrsToObject(req.URL, attrs), nil

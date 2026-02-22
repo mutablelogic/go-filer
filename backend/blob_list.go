@@ -26,8 +26,12 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 		return nil, err
 	}
 
-	// Get the relative path within this backend
-	key := b.Path(u)
+	// Validate the URL matches this backend
+	key := b.Key(u)
+	if key == "" {
+		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
+	}
+	sk := b.storageKey(key)
 
 	// Response
 	response := schema.ListObjectsResponse{
@@ -36,7 +40,7 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 
 	// If key is non-empty and doesn't end with /, check if object exists at this exact path
 	// Also check it's not a "phantom directory" (size=0 pseudo-object created by some S3 implementations)
-	if key != "" && !strings.HasSuffix(key, "/") {
+	if sk != "" && !strings.HasSuffix(sk, "/") {
 		if obj, err := b.GetObject(ctx, schema.GetObjectRequest{URL: req.URL}); err == nil && obj != nil {
 			// If object has content (size > 0), return just this one regardless of children
 			// If size is 0, it might be a phantom directory - check for children
@@ -47,7 +51,7 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 
 			// Size is 0 - check if there are objects with this key as a prefix
 			iter := b.bucket.List(&blob.ListOptions{
-				Prefix: key + "/",
+				Prefix: sk + "/",
 			})
 			if _, err := iter.Next(ctx); err == io.EOF {
 				// No children - this is a real (empty) object, return it
@@ -58,13 +62,8 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 		}
 	}
 
-	// Validate this backend handles the URL (key is empty only for root of this backend)
-	if key == "" && u.Host != b.url.Host {
-		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
-	}
-
 	// Object doesn't exist (or key is empty for root), treat as prefix
-	prefix := strings.TrimSuffix(key, "/")
+	prefix := strings.TrimSuffix(sk, "/")
 	if prefix != "" {
 		prefix = prefix + "/"
 	}
@@ -93,14 +92,10 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 		}
 
 		// Build the full URL for the object
-		// The obj.Key is relative to the bucket, so we need to add back the backend prefix
-		fullPath := obj.Key
-		if b.prefix != "" {
-			fullPath = b.prefix + "/" + obj.Key
-		}
+		objURL := fmt.Sprintf("%s://%s/%s", b.url.Scheme, b.url.Host, obj.Key)
 
 		o := schema.Object{
-			URL:     fmt.Sprintf("%s://%s/%s", b.url.Scheme, b.url.Host, fullPath),
+			URL:     objURL,
 			Size:    obj.Size,
 			ModTime: obj.ModTime,
 		}
