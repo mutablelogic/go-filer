@@ -11,13 +11,11 @@ import (
 
 	// Packages
 	kong "github.com/alecthomas/kong"
+	version "github.com/mutablelogic/go-filer/pkg/version"
 	server "github.com/mutablelogic/go-server"
 	logger "github.com/mutablelogic/go-server/pkg/logger"
 	terminal "golang.org/x/term"
 )
-
-// version is set at build time via -ldflags "-X main.version=..."
-var version = "v0.0.0"
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
@@ -61,7 +59,7 @@ func main() {
 	ctx := kong.Parse(cli,
 		kong.Name(execName),
 		kong.Description("filer file storage command-line interface"),
-		kong.Vars{"version": version},
+		kong.Vars{"version": string(version.JSON(execName))},
 		kong.UsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true}),
 	)
