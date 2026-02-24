@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,8 @@ func TestDeleteObject_Mem(t *testing.T) {
 	// Helper to create test objects
 	createTestObject := func(t *testing.T, key, content string) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/" + key,
+			Name:        "testbucket",
+			Path:        "/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
@@ -33,7 +35,8 @@ func TestDeleteObject_Mem(t *testing.T) {
 	tests := []struct {
 		name        string
 		setup       func(t *testing.T)
-		url         string
+		reqName     string
+		reqPath     string
 		wantSize    int64
 		wantErr     bool
 		errContains string
@@ -43,7 +46,8 @@ func TestDeleteObject_Mem(t *testing.T) {
 			setup: func(t *testing.T) {
 				createTestObject(t, "to-delete.txt", "delete me")
 			},
-			url:      "mem://testbucket/to-delete.txt",
+			reqName:  "testbucket",
+			reqPath:  "/to-delete.txt",
 			wantSize: 9,
 		},
 		{
@@ -51,20 +55,23 @@ func TestDeleteObject_Mem(t *testing.T) {
 			setup: func(t *testing.T) {
 				createTestObject(t, "subdir/nested-delete.txt", "nested content")
 			},
-			url:      "mem://testbucket/subdir/nested-delete.txt",
+			reqName:  "testbucket",
+			reqPath:  "/subdir/nested-delete.txt",
 			wantSize: 14,
 		},
 		{
 			name:        "delete non-existent file",
 			setup:       func(t *testing.T) {},
-			url:         "mem://testbucket/notfound.txt",
+			reqName:     "testbucket",
+			reqPath:     "/notfound.txt",
 			wantErr:     true,
 			errContains: "not found",
 		},
 		{
 			name:        "wrong bucket",
 			setup:       func(t *testing.T) {},
-			url:         "mem://otherbucket/file.txt",
+			reqName:     "otherbucket",
+			reqPath:     "/file.txt",
 			wantErr:     true,
 			errContains: "not handled",
 		},
@@ -76,7 +83,7 @@ func TestDeleteObject_Mem(t *testing.T) {
 
 			tt.setup(t)
 
-			obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: tt.url})
+			obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: tt.reqName, Path: tt.reqPath})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -87,11 +94,12 @@ func TestDeleteObject_Mem(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(tt.url, obj.URL)
+			assert.Equal(tt.reqName, obj.Name)
+			assert.Equal(tt.reqPath, obj.Path)
 			assert.Equal(tt.wantSize, obj.Size)
 
 			// Verify the object no longer exists
-			_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: tt.url})
+			_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: tt.reqName, Path: tt.reqPath})
 			assert.Error(err)
 			assert.Contains(err.Error(), "not found")
 		})
@@ -109,7 +117,9 @@ func TestDeleteObject_File(t *testing.T) {
 	// Helper to create test files
 	createTestObject := func(t *testing.T, key, content string) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "file://testfiles/" + key,
+			Name: "testfiles",
+
+			Path:        "/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
@@ -156,7 +166,8 @@ func TestDeleteObject_File(t *testing.T) {
 			tt.setup(t)
 
 			reqURL := "file://testfiles/" + tt.key
-			obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
+			_ = reqURL
+			obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testfiles", Path: "/" + tt.key})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -167,11 +178,12 @@ func TestDeleteObject_File(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(reqURL, obj.URL)
+			assert.Equal("testfiles", obj.Name)
+			assert.Equal("/"+tt.key, obj.Path)
 			assert.Equal(tt.wantSize, obj.Size)
 
 			// Verify the file no longer exists
-			_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: reqURL})
+			_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/" + tt.key})
 			assert.Error(err)
 			assert.Contains(err.Error(), "not found")
 		})
@@ -195,35 +207,43 @@ func TestDeleteObject_S3(t *testing.T) {
 		require := require.New(t)
 
 		// Generate unique key for this test run
+		bURL, _ := url.Parse(bucketURL)
 		testKey := "delete-test-" + time.Now().Format("20060102-150405") + ".txt"
 		reqURL := bucketURL + "/" + testKey
+		_ = reqURL
+		reqPath := bURL.Path + "/" + testKey
 
 		// Create test object first
 		content := "hello from S3 DeleteObject test"
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         reqURL,
+			Name:        bURL.Host,
+			Path:        reqPath,
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
 		require.NoError(err)
 
 		// Delete the object
-		obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
+		obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: bURL.Host, Path: reqPath})
 		require.NoError(err)
 
-		assert.Equal(reqURL, obj.URL)
+		assert.Equal(bURL.Host, obj.Name)
+		assert.Equal("/"+testKey, obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 
 		// Verify the object no longer exists
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: reqURL})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: bURL.Host, Path: reqPath})
 		assert.Error(err)
 	})
 
 	t.Run("delete non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
+		bURL2, _ := url.Parse(bucketURL)
 		nonExistentURL := bucketURL + "/non-existent-delete-" + time.Now().Format("20060102-150405") + ".txt"
-		_, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: nonExistentURL})
+		nonExistentPath := bURL2.Path + "/non-existent-delete-" + time.Now().Format("20060102-150405") + ".txt"
+		_, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: bURL2.Host, Path: nonExistentPath})
+		_ = nonExistentURL
 
 		// S3 may or may not return an error for deleting non-existent objects
 		// Some implementations are idempotent
@@ -245,29 +265,29 @@ func TestDeleteObject_VerifyGone(t *testing.T) {
 		require := require.New(t)
 
 		// Create object
-		reqURL := "mem://testbucket/verify-gone.txt"
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         reqURL,
+			Name:        "testbucket",
+			Path:        "/verify-gone.txt",
 			Body:        strings.NewReader("test content"),
 			ContentType: "text/plain",
 		})
 		require.NoError(err)
 
 		// Verify it exists
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: reqURL})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/verify-gone.txt"})
 		require.NoError(err)
 
 		// Delete it
-		_, err = backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
+		_, err = backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testbucket", Path: "/verify-gone.txt"})
 		require.NoError(err)
 
 		// Verify GetObject fails
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: reqURL})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/verify-gone.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 
 		// Verify ReadObject fails
-		_, _, err = backend.ReadObject(ctx, schema.ReadObjectRequest{URL: reqURL})
+		_, _, err = backend.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/verify-gone.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -285,9 +305,9 @@ func TestDeleteObject_ReturnsMetadata(t *testing.T) {
 		require := require.New(t)
 
 		// Create object with metadata
-		reqURL := "mem://testbucket/with-meta.txt"
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         reqURL,
+			Name:        "testbucket",
+			Path:        "/with-meta.txt",
 			Body:        strings.NewReader("content with metadata"),
 			ContentType: "text/plain",
 			Meta:        schema.ObjectMeta{"author": "test", "version": "1"},
@@ -295,10 +315,11 @@ func TestDeleteObject_ReturnsMetadata(t *testing.T) {
 		require.NoError(err)
 
 		// Delete and check returned metadata
-		obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
+		obj, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testbucket", Path: "/with-meta.txt"})
 		require.NoError(err)
 
-		assert.Equal(reqURL, obj.URL)
+		assert.Equal("testbucket", obj.Name)
+		assert.Equal("/with-meta.txt", obj.Path)
 		assert.Equal(int64(21), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 		assert.Equal("test", obj.Meta["author"])
@@ -329,7 +350,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		}
 		for _, f := range files {
 			_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-				URL:         "mem://testbucket/" + f,
+				Name: "testbucket",
+
+				Path:        "/" + f,
 				Body:        strings.NewReader("content of " + f),
 				ContentType: "text/plain",
 			})
@@ -346,19 +369,22 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		defer backend.Close()
 
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL: "mem://testbucket/file1.txt",
+			Name: "testbucket",
+
+			Path: "/file1.txt",
 		})
 		require.NoError(err)
 
 		assert.Len(resp.Body, 1)
-		assert.Equal("mem://testbucket/file1.txt", resp.Body[0].URL)
+		assert.Equal("testbucket", resp.Body[0].Name)
+		assert.Equal("/file1.txt", resp.Body[0].Path)
 
 		// Verify deleted
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/file1.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/file1.txt"})
 		assert.Error(err)
 
 		// Verify others still exist
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/file2.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/file2.txt"})
 		assert.NoError(err)
 	})
 
@@ -372,7 +398,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		// Delete "subdir" without trailing slash - no object named "subdir" exists,
 		// so it should treat it as a prefix and delete subdir/* recursively
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL:       "mem://testbucket/subdir",
+			Name: "testbucket",
+
+			Path:      "/subdir",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -381,13 +409,13 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		assert.Len(resp.Body, 3)
 
 		// Verify all subdir files deleted
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/nested1.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/nested1.txt"})
 		assert.Error(err)
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/deep/file.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/deep/file.txt"})
 		assert.Error(err)
 
 		// Verify root files still exist
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/file1.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/file1.txt"})
 		assert.NoError(err)
 	})
 
@@ -400,7 +428,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 
 		// Create an object called "subdir" (no extension) alongside the subdir/ prefix
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/subdir",
+			Name: "testbucket",
+
+			Path:        "/subdir",
 			Body:        strings.NewReader("i am a file named subdir"),
 			ContentType: "text/plain",
 		})
@@ -408,20 +438,23 @@ func TestDeleteObjects_Mem(t *testing.T) {
 
 		// Delete "subdir" without trailing slash - object exists, so delete just that
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL: "mem://testbucket/subdir",
+			Name: "testbucket",
+
+			Path: "/subdir",
 		})
 		require.NoError(err)
 
 		// Should delete just the one object
 		assert.Len(resp.Body, 1)
-		assert.Equal("mem://testbucket/subdir", resp.Body[0].URL)
+		assert.Equal("testbucket", resp.Body[0].Name)
+		assert.Equal("/subdir", resp.Body[0].Path)
 
 		// Verify the object is deleted
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir"})
 		assert.Error(err)
 
 		// Verify subdir/* files still exist
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/nested1.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/nested1.txt"})
 		assert.NoError(err)
 	})
 
@@ -433,7 +466,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		defer backend.Close()
 
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL:       "mem://testbucket/subdir/",
+			Name: "testbucket",
+
+			Path:      "/subdir/",
 			Recursive: false,
 		})
 		require.NoError(err)
@@ -442,13 +477,13 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		assert.Len(resp.Body, 2)
 
 		// Verify nested files deleted
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/nested1.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/nested1.txt"})
 		assert.Error(err)
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/nested2.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/nested2.txt"})
 		assert.Error(err)
 
 		// Verify deep file still exists
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/deep/file.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/deep/file.txt"})
 		assert.NoError(err)
 	})
 
@@ -460,7 +495,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		defer backend.Close()
 
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL:       "mem://testbucket/subdir/",
+			Name: "testbucket",
+
+			Path:      "/subdir/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -469,15 +506,15 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		assert.Len(resp.Body, 3)
 
 		// Verify all subdir files deleted
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/nested1.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/nested1.txt"})
 		assert.Error(err)
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/nested2.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/nested2.txt"})
 		assert.Error(err)
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/subdir/deep/file.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/subdir/deep/file.txt"})
 		assert.Error(err)
 
 		// Verify root files still exist
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/file1.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/file1.txt"})
 		assert.NoError(err)
 	})
 
@@ -489,7 +526,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		defer backend.Close()
 
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL:       "mem://testbucket/",
+			Name: "testbucket",
+
+			Path:      "/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -499,7 +538,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 
 		// Verify all deleted
 		listResp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/",
+			Name: "testbucket",
+
+			Path:      "/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -515,7 +556,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		defer backend.Close()
 
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL:       "mem://emptybucket/",
+			Name: "emptybucket",
+
+			Path:      "/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -530,7 +573,9 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		defer backend.Close()
 
 		_, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL: "mem://otherbucket/file.txt",
+			Name: "otherbucket",
+
+			Path: "/file.txt",
 		})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not handled")
@@ -549,7 +594,9 @@ func TestDeleteObjects_File(t *testing.T) {
 	files := []string{"a.txt", "b.txt", "dir/c.txt", "dir/d.txt"}
 	for _, f := range files {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "file://testfiles/" + f,
+			Name: "testfiles",
+
+			Path:        "/" + f,
 			Body:        strings.NewReader("content"),
 			ContentType: "text/plain",
 		})
@@ -561,7 +608,9 @@ func TestDeleteObjects_File(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
-			URL:       "file://testfiles/dir/",
+			Name: "testfiles",
+
+			Path:      "/dir/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -569,11 +618,11 @@ func TestDeleteObjects_File(t *testing.T) {
 		assert.Len(resp.Body, 2)
 
 		// Verify deleted
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "file://testfiles/dir/c.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/dir/c.txt"})
 		assert.Error(err)
 
 		// Verify root files still exist
-		_, err = backend.GetObject(ctx, schema.GetObjectRequest{URL: "file://testfiles/a.txt"})
+		_, err = backend.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/a.txt"})
 		assert.NoError(err)
 	})
 }
@@ -598,11 +647,13 @@ func TestDeleteObjects_S3(t *testing.T) {
 		prefix := "deleteobjects-test-" + time.Now().Format("20060102-150405")
 		fileURLs := make([]string, 3)
 
+		s3bURL, _ := url.Parse(bucketURL)
 		// Create test objects
 		for i := 0; i < 3; i++ {
 			fileURLs[i] = bucketURL + "/" + prefix + "/" + fmt.Sprintf("file%d.txt", i)
 			_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-				URL:         fileURLs[i],
+				Name:        s3bURL.Host,
+				Path:        s3bURL.Path + "/" + prefix + "/" + fmt.Sprintf("file%d.txt", i),
 				Body:        strings.NewReader("test content"),
 				ContentType: "text/plain",
 			})
@@ -614,8 +665,12 @@ func TestDeleteObjects_S3(t *testing.T) {
 
 		// Delete each file individually (more reliable than prefix delete on some S3-compatible services)
 		deletedCount := 0
-		for _, fileURL := range fileURLs {
-			_, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: fileURL})
+		for i, fileURL := range fileURLs {
+			_ = fileURL
+			_, err := backend.DeleteObject(ctx, schema.DeleteObjectRequest{
+				Name: s3bURL.Host,
+				Path: s3bURL.Path + "/" + prefix + "/" + fmt.Sprintf("file%d.txt", i),
+			})
 			if err == nil {
 				deletedCount++
 			}
@@ -625,7 +680,8 @@ func TestDeleteObjects_S3(t *testing.T) {
 		// Verify all deleted with retry for eventual consistency
 		s3Retry(t, 5, func() error {
 			listResp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-				URL:       bucketURL + "/" + prefix + "/",
+				Name:      s3bURL.Host,
+				Path:      s3bURL.Path + "/" + prefix + "/",
 				Recursive: true,
 			})
 			if err != nil {

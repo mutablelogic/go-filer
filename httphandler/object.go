@@ -6,45 +6,82 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strings"
 
 	// Packages
-	filer "github.com/mutablelogic/go-filer"
+	manager "github.com/mutablelogic/go-filer/manager"
 	schema "github.com/mutablelogic/go-filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	openapi "github.com/mutablelogic/go-server/pkg/openapi/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
+// HANDLER FUNCTIONS
+
+// Path: /{name}
+// GET lists objects at the backend root.
+func ObjectListHandler(mgr *manager.Manager) (string, http.HandlerFunc, *openapi.PathItem) {
+	return "/{name}", func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				_ = objectList(w, r, mgr)
+			default:
+				_ = httpresponse.Error(w, httpresponse.Err(http.StatusMethodNotAllowed), r.Method)
+			}
+		}, types.Ptr(openapi.PathItem{
+			Get: &openapi.Operation{
+				Description: "List objects at the backend root",
+			},
+		})
+}
+
+// Path: /{name}/{path...}
+// GET downloads a file, HEAD returns metadata, PUT creates/replaces, DELETE removes.
+func ObjectHandler(mgr *manager.Manager) (string, http.HandlerFunc, *openapi.PathItem) {
+	return "/{name}/{path...}", func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				_ = objectGet(w, r, mgr)
+			case http.MethodHead:
+				_ = objectHead(w, r, mgr)
+			case http.MethodPut:
+				_ = objectPut(w, r, mgr)
+			case http.MethodDelete:
+				_ = objectDelete(w, r, mgr)
+			default:
+				_ = httpresponse.Error(w, httpresponse.Err(http.StatusMethodNotAllowed), r.Method)
+			}
+		}, types.Ptr(openapi.PathItem{
+			Get: &openapi.Operation{
+				Description: "Download a file",
+			},
+			Head: &openapi.Operation{
+				Description: "Get file metadata without body",
+			},
+			Put: &openapi.Operation{
+				Description: "Create or replace a file",
+			},
+			Delete: &openapi.Operation{
+				Description: "Delete a file or series of files",
+			},
+		})
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// objectList handles GET requests to list objects at a URL path.
-// The path is constructed from the request path: /api/filer/{scheme}/{host}{path...}
-// Examples:
-//
-//	/api/filer/file/media        → file://media/
-//	/api/filer/file/media/podcasts → file://media/podcasts
-func objectList(w http.ResponseWriter, r *http.Request, manager *filer.Manager, prefix string) error {
-	// Parse query parameters into request struct
+func objectList(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
 	var request schema.ListObjectsRequest
 	if err := httprequest.Query(r.URL.Query(), &request); err != nil {
 		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
 	}
 
-	// Set the URL with query parameters
-	u := url.URL{
-		Scheme:   r.PathValue("scheme"),
-		Host:     r.PathValue("host"),
-		Path:     r.PathValue("path"),
-		RawQuery: r.URL.RawQuery,
-	}
-	request.URL = u.String()
+	request.Name = r.PathValue("name")
 
-	// List objects
-	response, err := manager.ListObjects(r.Context(), request)
+	response, err := mgr.ListObjects(r.Context(), request)
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
@@ -52,29 +89,38 @@ func objectList(w http.ResponseWriter, r *http.Request, manager *filer.Manager, 
 	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), response)
 }
 
-// objectPut handles PUT requests to create or replace a file at a URL path.
-// The path is constructed from the request path: /api/filer/{scheme}/{host}{path...}
-func objectPut(w http.ResponseWriter, r *http.Request, manager *filer.Manager, prefix string) error {
-	scheme := r.PathValue("scheme")
-	host := r.PathValue("host")
-	pathValue := r.PathValue("path")
-
-	// Build the target URL
-	u := url.URL{
-		Scheme:   scheme,
-		Host:     host,
-		Path:     pathValue,
-		RawQuery: r.URL.RawQuery,
+func objectPut(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
+	req := schema.CreateObjectRequest{
+		Name: r.PathValue("name"),
+		Path: "/" + r.PathValue("path"),
+		Body: r.Body,
 	}
 
-	// Create the object
-	obj, err := manager.CreateObject(r.Context(), schema.CreateObjectRequest{
-		URL:  u.String(),
-		Body: r.Body,
-	})
+	// Forward Content-Type if provided
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		req.ContentType = ct
+	}
+
+	// Forward Last-Modified if provided
+	if lm := r.Header.Get("Last-Modified"); lm != "" {
+		if t, err := http.ParseTime(lm); err == nil {
+			req.ModTime = t
+		}
+	}
+
+	// Forward X-Meta-{key} headers as user-defined metadata (lowercased for S3 compatibility)
+	for key, vals := range r.Header {
+		if after, ok := strings.CutPrefix(key, schema.ObjectMetaKeyPrefix); ok && len(vals) > 0 {
+			if req.Meta == nil {
+				req.Meta = make(schema.ObjectMeta)
+			}
+			req.Meta[strings.ToLower(after)] = vals[0]
+		}
+	}
+
+	obj, err := mgr.CreateObject(r.Context(), req)
 	if err != nil {
-		// Check if the error is due to trying to overwrite a directory
-		if strings.Contains(err.Error(), "is a directory") {
+		if strings.Contains(err.Error(), "is a directory") || strings.Contains(err.Error(), "file exists") {
 			return httpresponse.Error(w, httpresponse.ErrBadRequest.With("cannot overwrite directory with file"))
 		}
 		return httpresponse.Error(w, err)
@@ -83,24 +129,25 @@ func objectPut(w http.ResponseWriter, r *http.Request, manager *filer.Manager, p
 	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), obj)
 }
 
-// objectDelete handles DELETE requests to delete a file at a URL path.
-// The path is constructed from the request path: /api/filer/{scheme}/{host}{path...}
-func objectDelete(w http.ResponseWriter, r *http.Request, manager *filer.Manager, prefix string) error {
-	scheme := r.PathValue("scheme")
-	host := r.PathValue("host")
-	pathValue := r.PathValue("path")
+func objectDelete(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
+	var request schema.DeleteObjectsRequest
+	if err := httprequest.Query(r.URL.Query(), &request); err != nil {
+		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+	}
+	request.Name = r.PathValue("name")
+	request.Path = "/" + r.PathValue("path")
 
-	// Build the target URL
-	u := url.URL{
-		Scheme:   scheme,
-		Host:     host,
-		Path:     pathValue,
-		RawQuery: r.URL.RawQuery,
+	if request.Recursive {
+		resp, err := mgr.DeleteObjects(r.Context(), request)
+		if err != nil {
+			return httpresponse.Error(w, err)
+		}
+		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
 	}
 
-	// Delete the object
-	obj, err := manager.DeleteObject(r.Context(), schema.DeleteObjectRequest{
-		URL: u.String(),
+	obj, err := mgr.DeleteObject(r.Context(), schema.DeleteObjectRequest{
+		Name: request.Name,
+		Path: request.Path,
 	})
 	if err != nil {
 		return httpresponse.Error(w, err)
@@ -109,121 +156,80 @@ func objectDelete(w http.ResponseWriter, r *http.Request, manager *filer.Manager
 	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), obj)
 }
 
-// objectHead handles HEAD requests to get file metadata without downloading the body.
-// It sets Content-Type, Content-Length, Last-Modified, and X-Object-Meta headers.
-func objectHead(w http.ResponseWriter, r *http.Request, manager *filer.Manager, prefix string) error {
-	scheme := r.PathValue("scheme")
-	host := r.PathValue("host")
+func objectHead(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
 	pathValue := r.PathValue("path")
-
-	// Build the target URL
-	u := url.URL{
-		Scheme:   scheme,
-		Host:     host,
-		Path:     pathValue,
-		RawQuery: r.URL.RawQuery,
-	}
-
-	// Read the object metadata (without reading the body)
-	reader, obj, err := manager.ReadObject(r.Context(), schema.ReadObjectRequest{
-		URL: u.String(),
+	obj, err := mgr.GetObject(r.Context(), schema.GetObjectRequest{
+		Name: r.PathValue("name"),
+		Path: "/" + pathValue,
 	})
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
-	defer reader.Close()
 
-	// Detect content type from file extension
 	contentType := mime.TypeByExtension(filepath.Ext(pathValue))
 	if contentType == "" {
 		contentType = types.ContentTypeBinary
 	}
 
-	// Set headers
 	w.Header().Set(types.ContentTypeHeader, contentType)
 	if obj.Size >= 0 {
 		w.Header().Set(types.ContentLengthHeader, fmt.Sprint(obj.Size))
 	}
 	w.Header().Set(types.ContentModifiedHeader, obj.ModTime.Format(http.TimeFormat))
 
-	// Add object metadata as JSON in custom header
 	if metaJSON, err := json.Marshal(obj); err == nil {
 		w.Header().Set(schema.ObjectMetaHeader, string(metaJSON))
 	}
 
 	w.WriteHeader(http.StatusOK)
-
-	// No body for HEAD request
 	return nil
 }
 
-// objectGet handles GET requests to download a single file.
-// It detects the content type and includes object metadata in headers.
-func objectGet(w http.ResponseWriter, r *http.Request, manager *filer.Manager, prefix string) error {
-	scheme := r.PathValue("scheme")
-	host := r.PathValue("host")
+func objectGet(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
 	pathValue := r.PathValue("path")
-
-	// Build the target URL
-	u := url.URL{
-		Scheme:   scheme,
-		Host:     host,
-		Path:     pathValue,
-		RawQuery: r.URL.RawQuery,
-	}
-
-	// Read the object
-	reader, obj, err := manager.ReadObject(r.Context(), schema.ReadObjectRequest{
-		URL: u.String(),
+	reader, obj, err := mgr.ReadObject(r.Context(), schema.ReadObjectRequest{
+		Name: r.PathValue("name"),
+		Path: "/" + pathValue,
 	})
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
 	defer reader.Close()
 
-	// Detect content type by reading first 512 bytes
 	buffer := make([]byte, 512)
 	n, err := io.ReadFull(reader, buffer)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return httpresponse.Error(w, err)
 	}
 
-	// Detect content type from the buffer
 	contentType := http.DetectContentType(buffer[:n])
-
-	// If detection failed or returned generic type, try file extension
 	if contentType == types.ContentTypeBinary {
 		if extType := mime.TypeByExtension(filepath.Ext(pathValue)); extType != "" {
 			contentType = extType
 		}
 	}
 
-	// Set headers
 	w.Header().Set(types.ContentTypeHeader, contentType)
 	if obj.Size >= 0 {
 		w.Header().Set(types.ContentLengthHeader, fmt.Sprint(obj.Size))
 	}
 	w.Header().Set(types.ContentModifiedHeader, obj.ModTime.Format(http.TimeFormat))
 
-	// Add object metadata as JSON in custom header
 	if metaJSON, err := json.Marshal(obj); err == nil {
 		w.Header().Set(schema.ObjectMetaHeader, string(metaJSON))
 	}
 
 	w.WriteHeader(http.StatusOK)
 
-	// Write the buffered bytes first
 	if n > 0 {
 		if _, err := w.Write(buffer[:n]); err != nil {
 			return err
 		}
 	}
 
-	// Stream the rest of the file
 	if _, err := io.Copy(w, reader); err != nil {
 		return err
 	}
 
-	// Return success
 	return nil
 }

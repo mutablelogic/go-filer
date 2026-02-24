@@ -3,7 +3,6 @@ package filer
 import (
 	"context"
 	"io"
-	"net/url"
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/schema"
@@ -24,16 +23,13 @@ const (
 type Filer interface {
 	io.Closer
 
-	// URL returns the URL for the filer root
-	URL() *url.URL
+	// Name returns the name of the filer backend
+	Name() string
 
-	// Key returns the storage key for a given URL within this filer.
-	// Returns empty string if the URL is not handled by this filer.
-	// Returns "/" for the root of the filer.
-	Key(url *url.URL) string
-
-	// Handles returns true if this filer handles the given URL
-	Handles(url *url.URL) bool
+	// Key returns the storage key for a given path within this filer.
+	// Returns empty string if the path is not handled by this filer (e.g., prefix mismatch).
+	// Returns "/" for the root.
+	Key(path string) string
 
 	// Create object in the filer
 	CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error)

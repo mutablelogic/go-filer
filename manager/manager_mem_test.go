@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -41,8 +40,8 @@ func Test_ManagerMem_MultipleBackends(t *testing.T) {
 
 	backends := mgr.Backends()
 	assert.Len(backends, 2)
-	assert.Contains(backends, "mem://bucket1")
-	assert.Contains(backends, "mem://bucket2")
+	assert.Contains(backends, "bucket1")
+	assert.Contains(backends, "bucket2")
 }
 
 func Test_ManagerMem_Close(t *testing.T) {
@@ -67,20 +66,11 @@ func Test_ManagerMem_Key(t *testing.T) {
 	assert.NoError(err)
 	defer mgr.Close()
 
-	// Matching URL
-	u, _ := url.Parse("mem://testbucket/somefile.txt")
-	key := mgr.Key(u)
-	assert.Equal("/somefile.txt", key)
+	// Matching backend and path
+	assert.Equal("/somefile.txt", mgr.Key("testbucket", "/somefile.txt"))
 
-	// Non-matching URL (wrong host)
-	u2, _ := url.Parse("mem://otherbucket/somefile.txt")
-	key2 := mgr.Key(u2)
-	assert.Equal("", key2)
-
-	// Non-matching URL (wrong scheme)
-	u3, _ := url.Parse("file://testbucket/somefile.txt")
-	key3 := mgr.Key(u3)
-	assert.Equal("", key3)
+	// No backend with this name
+	assert.Equal("", mgr.Key("otherbucket", "/somefile.txt"))
 }
 
 func Test_ManagerMem_Key_MultipleBackends(t *testing.T) {
@@ -95,16 +85,13 @@ func Test_ManagerMem_Key_MultipleBackends(t *testing.T) {
 	defer mgr.Close()
 
 	// First backend
-	u1, _ := url.Parse("mem://files/doc.txt")
-	assert.Equal("/doc.txt", mgr.Key(u1))
+	assert.Equal("/doc.txt", mgr.Key("files", "/doc.txt"))
 
 	// Second backend
-	u2, _ := url.Parse("mem://media/video.mp4")
-	assert.Equal("/video.mp4", mgr.Key(u2))
+	assert.Equal("/video.mp4", mgr.Key("media", "/video.mp4"))
 
-	// No match
-	u3, _ := url.Parse("mem://other/file.txt")
-	assert.Equal("", mgr.Key(u3))
+	// No backend with this name
+	assert.Equal("", mgr.Key("other", "/file.txt"))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -119,27 +106,29 @@ func Test_ManagerMem_NoBackendError(t *testing.T) {
 	defer mgr.Close()
 
 	// GetObject with wrong backend
-	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://other/file.txt"})
+	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "other", Path: "/file.txt"})
 	assert.Error(err)
 	assert.Contains(err.Error(), "no backend found")
 
 	// ListObjects with wrong backend
-	_, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{URL: "mem://other/"})
+	_, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{Name: "other", Path: "/"})
 	assert.Error(err)
 
 	// DeleteObject with wrong backend
-	_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: "mem://other/file.txt"})
+	_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "other", Path: "/file.txt"})
 	assert.Error(err)
 
 	// CreateObject with wrong backend
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:  "mem://other/file.txt",
+		Name: "other",
+
+		Path: "/file.txt",
 		Body: strings.NewReader("content"),
 	})
 	assert.Error(err)
 
 	// ReadObject with wrong backend
-	_, _, err = mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://other/file.txt"})
+	_, _, err = mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "other", Path: "/file.txt"})
 	assert.Error(err)
 }
 
@@ -158,12 +147,15 @@ func Test_ManagerMem_CreateObject(t *testing.T) {
 
 		content := "hello from manager"
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/created.txt",
+			Name: "testbucket",
+
+			Path:        "/created.txt",
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
 		assert.NoError(err)
-		assert.Equal("mem://testbucket/created.txt", obj.URL)
+		assert.Equal("testbucket", obj.Name)
+		assert.Equal("/created.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 	})
@@ -173,12 +165,15 @@ func Test_ManagerMem_CreateObject(t *testing.T) {
 
 		content := "nested content"
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/subdir/nested/file.txt",
+			Name: "testbucket",
+
+			Path:        "/subdir/nested/file.txt",
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
 		assert.NoError(err)
-		assert.Equal("mem://testbucket/subdir/nested/file.txt", obj.URL)
+		assert.Equal("testbucket", obj.Name)
+		assert.Equal("/subdir/nested/file.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 	})
 
@@ -186,7 +181,9 @@ func Test_ManagerMem_CreateObject(t *testing.T) {
 		assert := assert.New(t)
 
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/with-meta.txt",
+			Name: "testbucket",
+
+			Path:        "/with-meta.txt",
 			Body:        strings.NewReader("metadata test"),
 			ContentType: "text/plain",
 			Meta:        schema.ObjectMeta{"author": "test", "version": "1"},
@@ -201,21 +198,25 @@ func Test_ManagerMem_CreateObject(t *testing.T) {
 
 		// Create initial
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  "mem://testbucket/overwrite.txt",
+			Name: "testbucket",
+
+			Path: "/overwrite.txt",
 			Body: strings.NewReader("original"),
 		})
 		assert.NoError(err)
 
 		// Overwrite
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  "mem://testbucket/overwrite.txt",
+			Name: "testbucket",
+
+			Path: "/overwrite.txt",
 			Body: strings.NewReader("new content"),
 		})
 		assert.NoError(err)
 		assert.Equal(int64(len("new content")), obj.Size)
 
 		// Verify new content
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/overwrite.txt"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/overwrite.txt"})
 		assert.NoError(err)
 		defer reader.Close()
 		data, _ := io.ReadAll(reader)
@@ -236,7 +237,9 @@ func Test_ManagerMem_ReadObject(t *testing.T) {
 	// Create a test object
 	content := "read me via manager"
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "mem://testbucket/readable.txt",
+		Name: "testbucket",
+
+		Path:        "/readable.txt",
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 	})
@@ -245,11 +248,12 @@ func Test_ManagerMem_ReadObject(t *testing.T) {
 	t.Run("read existing object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		reader, obj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/readable.txt"})
+		reader, obj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/readable.txt"})
 		assert.NoError(err)
 		defer reader.Close()
 
-		assert.Equal("mem://testbucket/readable.txt", obj.URL)
+		assert.Equal("testbucket", obj.Name)
+		assert.Equal("/readable.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 
@@ -261,7 +265,7 @@ func Test_ManagerMem_ReadObject(t *testing.T) {
 	t.Run("read non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		_, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/notfound.txt"})
+		_, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/notfound.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -280,7 +284,9 @@ func Test_ManagerMem_GetObject(t *testing.T) {
 	// Create a test object
 	content := "get my metadata"
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "mem://testbucket/getme.txt",
+		Name: "testbucket",
+
+		Path:        "/getme.txt",
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 		Meta:        schema.ObjectMeta{"key": "value"},
@@ -290,9 +296,10 @@ func Test_ManagerMem_GetObject(t *testing.T) {
 	t.Run("get existing object metadata", func(t *testing.T) {
 		assert := assert.New(t)
 
-		obj, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/getme.txt"})
+		obj, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/getme.txt"})
 		assert.NoError(err)
-		assert.Equal("mem://testbucket/getme.txt", obj.URL)
+		assert.Equal("testbucket", obj.Name)
+		assert.Equal("/getme.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 		assert.Equal("value", obj.Meta["key"])
@@ -301,7 +308,7 @@ func Test_ManagerMem_GetObject(t *testing.T) {
 	t.Run("get non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		_, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/notfound.txt"})
+		_, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/notfound.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -327,7 +334,9 @@ func Test_ManagerMem_ListObjects(t *testing.T) {
 	}
 	for _, f := range files {
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/" + f,
+			Name: "testbucket",
+
+			Path:        "/" + f,
 			Body:        strings.NewReader("content of " + f),
 			ContentType: "text/plain",
 		})
@@ -338,11 +347,13 @@ func Test_ManagerMem_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/",
+			Name: "testbucket",
+
+			Path:      "/",
 			Recursive: false,
 		})
 		assert.NoError(err)
-		assert.Equal("mem://testbucket/", resp.URL)
+		assert.Equal("testbucket", resp.Name)
 		// Should have file1.txt, file2.txt, and subdir/ marker
 		assert.GreaterOrEqual(len(resp.Body), 2)
 	})
@@ -351,7 +362,9 @@ func Test_ManagerMem_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/",
+			Name: "testbucket",
+
+			Path:      "/",
 			Recursive: true,
 		})
 		assert.NoError(err)
@@ -362,7 +375,9 @@ func Test_ManagerMem_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/subdir/",
+			Name: "testbucket",
+
+			Path:      "/subdir/",
 			Recursive: false,
 		})
 		assert.NoError(err)
@@ -374,7 +389,9 @@ func Test_ManagerMem_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/subdir/",
+			Name: "testbucket",
+
+			Path:      "/subdir/",
 			Recursive: true,
 		})
 		assert.NoError(err)
@@ -385,18 +402,23 @@ func Test_ManagerMem_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/file1.txt",
+			Name: "testbucket",
+
+			Path: "/file1.txt",
 		})
 		assert.NoError(err)
 		assert.Len(resp.Body, 1)
-		assert.Equal("mem://testbucket/file1.txt", resp.Body[0].URL)
+		assert.Equal("testbucket", resp.Body[0].Name)
+		assert.Equal("/file1.txt", resp.Body[0].Path)
 	})
 
 	t.Run("list empty prefix", func(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/nonexistent/",
+			Name: "testbucket",
+
+			Path: "/nonexistent/",
 		})
 		assert.NoError(err)
 		assert.Len(resp.Body, 0)
@@ -419,19 +441,22 @@ func Test_ManagerMem_DeleteObject(t *testing.T) {
 		// Create object
 		content := "delete me"
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  "mem://testbucket/deleteme.txt",
+			Name: "testbucket",
+
+			Path: "/deleteme.txt",
 			Body: strings.NewReader(content),
 		})
 		assert.NoError(err)
 
 		// Delete it
-		obj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: "mem://testbucket/deleteme.txt"})
+		obj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testbucket", Path: "/deleteme.txt"})
 		assert.NoError(err)
-		assert.Equal("mem://testbucket/deleteme.txt", obj.URL)
+		assert.Equal("testbucket", obj.Name)
+		assert.Equal("/deleteme.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 
 		// Verify it's gone
-		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/deleteme.txt"})
+		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/deleteme.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -439,7 +464,7 @@ func Test_ManagerMem_DeleteObject(t *testing.T) {
 	t.Run("delete non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		_, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: "mem://testbucket/notfound.txt"})
+		_, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testbucket", Path: "/notfound.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -449,17 +474,19 @@ func Test_ManagerMem_DeleteObject(t *testing.T) {
 
 		// Create nested object
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  "mem://testbucket/nested/deep/file.txt",
+			Name: "testbucket",
+
+			Path: "/nested/deep/file.txt",
 			Body: strings.NewReader("nested content"),
 		})
 		assert.NoError(err)
 
 		// Delete it
-		_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: "mem://testbucket/nested/deep/file.txt"})
+		_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testbucket", Path: "/nested/deep/file.txt"})
 		assert.NoError(err)
 
 		// Verify it's gone
-		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/nested/deep/file.txt"})
+		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/nested/deep/file.txt"})
 		assert.Error(err)
 	})
 }
@@ -480,32 +507,38 @@ func Test_ManagerMem_RoutesToCorrectBackend(t *testing.T) {
 
 	// Create in bucket1
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:  "mem://bucket1/test1.txt",
+		Name: "bucket1",
+
+		Path: "/test1.txt",
 		Body: strings.NewReader("bucket1 content"),
 	})
 	assert.NoError(err)
 
 	// Create in bucket2
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:  "mem://bucket2/test2.txt",
+		Name: "bucket2",
+
+		Path: "/test2.txt",
 		Body: strings.NewReader("bucket2 content"),
 	})
 	assert.NoError(err)
 
 	// Verify object in bucket1
-	obj1, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://bucket1/test1.txt"})
+	obj1, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "bucket1", Path: "/test1.txt"})
 	assert.NoError(err)
-	assert.Equal("mem://bucket1/test1.txt", obj1.URL)
+	assert.Equal("bucket1", obj1.Name)
+	assert.Equal("/test1.txt", obj1.Path)
 
 	// Verify object in bucket2
-	obj2, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://bucket2/test2.txt"})
+	obj2, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "bucket2", Path: "/test2.txt"})
 	assert.NoError(err)
-	assert.Equal("mem://bucket2/test2.txt", obj2.URL)
+	assert.Equal("bucket2", obj2.Name)
+	assert.Equal("/test2.txt", obj2.Path)
 
 	// Verify cross-bucket isolation
-	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://bucket1/test2.txt"})
+	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "bucket1", Path: "/test2.txt"})
 	assert.Error(err)
-	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://bucket2/test1.txt"})
+	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "bucket2", Path: "/test1.txt"})
 	assert.Error(err)
 }
 
@@ -523,22 +556,25 @@ func Test_ManagerMem_FullWorkflow(t *testing.T) {
 	// 1. Create an object
 	content := "full workflow test content"
 	createdObj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "mem://testbucket/workflow/test.txt",
+		Name: "testbucket",
+
+		Path:        "/workflow/test.txt",
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 		Meta:        schema.ObjectMeta{"step": "created"},
 	})
 	assert.NoError(err)
-	assert.Equal("mem://testbucket/workflow/test.txt", createdObj.URL)
+	assert.Equal("testbucket", createdObj.Name)
+	assert.Equal("/workflow/test.txt", createdObj.Path)
 
 	// 2. Get object metadata
-	gotObj, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/workflow/test.txt"})
+	gotObj, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/workflow/test.txt"})
 	assert.NoError(err)
 	assert.Equal(int64(len(content)), gotObj.Size)
 	assert.Equal("text/plain", gotObj.ContentType)
 
 	// 3. Read object content
-	reader, readObj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/workflow/test.txt"})
+	reader, readObj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/workflow/test.txt"})
 	assert.NoError(err)
 	data, _ := io.ReadAll(reader)
 	reader.Close()
@@ -546,21 +582,22 @@ func Test_ManagerMem_FullWorkflow(t *testing.T) {
 	assert.Equal(int64(len(content)), readObj.Size)
 
 	// 4. List objects
-	listResp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{URL: "mem://testbucket/workflow/"})
+	listResp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{Name: "testbucket", Path: "/workflow/"})
 	assert.NoError(err)
 	assert.Len(listResp.Body, 1)
 
 	// 5. Delete object
-	deletedObj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: "mem://testbucket/workflow/test.txt"})
+	deletedObj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testbucket", Path: "/workflow/test.txt"})
 	assert.NoError(err)
-	assert.Equal("mem://testbucket/workflow/test.txt", deletedObj.URL)
+	assert.Equal("testbucket", deletedObj.Name)
+	assert.Equal("/workflow/test.txt", deletedObj.Path)
 
 	// 6. Verify object is gone
-	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/workflow/test.txt"})
+	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/workflow/test.txt"})
 	assert.Error(err)
 
 	// 7. Verify list is empty
-	listResp, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{URL: "mem://testbucket/workflow/"})
+	listResp, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{Name: "testbucket", Path: "/workflow/"})
 	assert.NoError(err)
 	assert.Len(listResp.Body, 0)
 }
@@ -579,14 +616,16 @@ func Test_ManagerMem_EdgeCases(t *testing.T) {
 		assert := assert.New(t)
 
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  "mem://testbucket/empty.txt",
+			Name: "testbucket",
+
+			Path: "/empty.txt",
 			Body: strings.NewReader(""),
 		})
 		assert.NoError(err)
 		assert.Equal(int64(0), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/empty.txt"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/empty.txt"})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()
@@ -598,7 +637,9 @@ func Test_ManagerMem_EdgeCases(t *testing.T) {
 
 		binaryData := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD}
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/binary.bin",
+			Name: "testbucket",
+
+			Path:        "/binary.bin",
 			Body:        bytes.NewReader(binaryData),
 			ContentType: "application/octet-stream",
 		})
@@ -606,7 +647,7 @@ func Test_ManagerMem_EdgeCases(t *testing.T) {
 		assert.Equal(int64(len(binaryData)), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/binary.bin"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/binary.bin"})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()
@@ -617,14 +658,16 @@ func Test_ManagerMem_EdgeCases(t *testing.T) {
 		assert := assert.New(t)
 
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  "mem://testbucket/path with spaces/file-name_v1.2.txt",
+			Name: "testbucket",
+
+			Path: "/path with spaces/file-name_v1.2.txt",
 			Body: strings.NewReader("special chars"),
 		})
 		assert.NoError(err)
-		assert.Contains(obj.URL, "path with spaces")
+		assert.Contains(obj.Path, "path with spaces")
 
 		// Should be retrievable
-		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "mem://testbucket/path with spaces/file-name_v1.2.txt"})
+		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testbucket", Path: "/path with spaces/file-name_v1.2.txt"})
 		assert.NoError(err)
 	})
 
@@ -633,14 +676,16 @@ func Test_ManagerMem_EdgeCases(t *testing.T) {
 
 		unicodeContent := "Hello 世界! 🌍 Привет мир"
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  "mem://testbucket/unicode.txt",
+			Name: "testbucket",
+
+			Path: "/unicode.txt",
 			Body: strings.NewReader(unicodeContent),
 		})
 		assert.NoError(err)
 		assert.Equal(int64(len(unicodeContent)), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/unicode.txt"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/unicode.txt"})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()

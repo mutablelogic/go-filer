@@ -3,7 +3,6 @@ package backend
 import (
 	"context"
 	"io"
-	"net/url"
 	"time"
 
 	// Packages
@@ -18,16 +17,15 @@ import (
 
 // CreateObject creates an object in the backend
 func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
-	// Parse the URL
-	u, err := url.Parse(req.URL)
-	if err != nil {
-		return nil, err
+	// Validate name
+	if req.Name != "" && req.Name != b.Name() {
+		return nil, httpresponse.ErrBadRequest.Withf("name %q not handled by backend %q", req.Name, b.Name())
 	}
 
-	// Validate the URL matches this backend
-	key := b.Key(u)
+	// Compute key using the request path
+	key := b.Key(req.Path)
 	if key == "" {
-		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
+		return nil, httpresponse.ErrBadRequest.Withf("path %q not handled by backend %q", req.Path, b.Name())
 	}
 	sk := b.storageKey(key)
 
@@ -45,22 +43,22 @@ func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectR
 		ContentType: req.ContentType,
 		Metadata:    meta,
 	}); err != nil {
-		return nil, blobErr(err, req.URL)
+		return nil, blobErr(err, b.Name()+":"+key)
 	} else if _, err := io.Copy(w, req.Body); err != nil {
 		w.Close()
 		b.bucket.Delete(ctx, sk)
-		return nil, blobErr(err, req.URL)
+		return nil, blobErr(err, b.Name()+":"+key)
 	} else if err := w.Close(); err != nil {
 		b.bucket.Delete(ctx, sk)
-		return nil, blobErr(err, req.URL)
+		return nil, blobErr(err, b.Name()+":"+key)
 	}
 
 	// Get attributes to return
 	attrs, err := b.bucket.Attributes(ctx, sk)
 	if err != nil {
-		return nil, blobErr(err, req.URL)
+		return nil, blobErr(err, b.Name()+":"+key)
 	}
 
 	// Return success
-	return b.attrsToObject(req.URL, attrs), nil
+	return b.attrsToObject(b.Name(), key, attrs), nil
 }

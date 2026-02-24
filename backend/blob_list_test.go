@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"testing"
 	"time"
 
@@ -34,7 +35,9 @@ func TestListObjects_Mem(t *testing.T) {
 
 	for _, f := range files {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/" + f.key,
+			Name: "testbucket",
+
+			Path:        "/" + f.key,
 			Body:        bytes.NewReader([]byte(f.content)),
 			ContentType: "text/plain",
 		})
@@ -46,21 +49,23 @@ func TestListObjects_Mem(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/",
+			Name: "testbucket",
+
+			Path:      "/",
 			Recursive: false,
 		})
 		require.NoError(err)
-		assert.Equal("mem://testbucket/", resp.URL)
+		assert.Equal("testbucket", resp.Name)
 
 		// Should have file1.txt, file2.txt, and subdir/ (as a prefix)
 		assert.GreaterOrEqual(len(resp.Body), 2)
 
-		var urls []string
+		var keys []string
 		for _, obj := range resp.Body {
-			urls = append(urls, obj.URL)
+			keys = append(keys, obj.Name+obj.Path)
 		}
-		assert.Contains(urls, "mem://testbucket/file1.txt")
-		assert.Contains(urls, "mem://testbucket/file2.txt")
+		assert.Contains(keys, "testbucket/file1.txt")
+		assert.Contains(keys, "testbucket/file2.txt")
 	})
 
 	t.Run("list root recursive", func(t *testing.T) {
@@ -68,7 +73,9 @@ func TestListObjects_Mem(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/",
+			Name: "testbucket",
+
+			Path:      "/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -76,12 +83,12 @@ func TestListObjects_Mem(t *testing.T) {
 		// Should have all 5 files
 		assert.Equal(5, len(resp.Body))
 
-		var urls []string
+		var keys []string
 		for _, obj := range resp.Body {
-			urls = append(urls, obj.URL)
+			keys = append(keys, obj.Name+obj.Path)
 		}
-		assert.Contains(urls, "mem://testbucket/file1.txt")
-		assert.Contains(urls, "mem://testbucket/subdir/nested/file5.txt")
+		assert.Contains(keys, "testbucket/file1.txt")
+		assert.Contains(keys, "testbucket/subdir/nested/file5.txt")
 	})
 
 	t.Run("list subdir non-recursive", func(t *testing.T) {
@@ -89,7 +96,9 @@ func TestListObjects_Mem(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/subdir/",
+			Name: "testbucket",
+
+			Path:      "/subdir/",
 			Recursive: false,
 		})
 		require.NoError(err)
@@ -97,12 +106,12 @@ func TestListObjects_Mem(t *testing.T) {
 		// Should have file3.txt, file4.txt, and nested/ prefix
 		assert.GreaterOrEqual(len(resp.Body), 2)
 
-		var urls []string
+		var keys []string
 		for _, obj := range resp.Body {
-			urls = append(urls, obj.URL)
+			keys = append(keys, obj.Name+obj.Path)
 		}
-		assert.Contains(urls, "mem://testbucket/subdir/file3.txt")
-		assert.Contains(urls, "mem://testbucket/subdir/file4.txt")
+		assert.Contains(keys, "testbucket/subdir/file3.txt")
+		assert.Contains(keys, "testbucket/subdir/file4.txt")
 	})
 
 	t.Run("list subdir recursive", func(t *testing.T) {
@@ -110,7 +119,9 @@ func TestListObjects_Mem(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       "mem://testbucket/subdir/",
+			Name: "testbucket",
+
+			Path:      "/subdir/",
 			Recursive: true,
 		})
 		require.NoError(err)
@@ -124,12 +135,15 @@ func TestListObjects_Mem(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/file1.txt",
+			Name: "testbucket",
+
+			Path: "/file1.txt",
 		})
 		require.NoError(err)
-		assert.Equal("mem://testbucket/file1.txt", resp.URL)
+		assert.Equal("testbucket", resp.Name)
 		assert.Equal(1, len(resp.Body))
-		assert.Equal("mem://testbucket/file1.txt", resp.Body[0].URL)
+		assert.Equal("testbucket", resp.Body[0].Name)
+		assert.Equal("/file1.txt", resp.Body[0].Path)
 		assert.Equal(int64(8), resp.Body[0].Size) // "content1" = 8 bytes
 	})
 
@@ -138,11 +152,14 @@ func TestListObjects_Mem(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/subdir/nested/file5.txt",
+			Name: "testbucket",
+
+			Path: "/subdir/nested/file5.txt",
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
-		assert.Equal("mem://testbucket/subdir/nested/file5.txt", resp.Body[0].URL)
+		assert.Equal("testbucket", resp.Body[0].Name)
+		assert.Equal("/subdir/nested/file5.txt", resp.Body[0].Path)
 	})
 
 	t.Run("get non-existent object", func(t *testing.T) {
@@ -151,7 +168,9 @@ func TestListObjects_Mem(t *testing.T) {
 
 		// Non-existent object returns empty list (treated as prefix with no matches)
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/nonexistent.txt",
+			Name: "testbucket",
+
+			Path: "/nonexistent.txt",
 		})
 		require.NoError(err)
 		assert.Empty(resp.Body)
@@ -161,7 +180,9 @@ func TestListObjects_Mem(t *testing.T) {
 		assert := assert.New(t)
 
 		_, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://otherbucket/file.txt",
+			Name: "otherbucket",
+
+			Path: "/file.txt",
 		})
 		assert.Error(err)
 	})
@@ -171,7 +192,9 @@ func TestListObjects_Mem(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/emptydir/",
+			Name: "testbucket",
+
+			Path: "/emptydir/",
 		})
 		require.NoError(err)
 		assert.Equal(0, len(resp.Body))
@@ -187,7 +210,9 @@ func TestListObjects_WithPrefix(t *testing.T) {
 
 	// Create test objects under the prefix
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "mem://testbucket/prefix/file.txt",
+		Name: "testbucket",
+
+		Path:        "/prefix/file.txt",
 		Body:        bytes.NewReader([]byte("test")),
 		ContentType: "text/plain",
 	})
@@ -198,11 +223,14 @@ func TestListObjects_WithPrefix(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/prefix/",
+			Name: "testbucket",
+
+			Path: "/prefix/",
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
-		assert.Equal("mem://testbucket/prefix/file.txt", resp.Body[0].URL)
+		assert.Equal("testbucket", resp.Body[0].Name)
+		assert.Equal("/file.txt", resp.Body[0].Path) // prefix is stripped from the path
 	})
 
 	t.Run("get single object with prefix", func(t *testing.T) {
@@ -210,7 +238,9 @@ func TestListObjects_WithPrefix(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "mem://testbucket/prefix/file.txt",
+			Name: "testbucket",
+
+			Path: "/prefix/file.txt",
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -227,7 +257,9 @@ func TestListObjects_File(t *testing.T) {
 
 	// Create test files
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "file://testfiles/test.txt",
+		Name: "testfiles",
+
+		Path:        "/test.txt",
 		Body:        bytes.NewReader([]byte("hello")),
 		ContentType: "text/plain",
 	})
@@ -238,7 +270,9 @@ func TestListObjects_File(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "file://testfiles/",
+			Name: "testfiles",
+
+			Path: "/",
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -249,7 +283,9 @@ func TestListObjects_File(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: "file://testfiles/test.txt",
+			Name: "testfiles",
+
+			Path: "/test.txt",
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -269,11 +305,13 @@ func TestListObjects_S3(t *testing.T) {
 	defer backend.Close()
 
 	// Create a single test object with unique name for this test run
+	s3bURL, _ := url.Parse(bucketURL)
 	testKey := "listtest-" + time.Now().Format("20060102-150405") + ".txt"
-	testURL := bucketURL + "/" + testKey
+	testPath := s3bURL.Path + "/" + testKey
 
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         testURL,
+		Name:        s3bURL.Host,
+		Path:        testPath,
 		Body:        bytes.NewReader([]byte("test content")),
 		ContentType: "text/plain",
 	})
@@ -284,7 +322,7 @@ func TestListObjects_S3(t *testing.T) {
 
 	// Cleanup at end
 	defer func() {
-		backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: testURL})
+		backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: s3bURL.Host, Path: testPath})
 	}()
 
 	t.Run("get single object", func(t *testing.T) {
@@ -294,7 +332,8 @@ func TestListObjects_S3(t *testing.T) {
 		err := s3Retry(t, 5, func() error {
 			var err error
 			resp, err = backend.ListObjects(ctx, schema.ListObjectsRequest{
-				URL: testURL,
+				Name: s3bURL.Host,
+				Path: testPath,
 			})
 			if err != nil {
 				return err
@@ -306,7 +345,8 @@ func TestListObjects_S3(t *testing.T) {
 		})
 		assert.NoError(err)
 		if len(resp.Body) == 1 {
-			assert.Equal(testURL, resp.Body[0].URL)
+			assert.Equal(s3bURL.Host, resp.Body[0].Name)
+			assert.Equal("/"+testKey, resp.Body[0].Path)
 		}
 	})
 
@@ -317,7 +357,8 @@ func TestListObjects_S3(t *testing.T) {
 		err := s3Retry(t, 5, func() error {
 			var err error
 			resp, err = backend.ListObjects(ctx, schema.ListObjectsRequest{
-				URL:       bucketURL + "/",
+				Name:      s3bURL.Host,
+				Path:      s3bURL.Path + "/",
 				Recursive: true,
 			})
 			if err != nil {

@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,9 @@ func TestReadObject_Mem(t *testing.T) {
 	// Create test objects
 	createTestObject := func(t *testing.T, key, content, contentType string, meta schema.ObjectMeta) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/" + key,
+			Name: "testbucket",
+
+			Path:        "/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: contentType,
 			Meta:        meta,
@@ -37,7 +40,8 @@ func TestReadObject_Mem(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		url         string
+		reqName     string
+		reqPath     string
 		wantContent string
 		wantSize    int64
 		wantType    string
@@ -47,14 +51,16 @@ func TestReadObject_Mem(t *testing.T) {
 	}{
 		{
 			name:        "simple file",
-			url:         "mem://testbucket/simple.txt",
+			reqName:     "testbucket",
+			reqPath:     "/simple.txt",
 			wantContent: "hello world",
 			wantSize:    11,
 			wantType:    "text/plain",
 		},
 		{
 			name:        "file with metadata",
-			url:         "mem://testbucket/data.json",
+			reqName:     "testbucket",
+			reqPath:     "/data.json",
 			wantContent: `{"foo":"bar"}`,
 			wantSize:    13,
 			wantType:    "application/json",
@@ -62,20 +68,23 @@ func TestReadObject_Mem(t *testing.T) {
 		},
 		{
 			name:        "nested file",
-			url:         "mem://testbucket/subdir/nested.txt",
+			reqName:     "testbucket",
+			reqPath:     "/subdir/nested.txt",
 			wantContent: "nested content",
 			wantSize:    14,
 			wantType:    "text/plain",
 		},
 		{
 			name:        "non-existent file",
-			url:         "mem://testbucket/notfound.txt",
+			reqName:     "testbucket",
+			reqPath:     "/notfound.txt",
 			wantErr:     true,
 			errContains: "not found",
 		},
 		{
 			name:        "wrong bucket",
-			url:         "mem://otherbucket/simple.txt",
+			reqName:     "otherbucket",
+			reqPath:     "/simple.txt",
 			wantErr:     true,
 			errContains: "not handled",
 		},
@@ -85,7 +94,7 @@ func TestReadObject_Mem(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{URL: tt.url})
+			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Name: tt.reqName, Path: tt.reqPath})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -104,7 +113,8 @@ func TestReadObject_Mem(t *testing.T) {
 			assert.Equal(tt.wantContent, string(content))
 
 			// Check object metadata
-			assert.Equal(tt.url, obj.URL)
+			assert.Equal(tt.reqName, obj.Name)
+			assert.Equal(tt.reqPath, obj.Path)
 			assert.Equal(tt.wantSize, obj.Size)
 			assert.Equal(tt.wantType, obj.ContentType)
 
@@ -128,7 +138,9 @@ func TestReadObject_File(t *testing.T) {
 	// Create test files
 	createTestObject := func(t *testing.T, key, content string) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "file://testfiles/" + key,
+			Name: "testfiles",
+
+			Path:        "/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
@@ -171,7 +183,8 @@ func TestReadObject_File(t *testing.T) {
 			assert := assert.New(t)
 
 			reqURL := "file://testfiles/" + tt.key
-			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{URL: reqURL})
+			_ = reqURL
+			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/" + tt.key})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -190,7 +203,8 @@ func TestReadObject_File(t *testing.T) {
 			assert.Equal(tt.wantContent, string(content))
 
 			// Check object metadata
-			assert.Equal(reqURL, obj.URL)
+			assert.Equal("testfiles", obj.Name)
+			assert.Equal("/"+tt.key, obj.Path)
 			assert.Equal(tt.wantSize, obj.Size)
 		})
 	}
@@ -209,13 +223,17 @@ func TestReadObject_S3(t *testing.T) {
 	defer backend.Close()
 
 	// Generate unique key for this test run
+	bURL, _ := url.Parse(bucketURL)
 	testKey := "read-test-" + time.Now().Format("20060102-150405") + ".txt"
 	reqURL := bucketURL + "/" + testKey
+	_ = reqURL
+	reqPath := bURL.Path + "/" + testKey
 
 	// Create test object first
 	content := "hello from S3 ReadObject test"
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         reqURL,
+		Name:        bURL.Host,
+		Path:        reqPath,
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 		Meta:        schema.ObjectMeta{"test-key": "test-value"},
@@ -224,14 +242,14 @@ func TestReadObject_S3(t *testing.T) {
 
 	// Clean up after test
 	defer func() {
-		backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
+		backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: bURL.Host, Path: reqPath})
 	}()
 
 	t.Run("read existing object", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{URL: reqURL})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Name: bURL.Host, Path: reqPath})
 		require.NoError(err)
 		defer reader.Close()
 
@@ -241,7 +259,8 @@ func TestReadObject_S3(t *testing.T) {
 		assert.Equal(content, string(data))
 
 		// Check metadata
-		assert.Equal(reqURL, obj.URL)
+		assert.Equal(bURL.Host, obj.Name)
+		assert.Equal("/"+testKey, obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 		assert.Equal("test-value", obj.Meta["test-key"])
@@ -251,7 +270,8 @@ func TestReadObject_S3(t *testing.T) {
 		assert := assert.New(t)
 
 		nonExistentURL := bucketURL + "/non-existent-file.txt"
-		_, _, err := backend.ReadObject(ctx, schema.ReadObjectRequest{URL: nonExistentURL})
+		_ = nonExistentURL
+		_, _, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Name: bURL.Host, Path: bURL.Path + "/non-existent-file.txt"})
 
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
@@ -268,7 +288,9 @@ func TestReadObject_PartialRead(t *testing.T) {
 	// Create a larger test object
 	content := strings.Repeat("abcdefghij", 100) // 1000 bytes
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "mem://testbucket/large.txt",
+		Name: "testbucket",
+
+		Path:        "/large.txt",
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 	})
@@ -278,7 +300,7 @@ func TestReadObject_PartialRead(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/large.txt"})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/large.txt"})
 		require.NoError(err)
 
 		// Only read first 10 bytes
@@ -306,7 +328,9 @@ func TestReadObject_EmptyFile(t *testing.T) {
 
 	// Create an empty file
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "mem://testbucket/empty.txt",
+		Name: "testbucket",
+
+		Path:        "/empty.txt",
 		Body:        strings.NewReader(""),
 		ContentType: "text/plain",
 	})
@@ -316,7 +340,7 @@ func TestReadObject_EmptyFile(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/empty.txt"})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/empty.txt"})
 		require.NoError(err)
 		defer reader.Close()
 
@@ -337,7 +361,9 @@ func TestReadObject_BinaryContent(t *testing.T) {
 	// Create binary content with null bytes
 	binaryContent := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD}
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         "mem://testbucket/binary.bin",
+		Name: "testbucket",
+
+		Path:        "/binary.bin",
 		Body:        strings.NewReader(string(binaryContent)),
 		ContentType: "application/octet-stream",
 	})
@@ -347,7 +373,7 @@ func TestReadObject_BinaryContent(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{URL: "mem://testbucket/binary.bin"})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Name: "testbucket", Path: "/binary.bin"})
 		require.NoError(err)
 		defer reader.Close()
 

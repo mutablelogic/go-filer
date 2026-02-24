@@ -7,5 +7,6 @@ const (
 	SchemaName = "filer"
 
 	// HTTP headers
-	ObjectMetaHeader = "X-Object-Meta"
+	ObjectMetaHeader    = "X-Object-Meta"
+	ObjectMetaKeyPrefix = "X-Meta-" // prefix for user-defined metadata headers on PUT
 )

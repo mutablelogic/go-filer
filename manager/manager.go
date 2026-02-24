@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/url"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -54,20 +53,21 @@ func (manager *Manager) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Backends returns the list of backend URLs
+// Backends returns the list of backend names
 func (manager *Manager) Backends() []string {
 	result := make([]string, 0, len(manager.backends))
 	for _, b := range manager.backends {
-		result = append(result, b.URL().String())
+		result = append(result, b.Name())
 	}
 	return result
 }
 
-// Key returns the storage key for a URL if any backend handles it, or empty string otherwise.
-func (manager *Manager) Key(url *url.URL) string {
+// Key returns the storage key for a named backend and path, or empty string if
+// the backend does not exist or the path is not handled (e.g., prefix mismatch).
+func (manager *Manager) Key(name, path string) string {
 	for _, backend := range manager.backends {
-		if key := backend.Key(url); key != "" {
-			return key
+		if backend.Name() == name {
+			return backend.Key(path)
 		}
 	}
 	return ""
@@ -75,7 +75,7 @@ func (manager *Manager) Key(url *url.URL) string {
 
 func (manager *Manager) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	// Find the right backend
-	backend, err := manager.backendForURL(req.URL)
+	backend, err := manager.backendForName(req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func (manager *Manager) CreateObject(ctx context.Context, req schema.CreateObjec
 
 func (manager *Manager) ReadObject(ctx context.Context, req schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
 	// Find the right backend
-	backend, err := manager.backendForURL(req.URL)
+	backend, err := manager.backendForName(req.Name)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -107,7 +107,7 @@ func (manager *Manager) ReadObject(ctx context.Context, req schema.ReadObjectReq
 
 func (manager *Manager) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
 	// Find the right backend
-	backend, err := manager.backendForURL(req.URL)
+	backend, err := manager.backendForName(req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ListObjectsR
 
 func (manager *Manager) DeleteObject(ctx context.Context, req schema.DeleteObjectRequest) (*schema.Object, error) {
 	// Find the right backend
-	backend, err := manager.backendForURL(req.URL)
+	backend, err := manager.backendForName(req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -137,9 +137,25 @@ func (manager *Manager) DeleteObject(ctx context.Context, req schema.DeleteObjec
 	return backend.DeleteObject(child, req)
 }
 
+func (manager *Manager) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
+	// Find the right backend
+	backend, err := manager.backendForName(req.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	// OTEL span
+	var result error
+	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("DeleteObjects"))
+	defer func() { endFunc(result) }()
+
+	// Run the backend
+	return backend.DeleteObjects(child, req)
+}
+
 func (manager *Manager) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
 	// Find the right backend
-	backend, err := manager.backendForURL(req.URL)
+	backend, err := manager.backendForName(req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -156,17 +172,13 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.GetObjectReque
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) backendForURL(urlStr string) (filer.Filer, error) {
-	url, err := url.Parse(urlStr)
-	if err != nil {
-		return nil, err
-	}
+func (manager *Manager) backendForName(name string) (filer.Filer, error) {
 	for _, backend := range manager.backends {
-		if backend.Handles(url) {
+		if backend.Name() == name {
 			return backend, nil
 		}
 	}
-	return nil, httpresponse.ErrNotFound.Withf("no backend found for URL: %q", urlStr)
+	return nil, httpresponse.ErrNotFound.Withf("no backend found for name %q", name)
 }
 
 func spanManagerName(op string) string {

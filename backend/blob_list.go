@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	// Packages
@@ -17,31 +16,31 @@ import (
 // PUBLIC METHODS
 
 // ListObjects lists objects in the backend.
-// If a single object exists at the URL, it returns just that object.
-// Otherwise, it treats the URL as a prefix and lists all matching objects.
+// If a single object exists at the path, it returns just that object.
+// Otherwise, it treats the path as a prefix and lists all matching objects.
 // Use Recursive=true to list nested objects, or Recursive=false for immediate children only.
 func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
-	u, err := url.Parse(req.URL)
-	if err != nil {
-		return nil, err
+	// Validate name
+	if req.Name != "" && req.Name != b.Name() {
+		return nil, httpresponse.ErrBadRequest.Withf("name %q not handled by backend %q", req.Name, b.Name())
 	}
 
-	// Validate the URL matches this backend
-	key := b.Key(u)
+	// Compute key using the request path
+	key := b.Key(req.Path)
 	if key == "" {
-		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
+		return nil, httpresponse.ErrBadRequest.Withf("path %q not handled by backend %q", req.Path, b.Name())
 	}
 	sk := b.storageKey(key)
 
 	// Response
 	response := schema.ListObjectsResponse{
-		URL: req.URL,
+		Name: req.Name,
 	}
 
 	// If key is non-empty and doesn't end with /, check if object exists at this exact path
 	// Also check it's not a "phantom directory" (size=0 pseudo-object created by some S3 implementations)
 	if sk != "" && !strings.HasSuffix(sk, "/") {
-		if obj, err := b.GetObject(ctx, schema.GetObjectRequest{URL: req.URL}); err == nil && obj != nil {
+		if obj, err := b.GetObject(ctx, schema.GetObjectRequest{Name: req.Name, Path: req.Path}); err == nil && obj != nil {
 			// If object has content (size > 0), return just this one regardless of children
 			// If size is 0, it might be a phantom directory - check for children
 			if obj.Size > 0 {
@@ -83,7 +82,7 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			return nil, blobErr(err, req.URL)
+			return nil, blobErr(err, req.Name+":"+req.Path)
 		}
 
 		// Skip the prefix itself
@@ -91,11 +90,9 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 			continue
 		}
 
-		// Build the full URL for the object
-		objURL := fmt.Sprintf("%s://%s/%s", b.url.Scheme, b.url.Host, obj.Key)
-
 		o := schema.Object{
-			URL:     objURL,
+			Name:    b.Name(),
+			Path:    b.pathFromStorageKey(obj.Key),
 			Size:    obj.Size,
 			ModTime: obj.ModTime,
 		}

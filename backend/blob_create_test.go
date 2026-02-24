@@ -3,6 +3,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -89,16 +90,17 @@ func TestCreateObject_Mem(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
-			// Build the request URL
-			var reqURL string
+			// Determine the backend name for this test case
+			reqName := "testbucket"
 			if tt.name == "wrong backend URL" {
-				reqURL = "mem://otherbucket/" + tt.key
-			} else {
-				reqURL = "mem://testbucket/" + tt.key
+				reqName = "otherbucket"
 			}
+			reqURL := "mem://" + reqName + "/" + tt.key
+			_ = reqURL
 
 			obj, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-				URL:         reqURL,
+				Name:        reqName,
+				Path:        "/" + tt.key,
 				Body:        strings.NewReader(tt.content),
 				ContentType: tt.contentType,
 				ModTime:     tt.modTime,
@@ -111,7 +113,8 @@ func TestCreateObject_Mem(t *testing.T) {
 			}
 
 			require.NoError(err)
-			assert.Equal(reqURL, obj.URL)
+			assert.Equal(reqName, obj.Name)
+			assert.Equal("/"+tt.key, obj.Path)
 			assert.Equal(int64(len(tt.content)), obj.Size)
 
 			if tt.contentType != "" {
@@ -170,15 +173,18 @@ func TestCreateObject_File(t *testing.T) {
 			require := require.New(t)
 
 			reqURL := "file://testfiles/" + tt.key
+			_ = reqURL
 
 			obj, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-				URL:         reqURL,
+				Name:        "testfiles",
+				Path:        "/" + tt.key,
 				Body:        strings.NewReader(tt.content),
 				ContentType: tt.contentType,
 			})
 
 			require.NoError(err)
-			assert.Equal(reqURL, obj.URL)
+			assert.Equal("testfiles", obj.Name)
+			assert.Equal("/"+tt.key, obj.Path)
 			assert.Equal(int64(len(tt.content)), obj.Size)
 
 			// Verify file exists on disk
@@ -253,8 +259,11 @@ func TestCreateObject_S3(t *testing.T) {
 	defer backend.Close()
 
 	// Generate unique key for this test run
+	bURL, _ := url.Parse(bucketURL)
 	testKey := "test-" + time.Now().Format("20060102-150405") + ".txt"
+	reqPath := bURL.Path + "/" + testKey
 	reqURL := bucketURL + "/" + testKey
+	_ = reqURL
 
 	t.Run("create and verify", func(t *testing.T) {
 		assert := assert.New(t)
@@ -264,7 +273,8 @@ func TestCreateObject_S3(t *testing.T) {
 		modTime := time.Date(2026, 1, 28, 12, 0, 0, 0, time.UTC)
 
 		obj, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         reqURL,
+			Name:        bURL.Host,
+			Path:        reqPath,
 			Body:        bytes.NewReader([]byte(content)),
 			ContentType: "text/plain",
 			ModTime:     modTime,
@@ -272,14 +282,15 @@ func TestCreateObject_S3(t *testing.T) {
 		})
 
 		require.NoError(err)
-		assert.Equal(reqURL, obj.URL)
+		assert.Equal(bURL.Host, obj.Name)
+		assert.Equal("/"+testKey, obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 		assert.Equal("test-value", obj.Meta["test-key"])
 		assert.Equal(modTime.Format(time.RFC3339), obj.Meta[filer.AttrLastModified])
 
 		// Cleanup: delete the test object
-		_, err = backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
+		_, err = backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: bURL.Host, Path: reqPath})
 		assert.NoError(err)
 	})
 }
@@ -293,22 +304,14 @@ func TestCreateObject_InvalidURL(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		url     string
+		reqName string
+		reqPath string
 		wantErr bool
 	}{
 		{
-			name:    "wrong scheme",
-			url:     "s3://bucket/file.txt",
-			wantErr: true,
-		},
-		{
-			name:    "wrong host",
-			url:     "mem://otherbucket/file.txt",
-			wantErr: true,
-		},
-		{
-			name:    "invalid URL",
-			url:     "://invalid",
+			name:    "wrong name",
+			reqName: "otherbucket",
+			reqPath: "/file.txt",
 			wantErr: true,
 		},
 	}
@@ -316,7 +319,8 @@ func TestCreateObject_InvalidURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-				URL:  tt.url,
+				Name: tt.reqName,
+				Path: tt.reqPath,
 				Body: strings.NewReader("test"),
 			})
 

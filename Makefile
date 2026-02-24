@@ -7,13 +7,6 @@ BUILD_DIR ?= build
 CMD_DIR := $(wildcard cmd/*)
 PLUGIN_DIR := $(wildcard plugin/*)
 
-# VERBOSE=1
-ifneq ($(VERBOSE),)
-  VERBOSE_FLAG = -v
-else
-  VERBOSE_FLAG =
-endif
-
 # Set OS and Architecture
 ARCH ?= $(shell arch | tr A-Z a-z | sed 's/x86_64/amd64/' | sed 's/i386/amd64/' | sed 's/armv7l/arm/' | sed 's/aarch64/arm64/')
 OS ?= $(shell uname | tr A-Z a-z)
@@ -98,15 +91,19 @@ docker-version: docker-dep
 .PHONY: test
 test: unit-test coverage-test
 
+.PHONY: testv
+testv: VERBOSE_FLAG = -v
+testv: unit-test coverage-test
+
 .PHONY: unit-test
 unit-test: go-dep
 	@echo Unit Tests
-	@${GO} test ${VERBOSE_FLAG} ./pkg/...
+	@${GO} test ${VERBOSE_FLAG} ./...
 
 .PHONY: coverage-test
 coverage-test: go-dep mkdir
 	@echo Test Coverage
-	@${GO} test -coverprofile ${BUILD_DIR}/coverprofile.out ./pkg/...
+	@${GO} test ${VERBOSE_FLAG} -coverprofile ${BUILD_DIR}/coverprofile.out ./...
 
 ###############################################################################
 # CLEAN

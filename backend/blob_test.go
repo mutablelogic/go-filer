@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"testing"
@@ -13,38 +14,26 @@ func TestBlobBackendKey(t *testing.T) {
 	tests := []struct {
 		name       string
 		backendURL string
-		inputURL   string
+		inputPath  string
 		want       string
 	}{
 		// S3 tests (no prefix)
 		{
-			name:       "s3 exact bucket match",
+			name:       "s3 path",
 			backendURL: "s3://mybucket",
-			inputURL:   "s3://mybucket/path/to/file.txt",
+			inputPath:  "/path/to/file.txt",
 			want:       "/path/to/file.txt",
-		},
-		{
-			name:       "s3 bucket mismatch",
-			backendURL: "s3://mybucket",
-			inputURL:   "s3://otherbucket/path/to/file.txt",
-			want:       "",
-		},
-		{
-			name:       "s3 scheme mismatch",
-			backendURL: "s3://mybucket",
-			inputURL:   "file:///path/to/file.txt",
-			want:       "",
 		},
 		{
 			name:       "s3 root path",
 			backendURL: "s3://mybucket",
-			inputURL:   "s3://mybucket/",
+			inputPath:  "/",
 			want:       "/",
 		},
 		{
-			name:       "s3 root no trailing slash",
+			name:       "s3 root empty path",
 			backendURL: "s3://mybucket",
-			inputURL:   "s3://mybucket",
+			inputPath:  "",
 			want:       "/",
 		},
 
@@ -52,124 +41,110 @@ func TestBlobBackendKey(t *testing.T) {
 		{
 			name:       "s3 with prefix match",
 			backendURL: "s3://mybucket/data",
-			inputURL:   "s3://mybucket/data/file.txt",
+			inputPath:  "/data/file.txt",
 			want:       "/file.txt",
 		},
 		{
 			name:       "s3 with prefix root",
 			backendURL: "s3://mybucket/data",
-			inputURL:   "s3://mybucket/data/",
+			inputPath:  "/data/",
 			want:       "/",
 		},
 		{
 			name:       "s3 with prefix exact",
 			backendURL: "s3://mybucket/data",
-			inputURL:   "s3://mybucket/data",
+			inputPath:  "/data",
 			want:       "/",
 		},
 		{
 			name:       "s3 with prefix mismatch",
 			backendURL: "s3://mybucket/data",
-			inputURL:   "s3://mybucket/other/file.txt",
+			inputPath:  "/other/file.txt",
 			want:       "",
 		},
 		{
 			name:       "s3 with nested prefix",
 			backendURL: "s3://mybucket/data/subdir",
-			inputURL:   "s3://mybucket/data/subdir/nested/file.txt",
+			inputPath:  "/data/subdir/nested/file.txt",
 			want:       "/nested/file.txt",
 		},
 
-		// File tests (scheme+host matching only, path is bucket root dir)
+		// File tests (path is returned as-is, cleaned)
 		{
-			name:       "file with name and path",
+			name:       "file path",
 			backendURL: "file://mystore/tmp/storage",
-			inputURL:   "file://mystore/test.txt",
+			inputPath:  "/test.txt",
 			want:       "/test.txt",
-		},
-		{
-			name:       "file name mismatch",
-			backendURL: "file://mystore/tmp/storage",
-			inputURL:   "file://other/test.txt",
-			want:       "",
 		},
 		{
 			name:       "file nested path",
 			backendURL: "file://mystore/data/dir",
-			inputURL:   "file://mystore/dir1/dir2/file.txt",
+			inputPath:  "/dir1/dir2/file.txt",
 			want:       "/dir1/dir2/file.txt",
 		},
 		{
 			name:       "file root",
 			backendURL: "file://mystore/data",
-			inputURL:   "file://mystore/",
+			inputPath:  "/",
 			want:       "/",
 		},
 		{
-			name:       "file root no trailing slash",
+			name:       "file empty path",
 			backendURL: "file://mystore/data",
-			inputURL:   "file://mystore",
+			inputPath:  "",
 			want:       "/",
 		},
 
 		// Mem tests
 		{
-			name:       "mem empty host",
+			name:       "mem empty host path",
 			backendURL: "mem://",
-			inputURL:   "mem:///path/to/file.txt",
+			inputPath:  "/path/to/file.txt",
 			want:       "/path/to/file.txt",
 		},
 		{
-			name:       "mem with host match",
+			name:       "mem path",
 			backendURL: "mem://testbucket",
-			inputURL:   "mem://testbucket/file.txt",
+			inputPath:  "/file.txt",
 			want:       "/file.txt",
-		},
-		{
-			name:       "mem host mismatch",
-			backendURL: "mem://bucket1",
-			inputURL:   "mem://bucket2/file.txt",
-			want:       "",
 		},
 		{
 			name:       "mem with prefix match",
 			backendURL: "mem://bucket/prefix",
-			inputURL:   "mem://bucket/prefix/subdir/file.txt",
+			inputPath:  "/prefix/subdir/file.txt",
 			want:       "/subdir/file.txt",
 		},
 		{
 			name:       "mem with prefix mismatch",
 			backendURL: "mem://bucket/prefix",
-			inputURL:   "mem://bucket/other/file.txt",
+			inputPath:  "/other/file.txt",
 			want:       "",
 		},
 
-		// Edge cases
+		// Path traversal prevention
 		{
-			name:       "nil URL returns empty",
-			backendURL: "s3://mybucket",
-			inputURL:   "",
-			want:       "",
-		},
-
-		// NewFileBackend-style tests (file://name/dir)
-		{
-			name:       "file backend with name and dir",
-			backendURL: "file://mybackend/var/data",
-			inputURL:   "file://mybackend/doc.txt",
-			want:       "/doc.txt",
+			name:       "file traversal at root",
+			backendURL: "file://mystore/data",
+			inputPath:  "/../../etc/passwd",
+			want:       "/etc/passwd",
 		},
 		{
-			name:       "file backend root",
-			backendURL: "file://mybackend/var/data",
-			inputURL:   "file://mybackend/",
-			want:       "/",
+			name:       "file traversal deep",
+			backendURL: "file://mystore/data",
+			inputPath:  "/valid/../../../etc/passwd",
+			want:       "/etc/passwd",
 		},
 		{
-			name:       "file backend name mismatch",
-			backendURL: "file://mybackend/var/data",
-			inputURL:   "file://other/doc.txt",
-			want:       "",
+			name:       "file traversal stays within path",
+			backendURL: "file://mystore/data",
+			inputPath:  "/a/b/../c",
+			want:       "/a/c",
+		},
+		{
+			name:       "s3 traversal within prefix",
+			backendURL: "s3://mybucket/data",
+			inputPath:  "/data/valid/../../other",
+			want:       "/other",
 		},
 	}
 
@@ -188,15 +163,44 @@ func TestBlobBackendKey(t *testing.T) {
 				prefix: strings.TrimSuffix(backendURL.Path, "/"),
 			}
 
-			// Parse input URL (handle empty string case)
-			var inputURL *url.URL
-			if tt.inputURL != "" {
-				inputURL, err = url.Parse(tt.inputURL)
-				assert.NoError(err)
-			}
-
-			got := b.Key(inputURL)
+			got := b.Key(tt.inputPath)
 			assert.Equal(tt.want, got)
+		})
+	}
+}
+func TestNewFileBackend(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		backend string
+		dir     string
+		wantErr bool
+	}{
+		{"valid name and dir", "mybackend", tmpDir, false},
+		{"name with hyphen", "my-backend", tmpDir, false},
+		{"name with digits", "backend2", tmpDir, false},
+		{"empty name", "", tmpDir, true},
+		{"name starts with digit", "2backend", tmpDir, true},
+		{"name starts with hyphen", "-backend", tmpDir, true},
+		{"name with underscore", "my_backend", tmpDir, false},
+		{"name with slash", "my/backend", tmpDir, true},
+		{"relative dir", "mybackend", "relative/path", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			b, err := NewFileBackend(ctx, tt.backend, tt.dir)
+			if tt.wantErr {
+				assert.Error(err)
+			} else {
+				assert.NoError(err)
+				if b != nil {
+					b.Close()
+				}
+			}
 		})
 	}
 }

@@ -12,7 +12,8 @@ import (
 // TYPES
 
 type CreateObjectRequest struct {
-	URL         string
+	Name        string
+	Path        string
 	Body        io.Reader  `json:"-"`
 	ContentType string     // optional: MIME type of the object
 	ModTime     time.Time  // optional: modification time (stored as metadata)
@@ -25,7 +26,8 @@ type CreateObjectRequest struct {
 type ObjectMeta map[string]string
 
 type Object struct {
-	URL         string     `json:"url,omitempty"`
+	Name        string     `json:"name,omitempty"`
+	Path        string     `json:"path,omitempty"`
 	Size        int64      `json:"size,omitempty"`
 	ModTime     time.Time  `json:"modtime,omitzero"`
 	ContentType string     `json:"type,omitempty"`
@@ -34,34 +36,39 @@ type Object struct {
 }
 
 type ListObjectsRequest struct {
-	URL       string `json:"url,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Path      string `json:"path,omitempty"`      // optional path prefix within the backend
 	Recursive bool   `json:"recursive,omitempty"` // if true, list all objects recursively; if false, list only immediate children
 }
 
 type GetObjectRequest struct {
-	URL string
+	Name string
+	Path string
 }
 
 type ReadObjectRequest struct {
-	URL string
+	Name string
+	Path string
 }
 
 type ListObjectsResponse struct {
-	URL  string
+	Name string
 	Body []Object
 }
 
 type DeleteObjectRequest struct {
-	URL string
+	Name string
+	Path string
 }
 
 type DeleteObjectsRequest struct {
-	URL       string `json:"url,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Path      string `json:"path,omitempty"`
 	Recursive bool   `json:"recursive,omitempty"` // if true, delete all objects recursively; if false, delete only immediate children
 }
 
 type DeleteObjectsResponse struct {
-	URL  string
+	Name string
 	Body []Object // list of deleted objects
 }
 

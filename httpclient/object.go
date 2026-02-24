@@ -15,57 +15,43 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// putPayload implements client.Payload for PUT requests with a body
+// putPayload implements client.Payload for PUT requests with a body.
 type putPayload struct {
-	body   io.Reader
-	length *int64
+	body        io.Reader
+	contentType string
 }
 
-// getObjectResponse holds the response from a GetObject request
-type getObjectResponse struct {
+// readObjectResponse holds the streamed response from a ReadObject request.
+type readObjectResponse struct {
 	Body   io.ReadCloser
 	Object *schema.Object
 }
 
-// headObjectResponse holds the response from a GetObjectMeta request
-type headObjectResponse struct {
+// getObjectResponse holds the metadata-only response from a GetObject (HEAD) request.
+type getObjectResponse struct {
 	Object *schema.Object
 }
 
 // Ensure putPayload implements client.Payload
 var _ client.Payload = (*putPayload)(nil)
 
+// Ensure readObjectResponse implements client.Unmarshaler
+var _ client.Unmarshaler = (*readObjectResponse)(nil)
+
 // Ensure getObjectResponse implements client.Unmarshaler
 var _ client.Unmarshaler = (*getObjectResponse)(nil)
 
-// Ensure headObjectResponse implements client.Unmarshaler
-var _ client.Unmarshaler = (*headObjectResponse)(nil)
-
-func (p *putPayload) Method() string {
-	return http.MethodPut
-}
-
-func (p *putPayload) Accept() string {
-	return "application/json"
-}
-
+func (p *putPayload) Method() string { return http.MethodPut }
+func (p *putPayload) Accept() string { return "application/json" }
 func (p *putPayload) Type() string {
+	if p.contentType != "" {
+		return p.contentType
+	}
 	return "application/octet-stream"
 }
+func (p *putPayload) Read(b []byte) (int, error) { return p.body.Read(b) }
 
-func (p *putPayload) Read(b []byte) (int, error) {
-	return p.body.Read(b)
-}
-
-func (p *putPayload) ContentLength() int64 {
-	if p.length != nil {
-		return *p.length
-	}
-	return -1 // unknown length
-}
-
-func (r *getObjectResponse) Unmarshal(header http.Header, reader io.Reader) error {
-	// Parse object metadata from X-Object-Meta header
+func (r *readObjectResponse) Unmarshal(header http.Header, reader io.Reader) error {
 	if metaJSON := header.Get(schema.ObjectMetaHeader); metaJSON != "" {
 		var obj schema.Object
 		if err := json.Unmarshal([]byte(metaJSON), &obj); err != nil {
@@ -73,19 +59,15 @@ func (r *getObjectResponse) Unmarshal(header http.Header, reader io.Reader) erro
 		}
 		r.Object = &obj
 	}
-
-	// Store the reader as-is (caller will close it)
 	if rc, ok := reader.(io.ReadCloser); ok {
 		r.Body = rc
 	} else {
 		r.Body = io.NopCloser(reader)
 	}
-
 	return nil
 }
 
-func (r *headObjectResponse) Unmarshal(header http.Header, reader io.Reader) error {
-	// Parse object metadata from X-Object-Meta header
+func (r *getObjectResponse) Unmarshal(header http.Header, _ io.Reader) error {
 	if metaJSON := header.Get(schema.ObjectMetaHeader); metaJSON != "" {
 		var obj schema.Object
 		if err := json.Unmarshal([]byte(metaJSON), &obj); err != nil {
@@ -93,120 +75,102 @@ func (r *headObjectResponse) Unmarshal(header http.Header, reader io.Reader) err
 		}
 		r.Object = &obj
 	}
-
 	return nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// ListObjects returns a list of objects at the given URL.
-// The URL should be in the format scheme://host/path (e.g., file://media/podcasts).
+// ListObjects returns a list of objects at the given backend name and optional path prefix.
 func (c *Client) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
-	// Parse the URL to extract scheme, host, and path
-	u, err := url.Parse(req.URL)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build path: /{scheme}/{host}{path}
-	path := u.Scheme + "/" + u.Host + u.Path
-
-	// Build query params
 	query := make(url.Values)
 	if req.Recursive {
 		query.Set("recursive", "true")
 	}
-
-	// Create request
-	request := client.NewRequest()
-
-	// Perform request
 	var response schema.ListObjectsResponse
-	if err := c.DoWithContext(ctx, request, &response, client.OptPath(path), client.OptQuery(query)); err != nil {
+	if err := c.DoWithContext(ctx, client.NewRequest(), &response,
+		client.OptPath(req.Name, req.Path),
+		client.OptQuery(query),
+	); err != nil {
 		return nil, err
 	}
-
-	// Return the response
 	return &response, nil
 }
 
-// CreateObject uploads a file to the given URL using PUT.
-// The URL should be in the format scheme://host/path (e.g., file://media/podcasts/file.txt).
-// The body is the file content, and size is optional (nil if unknown).
-func (c *Client) CreateObject(ctx context.Context, urlStr string, body io.Reader, size *int64) (*schema.Object, error) {
-	u, err := url.Parse(urlStr)
-	if err != nil {
-		return nil, err
+// CreateObject uploads content using PUT, forwarding ContentType, ModTime and Meta as request headers.
+func (c *Client) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
+	payload := &putPayload{body: req.Body, contentType: req.ContentType}
+
+	// Build per-request header opts from the request metadata
+	opts := []client.RequestOpt{client.OptPath(req.Name, req.Path)}
+	if !req.ModTime.IsZero() {
+		opts = append(opts, client.OptReqHeader("Last-Modified", req.ModTime.Format(http.TimeFormat)))
+	}
+	for k, v := range req.Meta {
+		opts = append(opts, client.OptReqHeader(http.CanonicalHeaderKey(schema.ObjectMetaKeyPrefix+k), v))
 	}
 
-	// Build path: /{scheme}/{host}{path}
-	path := u.Scheme + "/" + u.Host + u.Path
-
-	// Create PUT payload
-	payload := &putPayload{
-		body:   body,
-		length: size,
-	}
-
-	// Perform request
 	var response schema.Object
-	if err := c.DoWithContext(ctx, payload, &response, client.OptPath(path)); err != nil {
+	if err := c.DoWithContext(ctx, payload, &response, opts...); err != nil {
 		return nil, err
 	}
-
 	return &response, nil
 }
 
-// GetObject downloads a file from the given URL using GET.
-// The URL should be in the format scheme://host/path (e.g., file://media/podcasts/file.txt).
-// Returns an io.ReadCloser for the file content and the object metadata.
-// The caller is responsible for closing the reader.
-func (c *Client) GetObject(ctx context.Context, urlStr string) (io.ReadCloser, *schema.Object, error) {
-	u, err := url.Parse(urlStr)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Build path: /{scheme}/{host}{path}
-	path := u.Scheme + "/" + u.Host + u.Path
-
-	// Create GET request
-	request := client.NewRequest()
-
-	// Create response object that implements Unmarshaler
+// GetObject retrieves metadata only for an object using HEAD (no body download).
+func (c *Client) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
 	var response getObjectResponse
+	if err := c.DoWithContext(ctx,
+		client.NewRequestEx(http.MethodHead, ""),
+		&response,
+		client.OptPath(req.Name, req.Path),
+	); err != nil {
+		return nil, err
+	}
+	return response.Object, nil
+}
 
-	// Perform request
-	if err := c.DoWithContext(ctx, request, &response, client.OptPath(path)); err != nil {
+// ReadObject downloads the content of an object using GET.
+// The caller is responsible for closing the returned reader.
+func (c *Client) ReadObject(ctx context.Context, req schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
+	var response readObjectResponse
+	if err := c.DoWithContext(ctx,
+		client.NewRequest(),
+		&response,
+		client.OptPath(req.Name, req.Path),
+	); err != nil {
 		return nil, nil, err
 	}
-
-	// Return success
 	return response.Body, response.Object, nil
 }
 
-// GetObjectMeta retrieves only the metadata for a file at the given URL using HEAD.
-// The URL should be in the format scheme://host/path (e.g., file://media/podcasts/file.txt).
-// Returns the object metadata without downloading the file content.
-func (c *Client) GetObjectMeta(ctx context.Context, urlStr string) (*schema.Object, error) {
-	u, err := url.Parse(urlStr)
-	if err != nil {
+// DeleteObject deletes a single object.
+func (c *Client) DeleteObject(ctx context.Context, req schema.DeleteObjectRequest) (*schema.Object, error) {
+	var response schema.Object
+	if err := c.DoWithContext(ctx,
+		client.NewRequestEx(http.MethodDelete, "application/json"),
+		&response,
+		client.OptPath(req.Name, req.Path),
+	); err != nil {
 		return nil, err
 	}
+	return &response, nil
+}
 
-	// Build path: /{scheme}/{host}{path}
-	path := u.Scheme + "/" + u.Host + u.Path
-
-	// Create HEAD request
-	request := client.NewRequestEx(http.MethodHead, "")
-
-	// Create response object that implements Unmarshaler
-	var response headObjectResponse
-	if err := c.DoWithContext(ctx, request, &response, client.OptPath(path)); err != nil {
+// DeleteObjects deletes objects under a path prefix (recursive).
+func (c *Client) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
+	query := make(url.Values)
+	if req.Recursive {
+		query.Set("recursive", "true")
+	}
+	var response schema.DeleteObjectsResponse
+	if err := c.DoWithContext(ctx,
+		client.NewRequestEx(http.MethodDelete, "application/json"),
+		&response,
+		client.OptPath(req.Name, req.Path),
+		client.OptQuery(query),
+	); err != nil {
 		return nil, err
 	}
-
-	// Return the object metadata
-	return response.Object, nil
+	return &response, nil
 }

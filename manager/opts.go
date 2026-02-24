@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"fmt"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -33,25 +34,17 @@ func WithTracer(tracer trace.Tracer) Opt {
 
 // WithBackend adds a blob backend (mem://, file://, s3://) to the filer.
 // The url should be in the format "scheme://bucket" (e.g., "mem://mybucket", "s3://mybucket").
+// Returns an error if a backend with the same name already exists.
 func WithBackend(ctx context.Context, url string, backendOpts ...backend.Opt) Opt {
 	return func(o *opts) error {
 		b, err := backend.NewBlobBackend(ctx, url, backendOpts...)
 		if err != nil {
 			return err
 		}
-		o.backends = append(o.backends, b)
-		return nil
-	}
-}
-
-// WithFileBackend adds a file backend with a logical name.
-// The name is used as the backend identifier (file://name),
-// while dir specifies the actual filesystem directory for storage.
-func WithFileBackend(name, dir string, backendOpts ...backend.Opt) Opt {
-	return func(o *opts) error {
-		b, err := backend.NewFileBackend(context.Background(), name, dir, backendOpts...)
-		if err != nil {
-			return err
+		for _, existing := range o.backends {
+			if existing.Name() == b.Name() {
+				return fmt.Errorf("backend with name %q already registered", b.Name())
+			}
 		}
 		o.backends = append(o.backends, b)
 		return nil

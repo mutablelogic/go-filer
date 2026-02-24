@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"net/url"
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/schema"
@@ -14,18 +13,21 @@ import (
 
 // GetObject gets object metadata
 func (b *blobbackend) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
-	// Parse the URL
-	u, err := url.Parse(req.URL)
-	if err != nil {
-		return nil, err
+	// Validate name
+	if req.Name != "" && req.Name != b.Name() {
+		return nil, httpresponse.ErrBadRequest.Withf("name %q not handled by backend %q", req.Name, b.Name())
 	}
 
-	// Validate the URL matches this backend, then get and return attributes
-	if key := b.Key(u); key == "" {
-		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
-	} else if attrs, err := b.bucket.Attributes(ctx, b.storageKey(key)); err != nil {
-		return nil, blobErr(err, req.URL)
+	// Compute key using the request path
+	key := b.Key(req.Path)
+	if key == "" {
+		return nil, httpresponse.ErrBadRequest.Withf("path %q not handled by backend %q", req.Path, b.Name())
+	}
+
+	// Get and return attributes
+	if attrs, err := b.bucket.Attributes(ctx, b.storageKey(key)); err != nil {
+		return nil, blobErr(err, b.Name()+":"+key)
 	} else {
-		return b.attrsToObject(req.URL, attrs), nil
+		return b.attrsToObject(b.Name(), key, attrs), nil
 	}
 }

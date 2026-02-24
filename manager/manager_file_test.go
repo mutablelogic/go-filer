@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -71,20 +70,11 @@ func Test_ManagerFile_Key(t *testing.T) {
 	assert.NoError(err)
 	defer mgr.Close()
 
-	// Matching URL - Key() returns path relative to backend (prefix stripped)
-	u, _ := url.Parse("file://testfiles/somefile.txt")
-	key := mgr.Key(u)
-	assert.Equal("/somefile.txt", key)
+	// Matching backend and path
+	assert.Equal("/somefile.txt", mgr.Key("testfiles", "/somefile.txt"))
 
-	// Non-matching URL (wrong host)
-	u2, _ := url.Parse("file://other/somefile.txt")
-	key2 := mgr.Key(u2)
-	assert.Equal("", key2)
-
-	// Non-matching URL (wrong scheme)
-	u3, _ := url.Parse("mem://testfiles/somefile.txt")
-	key3 := mgr.Key(u3)
-	assert.Equal("", key3)
+	// No backend with this name
+	assert.Equal("", mgr.Key("other", "/somefile.txt"))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -100,27 +90,29 @@ func Test_ManagerFile_NoBackendError(t *testing.T) {
 	defer mgr.Close()
 
 	// GetObject with wrong backend
-	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "file://nomatch/file.txt"})
+	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "nomatch", Path: "/file.txt"})
 	assert.Error(err)
 	assert.Contains(err.Error(), "no backend found")
 
 	// ListObjects with wrong backend
-	_, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{URL: "file://nomatch/"})
+	_, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{Name: "nomatch", Path: "/"})
 	assert.Error(err)
 
 	// DeleteObject with wrong backend
-	_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: "file://nomatch/file.txt"})
+	_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "nomatch", Path: "/file.txt"})
 	assert.Error(err)
 
 	// CreateObject with wrong backend
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:  "file://nomatch/file.txt",
+		Name: "nomatch",
+
+		Path: "/file.txt",
 		Body: strings.NewReader("content"),
 	})
 	assert.Error(err)
 
 	// ReadObject with wrong backend
-	_, _, err = mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "file://nomatch/file.txt"})
+	_, _, err = mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "nomatch", Path: "/file.txt"})
 	assert.Error(err)
 }
 
@@ -135,19 +127,19 @@ func Test_ManagerFile_CreateObject(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
-	baseURL := "file://testfiles"
-
 	t.Run("create simple object", func(t *testing.T) {
 		assert := assert.New(t)
 
 		content := "hello from file manager"
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         baseURL + "/created.txt",
+			Name:        "testfiles",
+			Path:        "/created.txt",
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
 		assert.NoError(err)
-		assert.Equal(baseURL+"/created.txt", obj.URL)
+		assert.Equal("testfiles", obj.Name)
+		assert.Equal("/created.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 	})
 
@@ -156,12 +148,14 @@ func Test_ManagerFile_CreateObject(t *testing.T) {
 
 		content := "nested content"
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         baseURL + "/subdir/nested/file.txt",
+			Name:        "testfiles",
+			Path:        "/subdir/nested/file.txt",
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
 		assert.NoError(err)
-		assert.Equal(baseURL+"/subdir/nested/file.txt", obj.URL)
+		assert.Equal("testfiles", obj.Name)
+		assert.Equal("/subdir/nested/file.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 	})
 
@@ -169,7 +163,8 @@ func Test_ManagerFile_CreateObject(t *testing.T) {
 		assert := assert.New(t)
 
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         baseURL + "/with-meta.txt",
+			Name:        "testfiles",
+			Path:        "/with-meta.txt",
 			Body:        strings.NewReader("metadata test"),
 			ContentType: "text/plain",
 			Meta:        schema.ObjectMeta{"author": "test", "version": "1"},
@@ -184,21 +179,23 @@ func Test_ManagerFile_CreateObject(t *testing.T) {
 
 		// Create initial
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  baseURL + "/overwrite.txt",
+			Name: "testfiles",
+			Path: "/overwrite.txt",
 			Body: strings.NewReader("original"),
 		})
 		assert.NoError(err)
 
 		// Overwrite
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  baseURL + "/overwrite.txt",
+			Name: "testfiles",
+			Path: "/overwrite.txt",
 			Body: strings.NewReader("new content"),
 		})
 		assert.NoError(err)
 		assert.Equal(int64(len("new content")), obj.Size)
 
 		// Verify new content
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: baseURL + "/overwrite.txt"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/overwrite.txt"})
 		assert.NoError(err)
 		defer reader.Close()
 		data, _ := io.ReadAll(reader)
@@ -217,12 +214,11 @@ func Test_ManagerFile_ReadObject(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
-	baseURL := "file://testfiles"
-
 	// Create a test object
 	content := "read me via file manager"
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         baseURL + "/readable.txt",
+		Name:        "testfiles",
+		Path:        "/readable.txt",
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 	})
@@ -231,11 +227,12 @@ func Test_ManagerFile_ReadObject(t *testing.T) {
 	t.Run("read existing object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		reader, obj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: baseURL + "/readable.txt"})
+		reader, obj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/readable.txt"})
 		assert.NoError(err)
 		defer reader.Close()
 
-		assert.Equal(baseURL+"/readable.txt", obj.URL)
+		assert.Equal("testfiles", obj.Name)
+		assert.Equal("/readable.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 
 		data, err := io.ReadAll(reader)
@@ -246,7 +243,7 @@ func Test_ManagerFile_ReadObject(t *testing.T) {
 	t.Run("read non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		_, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: baseURL + "/notfound.txt"})
+		_, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/notfound.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -263,12 +260,11 @@ func Test_ManagerFile_GetObject(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
-	baseURL := "file://testfiles"
-
 	// Create a test object
 	content := "get my metadata"
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         baseURL + "/getme.txt",
+		Name:        "testfiles",
+		Path:        "/getme.txt",
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 		Meta:        schema.ObjectMeta{"key": "value"},
@@ -278,16 +274,17 @@ func Test_ManagerFile_GetObject(t *testing.T) {
 	t.Run("get existing object metadata", func(t *testing.T) {
 		assert := assert.New(t)
 
-		obj, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: baseURL + "/getme.txt"})
+		obj, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/getme.txt"})
 		assert.NoError(err)
-		assert.Equal(baseURL+"/getme.txt", obj.URL)
+		assert.Equal("testfiles", obj.Name)
+		assert.Equal("/getme.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 	})
 
 	t.Run("get non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		_, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: baseURL + "/notfound.txt"})
+		_, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/notfound.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -304,8 +301,6 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
-	baseURL := "file://testfiles"
-
 	// Create test structure
 	files := []string{
 		"file1.txt",
@@ -316,7 +311,8 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 	}
 	for _, f := range files {
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         baseURL + "/" + f,
+			Name:        "testfiles",
+			Path:        "/" + f,
 			Body:        strings.NewReader("content of " + f),
 			ContentType: "text/plain",
 		})
@@ -327,11 +323,12 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       baseURL + "/",
+			Name:      "testfiles",
+			Path:      "/",
 			Recursive: false,
 		})
 		assert.NoError(err)
-		assert.Equal(baseURL+"/", resp.URL)
+		assert.Equal("testfiles", resp.Name)
 		// Should have file1.txt, file2.txt, and subdir/ marker
 		assert.GreaterOrEqual(len(resp.Body), 2)
 	})
@@ -340,7 +337,8 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       baseURL + "/",
+			Name:      "testfiles",
+			Path:      "/",
 			Recursive: true,
 		})
 		assert.NoError(err)
@@ -351,7 +349,8 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       baseURL + "/subdir/",
+			Name:      "testfiles",
+			Path:      "/subdir/",
 			Recursive: false,
 		})
 		assert.NoError(err)
@@ -363,7 +362,8 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL:       baseURL + "/subdir/",
+			Name:      "testfiles",
+			Path:      "/subdir/",
 			Recursive: true,
 		})
 		assert.NoError(err)
@@ -374,18 +374,21 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: baseURL + "/file1.txt",
+			Name: "testfiles",
+			Path: "/file1.txt",
 		})
 		assert.NoError(err)
 		assert.Len(resp.Body, 1)
-		assert.Equal(baseURL+"/file1.txt", resp.Body[0].URL)
+		assert.Equal("testfiles", resp.Body[0].Name)
+		assert.Equal("/file1.txt", resp.Body[0].Path)
 	})
 
 	t.Run("list empty prefix", func(t *testing.T) {
 		assert := assert.New(t)
 
 		resp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{
-			URL: baseURL + "/nonexistent/",
+			Name: "testfiles",
+			Path: "/nonexistent/",
 		})
 		assert.NoError(err)
 		assert.Len(resp.Body, 0)
@@ -403,27 +406,27 @@ func Test_ManagerFile_DeleteObject(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
-	baseURL := "file://testfiles"
-
 	t.Run("delete existing object", func(t *testing.T) {
 		assert := assert.New(t)
 
 		// Create object
 		content := "delete me"
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  baseURL + "/deleteme.txt",
+			Name: "testfiles",
+			Path: "/deleteme.txt",
 			Body: strings.NewReader(content),
 		})
 		assert.NoError(err)
 
 		// Delete it
-		obj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: baseURL + "/deleteme.txt"})
+		obj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testfiles", Path: "/deleteme.txt"})
 		assert.NoError(err)
-		assert.Equal(baseURL+"/deleteme.txt", obj.URL)
+		assert.Equal("testfiles", obj.Name)
+		assert.Equal("/deleteme.txt", obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 
 		// Verify it's gone
-		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: baseURL + "/deleteme.txt"})
+		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/deleteme.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -431,7 +434,7 @@ func Test_ManagerFile_DeleteObject(t *testing.T) {
 	t.Run("delete non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		_, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: baseURL + "/notfound.txt"})
+		_, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testfiles", Path: "/notfound.txt"})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -441,17 +444,18 @@ func Test_ManagerFile_DeleteObject(t *testing.T) {
 
 		// Create nested object
 		_, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  baseURL + "/nested/deep/file.txt",
+			Name: "testfiles",
+			Path: "/nested/deep/file.txt",
 			Body: strings.NewReader("nested content"),
 		})
 		assert.NoError(err)
 
 		// Delete it
-		_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: baseURL + "/nested/deep/file.txt"})
+		_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testfiles", Path: "/nested/deep/file.txt"})
 		assert.NoError(err)
 
 		// Verify it's gone
-		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: baseURL + "/nested/deep/file.txt"})
+		_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/nested/deep/file.txt"})
 		assert.Error(err)
 	})
 }
@@ -468,26 +472,26 @@ func Test_ManagerFile_FullWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
-	baseURL := "file://testfiles"
-
 	// 1. Create an object
 	content := "full workflow test content"
 	createdObj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         baseURL + "/workflow/test.txt",
+		Name:        "testfiles",
+		Path:        "/workflow/test.txt",
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 		Meta:        schema.ObjectMeta{"step": "created"},
 	})
 	assert.NoError(err)
-	assert.Equal(baseURL+"/workflow/test.txt", createdObj.URL)
+	assert.Equal("testfiles", createdObj.Name)
+	assert.Equal("/workflow/test.txt", createdObj.Path)
 
 	// 2. Get object metadata
-	gotObj, err := mgr.GetObject(ctx, schema.GetObjectRequest{URL: baseURL + "/workflow/test.txt"})
+	gotObj, err := mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/workflow/test.txt"})
 	assert.NoError(err)
 	assert.Equal(int64(len(content)), gotObj.Size)
 
 	// 3. Read object content
-	reader, readObj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: baseURL + "/workflow/test.txt"})
+	reader, readObj, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/workflow/test.txt"})
 	assert.NoError(err)
 	data, _ := io.ReadAll(reader)
 	reader.Close()
@@ -495,21 +499,22 @@ func Test_ManagerFile_FullWorkflow(t *testing.T) {
 	assert.Equal(int64(len(content)), readObj.Size)
 
 	// 4. List objects
-	listResp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{URL: baseURL + "/workflow/"})
+	listResp, err := mgr.ListObjects(ctx, schema.ListObjectsRequest{Name: "testfiles", Path: "/workflow/"})
 	assert.NoError(err)
 	assert.Len(listResp.Body, 1)
 
 	// 5. Delete object
-	deletedObj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: baseURL + "/workflow/test.txt"})
+	deletedObj, err := mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "testfiles", Path: "/workflow/test.txt"})
 	assert.NoError(err)
-	assert.Equal(baseURL+"/workflow/test.txt", deletedObj.URL)
+	assert.Equal("testfiles", deletedObj.Name)
+	assert.Equal("/workflow/test.txt", deletedObj.Path)
 
 	// 6. Verify object is gone
-	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: baseURL + "/workflow/test.txt"})
+	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/workflow/test.txt"})
 	assert.Error(err)
 
 	// 7. Verify list is empty
-	listResp, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{URL: baseURL + "/workflow/"})
+	listResp, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{Name: "testfiles", Path: "/workflow/"})
 	assert.NoError(err)
 	assert.Len(listResp.Body, 0)
 }
@@ -525,20 +530,19 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
-	baseURL := "file://testfiles"
-
 	t.Run("empty content", func(t *testing.T) {
 		assert := assert.New(t)
 
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  baseURL + "/empty.txt",
+			Name: "testfiles",
+			Path: "/empty.txt",
 			Body: strings.NewReader(""),
 		})
 		assert.NoError(err)
 		assert.Equal(int64(0), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: baseURL + "/empty.txt"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/empty.txt"})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()
@@ -550,7 +554,8 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 
 		binaryData := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD}
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         baseURL + "/binary.bin",
+			Name:        "testfiles",
+			Path:        "/binary.bin",
 			Body:        bytes.NewReader(binaryData),
 			ContentType: "application/octet-stream",
 		})
@@ -558,7 +563,7 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 		assert.Equal(int64(len(binaryData)), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: baseURL + "/binary.bin"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/binary.bin"})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()
@@ -570,14 +575,15 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 
 		unicodeContent := "Hello 世界! 🌍 Привет мир"
 		obj, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:  baseURL + "/unicode.txt",
+			Name: "testfiles",
+			Path: "/unicode.txt",
 			Body: strings.NewReader(unicodeContent),
 		})
 		assert.NoError(err)
 		assert.Equal(int64(len(unicodeContent)), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: baseURL + "/unicode.txt"})
+		reader, _, err := mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "testfiles", Path: "/unicode.txt"})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()

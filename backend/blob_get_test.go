@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,9 @@ func TestGetObject_Mem(t *testing.T) {
 	// Create test objects
 	createTestObject := func(t *testing.T, key, content, contentType string, meta schema.ObjectMeta) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "mem://testbucket/" + key,
+			Name: "testbucket",
+
+			Path:        "/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: contentType,
 			Meta:        meta,
@@ -36,7 +39,8 @@ func TestGetObject_Mem(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		url         string
+		reqName     string
+		reqPath     string
 		wantSize    int64
 		wantType    string
 		wantMeta    schema.ObjectMeta
@@ -45,32 +49,37 @@ func TestGetObject_Mem(t *testing.T) {
 	}{
 		{
 			name:     "simple file",
-			url:      "mem://testbucket/simple.txt",
+			reqName:  "testbucket",
+			reqPath:  "/simple.txt",
 			wantSize: 11,
 			wantType: "text/plain",
 		},
 		{
 			name:     "file with metadata",
-			url:      "mem://testbucket/data.json",
+			reqName:  "testbucket",
+			reqPath:  "/data.json",
 			wantSize: 13,
 			wantType: "application/json",
 			wantMeta: schema.ObjectMeta{"author": "test"},
 		},
 		{
 			name:     "nested file",
-			url:      "mem://testbucket/subdir/nested.txt",
+			reqName:  "testbucket",
+			reqPath:  "/subdir/nested.txt",
 			wantSize: 14,
 			wantType: "text/plain",
 		},
 		{
 			name:        "non-existent file",
-			url:         "mem://testbucket/notfound.txt",
+			reqName:     "testbucket",
+			reqPath:     "/notfound.txt",
 			wantErr:     true,
 			errContains: "not found",
 		},
 		{
 			name:        "wrong bucket",
-			url:         "mem://otherbucket/simple.txt",
+			reqName:     "otherbucket",
+			reqPath:     "/simple.txt",
 			wantErr:     true,
 			errContains: "not handled",
 		},
@@ -80,7 +89,7 @@ func TestGetObject_Mem(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			obj, err := backend.GetObject(ctx, schema.GetObjectRequest{URL: tt.url})
+			obj, err := backend.GetObject(ctx, schema.GetObjectRequest{Name: tt.reqName, Path: tt.reqPath})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -91,7 +100,8 @@ func TestGetObject_Mem(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(tt.url, obj.URL)
+			assert.Equal(tt.reqName, obj.Name)
+			assert.Equal(tt.reqPath, obj.Path)
 			assert.Equal(tt.wantSize, obj.Size)
 			assert.Equal(tt.wantType, obj.ContentType)
 
@@ -115,7 +125,9 @@ func TestGetObject_File(t *testing.T) {
 	// Create test files
 	createTestObject := func(t *testing.T, key, content string) {
 		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
-			URL:         "file://testfiles/" + key,
+			Name: "testfiles",
+
+			Path:        "/" + key,
 			Body:        strings.NewReader(content),
 			ContentType: "text/plain",
 		})
@@ -155,7 +167,8 @@ func TestGetObject_File(t *testing.T) {
 			assert := assert.New(t)
 
 			reqURL := "file://testfiles/" + tt.key
-			obj, err := backend.GetObject(ctx, schema.GetObjectRequest{URL: reqURL})
+			_ = reqURL
+			obj, err := backend.GetObject(ctx, schema.GetObjectRequest{Name: "testfiles", Path: "/" + tt.key})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -166,7 +179,8 @@ func TestGetObject_File(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(reqURL, obj.URL)
+			assert.Equal("testfiles", obj.Name)
+			assert.Equal("/"+tt.key, obj.Path)
 			assert.Equal(tt.wantSize, obj.Size)
 		})
 	}
@@ -185,13 +199,17 @@ func TestGetObject_S3(t *testing.T) {
 	defer backend.Close()
 
 	// Generate unique key for this test run
+	bURL, _ := url.Parse(bucketURL)
 	testKey := "get-test-" + time.Now().Format("20060102-150405") + ".txt"
 	reqURL := bucketURL + "/" + testKey
+	_ = reqURL
+	reqPath := bURL.Path + "/" + testKey
 
 	// Create test object first
 	content := "hello from S3 GetObject test"
 	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:         reqURL,
+		Name:        bURL.Host,
+		Path:        reqPath,
 		Body:        strings.NewReader(content),
 		ContentType: "text/plain",
 		Meta:        schema.ObjectMeta{"test-key": "test-value"},
@@ -200,17 +218,18 @@ func TestGetObject_S3(t *testing.T) {
 
 	// Clean up after test
 	defer func() {
-		backend.DeleteObject(ctx, schema.DeleteObjectRequest{URL: reqURL})
+		backend.DeleteObject(ctx, schema.DeleteObjectRequest{Name: bURL.Host, Path: reqPath})
 	}()
 
 	t.Run("get existing object", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		obj, err := backend.GetObject(ctx, schema.GetObjectRequest{URL: reqURL})
+		obj, err := backend.GetObject(ctx, schema.GetObjectRequest{Name: bURL.Host, Path: reqPath})
 		require.NoError(err)
 
-		assert.Equal(reqURL, obj.URL)
+		assert.Equal(bURL.Host, obj.Name)
+		assert.Equal("/"+testKey, obj.Path)
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 		assert.Equal("test-value", obj.Meta["test-key"])
@@ -220,7 +239,8 @@ func TestGetObject_S3(t *testing.T) {
 		assert := assert.New(t)
 
 		nonExistentURL := bucketURL + "/non-existent-file.txt"
-		_, err := backend.GetObject(ctx, schema.GetObjectRequest{URL: nonExistentURL})
+		_ = nonExistentURL
+		_, err := backend.GetObject(ctx, schema.GetObjectRequest{Name: bURL.Host, Path: bURL.Path + "/non-existent-file.txt"})
 
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")

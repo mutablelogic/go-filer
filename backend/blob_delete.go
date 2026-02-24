@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	// Packages
@@ -18,16 +17,15 @@ import (
 
 // DeleteObject deletes an object
 func (b *blobbackend) DeleteObject(ctx context.Context, req schema.DeleteObjectRequest) (*schema.Object, error) {
-	// Parse the URL
-	u, err := url.Parse(req.URL)
-	if err != nil {
-		return nil, err
+	// Validate name
+	if req.Name != "" && req.Name != b.Name() {
+		return nil, httpresponse.ErrBadRequest.Withf("name %q not handled by backend %q", req.Name, b.Name())
 	}
 
-	// Validate the URL matches this backend
-	key := b.Key(u)
+	// Compute key using the request path
+	key := b.Key(req.Path)
 	if key == "" {
-		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
+		return nil, httpresponse.ErrBadRequest.Withf("path %q not handled by backend %q", req.Path, b.Name())
 	}
 	sk := b.storageKey(key)
 
@@ -39,35 +37,35 @@ func (b *blobbackend) DeleteObject(ctx context.Context, req schema.DeleteObjectR
 
 	// Perform delete
 	if err := b.bucket.Delete(ctx, sk); err != nil {
-		return nil, blobErr(err, req.URL)
+		return nil, blobErr(err, b.Name()+":"+key)
 	} else if attrs != nil {
-		return b.attrsToObject(req.URL, attrs), nil
+		return b.attrsToObject(b.Name(), key, attrs), nil
 	}
 
 	// Return empty object in the case there is no attributes
-	return &schema.Object{URL: req.URL}, nil
+	return &schema.Object{Name: b.Name(), Path: key}, nil
 }
 
 // DeleteObjects deletes objects in the backend.
-// If a single object exists at the URL, it deletes just that object.
-// Otherwise, it treats the URL as a prefix and deletes all matching objects.
+// If a single object exists at the path, it deletes just that object.
+// Otherwise, it treats the path as a prefix and deletes all matching objects.
 // Use Recursive=true to delete nested objects, or Recursive=false for immediate children only.
 func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	u, err := url.Parse(req.URL)
-	if err != nil {
-		return nil, err
+	// Validate name
+	if req.Name != "" && req.Name != b.Name() {
+		return nil, httpresponse.ErrBadRequest.Withf("name %q not handled by backend %q", req.Name, b.Name())
 	}
 
-	// Validate the URL matches this backend
-	key := b.Key(u)
+	// Compute key using the request path
+	key := b.Key(req.Path)
 	if key == "" {
-		return nil, httpresponse.ErrBadRequest.Withf("URL %q not handled by this backend", req.URL)
+		return nil, httpresponse.ErrBadRequest.Withf("path %q not handled by backend %q", req.Path, b.Name())
 	}
 	sk := b.storageKey(key)
 
 	// Response
 	response := schema.DeleteObjectsResponse{
-		URL: req.URL,
+		Name: req.Name,
 	}
 
 	// If key is non-empty and doesn't end with /, check if object exists at this exact path
@@ -77,7 +75,7 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 			// If object has content (size > 0), delete just this one regardless of children
 			// If size is 0, it might be a phantom directory - check for children
 			if attrs.Size > 0 {
-				if obj, err := b.DeleteObject(ctx, schema.DeleteObjectRequest{URL: req.URL}); err != nil {
+				if obj, err := b.DeleteObject(ctx, schema.DeleteObjectRequest{Name: req.Name, Path: req.Path}); err != nil {
 					return nil, err
 				} else if obj != nil {
 					response.Body = append(response.Body, *obj)
@@ -91,7 +89,7 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 			})
 			if _, err := iter.Next(ctx); err == io.EOF {
 				// No children - this is a real (empty) object, delete it
-				if obj, err := b.DeleteObject(ctx, schema.DeleteObjectRequest{URL: req.URL}); err != nil {
+				if obj, err := b.DeleteObject(ctx, schema.DeleteObjectRequest{Name: req.Name, Path: req.Path}); err != nil {
 					return nil, err
 				} else if obj != nil {
 					response.Body = append(response.Body, *obj)
@@ -127,7 +125,7 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 			if err == io.EOF {
 				break
 			} else if err != nil {
-				return nil, blobErr(err, req.URL)
+				return nil, blobErr(err, req.Name+":"+req.Path)
 			}
 
 			// Skip the prefix itself and directories (when non-recursive)
@@ -135,17 +133,17 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 				continue
 			}
 
-			// Build the full URL for the object
-			objURL := fmt.Sprintf("%s://%s/%s", b.url.Scheme, b.url.Host, obj.Key)
+			objPath := b.pathFromStorageKey(obj.Key)
 
 			// Delete the object
 			if err := b.bucket.Delete(ctx, obj.Key); err != nil {
-				return nil, blobErr(err, objURL)
+				return nil, blobErr(err, b.Name()+":"+objPath)
 			}
 
 			// Add to response
 			o := schema.Object{
-				URL:     objURL,
+				Name:    b.Name(),
+				Path:    objPath,
 				Size:    obj.Size,
 				ModTime: obj.ModTime,
 			}

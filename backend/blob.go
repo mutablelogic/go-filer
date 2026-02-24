@@ -5,18 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 
 	// Packages
-
-	"github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	types "github.com/mutablelogic/go-server/pkg/types"
 	blob "gocloud.dev/blob"
 	s3blob "gocloud.dev/blob/s3blob"
 	gcerrors "gocloud.dev/gcerrors"
 
-	//Drivers
+	// Drivers
 	_ "gocloud.dev/blob/fileblob" // file:// URLs
 	_ "gocloud.dev/blob/memblob"  // mem:// URLs
 	_ "gocloud.dev/blob/s3blob"   // s3:// URLs
@@ -58,7 +59,10 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (*blobbackend, e
 		self.opt = opt
 	}
 
-	// Store the prefix from the URL path.
+	// Validate the backend name (URL host) is a valid identifier
+	if !types.IsIdentifier(self.url.Host) {
+		return nil, fmt.Errorf("backend name %q must be a valid identifier (letter, digits, underscores, hyphens; max 64 chars)", self.url.Host)
+	}
 	// For s3/mem: prefix is used as a key discriminator in Key() and
 	// as a bucket prefix in storageKey() (bucket opens at host level).
 	// For file://: path is the bucket root directory, NOT a key discriminator.
@@ -109,59 +113,52 @@ func (b *blobbackend) Close() error {
 }
 
 // NewFileBackend creates a file-based backend with a logical name.
-// This is equivalent to NewBlobBackend(ctx, "file://name/dir").
-// The name is used as the host component of the backend URL (file://name/dir),
-// while dir specifies the actual filesystem directory for storage.
+// name must be a valid identifier (see types.IsIdentifier): starts with a
+// letter, contains only letters, digits, underscores, or hyphens, max 64 chars.
+// dir must be an absolute path; if it doesn't start with "/" an error is returned.
 func NewFileBackend(ctx context.Context, name, dir string, opts ...Opt) (*blobbackend, error) {
-	return NewBlobBackend(ctx, "file://"+name+dir, opts...)
+	if !path.IsAbs(dir) {
+		return nil, fmt.Errorf("backend dir %q must be an absolute path", dir)
+	}
+	return NewBlobBackend(ctx, "file://"+name+path.Clean(dir), opts...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// URL returns the URL for the backend
-func (b *blobbackend) URL() *url.URL {
-	return b.url
+// Name returns the name of the backend (the host component of the URL)
+func (b *blobbackend) Name() string {
+	return b.url.Host
 }
 
-// Key returns the storage key for a URL within this backend.
-// Returns empty string if the URL is not handled by this backend.
-// Returns "/" for the root of the backend.
-// For s3/mem: matches on scheme+host+prefix, returns key relative to prefix.
-// For file://: matches on scheme+host only, returns the input path directly.
-func (b *blobbackend) Key(u *url.URL) string {
-	if u == nil || u.Scheme != b.url.Scheme || u.Host != b.url.Host {
+// Key returns the storage key for a path within this backend.
+// Returns empty string if the path is not handled (e.g., prefix mismatch for s3/mem).
+// Returns "/" for the root.
+func (b *blobbackend) Key(p string) string {
+	if p == "" {
+		p = "/"
+	}
+
+	// For file://: no prefix matching — the path IS the key.
+	// Clean the path to prevent directory traversal (e.g. "/../../../etc/passwd" → "/etc/passwd").
+	if b.url.Scheme == "file" {
+		return path.Clean(p)
+	}
+
+	// For s3/mem without prefix: path is the key directly.
+	if b.prefix == "" {
+		return path.Clean(p)
+	}
+
+	// For s3/mem with prefix: strip prefix or return "" if path doesn't match.
+	if !strings.HasPrefix(p, b.prefix) {
 		return ""
 	}
-
-	// Get the path from the input URL
-	path := u.Path
-	if path == "" {
-		path = "/"
+	p = strings.TrimPrefix(p, b.prefix)
+	if p == "" {
+		p = "/"
 	}
-
-	// For file://: no prefix matching — the path IS the key
-	if b.url.Scheme == "file" {
-		return path
-	}
-
-	// For s3/mem: require prefix in the path and strip it
-	if b.prefix != "" {
-		if !strings.HasPrefix(path, b.prefix) {
-			return ""
-		}
-		path = strings.TrimPrefix(path, b.prefix)
-		if path == "" {
-			path = "/"
-		}
-	}
-
-	return path
-}
-
-// Handles returns true if this backend handles the given URL
-func (b *blobbackend) Handles(u *url.URL) bool {
-	return b.Key(u) != ""
+	return path.Clean(p)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -181,9 +178,10 @@ func (b *blobbackend) storageKey(key string) string {
 	return sk
 }
 
-func (b *blobbackend) attrsToObject(objectURL string, attrs *blob.Attributes) *schema.Object {
+func (b *blobbackend) attrsToObject(name, objPath string, attrs *blob.Attributes) *schema.Object {
 	obj := &schema.Object{
-		URL:         objectURL,
+		Name:        name,
+		Path:        objPath,
 		Size:        attrs.Size,
 		ModTime:     attrs.ModTime,
 		ContentType: attrs.ContentType,
@@ -195,6 +193,18 @@ func (b *blobbackend) attrsToObject(objectURL string, attrs *blob.Attributes) *s
 		obj.Meta = attrs.Metadata
 	}
 	return obj
+}
+
+// pathFromStorageKey converts a blob storage key back to a logical path
+// by stripping the bucket prefix (for s3/mem with bucket prefix).
+func (b *blobbackend) pathFromStorageKey(sk string) string {
+	if b.bucketPrefix != "" {
+		sk = strings.TrimPrefix(sk, b.bucketPrefix+"/")
+	}
+	if !strings.HasPrefix(sk, "/") {
+		sk = "/" + sk
+	}
+	return path.Clean(sk)
 }
 
 // blobErr wraps a go-cloud blob error with the appropriate httpresponse error

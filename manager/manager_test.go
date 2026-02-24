@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,7 +30,7 @@ func Test_Manager_NewWithBackend(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	assert.NotNil(mgr)
 	defer mgr.Close()
@@ -43,19 +42,31 @@ func Test_Manager_NewWithMultipleBackends(t *testing.T) {
 	tmpDir2 := t.TempDir()
 
 	mgr, err := New(context.TODO(),
-		WithFileBackend("backend1", tmpDir1),
-		WithFileBackend("backend2", tmpDir2),
+		WithBackend(context.TODO(), "file://backend1"+tmpDir1),
+		WithBackend(context.TODO(), "file://backend2"+tmpDir2),
 	)
 	assert.NoError(err)
 	assert.NotNil(mgr)
 	defer mgr.Close()
 }
 
+func Test_Manager_DuplicateBackendName(t *testing.T) {
+	assert := assert.New(t)
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	_, err := New(context.TODO(),
+		WithBackend(context.TODO(), "file://samename"+tmpDir1),
+		WithBackend(context.TODO(), "file://samename"+tmpDir2),
+	)
+	assert.Error(err)
+}
+
 func Test_Manager_Close(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 
 	err = mgr.Close()
@@ -69,24 +80,15 @@ func Test_Manager_Key(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
-	// Matching URL
-	u, _ := url.Parse("file://test/somefile.txt")
-	key := mgr.Key(u)
-	assert.Equal("/somefile.txt", key)
+	// Matching backend and path
+	assert.Equal("/somefile.txt", mgr.Key("test", "/somefile.txt"))
 
-	// Non-matching URL (wrong host)
-	u2, _ := url.Parse("file://other/somefile.txt")
-	key2 := mgr.Key(u2)
-	assert.Equal("", key2)
-
-	// Non-matching URL (wrong scheme)
-	u3, _ := url.Parse("s3://test/somefile.txt")
-	key3 := mgr.Key(u3)
-	assert.Equal("", key3)
+	// No backend with this name
+	assert.Equal("", mgr.Key("other", "/somefile.txt"))
 }
 
 func Test_Manager_Key_MultipleBackends(t *testing.T) {
@@ -95,23 +97,20 @@ func Test_Manager_Key_MultipleBackends(t *testing.T) {
 	tmpDir2 := t.TempDir()
 
 	mgr, err := New(context.TODO(),
-		WithFileBackend("files", tmpDir1),
-		WithFileBackend("media", tmpDir2),
+		WithBackend(context.TODO(), "file://files"+tmpDir1),
+		WithBackend(context.TODO(), "file://media"+tmpDir2),
 	)
 	assert.NoError(err)
 	defer mgr.Close()
 
 	// First backend
-	u1, _ := url.Parse("file://files/doc.txt")
-	assert.Equal("/doc.txt", mgr.Key(u1))
+	assert.Equal("/doc.txt", mgr.Key("files", "/doc.txt"))
 
 	// Second backend
-	u2, _ := url.Parse("file://media/video.mp4")
-	assert.Equal("/video.mp4", mgr.Key(u2))
+	assert.Equal("/video.mp4", mgr.Key("media", "/video.mp4"))
 
-	// No match
-	u3, _ := url.Parse("file://other/file.txt")
-	assert.Equal("", mgr.Key(u3))
+	// No backend with this name
+	assert.Equal("", mgr.Key("other", "/file.txt"))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -121,33 +120,34 @@ func Test_Manager_NoBackendError(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
 	ctx := context.Background()
 
 	// GetObject with wrong backend
-	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{URL: "file://other/file.txt"})
+	_, err = mgr.GetObject(ctx, schema.GetObjectRequest{Name: "other", Path: "/file.txt"})
 	assert.Error(err)
 
 	// ListObjects with wrong backend
-	_, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{URL: "file://other/"})
+	_, err = mgr.ListObjects(ctx, schema.ListObjectsRequest{Name: "other", Path: "/"})
 	assert.Error(err)
 
 	// DeleteObject with wrong backend
-	_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{URL: "file://other/file.txt"})
+	_, err = mgr.DeleteObject(ctx, schema.DeleteObjectRequest{Name: "other", Path: "/file.txt"})
 	assert.Error(err)
 
 	// CreateObject with wrong backend
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:  "file://other/file.txt",
+		Name: "other",
+		Path: "/file.txt",
 		Body: bytes.NewReader([]byte("content")),
 	})
 	assert.Error(err)
 
 	// ReadObject with wrong backend
-	_, _, err = mgr.ReadObject(ctx, schema.ReadObjectRequest{URL: "file://other/file.txt"})
+	_, _, err = mgr.ReadObject(ctx, schema.ReadObjectRequest{Name: "other", Path: "/file.txt"})
 	assert.Error(err)
 }
 
@@ -158,20 +158,22 @@ func Test_Manager_CreateObject(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
 	ctx := context.Background()
 	content := []byte("hello from manager")
 	req := schema.CreateObjectRequest{
-		URL:  "file://test/created.txt",
+		Name: "test",
+		Path: "/created.txt",
 		Body: bytes.NewReader(content),
 	}
 
 	obj, err := mgr.CreateObject(ctx, req)
 	assert.NoError(err)
-	assert.Equal("file://test/created.txt", obj.URL)
+	assert.Equal("test", obj.Name)
+	assert.Equal("/created.txt", obj.Path)
 	assert.Equal(int64(len(content)), obj.Size)
 
 	// Verify file exists
@@ -189,18 +191,19 @@ func Test_Manager_ReadObject(t *testing.T) {
 	err := os.WriteFile(filepath.Join(tmpDir, "readable.txt"), content, 0644)
 	assert.NoError(err)
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
 	ctx := context.Background()
-	req := schema.ReadObjectRequest{URL: "file://test/readable.txt"}
+	req := schema.ReadObjectRequest{Name: "test", Path: "/readable.txt"}
 
 	reader, obj, err := mgr.ReadObject(ctx, req)
 	assert.NoError(err)
 	defer reader.Close()
 
-	assert.Equal("file://test/readable.txt", obj.URL)
+	assert.Equal("test", obj.Name)
+	assert.Equal("/readable.txt", obj.Path)
 	assert.Equal(int64(len(content)), obj.Size)
 
 	data, err := io.ReadAll(reader)
@@ -217,16 +220,17 @@ func Test_Manager_GetObject(t *testing.T) {
 	err := os.WriteFile(filepath.Join(tmpDir, "getme.txt"), content, 0644)
 	assert.NoError(err)
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
 	ctx := context.Background()
-	req := schema.GetObjectRequest{URL: "file://test/getme.txt"}
+	req := schema.GetObjectRequest{Name: "test", Path: "/getme.txt"}
 
 	obj, err := mgr.GetObject(ctx, req)
 	assert.NoError(err)
-	assert.Equal("file://test/getme.txt", obj.URL)
+	assert.Equal("test", obj.Name)
+	assert.Equal("/getme.txt", obj.Path)
 	assert.Equal(int64(len(content)), obj.Size)
 }
 
@@ -238,16 +242,16 @@ func Test_Manager_ListObjects(t *testing.T) {
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("one"), 0644))
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("two"), 0644))
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
 	ctx := context.Background()
-	req := schema.ListObjectsRequest{URL: "file://test/"}
+	req := schema.ListObjectsRequest{Name: "test", Path: "/"}
 
 	resp, err := mgr.ListObjects(ctx, req)
 	assert.NoError(err)
-	assert.Equal("file://test/", resp.URL)
+	assert.Equal("test", resp.Name)
 	assert.Len(resp.Body, 2)
 }
 
@@ -259,16 +263,17 @@ func Test_Manager_DeleteObject(t *testing.T) {
 	filePath := filepath.Join(tmpDir, "deleteme.txt")
 	assert.NoError(os.WriteFile(filePath, []byte("delete me"), 0644))
 
-	mgr, err := New(context.TODO(), WithFileBackend("test", tmpDir))
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
 	ctx := context.Background()
-	req := schema.DeleteObjectRequest{URL: "file://test/deleteme.txt"}
+	req := schema.DeleteObjectRequest{Name: "test", Path: "/deleteme.txt"}
 
 	obj, err := mgr.DeleteObject(ctx, req)
 	assert.NoError(err)
-	assert.Equal("file://test/deleteme.txt", obj.URL)
+	assert.Equal("test", obj.Name)
+	assert.Equal("/deleteme.txt", obj.Path)
 
 	// Verify file is deleted
 	_, err = os.Stat(filePath)
@@ -284,8 +289,8 @@ func Test_Manager_RoutesToCorrectBackend(t *testing.T) {
 	tmpDir2 := t.TempDir()
 
 	mgr, err := New(context.TODO(),
-		WithFileBackend("backend1", tmpDir1),
-		WithFileBackend("backend2", tmpDir2),
+		WithBackend(context.TODO(), "file://backend1"+tmpDir1),
+		WithBackend(context.TODO(), "file://backend2"+tmpDir2),
 	)
 	assert.NoError(err)
 	defer mgr.Close()
@@ -294,14 +299,16 @@ func Test_Manager_RoutesToCorrectBackend(t *testing.T) {
 
 	// Create in backend1
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:  "file://backend1/test1.txt",
+		Name: "backend1",
+		Path: "/test1.txt",
 		Body: bytes.NewReader([]byte("backend1 content")),
 	})
 	assert.NoError(err)
 
 	// Create in backend2
 	_, err = mgr.CreateObject(ctx, schema.CreateObjectRequest{
-		URL:  "file://backend2/test2.txt",
+		Name: "backend2",
+		Path: "/test2.txt",
 		Body: bytes.NewReader([]byte("backend2 content")),
 	})
 	assert.NoError(err)
