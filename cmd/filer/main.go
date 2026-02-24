@@ -41,7 +41,7 @@ type Globals struct {
 
 type CLI struct {
 	Globals
-	Backends BackendsCommand  `cmd:"" name:"backends" help:"List registered backends." group:"CLIENT"`
+	Backends BackendsCommand `cmd:"" name:"backends" help:"List registered backends." group:"CLIENT"`
 	List     ListCommand     `cmd:"" name:"list"     help:"List objects in a backend."      group:"CLIENT"`
 	Get      GetCommand      `cmd:"" name:"get"      help:"Download an object to stdout."   group:"CLIENT"`
 	Head     HeadCommand     `cmd:"" name:"head"     help:"Print object metadata."           group:"CLIENT"`

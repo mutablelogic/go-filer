@@ -171,4 +171,3 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 	}
 	return prettyJSON(obj)
 }
-
