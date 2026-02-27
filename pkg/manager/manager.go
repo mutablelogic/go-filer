@@ -45,8 +45,6 @@ func (manager *Manager) Close() error {
 			result = errors.Join(result, err)
 		}
 	}
-
-	// Return any errors
 	return result
 }
 
@@ -56,8 +54,8 @@ func (manager *Manager) Close() error {
 // Backends returns the list of backend names
 func (manager *Manager) Backends() []string {
 	result := make([]string, 0, len(manager.backends))
-	for _, b := range manager.backends {
-		result = append(result, b.Name())
+	for name := range manager.backends {
+		result = append(result, name)
 	}
 	return result
 }
@@ -75,7 +73,8 @@ func (manager *Manager) CreateObject(ctx context.Context, name string, req schem
 	defer func() { endFunc(result) }()
 
 	// Run the backend
-	return backend.CreateObject(child, req)
+	obj, result := backend.CreateObject(child, req)
+	return obj, result
 }
 
 func (manager *Manager) ReadObject(ctx context.Context, name string, req schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
@@ -91,7 +90,8 @@ func (manager *Manager) ReadObject(ctx context.Context, name string, req schema.
 	defer func() { endFunc(result) }()
 
 	// Run the backend
-	return backend.ReadObject(child, req)
+	r, obj, result := backend.ReadObject(child, req)
+	return r, obj, result
 }
 
 func (manager *Manager) ListObjects(ctx context.Context, name string, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
@@ -106,38 +106,14 @@ func (manager *Manager) ListObjects(ctx context.Context, name string, req schema
 	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ListObjects"))
 	defer func() { endFunc(result) }()
 
-	// Run the backend (always returns the full set; pagination is applied here)
-	resp, err := backend.ListObjects(child, req)
-	if err != nil {
-		return nil, err
+	// Clamp Limit to MaxListLimit when set
+	if req.Limit > schema.MaxListLimit {
+		req.Limit = schema.MaxListLimit
 	}
 
-	// Record total count before slicing
-	resp.Count = len(resp.Body)
-
-	// Limit==0 means count-only: return the total with no body
-	if req.Limit == 0 {
-		resp.Body = nil
-		return resp, nil
-	}
-
-	// Apply offset
-	offset := req.Offset
-	if offset > resp.Count {
-		offset = resp.Count
-	}
-	resp.Body = resp.Body[offset:]
-
-	// Clamp limit to MaxListLimit and apply
-	limit := req.Limit
-	if limit > schema.MaxListLimit {
-		limit = schema.MaxListLimit
-	}
-	if limit < len(resp.Body) {
-		resp.Body = resp.Body[:limit]
-	}
-
-	return resp, nil
+	// Delegate to the backend; it owns Count, Offset, and Limit.
+	resp, result := backend.ListObjects(child, req)
+	return resp, result
 }
 
 func (manager *Manager) DeleteObject(ctx context.Context, name string, req schema.DeleteObjectRequest) (*schema.Object, error) {
@@ -153,7 +129,8 @@ func (manager *Manager) DeleteObject(ctx context.Context, name string, req schem
 	defer func() { endFunc(result) }()
 
 	// Run the backend
-	return backend.DeleteObject(child, req)
+	obj, result := backend.DeleteObject(child, req)
+	return obj, result
 }
 
 func (manager *Manager) DeleteObjects(ctx context.Context, name string, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
@@ -169,7 +146,8 @@ func (manager *Manager) DeleteObjects(ctx context.Context, name string, req sche
 	defer func() { endFunc(result) }()
 
 	// Run the backend
-	return backend.DeleteObjects(child, req)
+	resp, result := backend.DeleteObjects(child, req)
+	return resp, result
 }
 
 func (manager *Manager) GetObject(ctx context.Context, name string, req schema.GetObjectRequest) (*schema.Object, error) {
@@ -185,17 +163,16 @@ func (manager *Manager) GetObject(ctx context.Context, name string, req schema.G
 	defer func() { endFunc(result) }()
 
 	// Run the backend
-	return backend.GetObject(child, req)
+	obj, result := backend.GetObject(child, req)
+	return obj, result
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
 func (manager *Manager) backendForName(name string) (backend.Backend, error) {
-	for _, backend := range manager.backends {
-		if backend.Name() == name {
-			return backend, nil
-		}
+	if b, ok := manager.backends[name]; ok {
+		return b, nil
 	}
 	return nil, httpresponse.ErrNotFound.Withf("no backend found for name %q", name)
 }

@@ -8,7 +8,9 @@ import (
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	blob "gocloud.dev/blob"
+	gcerrors "gocloud.dev/gcerrors"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -18,6 +20,17 @@ import (
 func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
+
+	// Conditional create: reject if the object already exists
+	if req.IfNotExists {
+		_, err := b.bucket.Attributes(ctx, sk)
+		if err == nil {
+			return nil, httpresponse.ErrConflict.Withf("object %q already exists", b.Name()+":"+objPath)
+		} else if gcerrors.Code(err) != gcerrors.NotFound {
+			return nil, blobErr(err, b.Name()+":"+objPath)
+		}
+		// NotFound → safe to create
+	}
 
 	// Clone metadata to avoid mutating the caller's map
 	var meta schema.ObjectMeta
@@ -49,7 +62,15 @@ func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectR
 	// Get attributes to return
 	attrs, err := b.bucket.Attributes(ctx, sk)
 	if err != nil {
-		return nil, blobErr(err, b.Name()+":"+objPath)
+		// The write succeeded but we couldn't fetch the final metadata.
+		// Return a partial object rather than an error to avoid spurious retries
+		// that would duplicate the object in storage.
+		obj := &schema.Object{
+			Name:        b.Name(),
+			Path:        objPath,
+			ContentType: req.ContentType,
+		}
+		return obj, nil
 	}
 
 	// Return success

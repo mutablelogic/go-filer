@@ -84,6 +84,11 @@ func objectPut(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) err
 	// Forward X-Meta-{key} headers as user-defined metadata (lowercased for S3 compatibility)
 	req.Meta = extractMeta(r.Header)
 
+	// If-None-Match: * means "create only if the object does not already exist" (RFC 7232 §3.2).
+	if r.Header.Get("If-None-Match") == "*" {
+		req.IfNotExists = true
+	}
+
 	// Create the object in the manager
 	obj, err := mgr.CreateObject(r.Context(), r.PathValue("name"), req)
 	if err != nil {
@@ -94,32 +99,34 @@ func objectPut(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) err
 }
 
 func objectDelete(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
-	var request schema.DeleteObjectsRequest
+	path := types.NormalisePath(r.PathValue("path"))
 
-	// Read query parameters into request struct
-	if err := httprequest.Query(r.URL.Query(), &request); err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	} else {
-		request.Path = types.NormalisePath(r.PathValue("path"))
-	}
-
-	// Delete many objects when recursive=true
-	if request.Recursive {
-		resp, err := mgr.DeleteObjects(r.Context(), r.PathValue("name"), request)
+	// When ?recursive is present (regardless of true/false value) use bulk-delete semantics:
+	//   ?recursive=true  — remove the full sub-tree under path
+	//   ?recursive=false — remove only the immediate children of path (non-recursive bulk delete)
+	if r.URL.Query().Has("recursive") {
+		// Only parse the boolean flag from the query — Path always comes from the URL.
+		var params struct {
+			Recursive bool `json:"recursive,omitempty"`
+		}
+		if err := httprequest.Query(r.URL.Query(), &params); err != nil {
+			return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+		}
+		resp, err := mgr.DeleteObjects(r.Context(), r.PathValue("name"), schema.DeleteObjectsRequest{
+			Path:      path,
+			Recursive: params.Recursive,
+		})
 		if err != nil {
 			return httpresponse.Error(w, err)
 		}
 		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
 	}
 
-	// Else delete a single object
-	obj, err := mgr.DeleteObject(r.Context(), r.PathValue("name"), schema.DeleteObjectRequest{
-		Path: request.Path,
-	})
+	// No ?recursive param — single object delete.
+	obj, err := mgr.DeleteObject(r.Context(), r.PathValue("name"), schema.DeleteObjectRequest{Path: path})
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
-
 	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), obj)
 }
 
@@ -182,18 +189,7 @@ func objectUpload(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) 
 			destPath = types.JoinPath(basePath, filename)
 		}
 
-		// Derive content type from part header, falling back to extension sniff.
-		contentType := resolveContentType(f.ContentType, "", filepath.Ext(filename))
-
-		// Per-file metadata from part headers overrides shared request-level metadata.
-		meta := mergeMeta(sharedMeta, extractMeta(http.Header(f.Header)))
-
-		obj, err := mgr.CreateObject(r.Context(), name, schema.CreateObjectRequest{
-			Path:        destPath,
-			Body:        f.Body,
-			ContentType: contentType,
-			Meta:        meta,
-		})
+		obj, err := mgr.CreateObject(r.Context(), name, buildCreateRequest(f, sharedMeta, destPath, f.Body))
 		if err != nil {
 			return httpresponse.Error(w, rollback(err))
 		}
@@ -205,43 +201,47 @@ func objectUpload(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) 
 }
 
 func objectHead(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
-	obj, err := mgr.GetObject(r.Context(), r.PathValue("name"), schema.GetObjectRequest{
-		Path: types.NormalisePath(r.PathValue("path")),
-	})
-	if err != nil {
-		return httpresponse.Error(w, err)
-	}
-
-	contentType := resolveContentType(obj.ContentType, "", filepath.Ext(r.PathValue("path")))
-	writeObjectHeaders(w, obj, contentType)
-	if checkPreconditions(w, r, obj) {
-		return nil
+	_, _, stop, err := fetchObjectMeta(w, r, mgr)
+	if err != nil || stop {
+		return err
 	}
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
 
 func objectGet(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
-	reader, obj, err := mgr.ReadObject(r.Context(), r.PathValue("name"), schema.ReadObjectRequest{
-		GetObjectRequest: schema.GetObjectRequest{Path: types.NormalisePath(r.PathValue("path"))},
+	path := types.NormalisePath(r.PathValue("path"))
+	ext := filepath.Ext(r.PathValue("path"))
+	name := r.PathValue("name")
+
+	obj, contentType, stop, err := fetchObjectMeta(w, r, mgr)
+	if err != nil || stop {
+		return err
+	}
+
+	// Preconditions passed: now open the body stream.
+	reader, _, err := mgr.ReadObject(r.Context(), name, schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: path},
 	})
 	if err != nil {
 		return httpresponse.Error(w, err)
 	}
 	defer reader.Close()
 
+	// Sniff the first 512 bytes to improve Content-Type detection when the
+	// stored type is absent or the generic binary fallback.
 	buffer := make([]byte, 512)
 	n, err := io.ReadFull(reader, buffer)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return httpresponse.Error(w, err)
 	}
 
+	// Update Content-Type before status is committed (headers still mutable).
 	sniffed := http.DetectContentType(buffer[:n])
-	contentType := resolveContentType(obj.ContentType, sniffed, filepath.Ext(r.PathValue("path")))
-	writeObjectHeaders(w, obj, contentType)
-	if checkPreconditions(w, r, obj) {
-		return nil
+	if improved := resolveContentType(obj.ContentType, sniffed, ext); improved != contentType {
+		w.Header().Set(types.ContentTypeHeader, improved)
 	}
+
 	w.WriteHeader(http.StatusOK)
 
 	if n > 0 {
@@ -260,6 +260,25 @@ func objectGet(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) err
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS - HELPER FUNCTIONS
 
+// fetchObjectMeta fetches object metadata, writes response headers, and
+// evaluates RFC 7232 conditional request headers. It returns the object, the
+// resolved content-type, and stop=true if a precondition response (304/412)
+// has already been committed. Callers must return immediately when stop is true.
+func fetchObjectMeta(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) (*schema.Object, string, bool, error) {
+	obj, err := mgr.GetObject(r.Context(), r.PathValue("name"), schema.GetObjectRequest{
+		Path: types.NormalisePath(r.PathValue("path")),
+	})
+	if err != nil {
+		return nil, "", true, httpresponse.Error(w, err)
+	}
+	contentType := resolveContentType(obj.ContentType, "", filepath.Ext(r.PathValue("path")))
+	writeObjectHeaders(w, obj, contentType)
+	if checkPreconditions(w, r, obj) {
+		return obj, contentType, true, nil
+	}
+	return obj, contentType, false, nil
+}
+
 // extractMeta builds an ObjectMeta map from X-Meta-{key} headers, lowercasing
 // keys for S3 compatibility. Returns nil if no matching headers are found.
 func extractMeta(h http.Header) schema.ObjectMeta {
@@ -275,8 +294,12 @@ func extractMeta(h http.Header) schema.ObjectMeta {
 	return meta
 }
 
-// resolveContentType returns the best content-type for an object, preferring
-// stored metadata over sniffed body content over file-extension over binary fallback.
+// resolveContentType returns the best content-type for an object. Priority:
+//  1. Explicitly-stored type (unless it is the generic binary fallback)
+//  2. Sniffed type from the body prefix (unless it is the generic binary fallback)
+//  3. MIME type inferred from the file extension
+//  4. The stored type as-is (at this point it can only be application/octet-stream or empty)
+//  5. The hardcoded binary fallback
 func resolveContentType(stored, sniffed, ext string) string {
 	if stored != "" && stored != types.ContentTypeBinary {
 		return stored
@@ -287,6 +310,8 @@ func resolveContentType(stored, sniffed, ext string) string {
 	if extType := mime.TypeByExtension(ext); extType != "" {
 		return extType
 	}
+	// stored is either application/octet-stream or empty; return it when set
+	// so we propagate the caller's explicit value rather than re-hardcoding it.
 	if stored != "" {
 		return stored
 	}
@@ -355,16 +380,21 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, obj *schema.Obje
 }
 
 // matchETags reports whether the header value ("*" or a comma-separated list
-// of quoted ETags) matches etag. strong=true requires strong comparison;
+// of quoted ETags) matches etag. strong=true requires strong comparison (RFC 7232
+// §2.3.2): both the stored ETag and each header ETag must be strong (no W/ prefix).
 // strong=false allows weak comparison (W/ prefix stripped before comparing).
 func matchETags(header, etag string, strong bool) bool {
 	if strings.TrimSpace(header) == "*" {
 		return etag != ""
 	}
+	// For strong comparison a weak stored ETag never matches any header value.
+	if strong && strings.HasPrefix(etag, "W/") {
+		return false
+	}
 	for _, part := range strings.Split(header, ",") {
 		part = strings.TrimSpace(part)
 		if strong && strings.HasPrefix(part, "W/") {
-			continue // weak ETags never satisfy strong comparison
+			continue // weak header ETag never satisfies strong comparison
 		}
 		if strings.Trim(strings.TrimPrefix(part, "W/"), `"`) ==
 			strings.Trim(strings.TrimPrefix(etag, "W/"), `"`) {
@@ -372,6 +402,27 @@ func matchETags(header, etag string, strong bool) bool {
 		}
 	}
 	return false
+}
+
+// buildCreateRequest assembles a CreateObjectRequest from a multipart file part,
+// shared metadata, and the resolved destination path. body overrides f.Body so
+// the caller can wrap it (e.g. in a progressReader) before passing it here.
+func buildCreateRequest(f types.File, sharedMeta schema.ObjectMeta, destPath string, body io.Reader) schema.CreateObjectRequest {
+	contentType := resolveContentType(f.ContentType, "", filepath.Ext(f.Path))
+	meta := mergeMeta(sharedMeta, extractMeta(http.Header(f.Header)))
+	req := schema.CreateObjectRequest{
+		Path:        destPath,
+		Body:        body,
+		ContentType: contentType,
+		Meta:        meta,
+	}
+	// Preserve the file modification time when the part carries a Last-Modified header.
+	if lm := f.Header.Get("Last-Modified"); lm != "" {
+		if t, err := http.ParseTime(lm); err == nil {
+			req.ModTime = t
+		}
+	}
+	return req
 }
 
 // mergeMeta merges per-file metadata on top of shared metadata.
@@ -474,15 +525,7 @@ func objectUploadSSE(
 			})
 		})
 
-		contentType := resolveContentType(f.ContentType, "", filepath.Ext(filename))
-		meta := mergeMeta(sharedMeta, extractMeta(http.Header(f.Header)))
-
-		obj, err := mgr.CreateObject(r.Context(), name, schema.CreateObjectRequest{
-			Path:        destPath,
-			Body:        pr,
-			ContentType: contentType,
-			Meta:        meta,
-		})
+		obj, err := mgr.CreateObject(r.Context(), name, buildCreateRequest(f, sharedMeta, destPath, pr))
 		if err != nil {
 			rbErr := rollback(err)
 			stream.Write(schema.UploadErrorEvent, schema.UploadError{

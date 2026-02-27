@@ -526,6 +526,7 @@ func TestDeleteObjects_Mem(t *testing.T) {
 
 			Path:      "/",
 			Recursive: true,
+			Limit:     schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Empty(listResp.Body)
@@ -660,6 +661,7 @@ func TestDeleteObjects_S3(t *testing.T) {
 			listResp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
 				Path:      s3bURL.Path + "/" + prefix + "/",
 				Recursive: true,
+				Limit:     schema.MaxListLimit,
 			})
 			if err != nil {
 				return err

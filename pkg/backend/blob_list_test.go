@@ -51,6 +51,7 @@ func TestListObjects_Mem(t *testing.T) {
 
 			Path:      "/",
 			Recursive: false,
+			Limit:     schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Equal("testbucket", resp.Name)
@@ -74,6 +75,7 @@ func TestListObjects_Mem(t *testing.T) {
 
 			Path:      "/",
 			Recursive: true,
+			Limit:     schema.MaxListLimit,
 		})
 		require.NoError(err)
 
@@ -96,6 +98,7 @@ func TestListObjects_Mem(t *testing.T) {
 
 			Path:      "/subdir/",
 			Recursive: false,
+			Limit:     schema.MaxListLimit,
 		})
 		require.NoError(err)
 
@@ -118,6 +121,7 @@ func TestListObjects_Mem(t *testing.T) {
 
 			Path:      "/subdir/",
 			Recursive: true,
+			Limit:     schema.MaxListLimit,
 		})
 		require.NoError(err)
 
@@ -131,7 +135,8 @@ func TestListObjects_Mem(t *testing.T) {
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
 
-			Path: "/file1.txt",
+			Path:  "/file1.txt",
+			Limit: schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Equal("testbucket", resp.Name)
@@ -146,7 +151,8 @@ func TestListObjects_Mem(t *testing.T) {
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
 
-			Path: "/subdir/nested/file5.txt",
+			Path:  "/subdir/nested/file5.txt",
+			Limit: schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -213,7 +219,8 @@ func TestListObjects_WithPrefix(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			Path: "/",
+			Path:  "/",
+			Limit: schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -225,11 +232,51 @@ func TestListObjects_WithPrefix(t *testing.T) {
 		require := require.New(t)
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
-			Path: "/file.txt",
+			Path:  "/file.txt",
+			Limit: schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
 	})
+}
+
+// TestETagConsistency verifies that the ETag returned by CreateObject, GetObject,
+// and ListObjects is the same value for the same object (fix: attrsToObject now
+// uses MD5-as-hex to match the list iterator's format).
+func TestETagConsistency(t *testing.T) {
+	ctx := context.Background()
+
+	backend, err := NewBlobBackend(ctx, "mem://testbucket")
+	require.NoError(t, err)
+	defer backend.Close()
+
+	content := []byte("etag consistency check content")
+
+	// CreateObject returns the ETag after a successful write.
+	created, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
+		Path:        "/etag-test.txt",
+		Body:        bytes.NewReader(content),
+		ContentType: "text/plain",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, created.ETag, "CreateObject must return a non-empty ETag")
+
+	// GetObject must return the same ETag.
+	got, err := backend.GetObject(ctx, schema.GetObjectRequest{Path: "/etag-test.txt"})
+	require.NoError(t, err)
+	assert.Equal(t, created.ETag, got.ETag, "GetObject ETag must match CreateObject ETag")
+
+	// ListObjects (single-object path) must return the same ETag.
+	listResp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{Path: "/etag-test.txt", Limit: schema.MaxListLimit})
+	require.NoError(t, err)
+	require.Len(t, listResp.Body, 1)
+	assert.Equal(t, created.ETag, listResp.Body[0].ETag, "ListObjects ETag must match CreateObject ETag")
+
+	// ListObjects (directory scan) must also return the same ETag.
+	listAll, err := backend.ListObjects(ctx, schema.ListObjectsRequest{Path: "/", Recursive: true, Limit: schema.MaxListLimit})
+	require.NoError(t, err)
+	require.Len(t, listAll.Body, 1)
+	assert.Equal(t, created.ETag, listAll.Body[0].ETag, "Recursive ListObjects ETag must match CreateObject ETag")
 }
 
 func TestListObjects_File(t *testing.T) {
@@ -255,7 +302,8 @@ func TestListObjects_File(t *testing.T) {
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
 
-			Path: "/",
+			Path:  "/",
+			Limit: schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -267,7 +315,8 @@ func TestListObjects_File(t *testing.T) {
 
 		resp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
 
-			Path: "/test.txt",
+			Path:  "/test.txt",
+			Limit: schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Equal(1, len(resp.Body))
@@ -313,7 +362,8 @@ func TestListObjects_S3(t *testing.T) {
 		err := s3Retry(t, 5, func() error {
 			var err error
 			resp, err = backend.ListObjects(ctx, schema.ListObjectsRequest{
-				Path: testPath,
+				Path:  testPath,
+				Limit: schema.MaxListLimit,
 			})
 			if err != nil {
 				return err
@@ -338,6 +388,7 @@ func TestListObjects_S3(t *testing.T) {
 			resp, err = backend.ListObjects(ctx, schema.ListObjectsRequest{
 				Path:      s3bURL.Path + "/",
 				Recursive: true,
+				Limit:     schema.MaxListLimit,
 			})
 			if err != nil {
 				return err

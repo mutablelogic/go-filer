@@ -9,6 +9,7 @@ import (
 	// Packages
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	blob "gocloud.dev/blob"
+	gcerrors "gocloud.dev/gcerrors"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -19,9 +20,14 @@ func (b *blobbackend) DeleteObject(ctx context.Context, req schema.DeleteObjectR
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
 
-	// Attributes may not exist, continue with delete
+	// Fetch attributes to return in the response.
+	// Only NotFound is tolerated (the object may have already been deleted);
+	// other errors (e.g. PermissionDenied) are propagated.
 	attrs, err := b.bucket.Attributes(ctx, sk)
 	if err != nil {
+		if gcerrors.Code(err) != gcerrors.NotFound {
+			return nil, blobErr(err, b.Name()+":"+objPath)
+		}
 		attrs = nil
 	}
 
@@ -51,7 +57,11 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 	}
 
 	// Check if this path refers to a single real object (not a phantom directory)
-	if b.isRealObject(ctx, sk) != nil {
+	realObj, err := b.isRealObject(ctx, sk)
+	if err != nil {
+		return nil, err
+	}
+	if realObj != nil {
 		if obj, err := b.DeleteObject(ctx, schema.DeleteObjectRequest{Path: req.Path}); err != nil {
 			return nil, err
 		} else if obj != nil {
@@ -72,8 +82,11 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 		delim = "/"
 	}
 
-	// Keep listing and deleting until no more objects match
-	for {
+	// Keep listing and deleting until no more objects match.
+	// maxDeletePasses prevents an infinite loop when a deletion silently fails
+	// (returns no error but the object persists).
+	const maxDeletePasses = 10
+	for pass := 0; pass < maxDeletePasses; pass++ {
 		iter := b.bucket.List(&blob.ListOptions{
 			Prefix:    prefix,
 			Delimiter: delim,
@@ -102,6 +115,7 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 
 			// Add to response
 			o := schema.Object{
+				Name:    b.Name(),
 				Path:    objPath,
 				Size:    obj.Size,
 				ModTime: obj.ModTime,

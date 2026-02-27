@@ -49,6 +49,48 @@ func Test_objectPut(t *testing.T) {
 	}
 }
 
+func Test_objectPut_withLastModified(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	testContent := "timestamped content"
+	req := httptest.NewRequest(http.MethodPut, "/media/ts.txt", strings.NewReader(testContent))
+	req.ContentLength = int64(len(testContent))
+	// RFC1123 format as required by HTTP
+	req.Header.Set("Last-Modified", "Mon, 01 Jan 2024 12:00:00 GMT")
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+
+	if rw.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rw.Result().StatusCode, rw.Body.String())
+	}
+}
+
+func Test_objectPut_withLastModified_invalid(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	// Invalid Last-Modified header must be silently ignored; create succeeds.
+	testContent := "content"
+	req := httptest.NewRequest(http.MethodPut, "/media/ts2.txt", strings.NewReader(testContent))
+	req.ContentLength = int64(len(testContent))
+	req.Header.Set("Last-Modified", "not-a-valid-date")
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+
+	if rw.Result().StatusCode != http.StatusCreated {
+		t.Errorf("expected 201 even with invalid Last-Modified, got %d", rw.Result().StatusCode)
+	}
+}
+
 func Test_objectPut_withHeaders(t *testing.T) {
 	tempDir := t.TempDir()
 	mediaPath := tempDir + "/media"
@@ -1036,5 +1078,139 @@ func Test_objectUpload_methodNotAllowed(t *testing.T) {
 				t.Errorf("expected 405, got %d", rw.Result().StatusCode)
 			}
 		})
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// If-None-Match: * conditional create
+
+// Test_objectPut_ifNoneMatch_star verifies RFC 7232 §3.2 conditional-create
+// semantics: PUT with If-None-Match: * must succeed (201) when the object is
+// absent and return 409 Conflict when it already exists.
+func Test_objectPut_ifNoneMatch_star(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	t.Run("creates absent object", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/media/new.txt", strings.NewReader("content"))
+		req.ContentLength = int64(len("content"))
+		req.Header.Set("If-None-Match", "*")
+		rw := httptest.NewRecorder()
+		mux.ServeHTTP(rw, req)
+
+		if rw.Result().StatusCode != http.StatusCreated {
+			t.Errorf("expected 201 for conditional create of absent object, got %d: %s",
+				rw.Result().StatusCode, rw.Body.String())
+		}
+	})
+
+	t.Run("409 when object already exists", func(t *testing.T) {
+		// Pre-populate the file so it already exists.
+		if err := os.WriteFile(mediaPath+"/existing.txt", []byte("original"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/media/existing.txt", strings.NewReader("overwrite"))
+		req.ContentLength = int64(len("overwrite"))
+		req.Header.Set("If-None-Match", "*")
+		rw := httptest.NewRecorder()
+		mux.ServeHTTP(rw, req)
+
+		resp := rw.Result()
+		if resp.StatusCode < 400 {
+			t.Errorf("expected 4xx for conditional create of existing object, got %d", resp.StatusCode)
+		}
+
+		// Original content must be preserved.
+		data, err := os.ReadFile(mediaPath + "/existing.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "original" {
+			t.Errorf("expected original content to be preserved, got %q", string(data))
+		}
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DELETE ?recursive=false (non-recursive bulk delete)
+
+// Test_objectDelete_nonRecursiveBulk verifies that ?recursive=false routes to
+// DeleteObjects with Recursive: false, removing only the immediate children of
+// the path and leaving any deeper nested objects in place.
+func Test_objectDelete_nonRecursiveBulk(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath+"/dir/nested")
+
+	for _, f := range []string{"dir/a.txt", "dir/b.txt", "dir/nested/c.txt"} {
+		if err := os.WriteFile(mediaPath+"/"+f, []byte("x"), 0644); err != nil {
+			t.Fatalf("create %s: %v", f, err)
+		}
+	}
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	req := httptest.NewRequest(http.MethodDelete, "/media/dir?recursive=false", nil)
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+
+	resp := rw.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, rw.Body.String())
+	}
+
+	var out schema.DeleteObjectsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	// a.txt and b.txt must be in the deleted list.
+	deleted := make(map[string]bool)
+	for _, o := range out.Body {
+		deleted[o.Path] = true
+	}
+	if !deleted["/dir/a.txt"] {
+		t.Errorf("expected /dir/a.txt to be deleted; deleted=%v", deleted)
+	}
+	if !deleted["/dir/b.txt"] {
+		t.Errorf("expected /dir/b.txt to be deleted; deleted=%v", deleted)
+	}
+
+	// nested/c.txt must survive (non-recursive).
+	if _, err := os.Stat(mediaPath + "/dir/nested/c.txt"); os.IsNotExist(err) {
+		t.Error("expected /dir/nested/c.txt to survive non-recursive bulk delete")
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DELETE bad query parameter
+
+// Test_objectDelete_badQueryParam verifies that a malformed ?recursive value
+// returns 400 Bad Request.
+func Test_objectDelete_badQueryParam(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+	if err := os.WriteFile(mediaPath+"/file.txt", []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	// "recursive" is a bool field; passing a non-boolean value should yield 400.
+	req := httptest.NewRequest(http.MethodDelete, "/media/file.txt?recursive=notabool", nil)
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+
+	if rw.Result().StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad query param, got %d: %s",
+			rw.Result().StatusCode, rw.Body.String())
 	}
 }

@@ -108,6 +108,11 @@ func Test_Manager_NoBackendError(t *testing.T) {
 	// ReadObject with wrong backend
 	_, _, err = mgr.ReadObject(ctx, "other", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/file.txt"}})
 	assert.Error(err)
+
+	// DeleteObjects with wrong backend
+	_, err = mgr.DeleteObjects(ctx, "other", schema.DeleteObjectsRequest{Path: "/"})
+	assert.Error(err)
+	assert.Contains(err.Error(), "no backend found")
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -236,6 +241,142 @@ func Test_Manager_DeleteObject(t *testing.T) {
 	// Verify file is deleted
 	_, err = os.Stat(filePath)
 	assert.True(os.IsNotExist(err))
+}
+
+func Test_Manager_DeleteObjects(t *testing.T) {
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+
+	// Create test files
+	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "del1.txt"), []byte("one"), 0644))
+	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "del2.txt"), []byte("two"), 0644))
+
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	assert.NoError(err)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	resp, err := mgr.DeleteObjects(ctx, "test", schema.DeleteObjectsRequest{Path: "/", Recursive: false})
+	assert.NoError(err)
+	assert.NotNil(resp)
+	assert.Equal("test", resp.Name)
+	assert.Len(resp.Body, 2)
+
+	// Verify files are deleted
+	_, err = os.Stat(filepath.Join(tmpDir, "del1.txt"))
+	assert.True(os.IsNotExist(err))
+	_, err = os.Stat(filepath.Join(tmpDir, "del2.txt"))
+	assert.True(os.IsNotExist(err))
+}
+
+func Test_Manager_DeleteObjects_Recursive(t *testing.T) {
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+
+	// Create files in a sub-directory
+	subDir := filepath.Join(tmpDir, "sub")
+	assert.NoError(os.MkdirAll(subDir, 0755))
+	assert.NoError(os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("nested"), 0644))
+	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "top.txt"), []byte("top"), 0644))
+
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	assert.NoError(err)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	resp, err := mgr.DeleteObjects(ctx, "test", schema.DeleteObjectsRequest{Path: "/", Recursive: true})
+	assert.NoError(err)
+	assert.NotNil(resp)
+	assert.Equal("test", resp.Name)
+	// Should have deleted both top-level and nested
+	assert.GreaterOrEqual(len(resp.Body), 2)
+}
+
+func Test_Manager_ListObjects_LimitClamp(t *testing.T) {
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+
+	// Create 3 test files
+	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("a"), 0644))
+	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "b.txt"), []byte("b"), 0644))
+	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "c.txt"), []byte("c"), 0644))
+
+	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	assert.NoError(err)
+	defer mgr.Close()
+
+	ctx := context.Background()
+
+	// Limit above MaxListLimit should be clamped and still return results
+	resp, err := mgr.ListObjects(ctx, "test", schema.ListObjectsRequest{
+		Path:  "/",
+		Limit: schema.MaxListLimit + 999,
+	})
+	assert.NoError(err)
+	assert.NotNil(resp)
+	// All 3 files must be present — clamped limit is still >= 3
+	assert.Equal(3, resp.Count)
+	assert.Len(resp.Body, 3)
+}
+
+func Test_Manager_WithFileBackend(t *testing.T) {
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	ctx := context.Background()
+
+	mgr, err := New(ctx, WithFileBackend(ctx, "myfiles", tmpDir))
+	assert.NoError(err)
+	assert.NotNil(mgr)
+	defer mgr.Close()
+
+	assert.Contains(mgr.Backends(), "myfiles")
+
+	// Create and retrieve an object to confirm the backend is functional
+	content := []byte("via file backend")
+	_, err = mgr.CreateObject(ctx, "myfiles", schema.CreateObjectRequest{
+		Path: "/hello.txt",
+		Body: bytes.NewReader(content),
+	})
+	assert.NoError(err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hello.txt"))
+	assert.NoError(err)
+	assert.Equal(content, data)
+}
+
+func Test_Manager_WithFileBackend_Duplicate(t *testing.T) {
+	assert := assert.New(t)
+	ctx := context.Background()
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	_, err := New(ctx,
+		WithFileBackend(ctx, "same", tmpDir1),
+		WithFileBackend(ctx, "same", tmpDir2),
+	)
+	assert.Error(err)
+	assert.Contains(err.Error(), "already registered")
+}
+
+func Test_Manager_WithBackend_InvalidURL(t *testing.T) {
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	// An unregistered scheme should cause NewBlobBackend to fail and return an error
+	// without leaking any resource
+	_, err := New(ctx, WithBackend(ctx, "invalid-scheme://bucket"))
+	assert.Error(err)
+}
+
+func Test_Manager_WithTracer(t *testing.T) {
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	// nil tracer is valid (OTEL helpers guard against nil)
+	mgr, err := New(ctx, WithTracer(nil))
+	assert.NoError(err)
+	assert.NotNil(mgr)
+	mgr.Close()
 }
 
 ////////////////////////////////////////////////////////////////////////////////

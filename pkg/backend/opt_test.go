@@ -86,60 +86,6 @@ func TestWithEndpoint(t *testing.T) {
 	}
 }
 
-func TestWithRegion(t *testing.T) {
-	tests := []struct {
-		name   string
-		region string
-		want   string
-	}{
-		{"us-east-1", "us-east-1", "us-east-1"},
-		{"eu-west-1", "eu-west-1", "eu-west-1"},
-		{"empty", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			u, err := url.Parse("s3://mybucket")
-			require.NoError(err)
-
-			o, err := apply(u, WithRegion(tt.region))
-			require.NoError(err)
-
-			assert.Equal(tt.want, o.url.Query().Get("region"))
-		})
-	}
-}
-
-func TestWithProfile(t *testing.T) {
-	tests := []struct {
-		name    string
-		profile string
-		want    string
-	}{
-		{"default", "default", "default"},
-		{"custom", "my-profile", "my-profile"},
-		{"empty", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			u, err := url.Parse("s3://mybucket")
-			require.NoError(err)
-
-			o, err := apply(u, WithProfile(tt.profile))
-			require.NoError(err)
-
-			assert.Equal(tt.want, o.url.Query().Get("profile"))
-		})
-	}
-}
-
 func TestCombinedOptions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -149,8 +95,6 @@ func TestCombinedOptions(t *testing.T) {
 
 	o, err := apply(u,
 		WithEndpoint("http://localhost:9000"),
-		WithRegion("us-east-1"),
-		WithProfile("myprofile"),
 	)
 	require.NoError(err)
 
@@ -160,8 +104,6 @@ func TestCombinedOptions(t *testing.T) {
 		"endpoint":         "http://localhost:9000",
 		"s3ForcePathStyle": "true",
 		"disable_https":    "true",
-		"region":           "us-east-1",
-		"profile":          "myprofile",
 	}
 
 	for key, want := range expected {
@@ -173,7 +115,7 @@ func TestApplyWithNilURL(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	o, err := apply(nil, WithRegion("us-east-1"))
+	o, err := apply(nil, WithAnonymous())
 	require.NoError(err)
 	assert.Nil(o.url)
 }

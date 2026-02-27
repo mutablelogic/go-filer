@@ -3,23 +3,30 @@ package backend
 import (
 	"context"
 	"errors"
-	"io"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"syscall"
+	"time"
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	blob "gocloud.dev/blob"
+	gcsblob "gocloud.dev/blob/gcsblob"
 	s3blob "gocloud.dev/blob/s3blob"
 	gcerrors "gocloud.dev/gcerrors"
+	gcp "gocloud.dev/gcp"
+	"golang.org/x/oauth2/google"
 
 	// Drivers
 	_ "gocloud.dev/blob/fileblob" // file:// URLs
+	_ "gocloud.dev/blob/gcsblob"  // gs:// URLs
 	_ "gocloud.dev/blob/memblob"  // mem:// URLs
 	_ "gocloud.dev/blob/s3blob"   // s3:// URLs
 )
@@ -39,14 +46,18 @@ var _ Backend = (*blobbackend)(nil)
 // LIFECYCLE
 
 // NewBlobBackend creates a new blob backend using Go CDK.
-// Supported URL schemes: s3://, file://, mem://
+// Supported URL schemes: s3://, gs://, file://, mem://
 // Examples:
 //   - "s3://my-bucket?region=us-east-1"
+//   - "gs://my-bucket"
+//   - "gs://my-bucket/prefix"
 //   - "file:///path/to/directory"
 //   - "mem://"
 //
 // For S3 URLs, you can optionally provide an aws.Config via WithAWSConfig()
 // for full control over AWS SDK configuration.
+// For GCS URLs, credentials are resolved via Application Default Credentials
+// unless WithGCSCredentialsFile() is provided.
 func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error) {
 	self := new(blobbackend)
 
@@ -77,6 +88,22 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 		// Use the provided AWS config to open S3 bucket directly
 		client := s3blob.Dial(*self.awsConfig)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
+	} else if self.url.Scheme == "gs" && self.gcsCredsFile != "" {
+		// Explicit service-account key file: build a GCP HTTP client and open directly.
+		credsJSON, cerr := os.ReadFile(self.gcsCredsFile)
+		if cerr != nil {
+			return nil, fmt.Errorf("failed to read GCS credentials file: %w", cerr)
+		}
+		creds, cerr := google.CredentialsFromJSON(ctx, credsJSON, "https://www.googleapis.com/auth/devstorage.read_write")
+		if cerr != nil {
+			return nil, fmt.Errorf("failed to parse GCS credentials: %w", cerr)
+		}
+		ts := gcp.CredentialsTokenSource(creds)
+		gcsClient, cerr := gcp.NewHTTPClient(http.DefaultTransport, ts)
+		if cerr != nil {
+			return nil, fmt.Errorf("failed to create GCS HTTP client: %w", cerr)
+		}
+		bucket, err = gcsblob.OpenBucket(ctx, gcsClient, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {
 		// For file:// the path is the bucket root dir - open using just the path
 		openURL := &url.URL{Scheme: "file", Path: self.url.Path}
@@ -159,11 +186,22 @@ func (b *blobbackend) attrsToObject(objPath string, attrs *blob.Attributes) *sch
 		ModTime:     attrs.ModTime,
 		ContentType: attrs.ContentType,
 	}
-	if attrs.ETag != "" {
+	// Prefer MD5-as-hex for ETag to stay consistent with the list iterator,
+	// which only exposes MD5. Fall back to the raw ETag string when MD5 is absent.
+	if len(attrs.MD5) > 0 {
+		obj.ETag = fmt.Sprintf("%x", attrs.MD5)
+	} else if attrs.ETag != "" {
 		obj.ETag = attrs.ETag
 	}
 	if len(attrs.Metadata) > 0 {
 		obj.Meta = attrs.Metadata
+		// If the object was uploaded with an original mod time stored in custom
+		// metadata, use that value instead of the storage-layer write time.
+		if lm, ok := attrs.Metadata[schema.AttrLastModified]; ok {
+			if t, err := time.Parse(time.RFC3339, lm); err == nil {
+				obj.ModTime = t
+			}
+		}
 	}
 	return obj
 }
@@ -183,24 +221,29 @@ func (b *blobbackend) pathFromStorageKey(sk string) string {
 // isRealObject checks whether the storage key refers to a single real object
 // (as opposed to a phantom directory — a size-0 pseudo-object with children).
 // Returns the object's attributes if real, nil otherwise.
-func (b *blobbackend) isRealObject(ctx context.Context, sk string) *blob.Attributes {
+// Permission errors are propagated as a non-nil error instead of being swallowed.
+func (b *blobbackend) isRealObject(ctx context.Context, sk string) (*blob.Attributes, error) {
 	if sk == "" || strings.HasSuffix(sk, "/") {
-		return nil
+		return nil, nil
 	}
 	attrs, err := b.bucket.Attributes(ctx, sk)
 	if err != nil {
-		return nil
+		// Surface permission errors rather than masking them as "not found".
+		if gcerrors.Code(err) == gcerrors.PermissionDenied {
+			return nil, blobErr(err, sk)
+		}
+		return nil, nil
 	}
 	if attrs.Size > 0 {
-		return attrs
+		return attrs, nil
 	}
 	// Size is 0 — check if there are objects with this key as a prefix.
 	// If children exist, this is a phantom directory.
 	iter := b.bucket.List(&blob.ListOptions{Prefix: sk + "/"})
 	if _, err := iter.Next(ctx); err == io.EOF {
-		return attrs // no children → real (empty) object
+		return attrs, nil // no children → real (empty) object
 	}
-	return nil // has children → phantom directory
+	return nil, nil // has children → phantom directory
 }
 
 // blobErr wraps a go-cloud blob error with the appropriate httpresponse error

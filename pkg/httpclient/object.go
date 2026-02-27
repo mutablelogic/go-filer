@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -60,11 +61,13 @@ func (r *readObjectResponse) Unmarshal(header http.Header, reader io.Reader) err
 		}
 		r.Object = &obj
 	}
-	if rc, ok := reader.(io.ReadCloser); ok {
-		r.Body = rc
-	} else {
-		r.Body = io.NopCloser(reader)
+	// Buffer the body immediately: go-client closes the underlying response body
+	// after Unmarshal returns, so we cannot safely store the reader directly.
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, reader); err != nil {
+		return err
 	}
+	r.Body = io.NopCloser(&buf)
 	return nil
 }
 
@@ -85,6 +88,11 @@ func (r *getObjectResponse) Unmarshal(header http.Header, _ io.Reader) error {
 // ListObjects returns a list of objects at the given backend name and optional path prefix.
 func (c *Client) ListObjects(ctx context.Context, name string, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
 	query := make(url.Values)
+	// Path is a filter prefix, not a URL path segment — always navigate to /{name}
+	// and pass path as a query parameter so the server routes to the list handler.
+	if req.Path != "" {
+		query.Set("path", req.Path)
+	}
 	if req.Recursive {
 		query.Set("recursive", "true")
 	}
@@ -96,7 +104,7 @@ func (c *Client) ListObjects(ctx context.Context, name string, req schema.ListOb
 	}
 	var response schema.ListObjectsResponse
 	if err := c.DoWithContext(ctx, client.NewRequest(), &response,
-		client.OptPath(name, req.Path),
+		client.OptPath(name),
 		client.OptQuery(query),
 	); err != nil {
 		return nil, err
@@ -112,6 +120,10 @@ func (c *Client) CreateObject(ctx context.Context, name string, req schema.Creat
 	opts := []client.RequestOpt{client.OptPath(name, req.Path)}
 	if !req.ModTime.IsZero() {
 		opts = append(opts, client.OptReqHeader("Last-Modified", req.ModTime.Format(http.TimeFormat)))
+	}
+	// If-None-Match: * triggers the server's IfNotExists check (RFC 7232 §3.2).
+	if req.IfNotExists {
+		opts = append(opts, client.OptReqHeader("If-None-Match", "*"))
 	}
 	for k, v := range req.Meta {
 		opts = append(opts, client.OptReqHeader(http.CanonicalHeaderKey(schema.ObjectMetaKeyPrefix+k), v))
@@ -164,12 +176,12 @@ func (c *Client) DeleteObject(ctx context.Context, name string, req schema.Delet
 	return &response, nil
 }
 
-// DeleteObjects deletes objects under a path prefix (recursive).
+// DeleteObjects deletes objects under a path prefix (recursive or non-recursive bulk delete).
 func (c *Client) DeleteObjects(ctx context.Context, name string, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	query := make(url.Values)
-	if req.Recursive {
-		query.Set("recursive", "true")
-	}
+	// Always send ?recursive so the server routes to the bulk-delete handler.
+	// The value controls whether the deletion descends into sub-directories.
+	query.Set("recursive", strconv.FormatBool(req.Recursive))
 	var response schema.DeleteObjectsResponse
 	if err := c.DoWithContext(ctx,
 		client.NewRequestEx(http.MethodDelete, "application/json"),
