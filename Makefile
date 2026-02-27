@@ -7,13 +7,6 @@ BUILD_DIR ?= build
 CMD_DIR := $(wildcard cmd/*)
 PLUGIN_DIR := $(wildcard plugin/*)
 
-# VERBOSE=1
-ifneq ($(VERBOSE),)
-  VERBOSE_FLAG = -v
-else
-  VERBOSE_FLAG =
-endif
-
 # Set OS and Architecture
 ARCH ?= $(shell arch | tr A-Z a-z | sed 's/x86_64/amd64/' | sed 's/i386/amd64/' | sed 's/armv7l/arm/' | sed 's/aarch64/arm64/')
 OS ?= $(shell uname | tr A-Z a-z)
@@ -42,13 +35,31 @@ all: clean build
 ###############################################################################
 # BUILD
 
-# Build the commands in the cmd directory
+# Compile NPM and build the commands in the cmd directory
 .PHONY: build
-build: tidy $(CMD_DIR) $(PLUGIN_DIR)
+build: build-docker
 
+# Build the commands in the cmd directory
+.PHONY: build-docker
+build-docker: tidy $(PLUGIN_DIR) $(CMD_DIR)
+
+# Build the commands
 $(CMD_DIR): go-dep mkdir
 	@echo Build command $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
 	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
+
+# Build the plugins
+.PHONY: plugins
+plugins: $(PLUGIN_DIR) 
+	@for plugin in log httprouter httpserver pg pgqueue; do \
+		echo "Build plugin $$plugin GOOS=${OS} GOARCH=${ARCH}"; \
+		GOOS=${OS} GOARCH=${ARCH} ${GO} build -buildmode=plugin ${BUILD_FLAGS} -o ${BUILD_DIR}/$$plugin.plugin github.com/mutablelogic/go-server/plugin/$$plugin; \
+	done
+
+# Build the plugins
+$(PLUGIN_DIR): go-dep mkdir
+	@echo Build plugin $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
+	@GOOS=${OS} GOARCH=${ARCH} ${GO} build -buildmode=plugin ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@).plugin ./$@
 
 # Build the docker image
 .PHONY: docker
@@ -68,21 +79,31 @@ docker-push: docker-dep
 	@echo push docker image: ${DOCKER_TAG}
 	@${DOCKER} push ${DOCKER_TAG}
 
+# Print out the version
+.PHONY: docker-version
+docker-version: docker-dep 
+	@echo "tag=${VERSION}"
+
+
 ###############################################################################
 # TEST
 
 .PHONY: test
 test: unit-test coverage-test
 
+.PHONY: testv
+testv: VERBOSE_FLAG = -v
+testv: unit-test coverage-test
+
 .PHONY: unit-test
 unit-test: go-dep
 	@echo Unit Tests
-	@${GO} test ${VERBOSE_FLAG} ./pkg/...
+	@${GO} test ${VERBOSE_FLAG} ./...
 
 .PHONY: coverage-test
 coverage-test: go-dep mkdir
 	@echo Test Coverage
-	@${GO} test -coverprofile ${BUILD_DIR}/coverprofile.out ./pkg/...
+	@${GO} test ${VERBOSE_FLAG} -coverprofile ${BUILD_DIR}/coverprofile.out ./...
 
 ###############################################################################
 # CLEAN
