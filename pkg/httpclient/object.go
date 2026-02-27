@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -61,8 +62,7 @@ func (r *readObjectResponse) Unmarshal(header http.Header, reader io.Reader) err
 		}
 		r.Object = &obj
 	}
-	// Buffer the body immediately: go-client closes the underlying response body
-	// after Unmarshal returns, so we cannot safely store the reader directly.
+	// go-client closes resp.Body after Unmarshal returns, so buffer now.
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, reader); err != nil {
 		return err
@@ -161,6 +161,40 @@ func (c *Client) ReadObject(ctx context.Context, name string, req schema.ReadObj
 		return nil, nil, err
 	}
 	return response.Body, response.Object, nil
+}
+
+// StreamObject returns a truly streaming reader for the object body by making a
+// direct HTTP GET, bypassing go-client's response-body lifecycle. The caller
+// must close the returned ReadCloser. meta is nil when no object header is present.
+func (c *Client) StreamObject(ctx context.Context, name string, req schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
+	// Build a properly encoded URL matching what OptPath(name, req.Path) produces.
+	// url.JoinPath encodes each segment so spaces, '#', etc. are safe.
+	rawURL, err := url.JoinPath(c.baseURL, name, req.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := c.httpClient().Do(httpReq)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, nil, fmt.Errorf("StreamObject: unexpected status %s", resp.Status)
+	}
+	var obj *schema.Object
+	if metaJSON := resp.Header.Get(schema.ObjectMetaHeader); metaJSON != "" {
+		var o schema.Object
+		if err := json.Unmarshal([]byte(metaJSON), &o); err != nil {
+			resp.Body.Close()
+			return nil, nil, err
+		}
+		obj = &o
+	}
+	return resp.Body, obj, nil
 }
 
 // DeleteObject deletes a single object.

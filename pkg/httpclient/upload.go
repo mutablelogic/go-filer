@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path"
+	"strconv"
 	"time"
 
 	// Packages
@@ -61,7 +62,7 @@ type uploadOpts struct {
 	prefix   string
 	filter   func(fs.DirEntry) bool
 	check    func(fs.FileInfo, *schema.Object) bool
-	progress func(string, int64, int64)
+	progress func(index, count int, path string, written, bytes int64)
 }
 
 // walkEntry holds the path of a discovered file (relative to the fs.FS root)
@@ -105,8 +106,10 @@ func WithCheck(fn func(fs.FileInfo, *schema.Object) bool) UploadOpt {
 }
 
 // WithProgress sets a callback that is invoked for each SSE byte-progress
-// update and once per committed file.
-func WithProgress(fn func(path string, written, total int64)) UploadOpt {
+// update and once per committed file. index is the 0-based file position;
+// count is the total number of files in this upload batch (from the SSE
+// start event). written and bytes are the per-file byte counters.
+func WithProgress(fn func(index, count int, path string, written, bytes int64)) UploadOpt {
 	return func(o *uploadOpts) error {
 		o.progress = fn
 		return nil
@@ -211,9 +214,14 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		}
 		// Stamp Last-Modified so the server stores the original mod time and
 		// future skip checks (skipUnchanged) can compare it.
+		// Stamp Content-Length so the server can populate UploadFile.Bytes and
+		// the CLI can display upload progress as a percentage.
 		h := textproto.MIMEHeader{}
 		if mt := e.info.ModTime(); !mt.IsZero() {
 			h.Set("Last-Modified", mt.UTC().Format(http.TimeFormat))
+		}
+		if sz := e.info.Size(); sz > 0 {
+			h.Set(types.ContentLengthHeader, strconv.FormatInt(sz, 10))
 		}
 		parts = append(parts, types.File{
 			Path:        remotePath,
@@ -242,18 +250,25 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 
 	// Collect committed objects and the first upload error from SSE events.
 	var (
-		results   []schema.Object
-		uploadErr error
+		results    []schema.Object
+		uploadErr  error
+		totalFiles int // populated from UploadStartEvent
 	)
 	sseCallback := func(ev client.TextStreamEvent) error {
 		switch ev.Event {
+		case schema.UploadStartEvent:
+			var s schema.UploadStart
+			if err := json.Unmarshal([]byte(ev.Data), &s); err != nil {
+				return err
+			}
+			totalFiles = s.Files
 		case schema.UploadFileEvent:
 			if o.progress != nil {
 				var f schema.UploadFile
 				if err := json.Unmarshal([]byte(ev.Data), &f); err != nil {
 					return err
 				}
-				o.progress(f.Path, f.Written, f.Bytes)
+				o.progress(f.Index, totalFiles, f.Path, f.Written, f.Bytes)
 			}
 		case schema.UploadCompleteEvent:
 			var obj schema.Object
@@ -263,7 +278,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			results = append(results, obj)
 			if o.progress != nil {
 				committed := &results[len(results)-1]
-				o.progress(committed.Path, committed.Size, committed.Size)
+				o.progress(len(results)-1, totalFiles, committed.Path, committed.Size, committed.Size)
 			}
 		case schema.UploadErrorEvent:
 			var e schema.UploadError

@@ -43,9 +43,9 @@ type CLI struct {
 	List     ListCommand     `cmd:"" name:"list"     help:"List objects in a backend."           group:"CLIENT"`
 	Get      GetCommand      `cmd:"" name:"get"      help:"Download an object to stdout."        group:"CLIENT"`
 	Head     HeadCommand     `cmd:"" name:"head"     help:"Print object metadata."               group:"CLIENT"`
-	Create   CreateCommand   `cmd:"" name:"create"   help:"Upload a single object."             group:"CLIENT"`
-	Upload   UploadCommand   `cmd:"" name:"upload"   help:"Upload a file or directory."         group:"CLIENT"`
-	Delete   DeleteCommand   `cmd:"" name:"delete"   help:"Delete an object or prefix."         group:"CLIENT"`
+	Upload   UploadCommand   `cmd:"" name:"upload"   help:"Upload a file or directory."              group:"CLIENT"`
+	Download DownloadCommand `cmd:"" name:"download" help:"Download objects to a local directory."   group:"CLIENT"`
+	Delete   DeleteCommand   `cmd:"" name:"delete"   help:"Delete an object, or recursively under a path." group:"CLIENT"`
 	ServerCommands
 }
 

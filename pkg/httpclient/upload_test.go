@@ -31,7 +31,7 @@ func TestCreateObjects_walk(t *testing.T) {
 
 	// Count progress events.
 	var progressCalls int
-	progress := func(path string, written, total int64) {
+	progress := func(_ int, _ int, path string, _, _ int64) {
 		if path == "" {
 			t.Errorf("progress called with empty path")
 		}
@@ -90,7 +90,7 @@ func TestCreateObjects_skipUnchanged(t *testing.T) {
 	// Second upload — SkipUnchanged is the default, sizes match the remote,
 	// so both files should be skipped and the result should be empty.
 	var uploadCalls int
-	progress := func(_ string, _, _ int64) { uploadCalls++ }
+	progress := func(_, _ int, _ string, _, _ int64) { uploadCalls++ }
 	objs2, err := c.CreateObjects(context.Background(), "testbucket", memFS,
 		httpclient.WithProgress(progress),
 	)
@@ -179,7 +179,7 @@ func TestCreateObjects_skipChanged(t *testing.T) {
 	// Second upload — size differs, so the file must be uploaded again.
 	var progressCalls int
 	objs2, err := c.CreateObjects(context.Background(), "testbucket", memFS,
-		httpclient.WithProgress(func(_ string, _, _ int64) { progressCalls++ }),
+		httpclient.WithProgress(func(_, _ int, _ string, _, _ int64) { progressCalls++ }),
 	)
 	if err != nil {
 		t.Fatalf("second upload: %v", err)
