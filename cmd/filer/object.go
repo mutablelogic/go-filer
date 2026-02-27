@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	// Packages
-	schema "github.com/mutablelogic/go-filer/schema"
+	schema "github.com/mutablelogic/go-filer/pkg/schema"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -52,8 +52,7 @@ func (cmd *ListCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	resp, err := c.ListObjects(ctx.ctx, schema.ListObjectsRequest{
-		Name:      cmd.Backend,
+	resp, err := c.ListObjects(ctx.ctx, cmd.Backend, schema.ListObjectsRequest{
 		Path:      cmd.Path,
 		Recursive: cmd.Recursive,
 	})
@@ -68,8 +67,7 @@ func (cmd *HeadCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	obj, err := c.GetObject(ctx.ctx, schema.GetObjectRequest{
-		Name: cmd.Backend,
+	obj, err := c.GetObject(ctx.ctx, cmd.Backend, schema.GetObjectRequest{
 		Path: cmd.Path,
 	})
 	if err != nil {
@@ -83,8 +81,7 @@ func (cmd *GetCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	reader, _, err := c.ReadObject(ctx.ctx, schema.ReadObjectRequest{
-		Name: cmd.Backend,
+	reader, _, err := c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
 		Path: cmd.Path,
 	})
 	if err != nil {
@@ -133,8 +130,7 @@ func (cmd *CreateCommand) Run(ctx *Globals) error {
 		meta[k] = v
 	}
 
-	obj, err := c.CreateObject(ctx.ctx, schema.CreateObjectRequest{
-		Name:        cmd.Backend,
+	obj, err := c.CreateObject(ctx.ctx, cmd.Backend, schema.CreateObjectRequest{
 		Path:        cmd.Path,
 		Body:        src,
 		ContentType: cmd.ContentType,
@@ -152,8 +148,7 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 		return err
 	}
 	if cmd.Recursive {
-		resp, err := c.DeleteObjects(ctx.ctx, schema.DeleteObjectsRequest{
-			Name:      cmd.Backend,
+		resp, err := c.DeleteObjects(ctx.ctx, cmd.Backend, schema.DeleteObjectsRequest{
 			Path:      cmd.Path,
 			Recursive: true,
 		})
@@ -162,8 +157,7 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 		}
 		return prettyJSON(resp)
 	}
-	obj, err := c.DeleteObject(ctx.ctx, schema.DeleteObjectRequest{
-		Name: cmd.Backend,
+	obj, err := c.DeleteObject(ctx.ctx, cmd.Backend, schema.DeleteObjectRequest{
 		Path: cmd.Path,
 	})
 	if err != nil {

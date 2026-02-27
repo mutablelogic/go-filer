@@ -8,8 +8,8 @@ import (
 	"net/http"
 
 	// Packages
-	httphandler "github.com/mutablelogic/go-filer/httphandler"
-	manager "github.com/mutablelogic/go-filer/manager"
+	httphandler "github.com/mutablelogic/go-filer/pkg/httphandler"
+	manager "github.com/mutablelogic/go-filer/pkg/manager"
 	version "github.com/mutablelogic/go-filer/pkg/version"
 	server "github.com/mutablelogic/go-server"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"

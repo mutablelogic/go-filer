@@ -8,7 +8,7 @@ import (
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
-	httpclient "github.com/mutablelogic/go-filer/httpclient"
+	httpclient "github.com/mutablelogic/go-filer/pkg/httpclient"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 

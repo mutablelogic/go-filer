@@ -5,7 +5,7 @@ import (
 	"io"
 
 	// Packages
-	schema "github.com/mutablelogic/go-filer/schema"
+	schema "github.com/mutablelogic/go-filer/pkg/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
