@@ -7,7 +7,7 @@ import (
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
-	filer "github.com/mutablelogic/go-filer"
+	backend "github.com/mutablelogic/go-filer/pkg/backend"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
@@ -60,17 +60,6 @@ func (manager *Manager) Backends() []string {
 		result = append(result, b.Name())
 	}
 	return result
-}
-
-// Key returns the storage key for a named backend and path, or empty string if
-// the backend does not exist or the path is not handled (e.g., prefix mismatch).
-func (manager *Manager) Key(name, path string) string {
-	for _, backend := range manager.backends {
-		if backend.Name() == name {
-			return backend.Key(path)
-		}
-	}
-	return ""
 }
 
 func (manager *Manager) CreateObject(ctx context.Context, name string, req schema.CreateObjectRequest) (*schema.Object, error) {
@@ -202,7 +191,7 @@ func (manager *Manager) GetObject(ctx context.Context, name string, req schema.G
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) backendForName(name string) (filer.Filer, error) {
+func (manager *Manager) backendForName(name string) (backend.Backend, error) {
 	for _, backend := range manager.backends {
 		if backend.Name() == name {
 			return backend, nil

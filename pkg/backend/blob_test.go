@@ -17,108 +17,84 @@ func TestBlobBackendKey(t *testing.T) {
 		inputPath  string
 		want       string
 	}{
-		// S3 tests (no prefix)
+		// S3 tests (no bucket prefix)
 		{
 			name:       "s3 path",
 			backendURL: "s3://mybucket",
 			inputPath:  "/path/to/file.txt",
-			want:       "/path/to/file.txt",
+			want:       "path/to/file.txt",
 		},
 		{
 			name:       "s3 root path",
 			backendURL: "s3://mybucket",
 			inputPath:  "/",
-			want:       "/",
+			want:       "",
 		},
 		{
-			name:       "s3 root empty path",
+			name:       "s3 empty path",
 			backendURL: "s3://mybucket",
 			inputPath:  "",
-			want:       "/",
+			want:       "",
 		},
 
-		// S3 with prefix (prefix as discriminator, stripped in Key)
+		// S3 with bucket prefix
 		{
-			name:       "s3 with prefix match",
+			name:       "s3 with prefix",
 			backendURL: "s3://mybucket/data",
-			inputPath:  "/data/file.txt",
-			want:       "/file.txt",
+			inputPath:  "/file.txt",
+			want:       "data/file.txt",
 		},
 		{
 			name:       "s3 with prefix root",
 			backendURL: "s3://mybucket/data",
-			inputPath:  "/data/",
-			want:       "/",
-		},
-		{
-			name:       "s3 with prefix exact",
-			backendURL: "s3://mybucket/data",
-			inputPath:  "/data",
-			want:       "/",
-		},
-		{
-			name:       "s3 with prefix mismatch",
-			backendURL: "s3://mybucket/data",
-			inputPath:  "/other/file.txt",
-			want:       "",
+			inputPath:  "/",
+			want:       "data/",
 		},
 		{
 			name:       "s3 with nested prefix",
 			backendURL: "s3://mybucket/data/subdir",
-			inputPath:  "/data/subdir/nested/file.txt",
-			want:       "/nested/file.txt",
+			inputPath:  "/nested/file.txt",
+			want:       "data/subdir/nested/file.txt",
 		},
 
-		// File tests (path is returned as-is, cleaned)
+		// File tests (no bucket prefix)
 		{
 			name:       "file path",
 			backendURL: "file://mystore/tmp/storage",
 			inputPath:  "/test.txt",
-			want:       "/test.txt",
+			want:       "test.txt",
 		},
 		{
 			name:       "file nested path",
 			backendURL: "file://mystore/data/dir",
 			inputPath:  "/dir1/dir2/file.txt",
-			want:       "/dir1/dir2/file.txt",
+			want:       "dir1/dir2/file.txt",
 		},
 		{
 			name:       "file root",
 			backendURL: "file://mystore/data",
 			inputPath:  "/",
-			want:       "/",
+			want:       "",
 		},
 		{
 			name:       "file empty path",
 			backendURL: "file://mystore/data",
 			inputPath:  "",
-			want:       "/",
+			want:       "",
 		},
 
 		// Mem tests
 		{
-			name:       "mem empty host path",
-			backendURL: "mem://",
-			inputPath:  "/path/to/file.txt",
-			want:       "/path/to/file.txt",
-		},
-		{
-			name:       "mem path",
+			name:       "mem no prefix",
 			backendURL: "mem://testbucket",
 			inputPath:  "/file.txt",
-			want:       "/file.txt",
+			want:       "file.txt",
 		},
 		{
-			name:       "mem with prefix match",
+			name:       "mem with prefix",
 			backendURL: "mem://bucket/prefix",
-			inputPath:  "/prefix/subdir/file.txt",
-			want:       "/subdir/file.txt",
-		},
-		{
-			name:       "mem with prefix mismatch",
-			backendURL: "mem://bucket/prefix",
-			inputPath:  "/other/file.txt",
-			want:       "",
+			inputPath:  "/subdir/file.txt",
+			want:       "prefix/subdir/file.txt",
 		},
 
 		// Path traversal prevention
@@ -126,25 +102,25 @@ func TestBlobBackendKey(t *testing.T) {
 			name:       "file traversal at root",
 			backendURL: "file://mystore/data",
 			inputPath:  "/../../etc/passwd",
-			want:       "/etc/passwd",
+			want:       "etc/passwd",
 		},
 		{
 			name:       "file traversal deep",
 			backendURL: "file://mystore/data",
 			inputPath:  "/valid/../../../etc/passwd",
-			want:       "/etc/passwd",
+			want:       "etc/passwd",
 		},
 		{
 			name:       "file traversal stays within path",
 			backendURL: "file://mystore/data",
 			inputPath:  "/a/b/../c",
-			want:       "/a/c",
+			want:       "a/c",
 		},
 		{
-			name:       "s3 traversal within prefix",
+			name:       "s3 traversal with prefix",
 			backendURL: "s3://mybucket/data",
-			inputPath:  "/data/valid/../../other",
-			want:       "/other",
+			inputPath:  "/valid/../../other",
+			want:       "data/other",
 		},
 	}
 
@@ -152,7 +128,6 @@ func TestBlobBackendKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			// Parse backend URL to create a minimal blobbackend for testing
 			backendURL, err := url.Parse(tt.backendURL)
 			assert.NoError(err)
 
@@ -160,14 +135,35 @@ func TestBlobBackendKey(t *testing.T) {
 				opt: &opt{
 					url: backendURL,
 				},
-				prefix: strings.TrimSuffix(backendURL.Path, "/"),
+			}
+			if backendURL.Scheme != "file" {
+				b.bucketPrefix = strings.TrimPrefix(strings.TrimSuffix(backendURL.Path, "/"), "/")
 			}
 
-			got := b.Key(tt.inputPath)
+			got := b.key(tt.inputPath)
 			assert.Equal(tt.want, got)
 		})
 	}
 }
+
+func TestCleanPath(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/foo/bar.txt", "/foo/bar.txt"},
+		{"", "/"},
+		{"/", "/"},
+		{"/a/b/../c", "/a/c"},
+		{"/../../etc/passwd", "/etc/passwd"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, cleanPath(tt.input))
+		})
+	}
+}
+
 func TestNewFileBackend(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()

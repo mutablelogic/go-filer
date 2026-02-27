@@ -74,46 +74,6 @@ func Test_Manager_Close(t *testing.T) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// KEY ROUTING TESTS
-
-func Test_Manager_Key(t *testing.T) {
-	assert := assert.New(t)
-	tmpDir := t.TempDir()
-
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
-	assert.NoError(err)
-	defer mgr.Close()
-
-	// Matching backend and path
-	assert.Equal("/somefile.txt", mgr.Key("test", "/somefile.txt"))
-
-	// No backend with this name
-	assert.Equal("", mgr.Key("other", "/somefile.txt"))
-}
-
-func Test_Manager_Key_MultipleBackends(t *testing.T) {
-	assert := assert.New(t)
-	tmpDir1 := t.TempDir()
-	tmpDir2 := t.TempDir()
-
-	mgr, err := New(context.TODO(),
-		WithBackend(context.TODO(), "file://files"+tmpDir1),
-		WithBackend(context.TODO(), "file://media"+tmpDir2),
-	)
-	assert.NoError(err)
-	defer mgr.Close()
-
-	// First backend
-	assert.Equal("/doc.txt", mgr.Key("files", "/doc.txt"))
-
-	// Second backend
-	assert.Equal("/video.mp4", mgr.Key("media", "/video.mp4"))
-
-	// No backend with this name
-	assert.Equal("", mgr.Key("other", "/file.txt"))
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // BACKEND ROUTING ERROR TESTS
 
 func Test_Manager_NoBackendError(t *testing.T) {
@@ -146,7 +106,7 @@ func Test_Manager_NoBackendError(t *testing.T) {
 	assert.Error(err)
 
 	// ReadObject with wrong backend
-	_, _, err = mgr.ReadObject(ctx, "other", schema.ReadObjectRequest{Path: "/file.txt"})
+	_, _, err = mgr.ReadObject(ctx, "other", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/file.txt"}})
 	assert.Error(err)
 }
 
@@ -194,7 +154,7 @@ func Test_Manager_ReadObject(t *testing.T) {
 	defer mgr.Close()
 
 	ctx := context.Background()
-	req := schema.ReadObjectRequest{Path: "/readable.txt"}
+	req := schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/readable.txt"}}
 
 	reader, obj, err := mgr.ReadObject(ctx, "test", req)
 	assert.NoError(err)

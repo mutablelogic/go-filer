@@ -74,10 +74,10 @@ func Test_objectList_withFiles(t *testing.T) {
 
 	found := make(map[string]bool)
 	for _, obj := range out.Body {
-		found[obj.Name+obj.Path] = true
+		found[obj.Path] = true
 	}
 	for _, filename := range testFiles {
-		expectedKey := "media/" + filename
+		expectedKey := "/" + filename
 		if !found[expectedKey] {
 			t.Errorf("expected to find file %s in listing", expectedKey)
 		}

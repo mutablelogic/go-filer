@@ -82,7 +82,7 @@ func (cmd *GetCommand) Run(ctx *Globals) error {
 		return err
 	}
 	reader, _, err := c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
-		Path: cmd.Path,
+		GetObjectRequest: schema.GetObjectRequest{Path: cmd.Path},
 	})
 	if err != nil {
 		return err

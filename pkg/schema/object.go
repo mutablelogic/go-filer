@@ -34,7 +34,7 @@ type ObjectMeta map[string]string
 type Object struct {
 	Name        string     `json:"name,omitempty"`
 	Path        string     `json:"path,omitempty"`
-	Size        int64      `json:"size,omitempty"`
+	Size        int64      `json:"size"`
 	ModTime     time.Time  `json:"modtime,omitzero"`
 	ContentType string     `json:"type,omitempty"`
 	ETag        string     `json:"etag,omitempty"`
@@ -53,7 +53,7 @@ type GetObjectRequest struct {
 }
 
 type ReadObjectRequest struct {
-	Path string
+	GetObjectRequest
 }
 
 type ListObjectsResponse struct {
@@ -72,8 +72,8 @@ type DeleteObjectsRequest struct {
 }
 
 type DeleteObjectsResponse struct {
-	Name string
-	Body []Object // list of deleted objects
+	Name string   `json:"name,omitempty"`
+	Body []Object `json:"body,omitempty"` // list of deleted objects
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -95,9 +95,6 @@ func (r GetObjectRequest) String() string {
 	return types.Stringify(r)
 }
 
-func (r ReadObjectRequest) String() string {
-	return types.Stringify(r)
-}
 
 func (r ListObjectsResponse) String() string {
 	return types.Stringify(r)

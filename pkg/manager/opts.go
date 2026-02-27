@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	// Packages
-	filer "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/pkg/backend"
 	trace "go.opentelemetry.io/otel/trace"
 )
@@ -18,7 +17,7 @@ type Opt func(*opts) error
 
 type opts struct {
 	tracer   trace.Tracer
-	backends []filer.Filer
+	backends []backend.Backend
 }
 
 ////////////////////////////////////////////////////////////////////////////////

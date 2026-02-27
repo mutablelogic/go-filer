@@ -223,7 +223,7 @@ func objectHead(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) er
 
 func objectGet(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
 	reader, obj, err := mgr.ReadObject(r.Context(), r.PathValue("name"), schema.ReadObjectRequest{
-		Path: types.NormalisePath(r.PathValue("path")),
+		GetObjectRequest: schema.GetObjectRequest{Path: types.NormalisePath(r.PathValue("path"))},
 	})
 	if err != nil {
 		return httpresponse.Error(w, err)
