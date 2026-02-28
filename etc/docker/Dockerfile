@@ -8,8 +8,8 @@ ARG ARCH
 WORKDIR /usr/src/app
 COPY . .
 
-RUN \
-    apt update -y && \
+RUN apt-get update -y && apt-get install -y --no-install-recommends make git && \
+    rm -rf /var/lib/apt/lists/* && \
     OS=${OS} ARCH=${ARCH} make build
 
 # Runtime stage: minimal debian image
@@ -19,7 +19,8 @@ ARG ARCH
 ARG SOURCE
 COPY --from=builder /usr/src/app/build/* /usr/local/bin/
 COPY etc/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN apt update -y && apt install -y ca-certificates gosu passwd && \
+RUN apt-get update -y && apt-get install -y --no-install-recommends ca-certificates gosu passwd && \
+    rm -rf /var/lib/apt/lists/* && \
     chmod +x /usr/local/bin/entrypoint.sh && \
     groupadd -g 1000 filer && \
     useradd -u 1000 -g 1000 -m -s /bin/false filer && \
@@ -35,6 +36,6 @@ ENV FILER_ADDR=:8087
 # Data directory for file storage; mount a host volume here to persist data.
 VOLUME /data
 
-# Entrypoint runs as root, optionally remaps UID/GID via FILER_UID / FILER_GID,
+# Entrypoint runs as root, optionally remaps UID/GID via FILER_UID/FILER_GID,
 # then drops to the filer user before exec-ing the server.
 ENTRYPOINT [ "/usr/local/bin/entrypoint.sh" ]

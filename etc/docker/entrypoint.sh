@@ -1,13 +1,13 @@
 #!/bin/sh
 set -e
 
-# If UID or GID are set, remap the filer user/group so that
+# If FILER_UID or FILER_GID are set, remap the filer user/group so that
 # files mounted from the host are accessible with the correct ownership.
-if [ -n "${GID}" ] && [ "${GID}" != "$(id -g filer)" ]; then
-    groupmod -g "${GID}" filer
+if [ -n "${FILER_GID}" ] && [ "${FILER_GID}" != "$(id -g filer)" ]; then
+    groupmod -g "${FILER_GID}" filer
 fi
-if [ -n "${UID}" ] && [ "${UID}" != "$(id -u filer)" ]; then
-    usermod -u "${UID}" filer
+if [ -n "${FILER_UID}" ] && [ "${FILER_UID}" != "$(id -u filer)" ]; then
+    usermod -u "${FILER_UID}" filer
 fi
 
 # Drop privileges and exec the server.

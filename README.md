@@ -35,7 +35,7 @@ The server defaults to `run file://data/data`, which creates a backend named `da
 ```bash
 docker run -d --name filer \
   -v /host/path:/data -p 8087:8087 \
-  -e UID=1234 -e GID=1234 \
+  -e FILER_UID=1234 -e FILER_GID=1234 \
   ghcr.io/mutablelogic/filer
 ```
 

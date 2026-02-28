@@ -6,6 +6,9 @@ on:
 
   workflow_dispatch:
 
+env:
+  DOCKER_REPO: ghcr.io/mutablelogic/filer
+
 jobs:
   build:
     name: Build
@@ -62,17 +65,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create
         run: |
-          docker manifest create ghcr.io/mutablelogic/filer:${{ matrix.tag }} \
-            --amend ghcr.io/mutablelogic/filer-linux-amd64:${{ needs.build.outputs.tag }} \
-            --amend ghcr.io/mutablelogic/filer-linux-arm64:${{ needs.build.outputs.tag }}
+          docker manifest create ${{ env.DOCKER_REPO }}:${{ matrix.tag }} \
+            --amend ${{ env.DOCKER_REPO }}-linux-amd64:${{ needs.build.outputs.tag }} \
+            --amend ${{ env.DOCKER_REPO }}-linux-arm64:${{ needs.build.outputs.tag }}
       - name: Annotate
         run: |
           docker manifest annotate --arch amd64 --os linux \
-            ghcr.io/mutablelogic/filer:${{ matrix.tag }} \
-            ghcr.io/mutablelogic/filer-linux-amd64:${{ needs.build.outputs.tag }}
+            ${{ env.DOCKER_REPO }}:${{ matrix.tag }} \
+            ${{ env.DOCKER_REPO }}-linux-amd64:${{ needs.build.outputs.tag }}
           docker manifest annotate --arch arm64 --os linux \
-            ghcr.io/mutablelogic/filer:${{ matrix.tag }} \
-            ghcr.io/mutablelogic/filer-linux-arm64:${{ needs.build.outputs.tag }}
+            ${{ env.DOCKER_REPO }}:${{ matrix.tag }} \
+            ${{ env.DOCKER_REPO }}-linux-arm64:${{ needs.build.outputs.tag }}
       - name: Push
         run: |
-          docker manifest push ghcr.io/mutablelogic/filer:${{ matrix.tag }}
+          docker manifest push ${{ env.DOCKER_REPO }}:${{ matrix.tag }}
