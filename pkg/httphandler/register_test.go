@@ -40,9 +40,16 @@ func Test_RegisterHandlers(t *testing.T) {
 		t.Fatalf("RegisterHandlers: %v", err)
 	}
 
-	// Three routes: /{$}, /{name}, /{name}/{path...}
-	if len(router.paths) != 3 {
-		t.Errorf("expected 3 registered paths, got %d: %v", len(router.paths), router.paths)
+	// Four routes: /{$} and "" (bare prefix, prevents ServeMux redirect),
+	// /{name} (backend object listing), /{name}/{path...} (object operations)
+	expected := []string{"/{$}", "", "/{name}", "/{name}/{path...}"}
+	if len(router.paths) != len(expected) {
+		t.Fatalf("expected %d registered paths, got %d: %v", len(expected), len(router.paths), router.paths)
+	}
+	for i, want := range expected {
+		if router.paths[i] != want {
+			t.Errorf("path[%d]: want %q, got %q", i, want, router.paths[i])
+		}
 	}
 }
 

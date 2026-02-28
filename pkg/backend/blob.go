@@ -170,24 +170,27 @@ func (b *blobbackend) URL() *url.URL {
 		Host:   b.url.Host,
 		Path:   b.url.Path,
 	}
-	q := url.Values{}
-	if b.awsConfig != nil && b.awsConfig.Region != "" {
-		q.Set("region", b.awsConfig.Region)
-	}
-	if b.endpoint != "" {
-		// Sanitize: strip userinfo, query, and fragment — only scheme+host+path is safe to expose
-		if ep, err := url.Parse(b.endpoint); err == nil {
-			ep.User = nil
-			ep.RawQuery = ""
-			ep.Fragment = ""
-			q.Set("endpoint", ep.String())
+	// Query params (region, endpoint, anonymous) are only meaningful for s3:// backends.
+	if b.url.Scheme == "s3" {
+		q := url.Values{}
+		if b.awsConfig != nil && b.awsConfig.Region != "" {
+			q.Set("region", b.awsConfig.Region)
 		}
-	}
-	if b.anonymous {
-		q.Set("anonymous", "true")
-	}
-	if len(q) > 0 {
-		u.RawQuery = q.Encode()
+		if b.endpoint != "" {
+			// Sanitize: strip userinfo, query, and fragment — only scheme+host+path is safe to expose
+			if ep, err := url.Parse(b.endpoint); err == nil {
+				ep.User = nil
+				ep.RawQuery = ""
+				ep.Fragment = ""
+				q.Set("endpoint", ep.String())
+			}
+		}
+		if b.anonymous {
+			q.Set("anonymous", "true")
+		}
+		if len(q) > 0 {
+			u.RawQuery = q.Encode()
+		}
 	}
 	return u
 }
