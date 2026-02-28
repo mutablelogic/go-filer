@@ -170,8 +170,8 @@ func (b *blobbackend) URL() *url.URL {
 		Host:   b.url.Host,
 		Path:   b.url.Path,
 	}
-	// Query params are only meaningful for cloud/S3 backends, not local file backends
-	if b.url.Scheme != "file" {
+	// Query params (region, endpoint, anonymous) are only meaningful for s3:// backends.
+	if b.url.Scheme == "s3" {
 		q := url.Values{}
 		if b.awsConfig != nil && b.awsConfig.Region != "" {
 			q.Set("region", b.awsConfig.Region)
