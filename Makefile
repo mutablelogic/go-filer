@@ -86,6 +86,15 @@ docker-version: docker-dep
 
 
 ###############################################################################
+# CLI
+
+# Build just the filer binary
+.PHONY: filer-client
+filer-client: go-dep mkdir
+	@echo Build command filer GOOS=${OS} GOARCH=${ARCH}
+	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -tags client -o ${BUILD_DIR}/filer ./cmd/filer
+
+###############################################################################
 # TEST
 
 .PHONY: test
