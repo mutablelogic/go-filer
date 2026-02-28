@@ -26,7 +26,11 @@ func RegisterHandlers(mgr *manager.Manager, router Router) error {
 	register := func(path string, handler http.HandlerFunc, spec *openapi.PathItem) {
 		result = errors.Join(result, router.RegisterFunc(path, handler, true, spec))
 	}
-	register(BackendListHandler(mgr))
+	// Register backend list at both /{$} (matches /api/filer/) and "" (matches
+	// /api/filer exactly), so http.ServeMux doesn't redirect the bare prefix.
+	path, handler, spec := BackendListHandler(mgr)
+	register(path, handler, spec)
+	register("", handler, nil)
 	register(ObjectListHandler(mgr))
 	register(ObjectHandler(mgr))
 	return result

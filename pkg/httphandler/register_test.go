@@ -40,9 +40,9 @@ func Test_RegisterHandlers(t *testing.T) {
 		t.Fatalf("RegisterHandlers: %v", err)
 	}
 
-	// Three routes: /{$}, /{name}, /{name}/{path...}
-	if len(router.paths) != 3 {
-		t.Errorf("expected 3 registered paths, got %d: %v", len(router.paths), router.paths)
+	// Four routes: /{$}, "" (bare prefix, no redirect), /{name}, /{name}/{path...}
+	if len(router.paths) != 4 {
+		t.Errorf("expected 4 registered paths, got %d: %v", len(router.paths), router.paths)
 	}
 }
 
