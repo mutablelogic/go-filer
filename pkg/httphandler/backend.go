@@ -36,8 +36,9 @@ func BackendListHandler(mgr *manager.Manager) (string, http.HandlerFunc, *openap
 // PRIVATE METHODS
 
 func backendList(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
-	body := make(map[string]string, len(mgr.Backends()))
-	for _, name := range mgr.Backends() {
+	backends := mgr.Backends()
+	body := make(map[string]string, len(backends))
+	for _, name := range backends {
 		if b := mgr.Backend(name); b != nil {
 			body[name] = b.URL().String()
 		}

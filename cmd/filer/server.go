@@ -76,12 +76,14 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 	for i, rawURL := range backends {
 		u, err := url.Parse(rawURL)
 		if err != nil {
+			ctx.logger.Printf(ctx.ctx, "backend[%d] invalid URL: %v", i, err)
 			continue
 		}
 		if b := mgr.Backend(u.Host); b != nil {
-			ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, b.URL())
+			ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, b.URL().String())
 		} else {
-			ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, rawURL)
+			// Backend not found in manager; log scheme+host only to avoid leaking credentials
+			ctx.logger.Printf(ctx.ctx, "backend[%d] %s://%s (not registered)", i, u.Scheme, u.Host)
 		}
 	}
 

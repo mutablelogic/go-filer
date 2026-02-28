@@ -12,7 +12,7 @@ import (
 	"time"
 
 	// Packages
-	"github.com/aws/aws-sdk-go-v2/aws"
+	aws "github.com/aws/aws-sdk-go-v2/aws"
 	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
@@ -175,7 +175,13 @@ func (b *blobbackend) URL() *url.URL {
 		q.Set("region", b.awsConfig.Region)
 	}
 	if b.endpoint != "" {
-		q.Set("endpoint", b.endpoint)
+		// Sanitize: strip userinfo, query, and fragment — only scheme+host+path is safe to expose
+		if ep, err := url.Parse(b.endpoint); err == nil {
+			ep.User = nil
+			ep.RawQuery = ""
+			ep.Fragment = ""
+			q.Set("endpoint", ep.String())
+		}
 	}
 	if b.anonymous {
 		q.Set("anonymous", "true")
