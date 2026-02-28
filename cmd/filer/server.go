@@ -71,6 +71,10 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 	}
 	defer mgr.Close()
 
+	for i, url := range backends {
+		ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, url)
+	}
+
 	return serve(ctx, mgr)
 }
 
