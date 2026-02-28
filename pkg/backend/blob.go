@@ -103,10 +103,9 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {
 		// For file:// the path is the bucket root dir - open using just the path.
-		// Set no_tmp_dir=1 so temp files are created next to their destination,
-		// avoiding "invalid cross-device link" errors when os.TempDir() is on a
-		// different mount (e.g. /tmp vs /data in Docker).
-		openURL := &url.URL{Scheme: "file", Path: self.url.Path, RawQuery: "no_tmp_dir=1"}
+		// Temp files are written to os.TempDir() (TMPDIR env var), which should be
+		// on the same filesystem as the data dir to avoid cross-device link errors.
+		openURL := &url.URL{Scheme: "file", Path: self.url.Path}
 		bucket, err = blob.OpenBucket(ctx, openURL.String())
 	} else {
 		// For s3, mem, etc.: open at root (strip path) to avoid PrefixedBucket
