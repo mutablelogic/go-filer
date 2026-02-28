@@ -53,7 +53,7 @@ type RunServerCommand struct {
 // COMMANDS
 
 func (cmd *RunServerCommand) Run(ctx *Globals) error {
-	bOpts, err := cmd.backendOpts()
+	bOpts, err := cmd.backendOpts(ctx.ctx)
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 // config.WithSharedConfigProfile so SSO and assume-role profiles work correctly.
 // When --aws.access-key is set (and no profile), static credentials are used.
 // Otherwise the default credential chain applies (env vars, instance metadata, etc.).
-func (cmd *RunServerCommand) backendOpts() ([]backend.Opt, error) {
+func (cmd *RunServerCommand) backendOpts(ctx context.Context) ([]backend.Opt, error) {
 	var opts []backend.Opt
 
 	if cmd.AWS.Profile != "" {
@@ -98,7 +98,7 @@ func (cmd *RunServerCommand) backendOpts() ([]backend.Opt, error) {
 		if cmd.AWS.Region != "" {
 			cfgOpts = append(cfgOpts, config.WithRegion(cmd.AWS.Region))
 		}
-		awsCfg, err := config.LoadDefaultConfig(context.Background(), cfgOpts...)
+		awsCfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load AWS config for profile %q: %w", cmd.AWS.Profile, err)
 		}
@@ -123,7 +123,7 @@ func (cmd *RunServerCommand) backendOpts() ([]backend.Opt, error) {
 	} else {
 		// Default credential chain; optionally pin region.
 		if cmd.AWS.Region != "" {
-			awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(cmd.AWS.Region))
+			awsCfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(cmd.AWS.Region))
 			if err != nil {
 				return nil, fmt.Errorf("failed to load AWS config: %w", err)
 			}

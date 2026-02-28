@@ -43,9 +43,9 @@ var wellKnownMIME = map[string]string{
 	".proto": "text/plain",
 }
 
-// mimeByExt returns the MIME type for a file extension, consulting wellKnownMIME
+// MIMEByExt returns the MIME type for a file extension, consulting wellKnownMIME
 // first and then the system MIME database.
-func mimeByExt(ext string) string {
+func MIMEByExt(ext string) string {
 	if ct, ok := wellKnownMIME[ext]; ok {
 		return ct
 	}
@@ -199,7 +199,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		// Determine content type: prefer extension-based lookup; fall back to
 		// sniffing the first 512 bytes when the extension yields nothing useful.
 		var body io.ReadCloser = f
-		ct := mimeByExt(path.Ext(e.path))
+		ct := MIMEByExt(path.Ext(e.path))
 		if ct == "" || ct == "application/octet-stream" {
 			var buf [512]byte
 			n, _ := io.ReadFull(f, buf[:])

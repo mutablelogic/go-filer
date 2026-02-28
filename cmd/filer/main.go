@@ -83,7 +83,7 @@ func run(ctx *kong.Context, globals *Globals) int {
 
 	if err := ctx.Run(globals); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		return -1
+		return 1
 	}
 	return 0
 }
