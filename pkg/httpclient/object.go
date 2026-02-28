@@ -118,9 +118,6 @@ func (c *Client) ReadObject(ctx context.Context, name string, req schema.ReadObj
 	); err != nil {
 		return nil, err
 	}
-	if u.obj == nil {
-		return nil, fmt.Errorf("ReadObject: missing %s header in response", schema.ObjectMetaHeader)
-	}
 	return u.obj, nil
 }
 

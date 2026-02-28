@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -26,13 +27,15 @@ var _ client.Unmarshaler = (*readObjectUnmarshaler)(nil)
 // INTERFACE IMPLEMENTATION
 
 func (r *readObjectUnmarshaler) Unmarshal(header http.Header, reader io.Reader) error {
-	if metaJSON := header.Get(schema.ObjectMetaHeader); metaJSON != "" {
-		var obj schema.Object
-		if err := json.Unmarshal([]byte(metaJSON), &obj); err != nil {
-			return err
-		}
-		r.obj = &obj
+	metaJSON := header.Get(schema.ObjectMetaHeader)
+	if metaJSON == "" {
+		return fmt.Errorf("ReadObject: missing %s header in response", schema.ObjectMetaHeader)
 	}
+	var obj schema.Object
+	if err := json.Unmarshal([]byte(metaJSON), &obj); err != nil {
+		return err
+	}
+	r.obj = &obj
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := reader.Read(buf)

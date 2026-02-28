@@ -12,10 +12,10 @@ import (
 // TYPES
 
 type opt struct {
-	url          *url.URL
-	awsConfig    *aws.Config
-	endpoint     string // raw endpoint URL set via WithEndpoint; wired into awsConfig when both are present
-	gcsCredsFile string // path to GCS service-account JSON key file; empty = use ADC
+	url       *url.URL
+	awsConfig *aws.Config
+	endpoint  string // raw endpoint URL set via WithEndpoint; wired into awsConfig when both are present
+	anonymous bool   // forces anonymous credentials; wired into awsConfig when both are present
 }
 
 type Opt func(*opt) error
@@ -63,6 +63,7 @@ func WithEndpoint(endpoint string) Opt {
 // Use this for S3-compatible services that don't require authentication.
 func WithAnonymous() Opt {
 	return func(o *opt) error {
+		o.anonymous = true
 		o.set("anonymous", "true")
 		return nil
 	}
@@ -83,17 +84,6 @@ func WithCreateDir() Opt {
 func WithAWSConfig(cfg aws.Config) Opt {
 	return func(o *opt) error {
 		o.awsConfig = &cfg
-		return nil
-	}
-}
-
-// WithGCSCredentialsFile sets an explicit service-account JSON key file for gs:// URLs.
-// When omitted, Application Default Credentials (ADC) are used — i.e. the
-// GOOGLE_APPLICATION_CREDENTIALS environment variable, gcloud auth, or the GCE metadata
-// server, in that order.
-func WithGCSCredentialsFile(path string) Opt {
-	return func(o *opt) error {
-		o.gcsCredsFile = path
 		return nil
 	}
 }

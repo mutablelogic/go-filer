@@ -38,14 +38,9 @@ type AWSConfig struct {
 	Endpoint     string `name:"endpoint"                                      help:"S3-compatible endpoint URL, e.g. http://localhost:9000 (s3://)."   optional:""`
 }
 
-type GCSConfig struct {
-	CredsFile string `name:"credentials" env:"GOOGLE_APPLICATION_CREDENTIALS" help:"Path to GCS service-account JSON key file (gs://). Defaults to Application Default Credentials." optional:""`
-}
-
 type RunServerCommand struct {
-	Backend []string  `arg:"" name:"backend" help:"Backend URL (e.g. mem://name, file://name/path, s3://bucket, gs://bucket)." optional:""`
+	Backend []string  `arg:"" name:"backend" help:"Backend URL (e.g. mem://name, file://name/path, s3://bucket)." optional:""`
 	AWS     AWSConfig `embed:"" prefix:"aws."`
-	GCS     GCSConfig `embed:"" prefix:"gcs."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -98,21 +93,14 @@ func (cmd *RunServerCommand) backendOpts(ctx context.Context) ([]backend.Opt, er
 		if cmd.AWS.Region != "" {
 			cfgOpts = append(cfgOpts, config.WithRegion(cmd.AWS.Region))
 		}
-		if cmd.AWS.Endpoint != "" {
-			epURL := cmd.AWS.Endpoint
-			cfgOpts = append(cfgOpts, config.WithEndpointResolverWithOptions(
-				aws.EndpointResolverWithOptionsFunc(
-					func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-						return aws.Endpoint{URL: epURL, HostnameImmutable: true}, nil
-					},
-				),
-			))
-		}
 		awsCfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load AWS config for profile %q: %w", cmd.AWS.Profile, err)
 		}
 		opts = append(opts, backend.WithAWSConfig(awsCfg))
+		if cmd.AWS.Endpoint != "" {
+			opts = append(opts, backend.WithEndpoint(cmd.AWS.Endpoint))
+		}
 	} else if cmd.AWS.AccessKey != "" {
 		// Static credentials (no profile set).
 		if cmd.AWS.SecretKey == "" {
@@ -126,29 +114,24 @@ func (cmd *RunServerCommand) backendOpts(ctx context.Context) ([]backend.Opt, er
 		if cmd.AWS.Region != "" {
 			cfg.Region = cmd.AWS.Region
 		}
-		if cmd.AWS.Endpoint != "" {
-			epURL := cmd.AWS.Endpoint
-			cfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
-				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-					return aws.Endpoint{URL: epURL, HostnameImmutable: true}, nil
-				},
-			)
-		}
 		opts = append(opts, backend.WithAWSConfig(cfg))
-	} else {
-		// No explicit credentials — use anonymous access.
-		if cmd.AWS.Region != "" {
-			opts = append(opts, backend.WithAWSConfig(aws.Config{Region: cmd.AWS.Region}))
-		}
 		if cmd.AWS.Endpoint != "" {
 			opts = append(opts, backend.WithEndpoint(cmd.AWS.Endpoint))
 		}
-		opts = append(opts, backend.WithAnonymous())
+	} else {
+		// No explicit credentials — use anonymous access.
+		cfg := aws.Config{
+			Credentials: aws.AnonymousCredentials{},
+		}
+		if cmd.AWS.Region != "" {
+			cfg.Region = cmd.AWS.Region
+		}
+		opts = append(opts, backend.WithAWSConfig(cfg))
+		if cmd.AWS.Endpoint != "" {
+			opts = append(opts, backend.WithEndpoint(cmd.AWS.Endpoint))
+		}
 	}
 
-	if cmd.GCS.CredsFile != "" {
-		opts = append(opts, backend.WithGCSCredentialsFile(cmd.GCS.CredsFile))
-	}
 	return opts, nil
 }
 

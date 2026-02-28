@@ -31,7 +31,7 @@ func WithTracer(tracer trace.Tracer) Opt {
 	}
 }
 
-// WithBackend adds a blob backend (mem://, file://, s3://, gs://) to the filer.
+// WithBackend adds a blob backend (mem://, file://, s3://) to the filer.
 // The url should be in the format "scheme://bucket" (e.g., "mem://mybucket", "s3://mybucket").
 // Returns an error if a backend with the same name already exists.
 func WithBackend(ctx context.Context, url string, backendOpts ...backend.Opt) Opt {

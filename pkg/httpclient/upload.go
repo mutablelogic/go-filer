@@ -264,11 +264,11 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			}
 			totalFiles = s.Files
 		case schema.UploadFileEvent:
-			var f schema.UploadFile
-			if err := json.Unmarshal([]byte(ev.Data), &f); err != nil {
-				return err
-			}
 			if o.progress != nil {
+				var f schema.UploadFile
+				if err := json.Unmarshal([]byte(ev.Data), &f); err != nil {
+					return err
+				}
 				o.progress(f.Index, totalFiles, f.Path, f.Written, f.Bytes)
 			}
 		case schema.UploadCompleteEvent:

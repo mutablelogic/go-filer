@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"syscall"
@@ -15,19 +13,16 @@ import (
 
 	// Packages
 	"github.com/aws/aws-sdk-go-v2/aws"
+	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	blob "gocloud.dev/blob"
-	gcsblob "gocloud.dev/blob/gcsblob"
 	s3blob "gocloud.dev/blob/s3blob"
 	gcerrors "gocloud.dev/gcerrors"
-	gcp "gocloud.dev/gcp"
-	"golang.org/x/oauth2/google"
 
 	// Drivers
 	_ "gocloud.dev/blob/fileblob" // file:// URLs
-	_ "gocloud.dev/blob/gcsblob"  // gs:// URLs
 	_ "gocloud.dev/blob/memblob"  // mem:// URLs
 	_ "gocloud.dev/blob/s3blob"   // s3:// URLs
 )
@@ -47,18 +42,14 @@ var _ Backend = (*blobbackend)(nil)
 // LIFECYCLE
 
 // NewBlobBackend creates a new blob backend using Go CDK.
-// Supported URL schemes: s3://, gs://, file://, mem://
+// Supported URL schemes: s3://, file://, mem://
 // Examples:
 //   - "s3://my-bucket?region=us-east-1"
-//   - "gs://my-bucket"
-//   - "gs://my-bucket/prefix"
 //   - "file:///path/to/directory"
 //   - "mem://"
 //
 // For S3 URLs, you can optionally provide an aws.Config via WithAWSConfig()
 // for full control over AWS SDK configuration.
-// For GCS URLs, credentials are resolved via Application Default Credentials
-// unless WithGCSCredentialsFile() is provided.
 func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error) {
 	self := new(blobbackend)
 
@@ -71,10 +62,19 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 		self.opt = opt
 	}
 
+	// Reject unsupported schemes up front
+	switch self.url.Scheme {
+	case "s3", "file", "mem":
+		// supported
+	default:
+		return nil, fmt.Errorf("unsupported backend scheme %q: supported schemes are s3://, file://, mem://", self.url.Scheme)
+	}
+
 	// Validate the backend name (URL host) is a valid identifier
 	if !types.IsIdentifier(self.url.Host) {
 		return nil, fmt.Errorf("backend name %q must be a valid identifier (letter, digits, underscores, hyphens; max 64 chars)", self.url.Host)
 	}
+
 	// For s3/mem: bucketPrefix is prepended to paths to form storage keys
 	// (bucket opens at host level). For file://: no prefix needed.
 	if self.url.Scheme != "file" {
@@ -84,41 +84,23 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 	// Open the bucket
 	var bucket *blob.Bucket
 	var err error
-
 	if self.url.Scheme == "s3" && self.awsConfig != nil {
 		// Use the provided AWS config to open S3 bucket directly.
-		// If a custom endpoint was also specified, inject it into a copy of the
-		// config so it is honoured — s3blob.Dial bypasses URL query parameters.
+		// Honour WithEndpoint and WithAnonymous even though they bypass URL query parameters.
 		cfg := *self.awsConfig
+		if self.anonymous {
+			cfg.Credentials = aws.AnonymousCredentials{}
+		}
+		var s3Opts []func(*s3svc.Options)
 		if self.endpoint != "" {
 			epURL := self.endpoint
-			cfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
-				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-					return aws.Endpoint{
-						URL:               epURL,
-						HostnameImmutable: true,
-					}, nil
-				},
-			)
+			s3Opts = append(s3Opts, func(o *s3svc.Options) {
+				o.BaseEndpoint = aws.String(epURL)
+				o.UsePathStyle = true
+			})
 		}
-		client := s3blob.Dial(cfg)
+		client := s3svc.NewFromConfig(cfg, s3Opts...)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
-	} else if self.url.Scheme == "gs" && self.gcsCredsFile != "" {
-		// Explicit service-account key file: build a GCP HTTP client and open directly.
-		credsJSON, cerr := os.ReadFile(self.gcsCredsFile)
-		if cerr != nil {
-			return nil, fmt.Errorf("failed to read GCS credentials file: %w", cerr)
-		}
-		creds, cerr := google.CredentialsFromJSON(ctx, credsJSON, "https://www.googleapis.com/auth/devstorage.read_write")
-		if cerr != nil {
-			return nil, fmt.Errorf("failed to parse GCS credentials: %w", cerr)
-		}
-		ts := gcp.CredentialsTokenSource(creds)
-		gcsClient, cerr := gcp.NewHTTPClient(http.DefaultTransport, ts)
-		if cerr != nil {
-			return nil, fmt.Errorf("failed to create GCS HTTP client: %w", cerr)
-		}
-		bucket, err = gcsblob.OpenBucket(ctx, gcsClient, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {
 		// For file:// the path is the bucket root dir - open using just the path
 		openURL := &url.URL{Scheme: "file", Path: self.url.Path}
@@ -131,9 +113,12 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 		bucket, err = blob.OpenBucket(ctx, openURL.String())
 	}
 
+	// Check for errors opening the bucket
 	if err != nil {
 		return nil, fmt.Errorf("failed to open bucket: %w", err)
 	}
+
+	// Success
 	self.bucket = bucket
 
 	return self, nil
@@ -159,7 +144,8 @@ func NewFileBackend(ctx context.Context, name, dir string, opts ...Opt) (Backend
 	if !path.IsAbs(dir) {
 		return nil, fmt.Errorf("backend dir %q must be an absolute path", dir)
 	}
-	return NewBlobBackend(ctx, "file://"+name+path.Clean(dir), opts...)
+	u := &url.URL{Scheme: "file", Host: name, Path: path.Clean(dir)}
+	return NewBlobBackend(ctx, u.String(), opts...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
