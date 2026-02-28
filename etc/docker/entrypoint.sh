@@ -15,4 +15,18 @@ fi
 if [ $# -eq 0 ]; then
     set -- run file://data/data
 fi
+
+# Ensure /data (and the TMPDIR subdirectory) is writable by the filer user.
+# Bind-mounted host volumes inherit the host's ownership, which may differ
+# from the container's filer UID/GID.
+if [ -d /data ]; then
+    chown filer:filer /data
+    if [ -n "${TMPDIR}" ] && [ ! -d "${TMPDIR}" ]; then
+        mkdir -p "${TMPDIR}"
+    fi
+    if [ -n "${TMPDIR}" ] && [ -d "${TMPDIR}" ]; then
+        chown filer:filer "${TMPDIR}"
+    fi
+fi
+
 exec gosu filer /usr/local/bin/filer "$@"
