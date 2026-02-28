@@ -492,6 +492,9 @@ func objectUploadSSEStream(w http.ResponseWriter, r *http.Request, mgr *manager.
 	}
 
 	// Open the SSE stream — commits 200 OK; no HTTP errors are possible after this point.
+	// X-Accel-Buffering tells nginx to disable response buffering for this
+	// request so SSE events are flushed to the client immediately.
+	w.Header().Set("X-Accel-Buffering", "no")
 	stream := httpresponse.NewTextStream(w)
 	stream.Write(schema.UploadStartEvent, schema.UploadStart{Files: fileCount})
 
