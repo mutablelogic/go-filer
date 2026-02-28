@@ -27,7 +27,7 @@ type Globals struct {
 	HTTP struct {
 		Prefix  string        `name:"prefix" help:"HTTP path prefix" default:"/api/filer"`
 		Addr    string        `name:"addr" env:"FILER_ADDR" help:"HTTP listen address" default:"localhost:8087"`
-		Timeout time.Duration `name:"timeout" help:"HTTP request timeout" default:"30s"`
+		Timeout time.Duration `name:"timeout" help:"HTTP request timeout" default:"30m"`
 		Origin  string        `name:"origin" help:"CORS origin ('*' to allow all, empty for same-origin only)" default:""`
 	} `embed:"" prefix:"http."`
 

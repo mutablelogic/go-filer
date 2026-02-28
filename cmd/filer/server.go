@@ -174,7 +174,10 @@ func serve(ctx *Globals, mgr *manager.Manager) error {
 	}
 
 	// Create and run the HTTP server
-	srv, err := httpserver.New(ctx.HTTP.Addr, http.Handler(router), nil)
+	srv, err := httpserver.New(ctx.HTTP.Addr, http.Handler(router), nil,
+		httpserver.WithReadTimeout(ctx.HTTP.Timeout),
+		httpserver.WithWriteTimeout(ctx.HTTP.Timeout),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
