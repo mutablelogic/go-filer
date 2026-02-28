@@ -98,12 +98,19 @@ func (cmd *RunServerCommand) backendOpts(ctx context.Context) ([]backend.Opt, er
 		if cmd.AWS.Region != "" {
 			cfgOpts = append(cfgOpts, config.WithRegion(cmd.AWS.Region))
 		}
+		if cmd.AWS.Endpoint != "" {
+			epURL := cmd.AWS.Endpoint
+			cfgOpts = append(cfgOpts, config.WithEndpointResolverWithOptions(
+				aws.EndpointResolverWithOptionsFunc(
+					func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+						return aws.Endpoint{URL: epURL, HostnameImmutable: true}, nil
+					},
+				),
+			))
+		}
 		awsCfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load AWS config for profile %q: %w", cmd.AWS.Profile, err)
-		}
-		if cmd.AWS.Endpoint != "" {
-			opts = append(opts, backend.WithEndpoint(cmd.AWS.Endpoint))
 		}
 		opts = append(opts, backend.WithAWSConfig(awsCfg))
 	} else if cmd.AWS.AccessKey != "" {
@@ -120,7 +127,12 @@ func (cmd *RunServerCommand) backendOpts(ctx context.Context) ([]backend.Opt, er
 			cfg.Region = cmd.AWS.Region
 		}
 		if cmd.AWS.Endpoint != "" {
-			opts = append(opts, backend.WithEndpoint(cmd.AWS.Endpoint))
+			epURL := cmd.AWS.Endpoint
+			cfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
+				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+					return aws.Endpoint{URL: epURL, HostnameImmutable: true}, nil
+				},
+			)
 		}
 		opts = append(opts, backend.WithAWSConfig(cfg))
 	} else {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	// Packages
+	"github.com/aws/aws-sdk-go-v2/aws"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -85,8 +86,22 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 	var err error
 
 	if self.url.Scheme == "s3" && self.awsConfig != nil {
-		// Use the provided AWS config to open S3 bucket directly
-		client := s3blob.Dial(*self.awsConfig)
+		// Use the provided AWS config to open S3 bucket directly.
+		// If a custom endpoint was also specified, inject it into a copy of the
+		// config so it is honoured — s3blob.Dial bypasses URL query parameters.
+		cfg := *self.awsConfig
+		if self.endpoint != "" {
+			epURL := self.endpoint
+			cfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
+				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+					return aws.Endpoint{
+						URL:               epURL,
+						HostnameImmutable: true,
+					}, nil
+				},
+			)
+		}
+		client := s3blob.Dial(cfg)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
 	} else if self.url.Scheme == "gs" && self.gcsCredsFile != "" {
 		// Explicit service-account key file: build a GCP HTTP client and open directly.

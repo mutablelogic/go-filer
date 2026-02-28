@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
+	"golang.org/x/sync/errgroup"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -83,28 +83,22 @@ func (c *Client) GetObject(ctx context.Context, name string, req schema.GetObjec
 }
 
 // GetObjects fetches metadata for multiple objects concurrently using HEAD requests,
-// with parallelism capped at parallelHeads. Results are returned in the same order
-// as reqs. Any per-request errors are joined and returned alongside partial results.
+// with both goroutine count and in-flight requests capped at parallelHeads via a
+// bounded worker pool. Results are returned in the same order as reqs. Any
+// per-request errors are joined and returned alongside partial results.
 func (c *Client) GetObjects(ctx context.Context, name string, reqs []schema.GetObjectRequest) ([]*schema.Object, error) {
 	objects := make([]*schema.Object, len(reqs))
 	errs := make([]error, len(reqs))
-	sem := make(chan struct{}, parallelHeads)
-	var wg sync.WaitGroup
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(parallelHeads)
 	for i, req := range reqs {
-		wg.Add(1)
-		go func(i int, req schema.GetObjectRequest) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				errs[i] = ctx.Err()
-				return
-			}
-			defer func() { <-sem }()
+		i, req := i, req
+		g.Go(func() error {
 			objects[i], errs[i] = c.GetObject(ctx, name, req)
-		}(i, req)
+			return nil
+		})
 	}
-	wg.Wait()
+	g.Wait()
 	return objects, errors.Join(errs...)
 }
 
@@ -113,6 +107,9 @@ func (c *Client) GetObjects(ctx context.Context, name string, reqs []schema.GetO
 // across calls; copy it if retained. Returns the object metadata; the returned
 // *Object is always non-nil on success.
 func (c *Client) ReadObject(ctx context.Context, name string, req schema.ReadObjectRequest, fn func([]byte) error) (*schema.Object, error) {
+	if fn == nil {
+		return nil, errors.New("ReadObject: fn must not be nil")
+	}
 	u := &readObjectUnmarshaler{fn: fn}
 	if err := c.DoWithContext(ctx,
 		client.NewRequest(),

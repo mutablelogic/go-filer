@@ -164,7 +164,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 	if o.check != nil {
 		reqs := make([]schema.GetObjectRequest, len(entries))
 		for i, e := range entries {
-			reqs[i] = schema.GetObjectRequest{Path: "/" + path.Join(o.prefix, e.path)}
+			reqs[i] = schema.GetObjectRequest{Path: path.Join("/", o.prefix, e.path)}
 		}
 		remotes, err := c.GetObjects(ctx, name, reqs)
 		if err != nil && ctx.Err() != nil {
@@ -195,7 +195,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			}
 			return nil, err
 		}
-		remotePath := path.Join(o.prefix, e.path)
+		remotePath := path.Join("/", o.prefix, e.path)
 		// Determine content type: prefer extension-based lookup; fall back to
 		// sniffing the first 512 bytes when the extension yields nothing useful.
 		var body io.ReadCloser = f

@@ -14,6 +14,7 @@ import (
 type opt struct {
 	url          *url.URL
 	awsConfig    *aws.Config
+	endpoint     string // raw endpoint URL set via WithEndpoint; wired into awsConfig when both are present
 	gcsCredsFile string // path to GCS service-account JSON key file; empty = use ADC
 }
 
@@ -47,6 +48,7 @@ func WithEndpoint(endpoint string) Opt {
 		} else if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
 			return fmt.Errorf("endpoint must be http:// or https://, got %s://", endpoint.Scheme)
 		} else {
+			o.endpoint = endpoint.String() // stored for use with awsConfig path
 			o.set("endpoint", endpoint.String())
 			o.set("s3ForcePathStyle", "true") // Always set s3ForcePathStyle=true for custom endpoints
 			if endpoint.Scheme == "http" {
