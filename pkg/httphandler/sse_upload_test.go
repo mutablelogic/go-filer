@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -67,6 +68,7 @@ func newSSEUploadRequest(t *testing.T, url string, files [][2]string, extraHeade
 	t.Helper()
 	req := newMultipartRequest(t, url, files, extraHeaders)
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-Upload-Count", strconv.Itoa(len(files)))
 	return req
 }
 

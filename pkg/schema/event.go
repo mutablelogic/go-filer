@@ -4,7 +4,7 @@ package schema
 // CONSTANTS
 
 const (
-	// SSE event names emitted during a streaming upload (objectUploadSSE).
+	// SSE event names emitted during a streaming upload (objectUploadSSEStream).
 	// Clients should switch on these names to drive per-file progress UIs.
 
 	// UploadStartEvent is sent once before the upload loop begins.

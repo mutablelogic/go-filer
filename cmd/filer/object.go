@@ -347,6 +347,17 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 	}))
 
 	tty := isTerminal(os.Stderr)
+	var skipped int
+	if !cmd.Force {
+		// Wrap the default skip check to count files that are already up to date.
+		uploadOpts = append(uploadOpts, httpclient.WithCheck(func(info fs.FileInfo, remote *schema.Object) bool {
+			if httpclient.SkipUnchanged(info, remote) {
+				skipped++
+				return true
+			}
+			return false
+		}))
+	}
 	uploadOpts = append(uploadOpts, httpclient.WithProgress(func(index, count int, path string, written, total int64) {
 		w := len(fmt.Sprintf("%d", count))
 		fileTag := fmt.Sprintf("[%*d/%d]", w, index+1, count)
@@ -371,8 +382,15 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	if tty {
-		fmt.Fprintf(os.Stderr, "%d object(s) uploaded\n", len(objs))
+	if tty || len(objs) > 0 || skipped > 0 {
+		switch {
+		case len(objs) > 0 && skipped > 0:
+			fmt.Fprintf(os.Stderr, "%d object(s) uploaded, %d skipped (up to date)\n", len(objs), skipped)
+		case skipped > 0:
+			fmt.Fprintf(os.Stderr, "0 object(s) uploaded, %d skipped (up to date)\n", skipped)
+		default:
+			fmt.Fprintf(os.Stderr, "%d object(s) uploaded\n", len(objs))
+		}
 	}
 	return nil
 }

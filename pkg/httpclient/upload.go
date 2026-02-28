@@ -116,12 +116,11 @@ func WithProgress(fn func(index, count int, path string, written, bytes int64)) 
 	}
 }
 
-// skipUnchanged is the default check function. It skips a file when the remote
-// object already exists with the same size. When both the local ModTime and the
-// remote ModTime are non-zero, they must also match (compared at second
-// precision, since the stored value is transmitted via HTTP-date format which
-// has no sub-second resolution).
-func skipUnchanged(localInfo fs.FileInfo, remote *schema.Object) bool {
+// SkipUnchanged is the default check function used by CreateObjects. It skips
+// a file when the remote object already exists with the same size. When both
+// the local ModTime and the remote ModTime are non-zero, they must also match
+// (compared at second precision, since HTTP-date has no sub-second resolution).
+func SkipUnchanged(localInfo fs.FileInfo, remote *schema.Object) bool {
 	if remote == nil {
 		return false // object does not exist remotely — upload it
 	}
@@ -144,7 +143,7 @@ func skipUnchanged(localInfo fs.FileInfo, remote *schema.Object) bool {
 // By default, files that already exist remotely with the same size (and modtime
 // when available) are skipped. Use WithCheck(nil) to disable this behaviour.
 func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opts ...UploadOpt) ([]schema.Object, error) {
-	o := &uploadOpts{check: skipUnchanged}
+	o := &uploadOpts{check: SkipUnchanged}
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
 			return nil, err
@@ -214,7 +213,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			}{io.MultiReader(bytes.NewReader(buf[:n]), f), f}
 		}
 		// Stamp Last-Modified so the server stores the original mod time and
-		// future skip checks (skipUnchanged) can compare it.
+		// future skip checks (SkipUnchanged) can compare it.
 		// Stamp Content-Length so the server can populate UploadFile.Bytes and
 		// the CLI can display upload progress as a percentage.
 		h := textproto.MIMEHeader{}
@@ -239,8 +238,9 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 
 	// Build a streaming multipart payload. The encoder reflect-walks the
 	// struct and writes each types.File as a separate multipart "file" part.
-	// Request text/event-stream so the server branches to objectUploadSSE,
-	// which emits one SSE event per committed file and one on error.
+	// Request text/event-stream so the server branches to objectUploadSSEStream,
+	// which streams each multipart part directly to the backend and emits
+	// one SSE event per committed file and one on error.
 	upload := struct {
 		Files []types.File `json:"file"`
 	}{Files: parts}
@@ -299,6 +299,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 	// that fires the SSE callback. The text-stream branch ignores out entirely.
 	if err := c.DoWithContext(ctx, payload, &results,
 		client.OptPath(name),
+		client.OptReqHeader("X-Upload-Count", strconv.Itoa(len(parts))),
 		client.OptTextStreamCallback(sseCallback),
 		client.OptNoTimeout(),
 	); err != nil {
