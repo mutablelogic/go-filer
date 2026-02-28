@@ -26,7 +26,7 @@ type Globals struct {
 
 	HTTP struct {
 		Prefix  string        `name:"prefix" help:"HTTP path prefix" default:"/api/filer"`
-		Addr    string        `name:"addr" env:"FILER_ADDR" help:"HTTP listen address" default:"localhost:8080"`
+		Addr    string        `name:"addr" env:"FILER_ADDR" help:"HTTP listen address" default:"localhost:8087"`
 		Timeout time.Duration `name:"timeout" help:"HTTP request timeout" default:"30s"`
 		Origin  string        `name:"origin" help:"CORS origin ('*' to allow all, empty for same-origin only)" default:""`
 	} `embed:"" prefix:"http."`
@@ -83,7 +83,7 @@ func run(ctx *kong.Context, globals *Globals) int {
 
 	if err := ctx.Run(globals); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		return -1
+		return 1
 	}
 	return 0
 }
