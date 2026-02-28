@@ -34,7 +34,7 @@ func Test_backendList(t *testing.T) {
 	}
 
 	if len(out.Body) != 0 {
-		t.Errorf("expected empty backends list, got %+v", out.Body)
+		t.Errorf("expected empty backends map, got %+v", out.Body)
 	}
 }
 
@@ -86,12 +86,11 @@ func Test_backendList_withBackends(t *testing.T) {
 		t.Errorf("expected 2 backends, got %d: %+v", len(out.Body), out.Body)
 	}
 
-	// Should return just the names (URL hosts)
-	found := make(map[string]bool)
-	for _, name := range out.Body {
-		found[name] = true
+	// Body is a map of name → URL string
+	if _, ok := out.Body["media"]; !ok {
+		t.Errorf("expected 'media' key in backends, got: %+v", out.Body)
 	}
-	if !found["media"] || !found["backup"] {
-		t.Errorf("expected to find 'media' and 'backup' in backends, got: %+v", out.Body)
+	if _, ok := out.Body["backup"]; !ok {
+		t.Errorf("expected 'backup' key in backends, got: %+v", out.Body)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -71,8 +72,17 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 	}
 	defer mgr.Close()
 
-	for i, url := range backends {
-		ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, url)
+	// Log the sanitised backend URLs (no credentials, no raw input query params)
+	for i, rawURL := range backends {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			continue
+		}
+		if b := mgr.Backend(u.Host); b != nil {
+			ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, b.URL())
+		} else {
+			ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, rawURL)
+		}
 	}
 
 	return serve(ctx, mgr)

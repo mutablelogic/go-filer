@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"io"
+	"net/url"
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
@@ -17,6 +18,11 @@ type Backend interface {
 
 	// Name returns the name of the backend
 	Name() string
+
+	// URL returns the backend destination URL. The scheme, host (bucket/name),
+	// and path (prefix/directory) identify the storage location. Query
+	// parameters carry useful non-credential details: region, endpoint, anonymous.
+	URL() *url.URL
 
 	// Create object in the backend
 	CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error)

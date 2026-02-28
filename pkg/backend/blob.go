@@ -159,6 +159,33 @@ func (b *blobbackend) Name() string {
 	return b.url.Host
 }
 
+// URL returns the backend destination URL.
+// Query parameters carry useful non-credential details:
+//   - region: AWS region (S3 only, when an awsConfig is present)
+//   - endpoint: custom S3-compatible endpoint (when set)
+//   - anonymous: "true" when anonymous credentials are used
+func (b *blobbackend) URL() *url.URL {
+	u := &url.URL{
+		Scheme: b.url.Scheme,
+		Host:   b.url.Host,
+		Path:   b.url.Path,
+	}
+	q := url.Values{}
+	if b.awsConfig != nil && b.awsConfig.Region != "" {
+		q.Set("region", b.awsConfig.Region)
+	}
+	if b.endpoint != "" {
+		q.Set("endpoint", b.endpoint)
+	}
+	if b.anonymous {
+		q.Set("anonymous", "true")
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
+	return u
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
