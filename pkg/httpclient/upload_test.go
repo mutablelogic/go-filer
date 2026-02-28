@@ -190,6 +190,43 @@ func TestCreateObjects_skipChanged(t *testing.T) {
 	}
 }
 
+// TestCreateObjects_batchSize verifies that WithBatchSize splits a large upload
+// into multiple requests and that all files are still committed correctly.
+func TestCreateObjects_batchSize(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	// 5 files with a batch size of 2 → 3 requests (2+2+1).
+	memFS := fstest.MapFS{
+		"a.txt": {Data: []byte("a")},
+		"b.txt": {Data: []byte("b")},
+		"c.txt": {Data: []byte("c")},
+		"d.txt": {Data: []byte("d")},
+		"e.txt": {Data: []byte("e")},
+	}
+
+	objs, err := c.CreateObjects(context.Background(), "testbucket", memFS,
+		httpclient.WithBatchSize(2),
+		httpclient.WithCheck(nil), // no skip
+	)
+	if err != nil {
+		t.Fatalf("CreateObjects: %v", err)
+	}
+	if len(objs) != 5 {
+		t.Fatalf("expected 5 objects, got %d", len(objs))
+	}
+
+	got := make(map[string]bool, len(objs))
+	for _, o := range objs {
+		got[o.Path] = true
+	}
+	for _, want := range []string{"/a.txt", "/b.txt", "/c.txt", "/d.txt", "/e.txt"} {
+		if !got[want] {
+			t.Errorf("missing object %q", want)
+		}
+	}
+}
+
 // TestCreateObjects_skipUnchangedModtime exercises the skipUnchanged branch where
 // both local and remote modtimes are non-zero (lmt.Equal(rmt) comparison).
 func TestCreateObjects_skipUnchangedModtime(t *testing.T) {

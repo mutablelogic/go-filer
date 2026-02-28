@@ -3,6 +3,7 @@ package httpclient
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"mime"
@@ -57,11 +58,18 @@ func MIMEByExt(ext string) string {
 type UploadOpt func(*uploadOpts) error
 
 type uploadOpts struct {
-	prefix   string
-	filter   func(fs.DirEntry) bool
-	check    func(fs.FileInfo, *schema.Object) bool
-	progress func(index, count int, path string, written, bytes int64)
+	prefix    string
+	batchSize int
+	filter    func(fs.DirEntry) bool
+	check     func(fs.FileInfo, *schema.Object) bool
+	progress  func(index, count int, path string, written, bytes int64)
 }
+
+// defaultBatchSize is the number of files sent in each multipart POST when
+// no explicit batch size is provided. Keeping batches small caps the number of
+// simultaneously-open file handles and the amount of in-flight metadata the
+// server must track at one time.
+const defaultBatchSize = 50
 
 // walkEntry holds the path of a discovered file (relative to the fs.FS root)
 // and its fs.FileInfo captured during the walk.
@@ -103,6 +111,20 @@ func WithCheck(fn func(fs.FileInfo, *schema.Object) bool) UploadOpt {
 	}
 }
 
+// WithBatchSize sets the maximum number of files sent in each multipart POST.
+// Smaller batches reduce peak memory on both client and server at the cost of
+// more round-trips. The default is 50. Pass 0 to send all files in one request
+// (equivalent to the pre-batching behaviour).
+func WithBatchSize(n int) UploadOpt {
+	return func(o *uploadOpts) error {
+		if n < 0 {
+			return fmt.Errorf("batch size must be >= 0, got %d", n)
+		}
+		o.batchSize = n
+		return nil
+	}
+}
+
 // WithProgress sets a callback that is invoked for byte-progress
 // updates and once per committed file. index is the 0-based file position;
 // count is the total number of files in this upload batch. written and
@@ -135,13 +157,16 @@ func SkipUnchanged(localInfo fs.FileInfo, remote *schema.Object) bool {
 }
 
 // CreateObjects walks fsys and uploads every matching file to the named backend
-// as a single streaming multipart POST. To upload a subtree, pass fs.Sub(fsys,
-// "subdir") as fsys. Options control the remote prefix, entry filter,
-// pre-upload skip check, and progress callback; all are optional.
-// By default, files that already exist remotely with the same size (and modtime
-// when available) are skipped. Use WithCheck(nil) to disable this behaviour.
+// in one or more streaming multipart POSTs. To upload a subtree, pass
+// fs.Sub(fsys, "subdir") as fsys. Options control the remote prefix, entry
+// filter, pre-upload skip check, batch size, and progress callback; all are
+// optional.
+// By default files are sent in batches of 50 (WithBatchSize to override) so
+// at most that many file handles are open at a time, bounding memory on both
+// client and server. Files that already exist remotely with the same size (and
+// modtime when available) are skipped. Use WithCheck(nil) to disable this.
 func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opts ...UploadOpt) ([]schema.Object, error) {
-	o := &uploadOpts{check: SkipUnchanged}
+	o := &uploadOpts{check: SkipUnchanged, batchSize: defaultBatchSize}
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
 			return nil, err
@@ -179,12 +204,42 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		return nil, nil
 	}
 
-	// Open every file. Keep track of all opened handles so we can close them
-	// after the HTTP round-trip completes (the streaming encoder reads bodies
-	// lazily as the HTTP client sends data, so files must stay open until
-	// DoWithContext returns).
+	// Split entries into bounded batches and POST each one separately.
+	// This caps the number of concurrently-open file handles to batchSize and
+	// keeps server-side per-request metadata proportionally small.
+	bsz := o.batchSize
+	if bsz <= 0 {
+		bsz = len(entries) // zero means "all in one request"
+	}
+	all := make([]schema.Object, 0, len(entries))
+	total := len(entries)
+	for offset := 0; offset < total; offset += bsz {
+		end := offset + bsz
+		if end > total {
+			end = total
+		}
+		batch, err := c.uploadBatch(ctx, name, fsys, entries[offset:end], offset, total, o)
+		if err != nil {
+			return all, err
+		}
+		all = append(all, batch...)
+	}
+	return all, nil
+}
+
+// uploadBatch opens each entry in a single slice, sends them as one multipart
+// POST, closes all handles, and returns the resulting objects.
+// globalOffset is the 0-based index of entries[0] within the full file list;
+// globalTotal is the total number of files being uploaded across all batches.
+func (c *Client) uploadBatch(
+	ctx context.Context,
+	name string,
+	fsys fs.FS,
+	entries []walkEntry,
+	globalOffset, globalTotal int,
+	o *uploadOpts,
+) ([]schema.Object, error) {
 	parts := make([]types.File, 0, len(entries))
-	var totalBytes int64
 	for i, e := range entries {
 		f, err := fsys.Open(e.path)
 		if err != nil {
@@ -223,12 +278,12 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			h.Set(types.ContentLengthHeader, strconv.FormatInt(sz, 10))
 		}
 		if o.progress != nil {
+			globalIdx := globalOffset + i
 			total := e.info.Size()
 			body = newUploadProgressReadCloser(body, total, func(written, bytes int64) {
-				o.progress(i, len(entries), remotePath, written, bytes)
+				o.progress(globalIdx, globalTotal, remotePath, written, bytes)
 			})
 		}
-		totalBytes += e.info.Size()
 		parts = append(parts, types.File{
 			Path:        remotePath,
 			Body:        body,
@@ -242,8 +297,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		}
 	}()
 
-	// Build a streaming multipart payload. The encoder reflect-walks the
-	// struct and writes each types.File as a separate multipart "file" part.
+	// Build a streaming multipart payload and POST it.
 	upload := struct {
 		Files []types.File `json:"file"`
 	}{Files: parts}
@@ -253,7 +307,6 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 	}
 
 	results := make([]schema.Object, 0, len(parts))
-	_ = totalBytes
 	if err := c.DoWithContext(ctx, payload, &results,
 		client.OptPath(name),
 		client.OptReqHeader("X-Upload-Count", strconv.Itoa(len(parts))),
@@ -262,8 +315,8 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		return nil, err
 	}
 	if o.progress != nil {
-		for index, obj := range results {
-			o.progress(index, len(results), obj.Path, obj.Size, obj.Size)
+		for i, obj := range results {
+			o.progress(globalOffset+i, globalTotal, obj.Path, obj.Size, obj.Size)
 		}
 	}
 	return results, nil
