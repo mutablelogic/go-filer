@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	// Packages
@@ -34,7 +35,7 @@ func Test_backendList(t *testing.T) {
 	}
 
 	if len(out.Body) != 0 {
-		t.Errorf("expected empty backends list, got %+v", out.Body)
+		t.Errorf("expected empty backends map, got %+v", out.Body)
 	}
 }
 
@@ -86,12 +87,38 @@ func Test_backendList_withBackends(t *testing.T) {
 		t.Errorf("expected 2 backends, got %d: %+v", len(out.Body), out.Body)
 	}
 
-	// Should return just the names (URL hosts)
-	found := make(map[string]bool)
-	for _, name := range out.Body {
-		found[name] = true
-	}
-	if !found["media"] || !found["backup"] {
-		t.Errorf("expected to find 'media' and 'backup' in backends, got: %+v", out.Body)
+	// Body is a map of name → URL string; check keys exist, values are correct, and no credentials are leaked
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"media", mediaPath},
+		{"backup", backupPath},
+	} {
+		rawURL, ok := out.Body[tc.name]
+		if !ok {
+			t.Errorf("expected %q key in backends, got: %+v", tc.name, out.Body)
+			continue
+		}
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			t.Errorf("backend %q URL %q is not parseable: %v", tc.name, rawURL, err)
+			continue
+		}
+		if u.Scheme != "file" {
+			t.Errorf("backend %q: expected scheme %q, got %q", tc.name, "file", u.Scheme)
+		}
+		if u.Host != tc.name {
+			t.Errorf("backend %q: expected host %q, got %q", tc.name, tc.name, u.Host)
+		}
+		if u.Path != tc.path {
+			t.Errorf("backend %q: expected path %q, got %q", tc.name, tc.path, u.Path)
+		}
+		if u.User != nil {
+			t.Errorf("backend %q: URL must not contain userinfo, got %q", tc.name, rawURL)
+		}
+		if u.RawQuery != "" {
+			t.Errorf("backend %q: file:// URL must have no query params, got %q", tc.name, u.RawQuery)
+		}
 	}
 }

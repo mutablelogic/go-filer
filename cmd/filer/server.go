@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -71,8 +72,19 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 	}
 	defer mgr.Close()
 
-	for i, url := range backends {
-		ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, url)
+	// Log the sanitised backend URLs (no credentials, no raw input query params)
+	for i, rawURL := range backends {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			ctx.logger.Printf(ctx.ctx, "backend[%d] invalid URL: %v", i, err)
+			continue
+		}
+		if b := mgr.Backend(u.Host); b != nil {
+			ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, b.URL().String())
+		} else {
+			// Backend not found in manager; log scheme+host only to avoid leaking credentials
+			ctx.logger.Printf(ctx.ctx, "backend[%d] %s://%s (not registered)", i, u.Scheme, u.Host)
+		}
 	}
 
 	return serve(ctx, mgr)

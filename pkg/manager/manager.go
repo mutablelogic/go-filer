@@ -60,6 +60,11 @@ func (manager *Manager) Backends() []string {
 	return result
 }
 
+// Backend returns the named backend, or nil if it does not exist.
+func (manager *Manager) Backend(name string) backend.Backend {
+	return manager.backends[name]
+}
+
 func (manager *Manager) CreateObject(ctx context.Context, name string, req schema.CreateObjectRequest) (*schema.Object, error) {
 	// Find the right backend
 	backend, err := manager.backendForName(name)

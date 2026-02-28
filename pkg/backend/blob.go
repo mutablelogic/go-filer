@@ -12,7 +12,7 @@ import (
 	"time"
 
 	// Packages
-	"github.com/aws/aws-sdk-go-v2/aws"
+	aws "github.com/aws/aws-sdk-go-v2/aws"
 	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
@@ -102,8 +102,11 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 		client := s3svc.NewFromConfig(cfg, s3Opts...)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {
-		// For file:// the path is the bucket root dir - open using just the path
-		openURL := &url.URL{Scheme: "file", Path: self.url.Path}
+		// For file:// the path is the bucket root dir - open using just the path.
+		// Set no_tmp_dir=1 so temp files are created next to their destination,
+		// avoiding "invalid cross-device link" errors when os.TempDir() is on a
+		// different mount (e.g. /tmp vs /data in Docker).
+		openURL := &url.URL{Scheme: "file", Path: self.url.Path, RawQuery: "no_tmp_dir=1"}
 		bucket, err = blob.OpenBucket(ctx, openURL.String())
 	} else {
 		// For s3, mem, etc.: open at root (strip path) to avoid PrefixedBucket
@@ -154,6 +157,39 @@ func NewFileBackend(ctx context.Context, name, dir string, opts ...Opt) (Backend
 // Name returns the name of the backend (the host component of the URL)
 func (b *blobbackend) Name() string {
 	return b.url.Host
+}
+
+// URL returns the backend destination URL.
+// Query parameters carry useful non-credential details:
+//   - region: AWS region (S3 only, when an awsConfig is present)
+//   - endpoint: custom S3-compatible endpoint (when set)
+//   - anonymous: "true" when anonymous credentials are used
+func (b *blobbackend) URL() *url.URL {
+	u := &url.URL{
+		Scheme: b.url.Scheme,
+		Host:   b.url.Host,
+		Path:   b.url.Path,
+	}
+	q := url.Values{}
+	if b.awsConfig != nil && b.awsConfig.Region != "" {
+		q.Set("region", b.awsConfig.Region)
+	}
+	if b.endpoint != "" {
+		// Sanitize: strip userinfo, query, and fragment — only scheme+host+path is safe to expose
+		if ep, err := url.Parse(b.endpoint); err == nil {
+			ep.User = nil
+			ep.RawQuery = ""
+			ep.Fragment = ""
+			q.Set("endpoint", ep.String())
+		}
+	}
+	if b.anonymous {
+		q.Set("anonymous", "true")
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
+	return u
 }
 
 ////////////////////////////////////////////////////////////////////////////////
