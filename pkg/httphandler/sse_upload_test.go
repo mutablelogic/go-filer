@@ -300,3 +300,59 @@ func Test_objectUploadSSE_errorRollback(t *testing.T) {
 		t.Error("a.txt should have been rolled back but still exists")
 	}
 }
+
+// Test_objectUploadSSE_largeFile uploads a ~128 KiB file in SSE mode to
+// exercise the progressReader's mid-transfer emit loop (triggered every 64 KiB).
+// We verify that at least one progress file-event with Written > 0 is emitted.
+func Test_objectUploadSSE_largeFile(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	// 128 KiB of content → the 64 KiB chunk boundary will be crossed at least once.
+	const size = 128 * 1024
+	content := make([]byte, size)
+	for i := range content {
+		content[i] = 'x'
+	}
+
+	req := newSSEUploadRequest(t, "/media", [][2]string{{"large.bin", string(content)}}, nil)
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rw.Code)
+	}
+
+	events := parseSSEEvents(rw.Body.String())
+
+	// At least one file event with Written > 0 (the progress tick).
+	allFileEvts := sseEventsByName(events, schema.UploadFileEvent)
+	hasMidProgress := false
+	for _, e := range allFileEvts {
+		var fe schema.UploadFile
+		if err := json.Unmarshal([]byte(e.Data), &fe); err == nil && fe.Written > 0 {
+			hasMidProgress = true
+			break
+		}
+	}
+	if !hasMidProgress {
+		t.Errorf("expected at least one file event with Written > 0 for a %d-byte upload; file events: %v", size, allFileEvts)
+	}
+
+	// Verify upload completed successfully.
+	dones := sseEventsByName(events, schema.UploadDoneEvent)
+	if len(dones) != 1 {
+		t.Fatalf("expected 1 done event, got %d", len(dones))
+	}
+	var done schema.UploadDone
+	if err := json.Unmarshal([]byte(dones[0].Data), &done); err != nil {
+		t.Fatalf("unmarshal done: %v", err)
+	}
+	if done.Bytes != size {
+		t.Errorf("done.Bytes: want %d, got %d", size, done.Bytes)
+	}
+}

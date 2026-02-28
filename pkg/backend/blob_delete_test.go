@@ -283,7 +283,7 @@ func TestDeleteObject_VerifyGone(t *testing.T) {
 		assert.Contains(err.Error(), "not found")
 
 		// Verify ReadObject fails
-		_, _, err = backend.ReadObject(ctx, schema.ReadObjectRequest{Path: "/verify-gone.txt"})
+		_, _, err = backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/verify-gone.txt"}})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -326,7 +326,7 @@ func TestDeleteObjects_Mem(t *testing.T) {
 	ctx := context.Background()
 
 	// Helper to create a fresh backend with test objects
-	setupBackend := func(t *testing.T) *blobbackend {
+	setupBackend := func(t *testing.T) Backend {
 		backend, err := NewBlobBackend(ctx, "mem://testbucket")
 		require.NoError(t, err)
 
@@ -369,7 +369,6 @@ func TestDeleteObjects_Mem(t *testing.T) {
 		require.NoError(err)
 
 		assert.Len(resp.Body, 1)
-		assert.Equal("testbucket", resp.Body[0].Name)
 		assert.Equal("/file1.txt", resp.Body[0].Path)
 
 		// Verify deleted
@@ -436,7 +435,6 @@ func TestDeleteObjects_Mem(t *testing.T) {
 
 		// Should delete just the one object
 		assert.Len(resp.Body, 1)
-		assert.Equal("testbucket", resp.Body[0].Name)
 		assert.Equal("/subdir", resp.Body[0].Path)
 
 		// Verify the object is deleted
@@ -528,6 +526,7 @@ func TestDeleteObjects_Mem(t *testing.T) {
 
 			Path:      "/",
 			Recursive: true,
+			Limit:     schema.MaxListLimit,
 		})
 		require.NoError(err)
 		assert.Empty(listResp.Body)
@@ -662,6 +661,7 @@ func TestDeleteObjects_S3(t *testing.T) {
 			listResp, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
 				Path:      s3bURL.Path + "/" + prefix + "/",
 				Recursive: true,
+				Limit:     schema.MaxListLimit,
 			})
 			if err != nil {
 				return err

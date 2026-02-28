@@ -4,22 +4,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"syscall"
+	"time"
 
 	// Packages
-	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	blob "gocloud.dev/blob"
+	gcsblob "gocloud.dev/blob/gcsblob"
 	s3blob "gocloud.dev/blob/s3blob"
 	gcerrors "gocloud.dev/gcerrors"
+	gcp "gocloud.dev/gcp"
+	"golang.org/x/oauth2/google"
 
 	// Drivers
 	_ "gocloud.dev/blob/fileblob" // file:// URLs
+	_ "gocloud.dev/blob/gcsblob"  // gs:// URLs
 	_ "gocloud.dev/blob/memblob"  // mem:// URLs
 	_ "gocloud.dev/blob/s3blob"   // s3:// URLs
 )
@@ -30,25 +37,28 @@ import (
 type blobbackend struct {
 	*opt
 	bucket       *blob.Bucket
-	prefix       string // URL path used for matching/stripping in Key()
 	bucketPrefix string // key prefix for bucket operations (empty for file://)
 }
 
-var _ filer.Filer = (*blobbackend)(nil)
+var _ Backend = (*blobbackend)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 // NewBlobBackend creates a new blob backend using Go CDK.
-// Supported URL schemes: s3://, file://, mem://
+// Supported URL schemes: s3://, gs://, file://, mem://
 // Examples:
 //   - "s3://my-bucket?region=us-east-1"
+//   - "gs://my-bucket"
+//   - "gs://my-bucket/prefix"
 //   - "file:///path/to/directory"
 //   - "mem://"
 //
 // For S3 URLs, you can optionally provide an aws.Config via WithAWSConfig()
 // for full control over AWS SDK configuration.
-func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (*blobbackend, error) {
+// For GCS URLs, credentials are resolved via Application Default Credentials
+// unless WithGCSCredentialsFile() is provided.
+func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error) {
 	self := new(blobbackend)
 
 	// Set the options
@@ -64,13 +74,10 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (*blobbackend, e
 	if !types.IsIdentifier(self.url.Host) {
 		return nil, fmt.Errorf("backend name %q must be a valid identifier (letter, digits, underscores, hyphens; max 64 chars)", self.url.Host)
 	}
-	// For s3/mem: prefix is used as a key discriminator in Key() and
-	// as a bucket prefix in storageKey() (bucket opens at host level).
-	// For file://: path is the bucket root directory, NOT a key discriminator.
-	// Key() matches on scheme+host only for file://.
-	self.prefix = strings.TrimSuffix(self.url.Path, "/")
+	// For s3/mem: bucketPrefix is prepended to paths to form storage keys
+	// (bucket opens at host level). For file://: no prefix needed.
 	if self.url.Scheme != "file" {
-		self.bucketPrefix = strings.TrimPrefix(self.prefix, "/")
+		self.bucketPrefix = strings.TrimPrefix(strings.TrimSuffix(self.url.Path, "/"), "/")
 	}
 
 	// Open the bucket
@@ -81,6 +88,22 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (*blobbackend, e
 		// Use the provided AWS config to open S3 bucket directly
 		client := s3blob.Dial(*self.awsConfig)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
+	} else if self.url.Scheme == "gs" && self.gcsCredsFile != "" {
+		// Explicit service-account key file: build a GCP HTTP client and open directly.
+		credsJSON, cerr := os.ReadFile(self.gcsCredsFile)
+		if cerr != nil {
+			return nil, fmt.Errorf("failed to read GCS credentials file: %w", cerr)
+		}
+		creds, cerr := google.CredentialsFromJSON(ctx, credsJSON, "https://www.googleapis.com/auth/devstorage.read_write")
+		if cerr != nil {
+			return nil, fmt.Errorf("failed to parse GCS credentials: %w", cerr)
+		}
+		ts := gcp.CredentialsTokenSource(creds)
+		gcsClient, cerr := gcp.NewHTTPClient(http.DefaultTransport, ts)
+		if cerr != nil {
+			return nil, fmt.Errorf("failed to create GCS HTTP client: %w", cerr)
+		}
+		bucket, err = gcsblob.OpenBucket(ctx, gcsClient, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {
 		// For file:// the path is the bucket root dir - open using just the path
 		openURL := &url.URL{Scheme: "file", Path: self.url.Path}
@@ -117,7 +140,7 @@ func (b *blobbackend) Close() error {
 // name must be a valid identifier (see types.IsIdentifier): starts with a
 // letter, contains only letters, digits, underscores, or hyphens, max 64 chars.
 // dir must be an absolute path; if it doesn't start with "/" an error is returned.
-func NewFileBackend(ctx context.Context, name, dir string, opts ...Opt) (*blobbackend, error) {
+func NewFileBackend(ctx context.Context, name, dir string, opts ...Opt) (Backend, error) {
 	if !path.IsAbs(dir) {
 		return nil, fmt.Errorf("backend dir %q must be an absolute path", dir)
 	}
@@ -132,44 +155,13 @@ func (b *blobbackend) Name() string {
 	return b.url.Host
 }
 
-// Key returns the storage key for a path within this backend.
-// Returns empty string if the path is not handled (e.g., prefix mismatch for s3/mem).
-// Returns "/" for the root.
-func (b *blobbackend) Key(p string) string {
-	if p == "" {
-		p = "/"
-	}
-
-	// For file://: no prefix matching — the path IS the key.
-	// Clean the path to prevent directory traversal (e.g. "/../../../etc/passwd" → "/etc/passwd").
-	if b.url.Scheme == "file" {
-		return path.Clean(p)
-	}
-
-	// For s3/mem without prefix: path is the key directly.
-	if b.prefix == "" {
-		return path.Clean(p)
-	}
-
-	// For s3/mem with prefix: strip prefix or return "" if path doesn't match.
-	if !strings.HasPrefix(p, b.prefix) {
-		return ""
-	}
-	p = strings.TrimPrefix(p, b.prefix)
-	if p == "" {
-		p = "/"
-	}
-	return path.Clean(p)
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// storageKey returns the blob storage key for a given key (as returned by Key()).
-// It converts the relative key to the actual blob storage key by prepending
-// the bucket prefix (for s3/mem where the bucket opens at the host level).
-func (b *blobbackend) storageKey(key string) string {
-	sk := strings.TrimPrefix(key, "/")
+// key returns the blob storage key for a given request path.
+// Cleans the path, strips the leading slash, and prepends the bucket prefix.
+func (b *blobbackend) key(p string) string {
+	sk := strings.TrimPrefix(cleanPath(p), "/")
 	if b.bucketPrefix != "" {
 		if sk == "" {
 			return b.bucketPrefix + "/"
@@ -179,19 +171,37 @@ func (b *blobbackend) storageKey(key string) string {
 	return sk
 }
 
-func (b *blobbackend) attrsToObject(name, objPath string, attrs *blob.Attributes) *schema.Object {
+// cleanPath normalises a request path for use as Object.Path.
+func cleanPath(p string) string {
+	if p == "" {
+		p = "/"
+	}
+	return path.Clean(p)
+}
+
+func (b *blobbackend) attrsToObject(objPath string, attrs *blob.Attributes) *schema.Object {
 	obj := &schema.Object{
-		Name:        name,
 		Path:        objPath,
 		Size:        attrs.Size,
 		ModTime:     attrs.ModTime,
 		ContentType: attrs.ContentType,
 	}
-	if attrs.ETag != "" {
+	// Prefer MD5-as-hex for ETag to stay consistent with the list iterator,
+	// which only exposes MD5. Fall back to the raw ETag string when MD5 is absent.
+	if len(attrs.MD5) > 0 {
+		obj.ETag = fmt.Sprintf("%x", attrs.MD5)
+	} else if attrs.ETag != "" {
 		obj.ETag = attrs.ETag
 	}
 	if len(attrs.Metadata) > 0 {
 		obj.Meta = attrs.Metadata
+		// If the object was uploaded with an original mod time stored in custom
+		// metadata, use that value instead of the storage-layer write time.
+		if lm, ok := attrs.Metadata[schema.AttrLastModified]; ok {
+			if t, err := time.Parse(time.RFC3339, lm); err == nil {
+				obj.ModTime = t
+			}
+		}
 	}
 	return obj
 }
@@ -208,25 +218,53 @@ func (b *blobbackend) pathFromStorageKey(sk string) string {
 	return path.Clean(sk)
 }
 
+// isRealObject checks whether the storage key refers to a single real object
+// (as opposed to a phantom directory — a size-0 pseudo-object with children).
+// Returns the object's attributes if real, nil otherwise.
+// Permission errors are propagated as a non-nil error instead of being swallowed.
+func (b *blobbackend) isRealObject(ctx context.Context, sk string) (*blob.Attributes, error) {
+	if sk == "" || strings.HasSuffix(sk, "/") {
+		return nil, nil
+	}
+	attrs, err := b.bucket.Attributes(ctx, sk)
+	if err != nil {
+		// Surface permission errors rather than masking them as "not found".
+		if gcerrors.Code(err) == gcerrors.PermissionDenied {
+			return nil, blobErr(err, sk)
+		}
+		return nil, nil
+	}
+	if attrs.Size > 0 {
+		return attrs, nil
+	}
+	// Size is 0 — check if there are objects with this key as a prefix.
+	// If children exist, this is a phantom directory.
+	iter := b.bucket.List(&blob.ListOptions{Prefix: sk + "/"})
+	if _, err := iter.Next(ctx); err == io.EOF {
+		return attrs, nil // no children → real (empty) object
+	}
+	return nil, nil // has children → phantom directory
+}
+
 // blobErr wraps a go-cloud blob error with the appropriate httpresponse error
-func blobErr(err error, url string) error {
+func blobErr(err error, ref string) error {
 	if err == nil {
 		return nil
 	}
 	// Check for OS-level errors before go-cloud classification, since the
 	// gcerrors default path wraps with %v and breaks the chain.
 	if errors.Is(err, syscall.EISDIR) || errors.Is(err, syscall.EEXIST) {
-		return httpresponse.ErrBadRequest.Withf("cannot overwrite directory with file: %q", url)
+		return httpresponse.ErrBadRequest.Withf("cannot overwrite directory with file: %q", ref)
 	}
 	switch gcerrors.Code(err) {
 	case gcerrors.NotFound:
-		return httpresponse.ErrNotFound.Withf("object %q not found", url)
+		return httpresponse.ErrNotFound.Withf("object %q not found", ref)
 	case gcerrors.PermissionDenied:
-		return httpresponse.ErrForbidden.Withf("permission denied for %q", url)
+		return httpresponse.ErrForbidden.Withf("permission denied for %q", ref)
 	case gcerrors.InvalidArgument:
-		return httpresponse.ErrBadRequest.Withf("invalid argument for %q: %v", url, err)
+		return httpresponse.ErrBadRequest.Withf("invalid argument for %q: %v", ref, err)
 	case gcerrors.FailedPrecondition:
-		return httpresponse.ErrConflict.Withf("precondition failed for %q: %v", url, err)
+		return httpresponse.ErrConflict.Withf("precondition failed for %q: %v", ref, err)
 	default:
 		return httpresponse.ErrInternalError.Withf("blob operation failed: %v", err)
 	}

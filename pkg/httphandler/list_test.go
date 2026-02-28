@@ -74,16 +74,18 @@ func Test_objectList_withFiles(t *testing.T) {
 
 	found := make(map[string]bool)
 	for _, obj := range out.Body {
-		found[obj.Name+obj.Path] = true
+		found[obj.Path] = true
 	}
 	for _, filename := range testFiles {
-		expectedKey := "media/" + filename
+		expectedKey := "/" + filename
 		if !found[expectedKey] {
 			t.Errorf("expected to find file %s in listing", expectedKey)
 		}
 	}
 }
 
+// Test_objectList_countOnly verifies that omitting ?limit (i.e. limit=0) returns
+// the total count but no body — Limit=0 means count-only.
 func Test_objectList_countOnly(t *testing.T) {
 	tempDir := t.TempDir()
 	mediaPath := tempDir + "/media"
@@ -99,7 +101,7 @@ func Test_objectList_countOnly(t *testing.T) {
 	mgr := newTestManager(t, "file://media"+mediaPath)
 	mux := serveMux(mgr)
 
-	// limit=0 (omitted) returns count only, no body
+	// limit=0 (omitted) returns count only, no body.
 	req := httptest.NewRequest(http.MethodGet, "/media", nil)
 	rw := httptest.NewRecorder()
 	mux.ServeHTTP(rw, req)
@@ -158,7 +160,7 @@ func Test_objectList_recursive(t *testing.T) {
 	mux := serveMux(mgr)
 
 	t.Run("NonRecursive", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/media", nil)
+		req := httptest.NewRequest(http.MethodGet, "/media?limit=100", nil)
 		rw := httptest.NewRecorder()
 		mux.ServeHTTP(rw, req)
 
@@ -170,13 +172,16 @@ func Test_objectList_recursive(t *testing.T) {
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		// Non-recursive: root.txt and subdir entry; child.txt must not appear.
+		// Non-recursive: root.txt must appear; subdir/child.txt must not.
 		paths := make(map[string]bool)
 		for _, o := range out.Body {
 			paths[o.Path] = true
 		}
+		if !paths["/root.txt"] {
+			t.Errorf("non-recursive listing missing /root.txt; got %v", paths)
+		}
 		if paths["/subdir/child.txt"] {
-			t.Errorf("non-recursive listing must not include /subdir/child.txt")
+			t.Errorf("non-recursive listing must not include /subdir/child.txt; got %v", paths)
 		}
 	})
 

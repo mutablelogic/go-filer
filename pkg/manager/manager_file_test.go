@@ -59,25 +59,6 @@ func Test_ManagerFile_Close(t *testing.T) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// FILE BACKEND - KEY ROUTING TESTS
-
-func Test_ManagerFile_Key(t *testing.T) {
-	assert := assert.New(t)
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
-	assert.NoError(err)
-	defer mgr.Close()
-
-	// Matching backend and path
-	assert.Equal("/somefile.txt", mgr.Key("testfiles", "/somefile.txt"))
-
-	// No backend with this name
-	assert.Equal("", mgr.Key("other", "/somefile.txt"))
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // FILE BACKEND - BACKEND ROUTING ERROR TESTS
 
 func Test_ManagerFile_NoBackendError(t *testing.T) {
@@ -110,7 +91,7 @@ func Test_ManagerFile_NoBackendError(t *testing.T) {
 	assert.Error(err)
 
 	// ReadObject with wrong backend
-	_, _, err = mgr.ReadObject(ctx, "nomatch", schema.ReadObjectRequest{Path: "/file.txt"})
+	_, _, err = mgr.ReadObject(ctx, "nomatch", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/file.txt"}})
 	assert.Error(err)
 }
 
@@ -188,7 +169,7 @@ func Test_ManagerFile_CreateObject(t *testing.T) {
 		assert.Equal(int64(len("new content")), obj.Size)
 
 		// Verify new content
-		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{Path: "/overwrite.txt"})
+		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/overwrite.txt"}})
 		assert.NoError(err)
 		defer reader.Close()
 		data, _ := io.ReadAll(reader)
@@ -219,7 +200,7 @@ func Test_ManagerFile_ReadObject(t *testing.T) {
 	t.Run("read existing object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		reader, obj, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{Path: "/readable.txt"})
+		reader, obj, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/readable.txt"}})
 		assert.NoError(err)
 		defer reader.Close()
 
@@ -235,7 +216,7 @@ func Test_ManagerFile_ReadObject(t *testing.T) {
 	t.Run("read non-existent object", func(t *testing.T) {
 		assert := assert.New(t)
 
-		_, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{Path: "/notfound.txt"})
+		_, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/notfound.txt"}})
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
 	})
@@ -369,7 +350,6 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 		})
 		assert.NoError(err)
 		assert.Len(resp.Body, 1)
-		assert.Equal("testfiles", resp.Body[0].Name)
 		assert.Equal("/file1.txt", resp.Body[0].Path)
 	})
 
@@ -478,7 +458,7 @@ func Test_ManagerFile_FullWorkflow(t *testing.T) {
 	assert.Equal(int64(len(content)), gotObj.Size)
 
 	// 3. Read object content
-	reader, readObj, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{Path: "/workflow/test.txt"})
+	reader, readObj, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/workflow/test.txt"}})
 	assert.NoError(err)
 	data, _ := io.ReadAll(reader)
 	reader.Close()
@@ -528,7 +508,7 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 		assert.Equal(int64(0), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{Path: "/empty.txt"})
+		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/empty.txt"}})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()
@@ -548,7 +528,7 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 		assert.Equal(int64(len(binaryData)), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{Path: "/binary.bin"})
+		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/binary.bin"}})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()
@@ -567,7 +547,7 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 		assert.Equal(int64(len(unicodeContent)), obj.Size)
 
 		// Should be retrievable
-		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{Path: "/unicode.txt"})
+		reader, _, err := mgr.ReadObject(ctx, "testfiles", schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/unicode.txt"}})
 		assert.NoError(err)
 		data, _ := io.ReadAll(reader)
 		reader.Close()

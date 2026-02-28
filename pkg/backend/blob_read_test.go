@@ -86,7 +86,7 @@ func TestReadObject_Mem(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Path: tt.reqPath})
+			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: tt.reqPath}})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -175,7 +175,7 @@ func TestReadObject_File(t *testing.T) {
 
 			reqURL := "file://testfiles/" + tt.key
 			_ = reqURL
-			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Path: "/" + tt.key})
+			reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/" + tt.key}})
 
 			if tt.wantErr {
 				assert.Error(err)
@@ -239,7 +239,7 @@ func TestReadObject_S3(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Path: reqPath})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: reqPath}})
 		require.NoError(err)
 		defer reader.Close()
 
@@ -261,7 +261,7 @@ func TestReadObject_S3(t *testing.T) {
 
 		nonExistentURL := bucketURL + "/non-existent-file.txt"
 		_ = nonExistentURL
-		_, _, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Path: bURL.Path + "/non-existent-file.txt"})
+		_, _, err := backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: bURL.Path + "/non-existent-file.txt"}})
 
 		assert.Error(err)
 		assert.Contains(err.Error(), "not found")
@@ -289,7 +289,7 @@ func TestReadObject_PartialRead(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Path: "/large.txt"})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/large.txt"}})
 		require.NoError(err)
 
 		// Only read first 10 bytes
@@ -328,7 +328,7 @@ func TestReadObject_EmptyFile(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Path: "/empty.txt"})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/empty.txt"}})
 		require.NoError(err)
 		defer reader.Close()
 
@@ -360,7 +360,7 @@ func TestReadObject_BinaryContent(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{Path: "/binary.bin"})
+		reader, obj, err := backend.ReadObject(ctx, schema.ReadObjectRequest{GetObjectRequest: schema.GetObjectRequest{Path: "/binary.bin"}})
 		require.NoError(err)
 		defer reader.Close()
 

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	// Packages
-	filer "github.com/mutablelogic/go-filer"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/mutablelogic/go-filer/pkg/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,7 +113,7 @@ func TestCreateObject_Mem(t *testing.T) {
 			}
 
 			if !tt.modTime.IsZero() {
-				assert.Equal(tt.modTime.Format(time.RFC3339), obj.Meta[filer.AttrLastModified])
+				assert.Equal(tt.modTime.Format(time.RFC3339), obj.Meta[schema.AttrLastModified])
 			}
 		})
 	}
@@ -189,7 +189,7 @@ func TestCreateObject_File(t *testing.T) {
 // Optional environment variables:
 //   - S3_ENDPOINT: Custom endpoint for S3-compatible services (e.g., MinIO, SeaweedFS)
 //   - S3_ANONYMOUS: Set to "true" to use anonymous credentials (no authentication)
-//   - AWS_REGION or AWS_DEFAULT_REGION: AWS region
+//   - AWS_REGION: AWS region
 //   - AWS_PROFILE: AWS shared credentials profile name
 //
 // Credentials are read from the AWS SDK default credential chain:
@@ -213,21 +213,96 @@ func s3TestConfig() (bucketURL string, opts []Opt) {
 		opts = append(opts, WithAnonymous())
 	}
 
-	// Region (check both AWS_REGION and AWS_DEFAULT_REGION)
-	region := os.Getenv("AWS_REGION")
-	if region == "" {
-		region = os.Getenv("AWS_DEFAULT_REGION")
+	// Load AWS config with optional region / profile so credentials and
+	// region are resolved via the SDK chain (env, shared config, SSO, etc.).
+	var cfgOpts []func(*config.LoadOptions) error
+	if region := os.Getenv("AWS_REGION"); region != "" {
+		cfgOpts = append(cfgOpts, config.WithRegion(region))
 	}
-	if region != "" {
-		opts = append(opts, WithRegion(region))
-	}
-
-	// AWS profile
 	if profile := os.Getenv("AWS_PROFILE"); profile != "" {
-		opts = append(opts, WithProfile(profile))
+		cfgOpts = append(cfgOpts, config.WithSharedConfigProfile(profile))
+	}
+	if len(cfgOpts) > 0 {
+		if awsCfg, err := config.LoadDefaultConfig(context.Background(), cfgOpts...); err == nil {
+			opts = append(opts, WithAWSConfig(awsCfg))
+		}
 	}
 
 	return bucketURL, opts
+}
+
+// TestCreateObject_IfNotExists covers the conditional-create (fix: IfNotExists field).
+func TestCreateObject_IfNotExists(t *testing.T) {
+	ctx := context.Background()
+
+	backend, err := NewBlobBackend(ctx, "mem://testbucket")
+	require.NoError(t, err)
+	defer backend.Close()
+
+	t.Run("IfNotExists=true succeeds when object absent", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
+		obj, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
+			Path:        "/new-object.txt",
+			Body:        strings.NewReader("hello"),
+			ContentType: "text/plain",
+			IfNotExists: true,
+		})
+		require.NoError(err)
+		assert.Equal("/new-object.txt", obj.Path)
+		assert.Equal(int64(5), obj.Size)
+	})
+
+	t.Run("IfNotExists=true returns conflict when object exists", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
+		// Create the object first
+		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
+			Path:        "/existing.txt",
+			Body:        strings.NewReader("original"),
+			ContentType: "text/plain",
+		})
+		require.NoError(err)
+
+		// Second create with IfNotExists=true must fail
+		_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
+			Path:        "/existing.txt",
+			Body:        strings.NewReader("new content"),
+			ContentType: "text/plain",
+			IfNotExists: true,
+		})
+		assert.Error(err)
+		assert.Contains(err.Error(), "already exists")
+
+		// Original content must be unchanged
+		got, err := backend.GetObject(ctx, schema.GetObjectRequest{Path: "/existing.txt"})
+		require.NoError(err)
+		assert.Equal(int64(8), got.Size) // "original" = 8 bytes
+	})
+
+	t.Run("IfNotExists=false (default) overwrites existing object", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
+		// Create original
+		_, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
+			Path:        "/overwrite.txt",
+			Body:        strings.NewReader("original content"),
+			ContentType: "text/plain",
+		})
+		require.NoError(err)
+
+		// Overwrite without IfNotExists (default=false)
+		obj, err := backend.CreateObject(ctx, schema.CreateObjectRequest{
+			Path:        "/overwrite.txt",
+			Body:        strings.NewReader("new"),
+			ContentType: "text/plain",
+		})
+		require.NoError(err)
+		assert.Equal(int64(3), obj.Size) // "new" = 3 bytes
+	})
 }
 
 func TestCreateObject_S3(t *testing.T) {
@@ -270,7 +345,7 @@ func TestCreateObject_S3(t *testing.T) {
 		assert.Equal(int64(len(content)), obj.Size)
 		assert.Equal("text/plain", obj.ContentType)
 		assert.Equal("test-value", obj.Meta["test-key"])
-		assert.Equal(modTime.Format(time.RFC3339), obj.Meta[filer.AttrLastModified])
+		assert.Equal(modTime.Format(time.RFC3339), obj.Meta[schema.AttrLastModified])
 
 		// Cleanup: delete the test object
 		_, err = backend.DeleteObject(ctx, schema.DeleteObjectRequest{Path: reqPath})
