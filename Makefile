@@ -86,6 +86,19 @@ docker-version: docker-dep
 
 
 ###############################################################################
+# CLI
+
+# Append .exe when cross-compiling for Windows
+FILER_EXT = $(if $(filter windows,$(GOOS)),.exe,)
+
+# Build just the filer binary (client-only, no server).
+# Respects GOOS and GOARCH env vars for cross-compilation.
+.PHONY: filer-client
+filer-client: go-dep mkdir
+	@echo Build command filer GOOS=${GOOS} GOARCH=${GOARCH}
+	@${GO} build ${BUILD_FLAGS} -tags client -o ${BUILD_DIR}/filer${FILER_EXT} ./cmd/filer
+
+###############################################################################
 # TEST
 
 .PHONY: test
