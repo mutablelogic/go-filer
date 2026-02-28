@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	// Packages
 	httpclient "github.com/mutablelogic/go-filer/pkg/httpclient"
@@ -186,5 +187,41 @@ func TestCreateObjects_skipChanged(t *testing.T) {
 	}
 	if len(objs2) != 1 {
 		t.Errorf("expected 1 re-uploaded object (size changed), got %d: %+v", len(objs2), objs2)
+	}
+}
+
+// TestCreateObjects_skipUnchangedModtime exercises the skipUnchanged branch where
+// both local and remote modtimes are non-zero (lmt.Equal(rmt) comparison).
+func TestCreateObjects_skipUnchangedModtime(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	mt := time.Unix(1_000_000, 0).UTC()
+	memFS := fstest.MapFS{
+		"timed.txt": {Data: []byte("timed content"), ModTime: mt},
+	}
+
+	// First upload — Last-Modified is sent; server stores the modtime.
+	if _, err := c.CreateObjects(context.Background(), "testbucket", memFS); err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+
+	// Second upload — size and modtime both match; skipUnchanged returns true.
+	objs2, err := c.CreateObjects(context.Background(), "testbucket", memFS)
+	if err != nil {
+		t.Fatalf("second upload: %v", err)
+	}
+	if len(objs2) != 0 {
+		t.Errorf("expected 0 objects (same modtime, skipped), got %d", len(objs2))
+	}
+
+	// Third upload — modtime changed; skipUnchanged returns false.
+	memFS["timed.txt"] = &fstest.MapFile{Data: []byte("timed content"), ModTime: mt.Add(time.Hour)}
+	objs3, err := c.CreateObjects(context.Background(), "testbucket", memFS)
+	if err != nil {
+		t.Fatalf("third upload: %v", err)
+	}
+	if len(objs3) != 1 {
+		t.Errorf("expected 1 object (modtime changed), got %d", len(objs3))
 	}
 }

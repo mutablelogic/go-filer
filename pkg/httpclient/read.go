@@ -23,7 +23,7 @@ type readObjectUnmarshaler struct {
 var _ client.Unmarshaler = (*readObjectUnmarshaler)(nil)
 
 ///////////////////////////////////////////////////////////////////////////////
-// PUBLIC METHODS - READ OBJECT
+// INTERFACE IMPLEMENTATION
 
 func (r *readObjectUnmarshaler) Unmarshal(header http.Header, reader io.Reader) error {
 	if metaJSON := header.Get(schema.ObjectMetaHeader); metaJSON != "" {
@@ -32,10 +32,6 @@ func (r *readObjectUnmarshaler) Unmarshal(header http.Header, reader io.Reader) 
 			return err
 		}
 		r.obj = &obj
-	}
-	if r.fn == nil {
-		_, err := io.Copy(io.Discard, reader)
-		return err
 	}
 	buf := make([]byte, 32*1024)
 	for {

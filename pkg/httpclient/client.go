@@ -22,11 +22,10 @@ type Client struct {
 // "http://localhost:8080/api/filer".
 func New(url string, opts ...client.ClientOpt) (*Client, error) {
 	c := new(Client)
-	if client, err := client.New(append(opts, client.OptEndpoint(url))...); err != nil {
+	cl, err := client.New(append(opts, client.OptEndpoint(url))...)
+	if err != nil {
 		return nil, err
-	} else {
-		c.Client = client
 	}
+	c.Client = cl
 	return c, nil
 }
-

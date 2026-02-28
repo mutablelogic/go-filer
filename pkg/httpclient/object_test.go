@@ -3,10 +3,14 @@ package httpclient_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	// Packages
+	httpclient "github.com/mutablelogic/go-filer/pkg/httpclient"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 )
 
@@ -191,6 +195,43 @@ func TestReadObject(t *testing.T) {
 	}
 }
 
+func TestReadObject_fnError(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	if _, err := c.CreateObject(context.Background(), "testbucket", schema.CreateObjectRequest{
+		Path: "/fn_err.txt", Body: bytes.NewReader([]byte("content")), ContentType: "text/plain",
+	}); err != nil {
+		t.Fatalf("CreateObject: %v", err)
+	}
+
+	sentinel := errors.New("fn error")
+	_, err := c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: "/fn_err.txt"},
+	}, func([]byte) error { return sentinel })
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel error, got %v", err)
+	}
+}
+
+func TestReadObject_missingHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := httpclient.New(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: "/test.txt"},
+	}, func([]byte) error { return nil })
+	if err == nil {
+		t.Fatal("expected error for missing header, got nil")
+	}
+}
+
 func TestDeleteObject(t *testing.T) {
 	c, cleanup := newTestServer(t, "mem://testbucket")
 	defer cleanup()
@@ -232,6 +273,41 @@ func TestDeleteObjects_recursive(t *testing.T) {
 	}
 	if len(resp.Body) != 3 {
 		t.Errorf("expected 3 deleted objects, got %d: %+v", len(resp.Body), resp.Body)
+	}
+}
+
+func TestGetObjects(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	paths := []string{"/ga.txt", "/gb.txt", "/gc.txt"}
+	for _, p := range paths {
+		if _, err := c.CreateObject(context.Background(), "testbucket", schema.CreateObjectRequest{
+			Path: p, Body: strings.NewReader("data"), ContentType: "text/plain",
+		}); err != nil {
+			t.Fatalf("CreateObject %s: %v", p, err)
+		}
+	}
+
+	reqs := make([]schema.GetObjectRequest, len(paths))
+	for i, p := range paths {
+		reqs[i] = schema.GetObjectRequest{Path: p}
+	}
+	objs, err := c.GetObjects(context.Background(), "testbucket", reqs)
+	if err != nil {
+		t.Fatalf("GetObjects: %v", err)
+	}
+	if len(objs) != len(paths) {
+		t.Fatalf("len: got %d, want %d", len(objs), len(paths))
+	}
+	for i, obj := range objs {
+		if obj == nil {
+			t.Errorf("obj[%d] is nil", i)
+			continue
+		}
+		if obj.Path != paths[i] {
+			t.Errorf("obj[%d].Path: got %q, want %q", i, obj.Path, paths[i])
+		}
 	}
 }
 

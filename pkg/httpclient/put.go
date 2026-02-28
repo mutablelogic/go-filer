@@ -21,7 +21,7 @@ type putPayload struct {
 var _ client.Payload = (*putPayload)(nil)
 
 ///////////////////////////////////////////////////////////////////////////////
-// PUBLIC METHODS - PUT OBJECT
+// INTERFACE IMPLEMENTATION
 
 func (p *putPayload) Method() string {
 	return http.MethodPut

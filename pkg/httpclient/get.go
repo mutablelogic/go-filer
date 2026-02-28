@@ -21,7 +21,7 @@ type getObjectResponse struct {
 var _ client.Unmarshaler = (*getObjectResponse)(nil)
 
 ///////////////////////////////////////////////////////////////////////////////
-// PUBLIC METHODS - GET OBJECT
+// INTERFACE IMPLEMENTATION
 
 func (r *getObjectResponse) Unmarshal(header http.Header, _ io.Reader) error {
 	if metaJSON := header.Get(schema.ObjectMetaHeader); metaJSON != "" {

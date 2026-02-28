@@ -2,10 +2,12 @@ package httpclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -18,13 +20,11 @@ import (
 // ListObjects returns a list of objects at the given backend name and optional path prefix.
 func (c *Client) ListObjects(ctx context.Context, name string, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
 	query := make(url.Values)
-	// Path is a filter prefix, not a URL path segment — always navigate to /{name}
-	// and pass path as a query parameter so the server routes to the list handler.
 	if req.Path != "" {
 		query.Set("path", req.Path)
 	}
 	if req.Recursive {
-		query.Set("recursive", "true")
+		query.Set("recursive", strconv.FormatBool(req.Recursive))
 	}
 	if req.Offset > 0 {
 		query.Set("offset", strconv.Itoa(req.Offset))
@@ -66,6 +66,9 @@ func (c *Client) CreateObject(ctx context.Context, name string, req schema.Creat
 	return &response, nil
 }
 
+// parallelHeads is the maximum number of concurrent HEAD requests issued by GetObjects.
+const parallelHeads = 10
+
 // GetObject retrieves metadata only for an object using HEAD (no body download).
 func (c *Client) GetObject(ctx context.Context, name string, req schema.GetObjectRequest) (*schema.Object, error) {
 	var response getObjectResponse
@@ -82,10 +85,36 @@ func (c *Client) GetObject(ctx context.Context, name string, req schema.GetObjec
 	return response.Object, nil
 }
 
+// GetObjects fetches metadata for multiple objects concurrently using HEAD requests,
+// with parallelism capped at parallelHeads. Results are returned in the same order
+// as reqs. Any per-request errors are joined and returned alongside partial results.
+func (c *Client) GetObjects(ctx context.Context, name string, reqs []schema.GetObjectRequest) ([]*schema.Object, error) {
+	objects := make([]*schema.Object, len(reqs))
+	errs := make([]error, len(reqs))
+	sem := make(chan struct{}, parallelHeads)
+	var wg sync.WaitGroup
+	for i, req := range reqs {
+		wg.Add(1)
+		go func(i int, req schema.GetObjectRequest) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errs[i] = ctx.Err()
+				return
+			}
+			defer func() { <-sem }()
+			objects[i], errs[i] = c.GetObject(ctx, name, req)
+		}(i, req)
+	}
+	wg.Wait()
+	return objects, errors.Join(errs...)
+}
+
 // ReadObject downloads the content of an object using GET, calling fn with each
-// chunk of data as it arrives from the server. fn may be nil when only metadata
-// is needed. The slice passed to fn is reused across calls; copy it if retained.
-// Returns the object metadata; the returned *Object is always non-nil on success.
+// chunk of data as it arrives from the server. The slice passed to fn is reused
+// across calls; copy it if retained. Returns the object metadata; the returned
+// *Object is always non-nil on success.
 func (c *Client) ReadObject(ctx context.Context, name string, req schema.ReadObjectRequest, fn func([]byte) error) (*schema.Object, error) {
 	u := &readObjectUnmarshaler{fn: fn}
 	if err := c.DoWithContext(ctx,
@@ -116,14 +145,9 @@ func (c *Client) DeleteObject(ctx context.Context, name string, req schema.Delet
 
 // DeleteObjects deletes objects under a path prefix (recursive or non-recursive bulk delete).
 func (c *Client) DeleteObjects(ctx context.Context, name string, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	var response schema.DeleteObjectsResponse
-
-	// Always send ?recursive so the server routes to the bulk-delete handler.
-	// The value controls whether the deletion descends into sub-directories.
 	query := make(url.Values)
 	query.Set("recursive", strconv.FormatBool(req.Recursive))
-
-	// Use DELETE with an empty body since the request parameters are fully conveyed
+	var response schema.DeleteObjectsResponse
 	if err := c.DoWithContext(ctx,
 		client.NewRequestEx(http.MethodDelete, "application/json"),
 		&response,
@@ -132,7 +156,5 @@ func (c *Client) DeleteObjects(ctx context.Context, name string, req schema.Dele
 	); err != nil {
 		return nil, err
 	}
-
-	// Return the response, which includes the list of deleted objects and any errors.
 	return &response, nil
 }
