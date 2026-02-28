@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,12 +70,8 @@ func (cmd *ListCommand) Run(ctx *Globals) error {
 	if limit == 0 {
 		limit = schema.MaxListLimit
 	}
-	path := cmd.Path
-	if path == "" {
-		path = "/"
-	}
 	resp, err := c.ListObjects(ctx.ctx, cmd.Backend, schema.ListObjectsRequest{
-		Path:      path,
+		Path:      cmd.Path,
 		Recursive: cmd.Recursive,
 		Limit:     limit,
 		Offset:    cmd.Offset,
@@ -88,142 +83,6 @@ func (cmd *ListCommand) Run(ctx *Globals) error {
 		return prettyJSON(resp)
 	}
 	return printListing(resp)
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
-
-// printListing renders a schema.ListObjectsResponse in an ls-style table.
-func printListing(resp *schema.ListObjectsResponse) error {
-	bold := isTerminal(os.Stdout)
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	for _, obj := range resp.Body {
-		name := strings.TrimPrefix(obj.Path, "/")
-		if bold {
-			name = "\x1b[1m" + name + "\x1b[0m"
-		}
-		fmt.Fprintf(w, "%8s\t%s\t%-30s\t%s\n",
-			humanSize(obj.Size),
-			formatModTime(obj.ModTime),
-			shortContentType(obj.ContentType, obj.Path),
-			name,
-		)
-	}
-	w.Flush()
-	if len(resp.Body) < resp.Count {
-		fmt.Fprintf(os.Stdout, "\n  %d of %d object(s)\n", len(resp.Body), resp.Count)
-	} else {
-		fmt.Fprintf(os.Stdout, "\n  %d object(s)\n", resp.Count)
-	}
-	return nil
-}
-
-// printObjects renders a slice of objects in the same ls-style table used by
-// printListing. It is used by DeleteCommand to display the deleted objects.
-func printObjects(objs []schema.Object) error {
-	bold := isTerminal(os.Stdout)
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	for _, obj := range objs {
-		name := strings.TrimPrefix(obj.Path, "/")
-		if bold {
-			name = "\x1b[1m" + name + "\x1b[0m"
-		}
-		fmt.Fprintf(w, "%8s\t%s\t%-30s\t%s\n",
-			humanSize(obj.Size),
-			formatModTime(obj.ModTime),
-			shortContentType(obj.ContentType, obj.Path),
-			name,
-		)
-	}
-	w.Flush()
-	fmt.Fprintf(os.Stdout, "\n  %d object(s) deleted\n", len(objs))
-	return nil
-}
-
-// wellKnownMIME maps file extensions that Go's mime package may not know about
-// (especially on macOS) to their canonical MIME type.
-var wellKnownMIME = map[string]string{
-	".go":       "text/x-go",
-	".mod":      "text/plain",
-	".sum":      "text/plain",
-	".md":       "text/markdown",
-	".sh":       "text/x-shellscript",
-	".py":       "text/x-python",
-	".rb":       "text/x-ruby",
-	".rs":       "text/x-rust",
-	".ts":       "text/typescript",
-	".tsx":      "text/typescript",
-	".jsx":      "text/javascript",
-	".yaml":     "application/yaml",
-	".yml":      "application/yaml",
-	".toml":     "application/toml",
-	".proto":    "text/plain",
-	".Makefile": "text/x-makefile",
-}
-
-// mimeByExt returns the MIME type for a file extension, consulting wellKnownMIME
-// first and then the system MIME database.
-func mimeByExt(ext string) string {
-	if ct, ok := wellKnownMIME[ext]; ok {
-		return ct
-	}
-	// Special case: Makefile has no extension
-	if ext == "" {
-		return ""
-	}
-	return mime.TypeByExtension(ext)
-}
-
-// shortContentType strips parameters from a MIME type. When ct is empty or
-// generic (application/octet-stream) it falls back to inferring the type from
-// the file extension of path. Returns "-" if neither source yields a useful type.
-func shortContentType(ct, path string) string {
-	if ct == "" || ct == "application/octet-stream" {
-		if inferred := mimeByExt(filepath.Ext(path)); inferred != "" {
-			ct = inferred
-		}
-	}
-	if ct == "" {
-		return "-"
-	}
-	if i := strings.IndexByte(ct, ';'); i >= 0 {
-		ct = strings.TrimSpace(ct[:i])
-	}
-	return ct
-}
-
-// humanSize formats a byte count as a human-readable string.
-func humanSize(n int64) string {
-	const (
-		KB = int64(1024)
-		MB = 1024 * KB
-		GB = 1024 * MB
-		TB = 1024 * GB
-	)
-	switch {
-	case n >= 1000*GB:
-		return fmt.Sprintf("%.1fT", float64(n)/float64(TB))
-	case n >= 1000*MB:
-		return fmt.Sprintf("%.1fG", float64(n)/float64(GB))
-	case n >= 1000*KB:
-		return fmt.Sprintf("%.1fM", float64(n)/float64(MB))
-	case n >= KB:
-		return fmt.Sprintf("%.1fK", float64(n)/float64(KB))
-	default:
-		return fmt.Sprintf("%dB", n)
-	}
-}
-
-// formatModTime formats a time in ls-style: "Jan  2 15:04" for the current
-// year, or "Jan  2  2006" for older entries. Zero times are rendered as blanks.
-func formatModTime(t time.Time) string {
-	if t.IsZero() {
-		return "            "
-	}
-	if t.Year() == time.Now().Year() {
-		return t.Format("Jan _2 15:04")
-	}
-	return t.Format("Jan _2  2006")
 }
 
 func (cmd *HeadCommand) Run(ctx *Globals) error {
@@ -245,24 +104,27 @@ func (cmd *GetCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	reader, _, err := c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
-		GetObjectRequest: schema.GetObjectRequest{Path: cmd.Path},
-	})
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-
 	var out io.Writer = os.Stdout
+	var outFile *os.File
 	if cmd.Output != "" {
-		f, err := os.Create(cmd.Output)
+		outFile, err = os.Create(cmd.Output)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		out = f
+		out = outFile
 	}
-	_, err = io.Copy(out, reader)
+	_, err = c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: cmd.Path},
+	}, func(chunk []byte) error {
+		_, err := out.Write(chunk)
+		return err
+	})
+	if outFile != nil {
+		outFile.Close()
+		if err != nil {
+			os.Remove(cmd.Output)
+		}
+	}
 	return err
 }
 
@@ -337,8 +199,8 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 	// Strip the prefix from each remote path to get the local relative path.
 	prefixStrip := strings.TrimSuffix(remotePath, "/") + "/"
 
-	// Pre-filter: skip objects whose local copy already has the same size,
-	// unless --force.
+	// Pre-filter: skip objects whose local copy already matches the remote
+	// (same size and modtime when both are known), unless --force.
 	type entry struct {
 		obj      schema.Object
 		localAbs string
@@ -352,7 +214,11 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 		localAbs := filepath.Join(absLocal, filepath.FromSlash(rel))
 		if !cmd.Force {
 			if fi, err := os.Stat(localAbs); err == nil && fi.Size() == obj.Size {
-				continue // already up to date
+				lmt := fi.ModTime().Truncate(time.Second)
+				rmt := obj.ModTime.Truncate(time.Second)
+				if lmt.IsZero() || rmt.IsZero() || lmt.Equal(rmt) {
+					continue // already up to date
+				}
 			}
 		}
 		todo = append(todo, entry{obj, localAbs})
@@ -370,7 +236,6 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 		fileTag := fmt.Sprintf("[%*d/%d]", w, i+1, total)
 		name := strings.TrimPrefix(e.obj.Path, "/")
 
-		// Show "starting" line (use known obj.Size for placeholder column).
 		if tty {
 			if e.obj.Size > 0 {
 				fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %5d%%  \x1b[1m%s\x1b[0m", fileTag, 0, name)
@@ -379,67 +244,42 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 			}
 		}
 
-		// Fetch the object as a streaming response.
-		reader, meta, err := c.StreamObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
-			GetObjectRequest: schema.GetObjectRequest{Path: e.obj.Path},
-		})
-		if err != nil {
-			return fmt.Errorf("%s: %w", e.obj.Path, err)
-		}
-
-		// Determine file size for percentage display.
-		var fileSize int64
-		if meta != nil {
-			fileSize = meta.Size
-		} else {
-			fileSize = e.obj.Size
-		}
-
-		// Create parent directories and destination file.
 		if err := os.MkdirAll(filepath.Dir(e.localAbs), 0o755); err != nil {
-			reader.Close()
 			return err
 		}
 		f, err := os.Create(e.localAbs)
 		if err != nil {
-			reader.Close()
 			return err
 		}
 
-		// Copy with progress (throttle redraws to percent-change boundaries).
+		fileSize := e.obj.Size
 		var written int64
 		var lastPct int64 = -1
-		buf := make([]byte, 64*1024)
-		for {
-			n, readErr := reader.Read(buf)
-			if n > 0 {
-				if _, werr := f.Write(buf[:n]); werr != nil {
-					f.Close()
-					reader.Close()
-					return werr
-				}
-				written += int64(n)
-				if tty && fileSize > 0 {
-					pct := written * 100 / fileSize
-					if pct != lastPct {
-						lastPct = pct
-						fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %5d%%  \x1b[1m%s\x1b[0m", fileTag, pct, name)
-					}
+		_, err = c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
+			GetObjectRequest: schema.GetObjectRequest{Path: e.obj.Path},
+		}, func(chunk []byte) error {
+			if _, werr := f.Write(chunk); werr != nil {
+				return werr
+			}
+			written += int64(len(chunk))
+			if tty && fileSize > 0 {
+				pct := written * 100 / fileSize
+				if pct != lastPct {
+					lastPct = pct
+					fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %5d%%  \x1b[1m%s\x1b[0m", fileTag, pct, name)
 				}
 			}
-			if readErr == io.EOF {
-				break
-			}
-			if readErr != nil {
-				f.Close()
-				reader.Close()
-				return fmt.Errorf("%s: %w", e.obj.Path, readErr)
-			}
-		}
+			return nil
+		})
 		f.Close()
-		reader.Close()
+		if err != nil {
+			os.Remove(e.localAbs)
+			return fmt.Errorf("%s: %w", e.obj.Path, err)
+		}
+		if !e.obj.ModTime.IsZero() {
+			_ = os.Chtimes(e.localAbs, e.obj.ModTime, e.obj.ModTime)
+		}
 
-		// Committed line.
 		size := fmt.Sprintf("%6s", humanSize(written))
 		if tty {
 			fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %s  \x1b[1m%s\x1b[0m\n", fileTag, size, name)
@@ -472,23 +312,20 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 		return err
 	}
 
-	// Stat so we can distinguish file vs directory.
 	fi, err := os.Stat(absLocal)
 	if err != nil {
 		return err
 	}
 
 	var fsys fs.FS
-	var singleFile string // non-empty when uploading exactly one file
+	var singleFile string
 	if fi.IsDir() {
 		fsys = os.DirFS(absLocal)
 	} else {
-		// Single file: walk the parent directory but restrict to this file only.
 		fsys = os.DirFS(filepath.Dir(absLocal))
 		singleFile = fi.Name()
 	}
 
-	// Build upload options.
 	var uploadOpts []httpclient.UploadOpt
 
 	if cmd.Prefix != "" {
@@ -499,10 +336,8 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 		uploadOpts = append(uploadOpts, httpclient.WithCheck(nil))
 	}
 
-	// Filter: skip hidden entries unless --hidden is set; restrict to singleFile when set.
 	uploadOpts = append(uploadOpts, httpclient.WithFilter(func(d fs.DirEntry) bool {
 		if singleFile != "" {
-			// Include the file itself; always descend the root "."
 			return d.Name() == "." || d.Name() == singleFile
 		}
 		if !cmd.Hidden && strings.HasPrefix(d.Name(), ".") && d.Name() != "." {
@@ -511,31 +346,23 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 		return true
 	}))
 
-	// Progress callback: overwrite the current line on a terminal.
 	tty := isTerminal(os.Stderr)
 	uploadOpts = append(uploadOpts, httpclient.WithProgress(func(index, count int, path string, written, total int64) {
-		w := len(fmt.Sprintf("%d", count)) // digits in total count
+		w := len(fmt.Sprintf("%d", count))
 		fileTag := fmt.Sprintf("[%*d/%d]", w, index+1, count)
 		name := strings.TrimPrefix(path, "/")
-		if written == total && total > 0 {
-			// File committed — print a permanent line.
-			// Size column is right-aligned in 6 chars to match the percentage
-			// column width used while the upload is in flight.
+		if written == total {
+			// File committed (including empty files where written == total == 0).
 			size := fmt.Sprintf("%6s", humanSize(total))
 			if tty {
-				fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %s  \x1b[1m%s\x1b[0m\n",
-					fileTag, size, name)
+				fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %s  \x1b[1m%s\x1b[0m\n", fileTag, size, name)
 			} else {
-				fmt.Fprintf(os.Stderr, "  %s  %s  %s\n",
-					fileTag, size, name)
+				fmt.Fprintf(os.Stderr, "  %s  %s  %s\n", fileTag, size, name)
 			}
 		} else if tty && total > 0 {
-			// Percentage right-aligned in 6 chars ("  100%") — same column
-			// width as the size field above.
 			pct := fmt.Sprintf("%5d%%", written*100/total)
 			fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %s  \x1b[1m%s\x1b[0m", fileTag, pct, name)
 		} else if tty {
-			// File size unknown — show counter only.
 			fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  \x1b[1m%s\x1b[0m", fileTag, name)
 		}
 	}))
@@ -548,4 +375,98 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 		fmt.Fprintf(os.Stderr, "%d object(s) uploaded\n", len(objs))
 	}
 	return nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// printListing renders a schema.ListObjectsResponse in an ls-style table.
+func printListing(resp *schema.ListObjectsResponse) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	writeObjectRows(w, resp.Body)
+	if len(resp.Body) < resp.Count {
+		fmt.Fprintf(os.Stdout, "\n  %d of %d object(s)\n", len(resp.Body), resp.Count)
+	} else {
+		fmt.Fprintf(os.Stdout, "\n  %d object(s)\n", resp.Count)
+	}
+	return nil
+}
+
+// printObjects renders a slice of objects in the same ls-style table used by
+// printListing. It is used by DeleteCommand to display deleted objects.
+func printObjects(objs []schema.Object) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	writeObjectRows(w, objs)
+	fmt.Fprintf(os.Stdout, "\n  %d object(s) deleted\n", len(objs))
+	return nil
+}
+
+// writeObjectRows writes one tabwriter row per object and flushes the writer.
+func writeObjectRows(w *tabwriter.Writer, objs []schema.Object) {
+	bold := isTerminal(os.Stdout)
+	for _, obj := range objs {
+		name := strings.TrimPrefix(obj.Path, "/")
+		if bold {
+			name = "\x1b[1m" + name + "\x1b[0m"
+		}
+		fmt.Fprintf(w, "%8s\t%s\t%-30s\t%s\n",
+			humanSize(obj.Size),
+			formatModTime(obj.ModTime),
+			shortContentType(obj.ContentType, obj.Path),
+			name,
+		)
+	}
+	w.Flush()
+}
+
+// shortContentType strips parameters from a MIME type. When ct is empty or
+// generic (application/octet-stream) it falls back to inferring the type from
+// the file extension of path. Returns "-" if neither source yields a useful type.
+func shortContentType(ct, path string) string {
+	if ct == "" || ct == "application/octet-stream" {
+		if inferred := httpclient.MIMEByExt(filepath.Ext(path)); inferred != "" {
+			ct = inferred
+		}
+	}
+	if ct == "" {
+		return "-"
+	}
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	return ct
+}
+
+// humanSize formats a byte count as a human-readable string.
+func humanSize(n int64) string {
+	const (
+		KB = int64(1024)
+		MB = 1024 * KB
+		GB = 1024 * MB
+		TB = 1024 * GB
+	)
+	switch {
+	case n >= 1000*GB:
+		return fmt.Sprintf("%.1fT", float64(n)/float64(TB))
+	case n >= 1000*MB:
+		return fmt.Sprintf("%.1fG", float64(n)/float64(GB))
+	case n >= 1000*KB:
+		return fmt.Sprintf("%.1fM", float64(n)/float64(MB))
+	case n >= KB:
+		return fmt.Sprintf("%.1fK", float64(n)/float64(KB))
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
+}
+
+// formatModTime formats a time in ls-style: "Jan  2 15:04" for the current
+// year, or "Jan  2  2006" for older entries. Zero times are rendered as blanks.
+func formatModTime(t time.Time) string {
+	if t.IsZero() {
+		return "            "
+	}
+	if t.Year() == time.Now().Year() {
+		return t.Format("Jan _2 15:04")
+	}
+	return t.Format("Jan _2  2006")
 }

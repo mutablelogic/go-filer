@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -42,6 +43,9 @@ func (g *Globals) clientEndpoint() (string, error) {
 	}
 	if host == "" {
 		host = "localhost"
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
 	}
 	portn, err := strconv.ParseUint(port, 10, 16)
 	if err != nil {

@@ -43,9 +43,9 @@ var wellKnownMIME = map[string]string{
 	".proto": "text/plain",
 }
 
-// mimeByExt returns the MIME type for a file extension, consulting wellKnownMIME
+// MIMEByExt returns the MIME type for a file extension, consulting wellKnownMIME
 // first and then the system MIME database.
-func mimeByExt(ext string) string {
+func MIMEByExt(ext string) string {
 	if ct, ok := wellKnownMIME[ext]; ok {
 		return ct
 	}
@@ -159,14 +159,20 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		return nil, nil
 	}
 
-	// Pre-filter: for each entry call GetObject (HEAD) and ask the check
-	// function whether the upload should be skipped.
+	// Pre-filter: HEAD all entries in parallel and ask the check function
+	// whether each upload should be skipped.
 	if o.check != nil {
+		reqs := make([]schema.GetObjectRequest, len(entries))
+		for i, e := range entries {
+			reqs[i] = schema.GetObjectRequest{Path: path.Join("/", o.prefix, e.path)}
+		}
+		remotes, err := c.GetObjects(ctx, name, reqs)
+		if err != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		filtered := entries[:0]
-		for _, e := range entries {
-			remotePath := path.Join("/", o.prefix, e.path)
-			remote, _ := c.GetObject(ctx, name, schema.GetObjectRequest{Path: remotePath})
-			if !o.check(e.info, remote) {
+		for i, e := range entries {
+			if !o.check(e.info, remotes[i]) {
 				filtered = append(filtered, e)
 			}
 		}
@@ -189,16 +195,11 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			}
 			return nil, err
 		}
-		// If a prefix was given, prepend it so the server stores the file at
-		// /{prefix}/{e.path}. POST always goes to /{name} (isDir=true on server).
-		remotePath := e.path
-		if o.prefix != "" {
-			remotePath = path.Join(o.prefix, e.path)
-		}
+		remotePath := path.Join("/", o.prefix, e.path)
 		// Determine content type: prefer extension-based lookup; fall back to
 		// sniffing the first 512 bytes when the extension yields nothing useful.
 		var body io.ReadCloser = f
-		ct := mimeByExt(path.Ext(e.path))
+		ct := MIMEByExt(path.Ext(e.path))
 		if ct == "" || ct == "application/octet-stream" {
 			var buf [512]byte
 			n, _ := io.ReadFull(f, buf[:])
@@ -277,15 +278,14 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			}
 			results = append(results, obj)
 			if o.progress != nil {
-				committed := &results[len(results)-1]
-				o.progress(len(results)-1, totalFiles, committed.Path, committed.Size, committed.Size)
+				o.progress(len(results)-1, totalFiles, obj.Path, obj.Size, obj.Size)
 			}
 		case schema.UploadErrorEvent:
 			var e schema.UploadError
 			if err := json.Unmarshal([]byte(ev.Data), &e); err != nil {
 				return err
 			}
-			uploadErr = errors.New(e.Message)
+			uploadErr = errors.Join(uploadErr, errors.New(e.Message))
 		}
 		return nil
 	}

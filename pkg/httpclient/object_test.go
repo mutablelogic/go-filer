@@ -3,11 +3,14 @@ package httpclient_test
 import (
 	"bytes"
 	"context"
-	"io"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	// Packages
+	httpclient "github.com/mutablelogic/go-filer/pkg/httpclient"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 )
 
@@ -157,6 +160,9 @@ func TestGetObject(t *testing.T) {
 	if obj == nil {
 		t.Fatal("GetObject returned nil object")
 	}
+	if obj.Path != "/meta.txt" {
+		t.Errorf("path: got %q, want %q", obj.Path, "/meta.txt")
+	}
 	if obj.Size != int64(len(data)) {
 		t.Errorf("size: got %d, want %d", obj.Size, len(data))
 	}
@@ -174,22 +180,58 @@ func TestReadObject(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateObject: %v", err)
 	}
-	rc, obj, err := c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
+	var got []byte
+	obj, err := c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
 		GetObjectRequest: schema.GetObjectRequest{Path: "/read.txt"},
+	}, func(chunk []byte) error {
+		got = append(got, chunk...)
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("ReadObject: %v", err)
 	}
-	defer rc.Close()
-	got, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("reading body: %v", err)
-	}
 	if !bytes.Equal(got, data) {
 		t.Errorf("body: got %q, want %q", got, data)
 	}
-	if obj != nil && obj.Size != int64(len(data)) {
+	if obj.Size != int64(len(data)) {
 		t.Errorf("size: got %d, want %d", obj.Size, len(data))
+	}
+}
+
+func TestReadObject_fnError(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	if _, err := c.CreateObject(context.Background(), "testbucket", schema.CreateObjectRequest{
+		Path: "/fn_err.txt", Body: bytes.NewReader([]byte("content")), ContentType: "text/plain",
+	}); err != nil {
+		t.Fatalf("CreateObject: %v", err)
+	}
+
+	sentinel := errors.New("fn error")
+	_, err := c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: "/fn_err.txt"},
+	}, func([]byte) error { return sentinel })
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel error, got %v", err)
+	}
+}
+
+func TestReadObject_missingHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := httpclient.New(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: "/test.txt"},
+	}, func([]byte) error { return nil })
+	if err == nil {
+		t.Fatal("expected error for missing header, got nil")
 	}
 }
 
@@ -237,6 +279,41 @@ func TestDeleteObjects_recursive(t *testing.T) {
 	}
 }
 
+func TestGetObjects(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	paths := []string{"/ga.txt", "/gb.txt", "/gc.txt"}
+	for _, p := range paths {
+		if _, err := c.CreateObject(context.Background(), "testbucket", schema.CreateObjectRequest{
+			Path: p, Body: strings.NewReader("data"), ContentType: "text/plain",
+		}); err != nil {
+			t.Fatalf("CreateObject %s: %v", p, err)
+		}
+	}
+
+	reqs := make([]schema.GetObjectRequest, len(paths))
+	for i, p := range paths {
+		reqs[i] = schema.GetObjectRequest{Path: p}
+	}
+	objs, err := c.GetObjects(context.Background(), "testbucket", reqs)
+	if err != nil {
+		t.Fatalf("GetObjects: %v", err)
+	}
+	if len(objs) != len(paths) {
+		t.Fatalf("len: got %d, want %d", len(objs), len(paths))
+	}
+	for i, obj := range objs {
+		if obj == nil {
+			t.Errorf("obj[%d] is nil", i)
+			continue
+		}
+		if obj.Path != paths[i] {
+			t.Errorf("obj[%d].Path: got %q, want %q", i, obj.Path, paths[i])
+		}
+	}
+}
+
 func TestDeleteObjects_nonRecursive(t *testing.T) {
 	c, cleanup := newTestServer(t, "mem://testbucket")
 	defer cleanup()
@@ -254,6 +331,9 @@ func TestDeleteObjects_nonRecursive(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("DeleteObjects non-recursive: %v", err)
+	}
+	if len(resp.Body) != 2 {
+		t.Errorf("expected 2 deleted objects, got %d: %+v", len(resp.Body), resp.Body)
 	}
 	for _, obj := range resp.Body {
 		if strings.Contains(obj.Path, "/sub/") {
