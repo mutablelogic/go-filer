@@ -116,10 +116,20 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 		openURL := &url.URL{Scheme: "file", Path: self.url.Path, RawQuery: fileblobParams.Encode()}
 		bucket, err = blob.OpenBucket(ctx, openURL.String())
 	} else {
-		// For s3, mem, etc.: open at root (strip path) to avoid PrefixedBucket
+		// For mem:// (and URL-based s3://): strip to root and filter out any
+		// params that aren't valid for the target driver.
 		openURL := *self.url
 		openURL.Path = ""
 		openURL.RawPath = ""
+		switch self.url.Scheme {
+		case "mem":
+			// memblob only accepts "nomd5"
+			memParams := url.Values{}
+			if v := self.url.Query().Get("nomd5"); v != "" {
+				memParams.Set("nomd5", v)
+			}
+			openURL.RawQuery = memParams.Encode()
+		}
 		bucket, err = blob.OpenBucket(ctx, openURL.String())
 	}
 
