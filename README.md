@@ -44,10 +44,15 @@ docker run -d --name filer \
 ```bash
 git clone https://github.com/mutablelogic/go-filer
 cd go-filer
+
+# Full binary (server + client)
 make build
+
+# Client-only binary (no server component)
+make filer-client
 ```
 
-The binary is placed in `build/filer`.
+Binaries are placed in `build/filer`. Pre-built client-only binaries for Linux, macOS, and Windows are also available on the [releases page](https://github.com/mutablelogic/go-filer/releases).
 
 ## Server Configuration
 
@@ -90,7 +95,7 @@ Credential priority: `--aws.profile` → `--aws.access-key` → anonymous.
 
 ## CLI Commands
 
-The `filer` binary acts as both server and client. Point it at a running server via `--http.addr`.
+Released binaries are client-only. The full binary (built with `make build`) includes the `run` server command. All client commands point at a running server via `--http.addr`.
 
 ### Server
 
