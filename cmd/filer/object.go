@@ -199,6 +199,25 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 	// Strip the prefix from each remote path to get the local relative path.
 	prefixStrip := strings.TrimSuffix(remotePath, "/") + "/"
 
+	// Resolve accurate modtimes for all remote objects via parallel HEAD requests.
+	// The list iterator returns the blob write time (not the original file modtime
+	// stored in X-Object-Meta metadata), so we need the HEAD response to compare
+	// correctly against local file modtimes.
+	var accObjs []*schema.Object
+	if !cmd.Force && len(resp.Body) > 0 {
+		headReqs := make([]schema.GetObjectRequest, len(resp.Body))
+		for i, obj := range resp.Body {
+			headReqs[i] = schema.GetObjectRequest{Path: obj.Path}
+		}
+		accObjs, _ = c.GetObjects(ctx.ctx, cmd.Backend, headReqs)
+		for i, acc := range accObjs {
+			if acc != nil {
+				resp.Body[i].ModTime = acc.ModTime
+				resp.Body[i].Size = acc.Size
+			}
+		}
+	}
+
 	// Pre-filter: skip objects whose local copy already matches the remote
 	// (same size and modtime when both are known), unless --force.
 	type entry struct {
@@ -206,6 +225,7 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 		localAbs string
 	}
 	var todo []entry
+	var skipped int
 	for _, obj := range resp.Body {
 		rel := strings.TrimPrefix(obj.Path, prefixStrip)
 		if rel == "" {
@@ -217,6 +237,7 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 				lmt := fi.ModTime().Truncate(time.Second)
 				rmt := obj.ModTime.Truncate(time.Second)
 				if lmt.IsZero() || rmt.IsZero() || lmt.Equal(rmt) {
+					skipped++
 					continue // already up to date
 				}
 			}
@@ -224,11 +245,15 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 		todo = append(todo, entry{obj, localAbs})
 	}
 
+	tty := isTerminal(os.Stderr)
+
 	if len(todo) == 0 {
+		if skipped > 0 {
+			fmt.Fprintf(os.Stderr, "0 object(s) downloaded, %d skipped (up to date)\n", skipped)
+		}
 		return nil
 	}
 
-	tty := isTerminal(os.Stderr)
 	total := len(todo)
 	w := len(fmt.Sprintf("%d", total))
 
@@ -288,8 +313,12 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 		}
 	}
 
-	if tty {
-		fmt.Fprintf(os.Stderr, "%d object(s) downloaded\n", len(todo))
+	if tty || len(todo) > 0 || skipped > 0 {
+		if skipped > 0 {
+			fmt.Fprintf(os.Stderr, "%d object(s) downloaded, %d skipped (up to date)\n", len(todo), skipped)
+		} else {
+			fmt.Fprintf(os.Stderr, "%d object(s) downloaded\n", len(todo))
+		}
 	}
 	return nil
 }
