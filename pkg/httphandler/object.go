@@ -137,69 +137,9 @@ func objectUpload(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) 
 	if accept, _ := types.AcceptContentType(r); accept == types.ContentTypeTextStream {
 		return objectUploadSSEStream(w, r, mgr)
 	}
-
-	// Non-SSE: parse form data into a struct with a []types.File field.
-	var form struct {
-		Files []types.File `json:"file"`
-	}
-	if err := httprequest.Read(r, &form); err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	} else if len(form.Files) == 0 {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(`missing or unreadable "file" form field`))
-	}
-
-	// Shared metadata from X-Meta-{key} request headers applies to all files.
-	sharedMeta := extractMeta(r.Header)
-
-	// Base path is derived from URL, with trailing slash indicating directory upload.
-	// NOTE: types.NormalisePath strips trailing slashes, so we check r.URL.Path
-	// directly to preserve the caller's intent (e.g. POST /media/subdir/ vs /media/subdir).
-	basePath := types.NormalisePath(r.PathValue("path"))
-	name := r.PathValue("name")
-	isDir := basePath == "/" || strings.HasSuffix(r.URL.Path, "/")
-
-	// A non-directory path is an explicit destination for exactly one file.
-	// Uploading multiple files to the same explicit path would silently
-	// overwrite with each successive file; reject it early instead.
-	if !isDir && len(form.Files) > 1 {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.Withf(
-			"cannot upload %d files to explicit path %q; add a trailing slash to upload to a directory",
-			len(form.Files), basePath,
-		))
-	}
-
-	// Upload each file in order, tracking created objects so we can roll back on error.
-	results := make([]schema.Object, 0, len(form.Files))
-	rollback := func(uploadErr error) error {
-		var errs []error
-		for _, obj := range results {
-			if _, err := mgr.DeleteObject(r.Context(), name, schema.DeleteObjectRequest{Path: obj.Path}); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		return errors.Join(append([]error{uploadErr}, errs...)...)
-	}
-	for _, f := range form.Files {
-		defer f.Body.Close() //nolint:gocritic // deferred close is intentional per-upload
-
-		// f.Path is already sanitised by httprequest.fileHeaderPath:
-		// leading slashes stripped, .. segments resolved, traversal rejected.
-		filename := f.Path
-
-		destPath := basePath
-		if isDir {
-			destPath = types.JoinPath(basePath, filename)
-		}
-
-		obj, err := mgr.CreateObject(r.Context(), name, buildCreateRequest(f, sharedMeta, destPath, f.Body))
-		if err != nil {
-			return httpresponse.Error(w, rollback(err))
-		}
-		results = append(results, *obj)
-	}
-
-	// Return a JSON array.
-	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), results)
+	// Non-SSE: still stream multipart parts directly to the backend to avoid
+	// buffering large request bodies in memory or /tmp.
+	return objectUploadJSONStream(w, r, mgr)
 }
 
 func objectHead(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
@@ -607,4 +547,85 @@ func objectUploadSSEStream(w http.ResponseWriter, r *http.Request, mgr *manager.
 
 	stream.Write(schema.UploadDoneEvent, schema.UploadDone{Files: len(results), Bytes: totalWritten})
 	return stream.Close()
+}
+
+// objectUploadJSONStream handles multipart uploads without SSE by streaming
+// each file part directly to the backend and returning a JSON array on success.
+// This avoids buffering the entire request body in memory/tmpfs.
+func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+	}
+
+	sharedMeta := extractMeta(r.Header)
+	basePath := types.NormalisePath(r.PathValue("path"))
+	name := r.PathValue("name")
+	isDir := basePath == "/" || strings.HasSuffix(r.URL.Path, "/")
+
+	results := make([]schema.Object, 0)
+	rollback := func(uploadErr error) error {
+		var errs []error
+		for _, obj := range results {
+			if _, err := mgr.DeleteObject(r.Context(), name, schema.DeleteObjectRequest{Path: obj.Path}); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(append([]error{uploadErr}, errs...)...)
+	}
+
+	fileCount := 0
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return httpresponse.Error(w, rollback(err))
+		}
+
+		if part.FormName() != "file" {
+			continue
+		}
+
+		fileCount++
+		if !isDir && fileCount > 1 {
+			return httpresponse.Error(w, rollback(httpresponse.ErrBadRequest.Withf(
+				"cannot upload %d files to explicit path %q; add a trailing slash to upload to a directory",
+				fileCount, basePath,
+			)))
+		}
+
+		filename := part.Header.Get(types.ContentPathHeader)
+		if filename == "" {
+			filename = part.FileName()
+		}
+		if filename == "" {
+			filename = fmt.Sprintf("file-%d", fileCount-1)
+		}
+
+		destPath := basePath
+		if isDir {
+			destPath = types.JoinPath(basePath, filename)
+		}
+
+		f := types.File{
+			Path:        filename,
+			Body:        io.NopCloser(part),
+			ContentType: part.Header.Get(types.ContentTypeHeader),
+			Header:      part.Header,
+		}
+
+		obj, err := mgr.CreateObject(r.Context(), name, buildCreateRequest(f, sharedMeta, destPath, part))
+		if err != nil {
+			return httpresponse.Error(w, rollback(err))
+		}
+		results = append(results, *obj)
+	}
+
+	if fileCount == 0 {
+		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(`missing or unreadable "file" form field`))
+	}
+
+	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), results)
 }

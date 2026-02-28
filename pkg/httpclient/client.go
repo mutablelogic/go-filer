@@ -1,6 +1,11 @@
 package httpclient
 
 import (
+	"crypto/tls"
+	"net/http"
+	"os"
+	"strings"
+
 	// Packages
 	client "github.com/mutablelogic/go-client"
 )
@@ -32,6 +37,24 @@ func New(url string, opts ...client.ClientOpt) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if isTruthyEnv("FILER_HTTP1") {
+		if tr, ok := cl.Client.Transport.(*http.Transport); ok && tr != nil {
+			tr = tr.Clone()
+			tr.ForceAttemptHTTP2 = false
+			tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+			cl.Client.Transport = tr
+		} else {
+			tr := http.DefaultTransport.(*http.Transport).Clone()
+			tr.ForceAttemptHTTP2 = false
+			tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+			cl.Client.Transport = tr
+		}
+	}
 	c.Client = cl
 	return c, nil
+}
+
+func isTruthyEnv(key string) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	return v != "" && v != "0" && v != "false" && v != "no" && v != "off"
 }

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"mime"
 	"net/http"
 	"net/textproto"
+	"os"
 	"path"
 	"strconv"
 	"time"
@@ -143,20 +145,36 @@ func SkipUnchanged(localInfo fs.FileInfo, remote *schema.Object) bool {
 // By default, files that already exist remotely with the same size (and modtime
 // when available) are skipped. Use WithCheck(nil) to disable this behaviour.
 func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opts ...UploadOpt) ([]schema.Object, error) {
+	debug := os.Getenv("FILER_UPLOAD_DEBUG") != ""
+	useSSE := os.Getenv("FILER_UPLOAD_SSE") != "0"
+	t0 := time.Now()
+	dbg := func(msg string, args ...any) {
+		if debug {
+			// Print to stderr with elapsed time for correlation
+			args = append([]any{time.Since(t0)}, args...)
+			_, _ = fmt.Fprintf(os.Stderr, "[upload-debug %+v] "+msg+"\n", args...)
+		}
+	}
+	dbg("begin CreateObjects name=%q opts=%d", name, len(opts))
+
 	o := &uploadOpts{check: SkipUnchanged}
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
 			return nil, err
 		}
 	}
+	dbg("config prefix=%q filter=%v check=%v progress=%v sse=%v", o.prefix, o.filter != nil, o.check != nil, o.progress != nil, useSSE)
 
 	entries, err := walkFS(fsys, o.filter)
 	if err != nil {
+		dbg("walkFS error: %v", err)
 		return nil, err
 	}
 	if len(entries) == 0 {
+		dbg("no local entries to upload")
 		return nil, nil
 	}
+	dbg("walked %d entries", len(entries))
 
 	// Pre-filter: HEAD all entries in parallel and ask the check function
 	// whether each upload should be skipped.
@@ -165,8 +183,10 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		for i, e := range entries {
 			reqs[i] = schema.GetObjectRequest{Path: path.Join("/", o.prefix, e.path)}
 		}
+		dbg("preflight HEAD for %d entries", len(reqs))
 		remotes, err := c.GetObjects(ctx, name, reqs)
 		if err != nil && ctx.Err() != nil {
+			dbg("preflight canceled: %v", ctx.Err())
 			return nil, ctx.Err()
 		}
 		filtered := entries[:0]
@@ -178,20 +198,24 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		entries = filtered
 	}
 	if len(entries) == 0 {
+		dbg("all entries skipped by preflight check")
 		return nil, nil
 	}
+	dbg("after skip check %d entries", len(entries))
 
 	// Open every file. Keep track of all opened handles so we can close them
 	// after the HTTP round-trip completes (the streaming encoder reads bodies
 	// lazily as the HTTP client sends data, so files must stay open until
 	// DoWithContext returns).
 	parts := make([]types.File, 0, len(entries))
-	for _, e := range entries {
+	var totalBytes int64
+	for i, e := range entries {
 		f, err := fsys.Open(e.path)
 		if err != nil {
 			for _, p := range parts {
 				p.Body.Close()
 			}
+			dbg("open error path=%s err=%v", e.path, err)
 			return nil, err
 		}
 		remotePath := path.Join("/", o.prefix, e.path)
@@ -223,29 +247,44 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		if sz := e.info.Size(); sz > 0 {
 			h.Set(types.ContentLengthHeader, strconv.FormatInt(sz, 10))
 		}
+		if !useSSE && o.progress != nil {
+			total := e.info.Size()
+			body = newUploadProgressReadCloser(body, total, func(written, bytes int64) {
+				o.progress(i, len(entries), remotePath, written, bytes)
+			})
+		}
+		totalBytes += e.info.Size()
 		parts = append(parts, types.File{
 			Path:        remotePath,
 			Body:        body,
 			ContentType: ct,
 			Header:      h,
 		})
+		dbg("prepared part path=%s size=%d ct=%s", remotePath, e.info.Size(), ct)
 	}
 	defer func() {
 		for _, p := range parts {
 			p.Body.Close()
 		}
 	}()
+	dbg("built multipart parts=%d totalBytes=%d", len(parts), totalBytes)
 
 	// Build a streaming multipart payload. The encoder reflect-walks the
 	// struct and writes each types.File as a separate multipart "file" part.
-	// Request text/event-stream so the server branches to objectUploadSSEStream,
-	// which streams each multipart part directly to the backend and emits
-	// one SSE event per committed file and one on error.
+	// When SSE is enabled (default), request text/event-stream so the server
+	// branches to objectUploadSSEStream and emits progressive upload events.
+	// Set FILER_UPLOAD_SSE=0 to use the non-SSE upload path (single JSON
+	// response on completion), which avoids full-duplex request/response.
 	upload := struct {
 		Files []types.File `json:"file"`
 	}{Files: parts}
-	payload, err := client.NewStreamingMultipartRequest(&upload, client.ContentTypeTextStream)
+	accept := client.ContentTypeTextStream
+	if !useSSE {
+		accept = types.ContentTypeJSON
+	}
+	payload, err := client.NewStreamingMultipartRequest(&upload, accept)
 	if err != nil {
+		dbg("multipart build error: %v", err)
 		return nil, err
 	}
 
@@ -255,37 +294,66 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		uploadErr  error
 		totalFiles int // populated from UploadStartEvent
 	)
+
+	if !useSSE {
+		dbg("starting non-SSE POST parts=%d totalBytes=%d", len(parts), totalBytes)
+		if err := c.DoWithContext(ctx, payload, &results,
+			client.OptPath(name),
+			client.OptReqHeader("X-Upload-Count", strconv.Itoa(len(parts))),
+			client.OptNoTimeout(),
+		); err != nil {
+			dbg("DoWithContext (non-SSE) error: %v", err)
+			return nil, err
+		}
+		if o.progress != nil {
+			for index, obj := range results {
+				o.progress(index, len(results), obj.Path, obj.Size, obj.Size)
+			}
+		}
+		dbg("completed upload (non-SSE) results=%d", len(results))
+		return results, nil
+	}
 	sseCallback := func(ev client.TextStreamEvent) error {
 		switch ev.Event {
 		case schema.UploadStartEvent:
 			var s schema.UploadStart
 			if err := json.Unmarshal([]byte(ev.Data), &s); err != nil {
+				dbg("sse start decode error: %v data=%q", err, ev.Data)
 				return err
 			}
 			totalFiles = s.Files
+			dbg("sse start files=%d", totalFiles)
 		case schema.UploadFileEvent:
+			var f schema.UploadFile
+			if err := json.Unmarshal([]byte(ev.Data), &f); err != nil {
+				dbg("sse progress decode error: %v data=%q", err, ev.Data)
+				return err
+			}
+			dbg("sse progress idx=%d/%d path=%s written=%d bytes=%d", f.Index, totalFiles, f.Path, f.Written, f.Bytes)
 			if o.progress != nil {
-				var f schema.UploadFile
-				if err := json.Unmarshal([]byte(ev.Data), &f); err != nil {
-					return err
-				}
 				o.progress(f.Index, totalFiles, f.Path, f.Written, f.Bytes)
 			}
 		case schema.UploadCompleteEvent:
 			var obj schema.Object
 			if err := json.Unmarshal([]byte(ev.Data), &obj); err != nil {
+				dbg("sse complete decode error: %v data=%q", err, ev.Data)
 				return err
 			}
 			results = append(results, obj)
+			dbg("sse complete path=%s size=%d count=%d/%d", obj.Path, obj.Size, len(results), totalFiles)
 			if o.progress != nil {
 				o.progress(len(results)-1, totalFiles, obj.Path, obj.Size, obj.Size)
 			}
 		case schema.UploadErrorEvent:
 			var e schema.UploadError
 			if err := json.Unmarshal([]byte(ev.Data), &e); err != nil {
+				dbg("sse error decode error: %v data=%q", err, ev.Data)
 				return err
 			}
 			uploadErr = errors.Join(uploadErr, errors.New(e.Message))
+			dbg("sse error %s", e.Message)
+		default:
+			dbg("sse unknown event=%q data=%q", ev.Event, ev.Data)
 		}
 		return nil
 	}
@@ -303,8 +371,10 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		client.OptTextStreamCallback(sseCallback),
 		client.OptNoTimeout(),
 	); err != nil {
+		dbg("DoWithContext error: %v", err)
 		return nil, err
 	}
+	dbg("completed upload results=%d err=%v", len(results), uploadErr)
 	return results, uploadErr
 }
 
@@ -341,4 +411,36 @@ func walkFS(fsys fs.FS, filter func(fs.DirEntry) bool) ([]walkEntry, error) {
 		return nil, err
 	}
 	return entries, nil
+}
+
+type uploadProgressReadCloser struct {
+	r        io.ReadCloser
+	total    int64
+	written  int64
+	lastEmit int64
+	cb       func(written, total int64)
+}
+
+func newUploadProgressReadCloser(r io.ReadCloser, total int64, cb func(written, total int64)) io.ReadCloser {
+	return &uploadProgressReadCloser{
+		r:     r,
+		total: total,
+		cb:    cb,
+	}
+}
+
+func (r *uploadProgressReadCloser) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.written += int64(n)
+		if r.written-r.lastEmit >= 64*1024 || (r.total > 0 && r.written >= r.total) {
+			r.lastEmit = r.written
+			r.cb(r.written, r.total)
+		}
+	}
+	return n, err
+}
+
+func (r *uploadProgressReadCloser) Close() error {
+	return r.r.Close()
 }
