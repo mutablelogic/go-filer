@@ -3,7 +3,6 @@ package httpclient_test
 import (
 	"bytes"
 	"context"
-	"io"
 	"strings"
 	"testing"
 
@@ -174,21 +173,20 @@ func TestReadObject(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateObject: %v", err)
 	}
-	rc, obj, err := c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
+	var got []byte
+	obj, err := c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
 		GetObjectRequest: schema.GetObjectRequest{Path: "/read.txt"},
+	}, func(chunk []byte) error {
+		got = append(got, chunk...)
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("ReadObject: %v", err)
 	}
-	defer rc.Close()
-	got, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("reading body: %v", err)
-	}
 	if !bytes.Equal(got, data) {
 		t.Errorf("body: got %q, want %q", got, data)
 	}
-	if obj != nil && obj.Size != int64(len(data)) {
+	if obj.Size != int64(len(data)) {
 		t.Errorf("size: got %d, want %d", obj.Size, len(data))
 	}
 }

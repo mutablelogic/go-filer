@@ -245,14 +245,6 @@ func (cmd *GetCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	reader, _, err := c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
-		GetObjectRequest: schema.GetObjectRequest{Path: cmd.Path},
-	})
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-
 	var out io.Writer = os.Stdout
 	if cmd.Output != "" {
 		f, err := os.Create(cmd.Output)
@@ -262,7 +254,12 @@ func (cmd *GetCommand) Run(ctx *Globals) error {
 		defer f.Close()
 		out = f
 	}
-	_, err = io.Copy(out, reader)
+	_, err = c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: cmd.Path},
+	}, func(chunk []byte) error {
+		_, err := out.Write(chunk)
+		return err
+	})
 	return err
 }
 
@@ -379,65 +376,40 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 			}
 		}
 
-		// Fetch the object as a streaming response.
-		reader, meta, err := c.StreamObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
-			GetObjectRequest: schema.GetObjectRequest{Path: e.obj.Path},
-		})
-		if err != nil {
-			return fmt.Errorf("%s: %w", e.obj.Path, err)
-		}
-
-		// Determine file size for percentage display.
-		var fileSize int64
-		if meta != nil {
-			fileSize = meta.Size
-		} else {
-			fileSize = e.obj.Size
-		}
-
-		// Create parent directories and destination file.
+		// Create parent directories and destination file before streaming.
 		if err := os.MkdirAll(filepath.Dir(e.localAbs), 0o755); err != nil {
-			reader.Close()
 			return err
 		}
 		f, err := os.Create(e.localAbs)
 		if err != nil {
-			reader.Close()
 			return err
 		}
 
-		// Copy with progress (throttle redraws to percent-change boundaries).
+		// Stream the object body in chunks, updating progress as data arrives.
+		// fileSize is already known from the earlier ListObjects call.
+		fileSize := e.obj.Size
 		var written int64
 		var lastPct int64 = -1
-		buf := make([]byte, 64*1024)
-		for {
-			n, readErr := reader.Read(buf)
-			if n > 0 {
-				if _, werr := f.Write(buf[:n]); werr != nil {
-					f.Close()
-					reader.Close()
-					return werr
-				}
-				written += int64(n)
-				if tty && fileSize > 0 {
-					pct := written * 100 / fileSize
-					if pct != lastPct {
-						lastPct = pct
-						fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %5d%%  \x1b[1m%s\x1b[0m", fileTag, pct, name)
-					}
+		_, err = c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
+			GetObjectRequest: schema.GetObjectRequest{Path: e.obj.Path},
+		}, func(chunk []byte) error {
+			if _, werr := f.Write(chunk); werr != nil {
+				return werr
+			}
+			written += int64(len(chunk))
+			if tty && fileSize > 0 {
+				pct := written * 100 / fileSize
+				if pct != lastPct {
+					lastPct = pct
+					fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %5d%%  \x1b[1m%s\x1b[0m", fileTag, pct, name)
 				}
 			}
-			if readErr == io.EOF {
-				break
-			}
-			if readErr != nil {
-				f.Close()
-				reader.Close()
-				return fmt.Errorf("%s: %w", e.obj.Path, readErr)
-			}
-		}
+			return nil
+		})
 		f.Close()
-		reader.Close()
+		if err != nil {
+			return fmt.Errorf("%s: %w", e.obj.Path, err)
+		}
 
 		// Committed line.
 		size := fmt.Sprintf("%6s", humanSize(written))

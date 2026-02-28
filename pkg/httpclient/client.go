@@ -1,8 +1,6 @@
 package httpclient
 
 import (
-	"net/http"
-
 	// Packages
 	client "github.com/mutablelogic/go-client"
 )
@@ -14,7 +12,6 @@ import (
 // and provides typed methods for interacting with the filer API.
 type Client struct {
 	*client.Client
-	baseURL string // stored for streaming requests that bypass go-client
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -25,7 +22,6 @@ type Client struct {
 // "http://localhost:8080/api/filer".
 func New(url string, opts ...client.ClientOpt) (*Client, error) {
 	c := new(Client)
-	c.baseURL = url
 	if client, err := client.New(append(opts, client.OptEndpoint(url))...); err != nil {
 		return nil, err
 	} else {
@@ -34,7 +30,3 @@ func New(url string, opts ...client.ClientOpt) (*Client, error) {
 	return c, nil
 }
 
-// httpClient returns a plain *http.Client for streaming requests.
-func (c *Client) httpClient() *http.Client {
-	return &http.Client{}
-}
