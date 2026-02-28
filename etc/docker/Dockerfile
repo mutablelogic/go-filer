@@ -17,6 +17,7 @@ FROM --platform=${OS}/${ARCH} debian:trixie-slim
 ARG OS
 ARG ARCH
 ARG SOURCE
+ARG VERSION
 COPY --from=builder /usr/src/app/build/* /usr/local/bin/
 COPY etc/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN apt-get update -y && apt-get install -y --no-install-recommends ca-certificates gosu passwd && \
@@ -28,6 +29,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends ca-certifica
 
 # Labels
 LABEL org.opencontainers.image.source=https://${SOURCE}
+LABEL org.opencontainers.image.version=${VERSION}
 
 # Default listen address: all interfaces so the port is reachable outside the container.
 # Override with -e FILER_ADDR=<addr> at runtime.
