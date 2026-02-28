@@ -15,6 +15,12 @@ type Client struct {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// CONSTANTS
+
+// parallelHeads is the maximum number of concurrent HEAD requests issued by GetObjects.
+const parallelHeads = 10
+
+///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 // New creates a new filer HTTP client with the given base URL and options.

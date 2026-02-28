@@ -160,6 +160,9 @@ func TestGetObject(t *testing.T) {
 	if obj == nil {
 		t.Fatal("GetObject returned nil object")
 	}
+	if obj.Path != "/meta.txt" {
+		t.Errorf("path: got %q, want %q", obj.Path, "/meta.txt")
+	}
 	if obj.Size != int64(len(data)) {
 		t.Errorf("size: got %d, want %d", obj.Size, len(data))
 	}
@@ -328,6 +331,9 @@ func TestDeleteObjects_nonRecursive(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("DeleteObjects non-recursive: %v", err)
+	}
+	if len(resp.Body) != 2 {
+		t.Errorf("expected 2 deleted objects, got %d: %+v", len(resp.Body), resp.Body)
 	}
 	for _, obj := range resp.Body {
 		if strings.Contains(obj.Path, "/sub/") {

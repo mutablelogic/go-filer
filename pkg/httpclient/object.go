@@ -66,9 +66,6 @@ func (c *Client) CreateObject(ctx context.Context, name string, req schema.Creat
 	return &response, nil
 }
 
-// parallelHeads is the maximum number of concurrent HEAD requests issued by GetObjects.
-const parallelHeads = 10
-
 // GetObject retrieves metadata only for an object using HEAD (no body download).
 func (c *Client) GetObject(ctx context.Context, name string, req schema.GetObjectRequest) (*schema.Object, error) {
 	var response getObjectResponse
