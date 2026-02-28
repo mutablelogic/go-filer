@@ -156,6 +156,12 @@ func (cmd *RunServerCommand) backendOpts(ctx context.Context) ([]backend.Opt, er
 
 // serve registers HTTP handlers and runs the server until context is done.
 func serve(ctx *Globals, mgr *manager.Manager) error {
+	// Ensure TMPDIR exists so Go's os.TempDir() is usable for fileblob temp files.
+	if tmpdir := os.Getenv("TMPDIR"); tmpdir != "" {
+		if err := os.MkdirAll(tmpdir, 0o755); err != nil {
+			ctx.logger.Printf(ctx.ctx, "warning: could not create TMPDIR %s: %v", tmpdir, err)
+		}
+	}
 	// Build middleware
 	middleware := []httprouter.HTTPMiddlewareFunc{}
 	if mw, ok := ctx.logger.(server.HTTPMiddleware); ok {

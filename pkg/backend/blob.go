@@ -103,9 +103,10 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {
 		// For file:// the path is the bucket root dir - open using just the path.
+		// Preserve RawQuery so fileblob options like create_dir pass through.
 		// Temp files are written to os.TempDir() (TMPDIR env var), which should be
 		// on the same filesystem as the data dir to avoid cross-device link errors.
-		openURL := &url.URL{Scheme: "file", Path: self.url.Path}
+		openURL := &url.URL{Scheme: "file", Path: self.url.Path, RawQuery: self.url.RawQuery}
 		bucket, err = blob.OpenBucket(ctx, openURL.String())
 	} else {
 		// For s3, mem, etc.: open at root (strip path) to avoid PrefixedBucket

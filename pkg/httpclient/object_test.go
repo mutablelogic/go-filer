@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	// Packages
 	httpclient "github.com/mutablelogic/go-filer/pkg/httpclient"
@@ -195,6 +196,35 @@ func TestReadObject(t *testing.T) {
 	}
 	if obj.Size != int64(len(data)) {
 		t.Errorf("size: got %d, want %d", obj.Size, len(data))
+	}
+}
+
+func TestReadObject_ModTime(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	// Use a known time truncated to second precision, as both the HTTP header
+	// format and storage metadata only preserve second-level granularity.
+	want := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+
+	if _, err := c.CreateObject(context.Background(), "testbucket", schema.CreateObjectRequest{
+		Path:        "/modtime.txt",
+		Body:        bytes.NewReader([]byte("hello")),
+		ContentType: "text/plain",
+		ModTime:     want,
+	}); err != nil {
+		t.Fatalf("CreateObject: %v", err)
+	}
+
+	obj, err := c.ReadObject(context.Background(), "testbucket", schema.ReadObjectRequest{
+		GetObjectRequest: schema.GetObjectRequest{Path: "/modtime.txt"},
+	}, func([]byte) error { return nil })
+	if err != nil {
+		t.Fatalf("ReadObject: %v", err)
+	}
+	got := obj.ModTime.UTC().Truncate(time.Second)
+	if !got.Equal(want) {
+		t.Errorf("ModTime: got %v, want %v", got, want)
 	}
 }
 
