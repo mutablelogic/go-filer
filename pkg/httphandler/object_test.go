@@ -481,6 +481,35 @@ func Test_objectUpload_rollbackOnFailure(t *testing.T) {
 	}
 }
 
+func Test_objectUpload_fileLimit(t *testing.T) {
+	t.Setenv("FILER_UPLOAD_MAX_FILES", "1")
+
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	req := newMultipartRequest(t, "/media",
+		[][2]string{{"a.txt", "content-a"}, {"b.txt", "content-b"}},
+		nil,
+	)
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+
+	if rw.Result().StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 when upload exceeds file limit, got %d: %s", rw.Result().StatusCode, rw.Body.String())
+	}
+
+	if _, err := os.Stat(mediaPath + "/a.txt"); !os.IsNotExist(err) {
+		t.Error("expected a.txt to be rolled back after limit rejection, but it exists")
+	}
+	if _, err := os.Stat(mediaPath + "/b.txt"); !os.IsNotExist(err) {
+		t.Error("expected b.txt to be absent after limit rejection, but it exists")
+	}
+}
+
 // newMultipartRequest builds a POST request with one or more "file" form fields.
 // Each entry in files is (filename, content).
 func newMultipartRequest(t *testing.T, url string, files [][2]string, extraHeaders map[string]string) *http.Request {

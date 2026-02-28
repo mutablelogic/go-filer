@@ -8,7 +8,7 @@ A file storage server and Go SDK with a unified HTTP API across local disk, S3-c
 ## Features
 
 - **Multiple backends**: `file://` (local disk), `s3://` (AWS S3 and S3-compatible), `mem://` (in-memory)
-- **HTTP API server**: REST endpoints for listing, uploading, downloading, and deleting objects with SSE streaming for uploads
+- **HTTP API server**: REST endpoints for listing, uploading, downloading, and deleting objects with streaming multipart uploads
 - **CLI**: List, upload, download, head, and delete objects against a running server
 - **Go SDK**: Typed client library (`pkg/httpclient`) for embedding filer into Go applications
 - **Conditional create**: `If-None-Match: *` support to prevent overwriting existing objects
@@ -128,7 +128,7 @@ All endpoints are prefixed with `--http.prefix` (default `/api/filer`).
 | `HEAD` | `/api/filer/{backend}/{path}` | Get object metadata |
 | `DELETE` | `/api/filer/{backend}/{path}` | Delete an object or path prefix |
 
-Object metadata is returned in the `X-Object-Meta` response header as a JSON blob. Multi-file uploads use SSE (Server-Sent Events) to stream per-file progress events.
+Object metadata is returned in the `X-Object-Meta` response header as a JSON blob. Multi-file uploads are streamed as multipart requests and return JSON on completion.
 
 ## Go SDK
 

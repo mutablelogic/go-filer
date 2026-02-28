@@ -3,15 +3,11 @@ package httpclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"mime"
 	"net/http"
 	"net/textproto"
-	"os"
 	"path"
 	"strconv"
 	"time"
@@ -107,10 +103,10 @@ func WithCheck(fn func(fs.FileInfo, *schema.Object) bool) UploadOpt {
 	}
 }
 
-// WithProgress sets a callback that is invoked for each SSE byte-progress
-// update and once per committed file. index is the 0-based file position;
-// count is the total number of files in this upload batch (from the SSE
-// start event). written and bytes are the per-file byte counters.
+// WithProgress sets a callback that is invoked for byte-progress
+// updates and once per committed file. index is the 0-based file position;
+// count is the total number of files in this upload batch. written and
+// bytes are the per-file byte counters.
 func WithProgress(fn func(index, count int, path string, written, bytes int64)) UploadOpt {
 	return func(o *uploadOpts) error {
 		o.progress = fn
@@ -145,36 +141,20 @@ func SkipUnchanged(localInfo fs.FileInfo, remote *schema.Object) bool {
 // By default, files that already exist remotely with the same size (and modtime
 // when available) are skipped. Use WithCheck(nil) to disable this behaviour.
 func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opts ...UploadOpt) ([]schema.Object, error) {
-	debug := os.Getenv("FILER_UPLOAD_DEBUG") != ""
-	useSSE := os.Getenv("FILER_UPLOAD_SSE") != "0"
-	t0 := time.Now()
-	dbg := func(msg string, args ...any) {
-		if debug {
-			// Print to stderr with elapsed time for correlation
-			args = append([]any{time.Since(t0)}, args...)
-			_, _ = fmt.Fprintf(os.Stderr, "[upload-debug %+v] "+msg+"\n", args...)
-		}
-	}
-	dbg("begin CreateObjects name=%q opts=%d", name, len(opts))
-
 	o := &uploadOpts{check: SkipUnchanged}
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
 			return nil, err
 		}
 	}
-	dbg("config prefix=%q filter=%v check=%v progress=%v sse=%v", o.prefix, o.filter != nil, o.check != nil, o.progress != nil, useSSE)
 
 	entries, err := walkFS(fsys, o.filter)
 	if err != nil {
-		dbg("walkFS error: %v", err)
 		return nil, err
 	}
 	if len(entries) == 0 {
-		dbg("no local entries to upload")
 		return nil, nil
 	}
-	dbg("walked %d entries", len(entries))
 
 	// Pre-filter: HEAD all entries in parallel and ask the check function
 	// whether each upload should be skipped.
@@ -183,10 +163,8 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		for i, e := range entries {
 			reqs[i] = schema.GetObjectRequest{Path: path.Join("/", o.prefix, e.path)}
 		}
-		dbg("preflight HEAD for %d entries", len(reqs))
 		remotes, err := c.GetObjects(ctx, name, reqs)
 		if err != nil && ctx.Err() != nil {
-			dbg("preflight canceled: %v", ctx.Err())
 			return nil, ctx.Err()
 		}
 		filtered := entries[:0]
@@ -198,10 +176,8 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		entries = filtered
 	}
 	if len(entries) == 0 {
-		dbg("all entries skipped by preflight check")
 		return nil, nil
 	}
-	dbg("after skip check %d entries", len(entries))
 
 	// Open every file. Keep track of all opened handles so we can close them
 	// after the HTTP round-trip completes (the streaming encoder reads bodies
@@ -215,7 +191,6 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			for _, p := range parts {
 				p.Body.Close()
 			}
-			dbg("open error path=%s err=%v", e.path, err)
 			return nil, err
 		}
 		remotePath := path.Join("/", o.prefix, e.path)
@@ -247,7 +222,7 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 		if sz := e.info.Size(); sz > 0 {
 			h.Set(types.ContentLengthHeader, strconv.FormatInt(sz, 10))
 		}
-		if !useSSE && o.progress != nil {
+		if o.progress != nil {
 			total := e.info.Size()
 			body = newUploadProgressReadCloser(body, total, func(written, bytes int64) {
 				o.progress(i, len(entries), remotePath, written, bytes)
@@ -260,122 +235,38 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 			ContentType: ct,
 			Header:      h,
 		})
-		dbg("prepared part path=%s size=%d ct=%s", remotePath, e.info.Size(), ct)
 	}
 	defer func() {
 		for _, p := range parts {
 			p.Body.Close()
 		}
 	}()
-	dbg("built multipart parts=%d totalBytes=%d", len(parts), totalBytes)
 
 	// Build a streaming multipart payload. The encoder reflect-walks the
 	// struct and writes each types.File as a separate multipart "file" part.
-	// When SSE is enabled (default), request text/event-stream so the server
-	// branches to objectUploadSSEStream and emits progressive upload events.
-	// Set FILER_UPLOAD_SSE=0 to use the non-SSE upload path (single JSON
-	// response on completion), which avoids full-duplex request/response.
 	upload := struct {
 		Files []types.File `json:"file"`
 	}{Files: parts}
-	accept := client.ContentTypeTextStream
-	if !useSSE {
-		accept = types.ContentTypeJSON
-	}
-	payload, err := client.NewStreamingMultipartRequest(&upload, accept)
+	payload, err := client.NewStreamingMultipartRequest(&upload, types.ContentTypeJSON)
 	if err != nil {
-		dbg("multipart build error: %v", err)
 		return nil, err
 	}
 
-	// Collect committed objects and the first upload error from SSE events.
-	var (
-		results    []schema.Object
-		uploadErr  error
-		totalFiles int // populated from UploadStartEvent
-	)
-
-	if !useSSE {
-		dbg("starting non-SSE POST parts=%d totalBytes=%d", len(parts), totalBytes)
-		if err := c.DoWithContext(ctx, payload, &results,
-			client.OptPath(name),
-			client.OptReqHeader("X-Upload-Count", strconv.Itoa(len(parts))),
-			client.OptNoTimeout(),
-		); err != nil {
-			dbg("DoWithContext (non-SSE) error: %v", err)
-			return nil, err
-		}
-		if o.progress != nil {
-			for index, obj := range results {
-				o.progress(index, len(results), obj.Path, obj.Size, obj.Size)
-			}
-		}
-		dbg("completed upload (non-SSE) results=%d", len(results))
-		return results, nil
-	}
-	sseCallback := func(ev client.TextStreamEvent) error {
-		switch ev.Event {
-		case schema.UploadStartEvent:
-			var s schema.UploadStart
-			if err := json.Unmarshal([]byte(ev.Data), &s); err != nil {
-				dbg("sse start decode error: %v data=%q", err, ev.Data)
-				return err
-			}
-			totalFiles = s.Files
-			dbg("sse start files=%d", totalFiles)
-		case schema.UploadFileEvent:
-			var f schema.UploadFile
-			if err := json.Unmarshal([]byte(ev.Data), &f); err != nil {
-				dbg("sse progress decode error: %v data=%q", err, ev.Data)
-				return err
-			}
-			dbg("sse progress idx=%d/%d path=%s written=%d bytes=%d", f.Index, totalFiles, f.Path, f.Written, f.Bytes)
-			if o.progress != nil {
-				o.progress(f.Index, totalFiles, f.Path, f.Written, f.Bytes)
-			}
-		case schema.UploadCompleteEvent:
-			var obj schema.Object
-			if err := json.Unmarshal([]byte(ev.Data), &obj); err != nil {
-				dbg("sse complete decode error: %v data=%q", err, ev.Data)
-				return err
-			}
-			results = append(results, obj)
-			dbg("sse complete path=%s size=%d count=%d/%d", obj.Path, obj.Size, len(results), totalFiles)
-			if o.progress != nil {
-				o.progress(len(results)-1, totalFiles, obj.Path, obj.Size, obj.Size)
-			}
-		case schema.UploadErrorEvent:
-			var e schema.UploadError
-			if err := json.Unmarshal([]byte(ev.Data), &e); err != nil {
-				dbg("sse error decode error: %v data=%q", err, ev.Data)
-				return err
-			}
-			uploadErr = errors.Join(uploadErr, errors.New(e.Message))
-			dbg("sse error %s", e.Message)
-		default:
-			dbg("sse unknown event=%q data=%q", ev.Event, ev.Data)
-		}
-		return nil
-	}
-
-	// POST to /{name}. ObjectListHandler handles POST by calling objectUploadSSE
-	// (because we requested text/event-stream); an empty URL path normalises to
-	// "/" on the server, which sets isDir=true so every file is stored at its
-	// File.Path relative to the backend root.
-	// We pass &results as out so the client's "if out == nil { return }" guard
-	// doesn't short-circuit before it reaches the ContentTypeTextStream branch
-	// that fires the SSE callback. The text-stream branch ignores out entirely.
+	results := make([]schema.Object, 0, len(parts))
+	_ = totalBytes
 	if err := c.DoWithContext(ctx, payload, &results,
 		client.OptPath(name),
 		client.OptReqHeader("X-Upload-Count", strconv.Itoa(len(parts))),
-		client.OptTextStreamCallback(sseCallback),
 		client.OptNoTimeout(),
 	); err != nil {
-		dbg("DoWithContext error: %v", err)
 		return nil, err
 	}
-	dbg("completed upload results=%d err=%v", len(results), uploadErr)
-	return results, uploadErr
+	if o.progress != nil {
+		for index, obj := range results {
+			o.progress(index, len(results), obj.Path, obj.Size, obj.Size)
+		}
+	}
+	return results, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////

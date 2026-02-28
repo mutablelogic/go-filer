@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -132,13 +133,8 @@ func objectDelete(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) 
 }
 
 func objectUpload(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
-	// For SSE: stream each multipart part directly to the backend one-at-a-time,
-	// avoiding ParseMultipartForm which buffers the entire body to memory or /tmp (tmpfs).
-	if accept, _ := types.AcceptContentType(r); accept == types.ContentTypeTextStream {
-		return objectUploadSSEStream(w, r, mgr)
-	}
-	// Non-SSE: still stream multipart parts directly to the backend to avoid
-	// buffering large request bodies in memory or /tmp.
+	// Stream multipart parts directly to the backend to avoid buffering
+	// large request bodies in memory or /tmp.
 	return objectUploadJSONStream(w, r, mgr)
 }
 
@@ -386,170 +382,7 @@ func mergeMeta(shared, perFile schema.ObjectMeta) schema.ObjectMeta {
 	return merged
 }
 
-// objectUploadSSEStream handles an SSE multipart upload by reading parts one at
-// a time via r.MultipartReader, streaming each directly to the backend without
-// first buffering the entire request body.  This avoids the OOM / hang caused
-// by ParseMultipartForm spilling large uploads to /tmp (a RAM-backed tmpfs
-// inside Docker containers).
-//
-// The caller should set the X-Upload-Count request header to the number of
-// file parts when it knows the count in advance; the value is forwarded in the
-// UploadStart event so the client can render accurate progress bars.
-//
-// Event sequence:
-//
-//	start    — once, before the loop; payload: schema.UploadStart
-//	file     — written==0 on first emission (file started); then every 64 KiB; payload: schema.UploadFile
-//	complete — after each file is committed; payload: schema.Object
-//	error    — on failure, after rollback; payload: schema.UploadError; stream closed immediately after
-//	done     — all files committed successfully; payload: schema.UploadDone
-func objectUploadSSEStream(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
-	// Allow interleaved reads from the request body and writes to the
-	// response. Without this, Go's HTTP/1.1 server stalls response
-	// flushes until the request body is fully consumed, deadlocking the
-	// SSE event channel.
-	if rc := http.NewResponseController(w); rc != nil {
-		_ = rc.EnableFullDuplex() // ignore error for httptest.ResponseRecorder
-	}
-
-	mr, err := r.MultipartReader()
-	if err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	}
-
-	sharedMeta := extractMeta(r.Header)
-	basePath := types.NormalisePath(r.PathValue("path"))
-	name := r.PathValue("name")
-	isDir := basePath == "/" || strings.HasSuffix(r.URL.Path, "/")
-
-	// X-Upload-Count lets the client declare how many file parts to expect so
-	// the progress UI can show "file 1 of N".
-	var fileCount int
-	if v := r.Header.Get("X-Upload-Count"); v != "" {
-		if n, err2 := strconv.Atoi(v); err2 == nil {
-			fileCount = n
-		}
-	}
-
-	// Open the SSE stream — commits 200 OK; no HTTP errors are possible after this point.
-	// X-Accel-Buffering tells nginx to disable response buffering for this
-	// request so SSE events are flushed to the client immediately.
-	w.Header().Set("X-Accel-Buffering", "no")
-	stream := httpresponse.NewTextStream(w)
-	stream.Write(schema.UploadStartEvent, schema.UploadStart{Files: fileCount})
-
-	results := make([]schema.Object, 0)
-	var (
-		totalWritten int64
-		index        int
-	)
-
-	rollback := func(uploadErr error) error {
-		var errs []error
-		for _, obj := range results {
-			if _, err := mgr.DeleteObject(r.Context(), name, schema.DeleteObjectRequest{Path: obj.Path}); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		return errors.Join(append([]error{uploadErr}, errs...)...)
-	}
-
-	for {
-		part, err := mr.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			rbErr := rollback(err)
-			stream.Write(schema.UploadErrorEvent, schema.UploadError{
-				Index:   index,
-				Message: rbErr.Error(),
-			})
-			return stream.Close()
-		}
-
-		// Skip non-file form fields (e.g. plain text inputs).
-		if part.FormName() != "file" {
-			continue
-		}
-
-		// The multipart encoder stores only the basename in Content-Disposition
-		// (per RFC 7578 §4.2) and preserves the full relative path in the
-		// X-Path part header when directory components are present.
-		filename := part.Header.Get(types.ContentPathHeader)
-		if filename == "" {
-			filename = part.FileName()
-		}
-		if filename == "" {
-			filename = fmt.Sprintf("file-%d", index)
-		}
-
-		destPath := basePath
-		if isDir {
-			destPath = types.JoinPath(basePath, filename)
-		}
-
-		// Wrap part in a types.File so buildCreateRequest can extract metadata.
-		// Body is io.NopCloser because *multipart.Part only implements io.Reader.
-		f := types.File{
-			Path:        filename,
-			Body:        io.NopCloser(part),
-			ContentType: part.Header.Get("Content-Type"),
-			Header:      part.Header,
-		}
-
-		var partTotal int64
-		if v := f.Header.Get(types.ContentLengthHeader); v != "" {
-			partTotal, _ = strconv.ParseInt(v, 10, 64)
-		}
-
-		// Emit file-start event (Written == 0 signals the file has begun).
-		stream.Write(schema.UploadFileEvent, schema.UploadFile{
-			Index:   index,
-			Path:    destPath,
-			Written: 0,
-			Bytes:   partTotal,
-		})
-
-		// Wrap part in a progress reader so we emit progress events; pass pr as
-		// the body so buildCreateRequest uses it rather than f.Body.
-		idx, dst := index, destPath
-		pr := newProgressReader(part, partTotal, func(written, total int64) {
-			stream.Write(schema.UploadFileEvent, schema.UploadFile{
-				Index:   idx,
-				Path:    dst,
-				Written: written,
-				Bytes:   total,
-			})
-		})
-
-		obj, err := mgr.CreateObject(r.Context(), name, buildCreateRequest(f, sharedMeta, destPath, pr))
-		if err != nil {
-			rbErr := rollback(err)
-			stream.Write(schema.UploadErrorEvent, schema.UploadError{
-				Index:   index,
-				Path:    destPath,
-				Message: rbErr.Error(),
-			})
-			return stream.Close()
-		}
-
-		results = append(results, *obj)
-		totalWritten += obj.Size
-		stream.Write(schema.UploadCompleteEvent, obj)
-		index++
-	}
-
-	// Drain any trailing data from the request body (e.g. the multipart
-	// epilogue after the final boundary) so the HTTP/1.1 connection can be
-	// safely reused for keep-alive.
-	_, _ = io.Copy(io.Discard, r.Body)
-
-	stream.Write(schema.UploadDoneEvent, schema.UploadDone{Files: len(results), Bytes: totalWritten})
-	return stream.Close()
-}
-
-// objectUploadJSONStream handles multipart uploads without SSE by streaming
+// objectUploadJSONStream handles multipart uploads by streaming
 // each file part directly to the backend and returning a JSON array on success.
 // This avoids buffering the entire request body in memory/tmpfs.
 func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
@@ -558,16 +391,32 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
 	}
 
+	maxFiles := uploadMaxFilesLimit()
+	resultsCap := 0
+	if declared := strings.TrimSpace(r.Header.Get("X-Upload-Count")); declared != "" {
+		n, err := strconv.Atoi(declared)
+		if err != nil || n < 0 {
+			return httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("invalid X-Upload-Count value %q", declared))
+		}
+		if maxFiles > 0 && n > maxFiles {
+			return httpresponse.Error(w, httpresponse.Err(http.StatusRequestEntityTooLarge).Withf(
+				"too many files in upload (%d > %d limit)", n, maxFiles,
+			))
+		}
+		resultsCap = n
+	}
+
 	sharedMeta := extractMeta(r.Header)
 	basePath := types.NormalisePath(r.PathValue("path"))
 	name := r.PathValue("name")
 	isDir := basePath == "/" || strings.HasSuffix(r.URL.Path, "/")
 
-	results := make([]schema.Object, 0)
+	results := make([]schema.Object, 0, resultsCap)
+	uploadedPaths := make([]string, 0, resultsCap)
 	rollback := func(uploadErr error) error {
 		var errs []error
-		for _, obj := range results {
-			if _, err := mgr.DeleteObject(r.Context(), name, schema.DeleteObjectRequest{Path: obj.Path}); err != nil {
+		for _, p := range uploadedPaths {
+			if _, err := mgr.DeleteObject(r.Context(), name, schema.DeleteObjectRequest{Path: p}); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -589,6 +438,11 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 		}
 
 		fileCount++
+		if maxFiles > 0 && fileCount > maxFiles {
+			return httpresponse.Error(w, rollback(httpresponse.Err(http.StatusRequestEntityTooLarge).Withf(
+				"too many files in upload (%d > %d limit)", fileCount, maxFiles,
+			)))
+		}
 		if !isDir && fileCount > 1 {
 			return httpresponse.Error(w, rollback(httpresponse.ErrBadRequest.Withf(
 				"cannot upload %d files to explicit path %q; add a trailing slash to upload to a directory",
@@ -620,6 +474,7 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 		if err != nil {
 			return httpresponse.Error(w, rollback(err))
 		}
+		uploadedPaths = append(uploadedPaths, obj.Path)
 		results = append(results, *obj)
 	}
 
@@ -628,4 +483,17 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 	}
 
 	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), results)
+}
+
+func uploadMaxFilesLimit() int {
+	const def = 1000
+	v := strings.TrimSpace(os.Getenv("FILER_UPLOAD_MAX_FILES"))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return def
+	}
+	return n
 }
