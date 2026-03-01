@@ -133,17 +133,38 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	resp, err := c.DeleteObjects(ctx.ctx, cmd.Backend, schema.DeleteObjectsRequest{
-		Path:      cmd.Path,
-		Recursive: cmd.Recursive,
-	})
+
+	// Use bulk (prefix) semantics when:
+	//   --recursive is set, OR
+	//   path is the backend root ("/"), OR
+	//   path has a trailing slash (explicit prefix notation).
+	// Otherwise fall through to single-object semantics so that a missing
+	// path produces a not-found error rather than silent success.
+	isPrefix := cmd.Recursive || cmd.Path == "/" || strings.HasSuffix(cmd.Path, "/")
+
+	if isPrefix {
+		resp, err := c.DeleteObjects(ctx.ctx, cmd.Backend, schema.DeleteObjectsRequest{
+			Path:      cmd.Path,
+			Recursive: cmd.Recursive,
+		})
+		if err != nil {
+			return err
+		}
+		if ctx.Debug {
+			return prettyJSON(resp)
+		}
+		return printObjects(resp.Body)
+	}
+
+	// Single-object delete: the server returns 404 if the object does not exist.
+	obj, err := c.DeleteObject(ctx.ctx, cmd.Backend, schema.DeleteObjectRequest{Path: cmd.Path})
 	if err != nil {
 		return err
 	}
 	if ctx.Debug {
-		return prettyJSON(resp)
+		return prettyJSON(obj)
 	}
-	return printObjects(resp.Body)
+	return printObjects([]schema.Object{*obj})
 }
 
 func (cmd *DownloadCommand) Run(ctx *Globals) error {
@@ -416,10 +437,14 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 func printListing(resp *schema.ListObjectsResponse) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	writeObjectRows(w, resp.Body)
+	sep := ""
+	if len(resp.Body) > 0 {
+		sep = "\n"
+	}
 	if len(resp.Body) < resp.Count {
-		fmt.Fprintf(os.Stdout, "\n  %d of %d object(s)\n", len(resp.Body), resp.Count)
+		fmt.Fprintf(os.Stdout, "%s  %d of %d object(s)\n", sep, len(resp.Body), resp.Count)
 	} else {
-		fmt.Fprintf(os.Stdout, "\n  %d object(s)\n", resp.Count)
+		fmt.Fprintf(os.Stdout, "%s  %d object(s)\n", sep, resp.Count)
 	}
 	return nil
 }
@@ -429,7 +454,11 @@ func printListing(resp *schema.ListObjectsResponse) error {
 func printObjects(objs []schema.Object) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	writeObjectRows(w, objs)
-	fmt.Fprintf(os.Stdout, "\n  %d object(s) deleted\n", len(objs))
+	sep := ""
+	if len(objs) > 0 {
+		sep = "\n"
+	}
+	fmt.Fprintf(os.Stdout, "%s  %d object(s) deleted\n", sep, len(objs))
 	return nil
 }
 
@@ -438,11 +467,18 @@ func writeObjectRows(w *tabwriter.Writer, objs []schema.Object) {
 	bold := isTerminal(os.Stdout)
 	for _, obj := range objs {
 		name := strings.TrimPrefix(obj.Path, "/")
+		if obj.IsDir {
+			name = name + "/"
+		}
 		if bold {
 			name = "\x1b[1m" + name + "\x1b[0m"
 		}
+		sizeCol := humanSize(obj.Size)
+		if obj.IsDir {
+			sizeCol = "DIR"
+		}
 		fmt.Fprintf(w, "%8s\t%s\t%-30s\t%s\n",
-			humanSize(obj.Size),
+			sizeCol,
 			formatModTime(obj.ModTime),
 			shortContentType(obj.ContentType, obj.Path),
 			name,

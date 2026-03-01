@@ -212,6 +212,58 @@ func Test_objectList_recursive(t *testing.T) {
 	})
 }
 
+// Test_objectList_isDirNonRecursive verifies that a non-recursive listing returns
+// directory placeholder entries with IsDir=true for sub-directories.
+func Test_objectList_isDirNonRecursive(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath+"/subdir")
+
+	// A file at root and one inside the subdir.
+	if err := os.WriteFile(mediaPath+"/root.txt", []byte("x"), 0644); err != nil {
+		t.Fatalf("create root.txt: %v", err)
+	}
+	if err := os.WriteFile(mediaPath+"/subdir/child.txt", []byte("x"), 0644); err != nil {
+		t.Fatalf("create child.txt: %v", err)
+	}
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	// Non-recursive listing of the root — should see root.txt and subdir/ as a directory.
+	req := httptest.NewRequest(http.MethodGet, "/media?limit=100", nil)
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+
+	if rw.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rw.Result().StatusCode, rw.Body.String())
+	}
+
+	var out schema.ListObjectsResponse
+	if err := json.NewDecoder(rw.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var foundDir, foundFile bool
+	for _, obj := range out.Body {
+		if obj.IsDir {
+			foundDir = true
+			if obj.Size != 0 {
+				t.Errorf("directory entry %q should have Size=0, got %d", obj.Path, obj.Size)
+			}
+		}
+		if obj.Path == "/root.txt" && !obj.IsDir {
+			foundFile = true
+		}
+	}
+	if !foundDir {
+		t.Errorf("expected at least one IsDir=true entry in non-recursive listing; got %+v", out.Body)
+	}
+	if !foundFile {
+		t.Errorf("expected /root.txt with IsDir=false in listing; got %+v", out.Body)
+	}
+}
+
 // Test_objectList_pathFilter verifies that ?path=/subdir restricts the listing
 // to objects whose path starts with the given prefix.
 func Test_objectList_pathFilter(t *testing.T) {
@@ -261,8 +313,8 @@ func Test_objectList_pathFilter(t *testing.T) {
 	}
 }
 
-// Test_objectList_methodNotAllowed verifies that methods other than GET and POST
-// on /{name} return 405.
+// Test_objectList_methodNotAllowed verifies that methods other than GET, POST,
+// and DELETE on /{name} return 405.
 func Test_objectList_methodNotAllowed(t *testing.T) {
 	tempDir := t.TempDir()
 	mediaPath := tempDir + "/media"
@@ -282,6 +334,81 @@ func Test_objectList_methodNotAllowed(t *testing.T) {
 			mux.ServeHTTP(rw, req)
 			if rw.Result().StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("expected 405, got %d", rw.Result().StatusCode)
+			}
+		})
+	}
+}
+
+// Test_objectList_deleteRoot exercises the three DELETE /{name} variants:
+//
+//	DELETE /media                 — no ?recursive, defaults to Recursive=false
+//	DELETE /media?recursive=false — explicit non-recursive
+//	DELETE /media?recursive=true  — recursive, removes entire tree
+//
+// Non-recursive runs verify that root-level objects are deleted while nested
+// objects survive. The recursive run verifies both are removed.
+func Test_objectList_deleteRoot(t *testing.T) {
+	setup := func(t *testing.T) (string, string) {
+		t.Helper()
+		tempDir := t.TempDir()
+		mediaPath := tempDir + "/media"
+		mustMkDir(t, mediaPath+"/subdir")
+		for _, f := range []string{"root.txt", "subdir/nested.txt"} {
+			if err := os.WriteFile(mediaPath+"/"+f, []byte("x"), 0644); err != nil {
+				t.Fatalf("create %s: %v", f, err)
+			}
+		}
+		return tempDir, mediaPath
+	}
+
+	for _, tc := range []struct {
+		url        string
+		rootGone   bool // expect root.txt deleted
+		nestedGone bool // expect subdir/nested.txt deleted
+	}{
+		{"/media", true, false},                 // default: non-recursive
+		{"/media?recursive=false", true, false}, // explicit non-recursive
+		{"/media?recursive=true", true, true},   // recursive: wipes everything
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			_, mediaPath := setup(t)
+			mgr := newTestManager(t, "file://media"+mediaPath)
+			mux := serveMux(mgr)
+
+			req := httptest.NewRequest(http.MethodDelete, tc.url, nil)
+			rw := httptest.NewRecorder()
+			mux.ServeHTTP(rw, req)
+
+			if rw.Result().StatusCode != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rw.Result().StatusCode, rw.Body.String())
+			}
+
+			// Response must be a valid JSON array (DeleteObjectsResponse).
+			var resp schema.DeleteObjectsResponse
+			if err := json.NewDecoder(rw.Result().Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+
+			rootMissing := func() bool {
+				_, err := os.Stat(mediaPath + "/root.txt")
+				return os.IsNotExist(err)
+			}
+			nestedMissing := func() bool {
+				_, err := os.Stat(mediaPath + "/subdir/nested.txt")
+				return os.IsNotExist(err)
+			}
+
+			if tc.rootGone && !rootMissing() {
+				t.Error("expected root.txt to be deleted")
+			}
+			if !tc.rootGone && rootMissing() {
+				t.Error("expected root.txt to survive")
+			}
+			if tc.nestedGone && !nestedMissing() {
+				t.Error("expected subdir/nested.txt to be deleted")
+			}
+			if !tc.nestedGone && nestedMissing() {
+				t.Error("expected subdir/nested.txt to survive")
 			}
 		})
 	}

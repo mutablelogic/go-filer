@@ -60,11 +60,17 @@ func TestListObjects_Mem(t *testing.T) {
 		assert.GreaterOrEqual(len(resp.Body), 2)
 
 		var keys []string
+		dirPaths := make(map[string]bool)
 		for _, obj := range resp.Body {
 			keys = append(keys, obj.Path)
+			if obj.IsDir {
+				dirPaths[obj.Path] = true
+			}
 		}
 		assert.Contains(keys, "/file1.txt")
 		assert.Contains(keys, "/file2.txt")
+		// subdir/ must appear as a directory entry
+		assert.True(dirPaths["/subdir/"] || dirPaths["/subdir"], "expected /subdir to be listed as IsDir=true")
 	})
 
 	t.Run("list root recursive", func(t *testing.T) {

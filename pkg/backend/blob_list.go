@@ -69,6 +69,7 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 			o := schema.Object{
 				Name:    b.Name(),
 				Path:    b.pathFromStorageKey(obj.Key),
+				IsDir:   obj.IsDir,
 				Size:    obj.Size,
 				ModTime: obj.ModTime,
 			}

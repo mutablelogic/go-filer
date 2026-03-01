@@ -262,3 +262,18 @@ func TestCreateObjects_skipUnchangedModtime(t *testing.T) {
 		t.Errorf("expected 1 object (modtime changed), got %d", len(objs3))
 	}
 }
+
+// TestWithBatchSize_NegativeError verifies that a negative batch size is rejected
+// by WithBatchSize before any network activity.
+func TestWithBatchSize_NegativeError(t *testing.T) {
+	c, cleanup := newTestServer(t, "mem://testbucket")
+	defer cleanup()
+
+	_, err := c.CreateObjects(context.Background(), "testbucket",
+		fstest.MapFS{"a.txt": {Data: []byte("x")}},
+		httpclient.WithBatchSize(-1),
+	)
+	if err == nil {
+		t.Error("expected error for negative batch size, got nil")
+	}
+}

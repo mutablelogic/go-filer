@@ -1,9 +1,13 @@
 package httphandler
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	// Packages
+	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -64,5 +68,46 @@ func Test_matchETags_table(t *testing.T) {
 					tc.header, tc.etag, tc.strong, got, tc.want)
 			}
 		})
+	}
+}
+
+func Test_checkPreconditions_ifNoneMatch_etagMatch(t *testing.T) {
+	// If-None-Match with a matching ETag should yield 304 Not Modified.
+	obj := &schema.Object{ETag: `"abc123"`}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("If-None-Match", `"abc123"`)
+	rw := httptest.NewRecorder()
+
+	if !checkPreconditions(rw, req, obj) {
+		t.Fatal("expected checkPreconditions to return true (short-circuit 304)")
+	}
+	if rw.Code != http.StatusNotModified {
+		t.Errorf("expected 304 Not Modified, got %d", rw.Code)
+	}
+}
+
+func Test_checkPreconditions_ifMatch_passes(t *testing.T) {
+	// If-Match with a matching ETag should allow the request to proceed (return false).
+	obj := &schema.Object{ETag: `"abc123"`}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("If-Match", `"abc123"`)
+	rw := httptest.NewRecorder()
+
+	if checkPreconditions(rw, req, obj) {
+		t.Fatal("expected checkPreconditions to return false (request should proceed)")
+	}
+	if rw.Code != http.StatusOK {
+		t.Errorf("expected 200 (no precondition failure), got %d", rw.Code)
+	}
+}
+
+func Test_checkPreconditions_noHeaders(t *testing.T) {
+	// No conditional headers → always returns false.
+	obj := &schema.Object{ETag: `"abc123"`, ModTime: time.Now()}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rw := httptest.NewRecorder()
+
+	if checkPreconditions(rw, req, obj) {
+		t.Fatal("expected false with no conditional headers")
 	}
 }

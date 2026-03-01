@@ -27,7 +27,7 @@ func ObjectListHandler(mgr *manager.Manager) (string, http.HandlerFunc, *openapi
 			case http.MethodPost:
 				_ = objectUpload(w, r, mgr)
 			case http.MethodDelete:
-				_ = objectDelete(w, r, mgr)
+				_ = objectDeleteRoot(w, r, mgr)
 			default:
 				_ = httpresponse.Error(w, httpresponse.Err(http.StatusMethodNotAllowed), r.Method)
 			}

@@ -1214,3 +1214,148 @@ func Test_objectDelete_badQueryParam(t *testing.T) {
 			rw.Result().StatusCode, rw.Body.String())
 	}
 }
+
+// Test_checkPreconditions_IfUnmodifiedSince verifies that GET returns 412 when
+// the stored object is newer than the If-Unmodified-Since header value.
+func Test_checkPreconditions_IfUnmodifiedSince(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	// PUT with a fixed Last-Modified so the stored modtime is deterministic.
+	putReq := httptest.NewRequest(http.MethodPut, "/media/cond.txt", strings.NewReader("hello"))
+	putReq.Header.Set("Content-Type", "text/plain")
+	putReq.Header.Set("Last-Modified", "Wed, 01 Jan 2025 00:00:00 GMT")
+	putRW := httptest.NewRecorder()
+	mux.ServeHTTP(putRW, putReq)
+	if putRW.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("PUT failed: %d %s", putRW.Result().StatusCode, putRW.Body.String())
+	}
+
+	// GET with If-Unmodified-Since set before the stored modtime (2024 < 2025):
+	// modtime.After(2024) is true → 412 Precondition Failed.
+	getReq := httptest.NewRequest(http.MethodGet, "/media/cond.txt", nil)
+	getReq.Header.Set("If-Unmodified-Since", "Wed, 01 Jan 2024 00:00:00 GMT")
+	getRW := httptest.NewRecorder()
+	mux.ServeHTTP(getRW, getReq)
+	if getRW.Result().StatusCode != http.StatusPreconditionFailed {
+		t.Errorf("expected 412 Precondition Failed, got %d", getRW.Result().StatusCode)
+	}
+}
+
+// Test_checkPreconditions_IfModifiedSince verifies that GET returns 304 when the
+// stored object has NOT been modified after the If-Modified-Since header value.
+func Test_checkPreconditions_IfModifiedSince(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	putReq := httptest.NewRequest(http.MethodPut, "/media/cond2.txt", strings.NewReader("hello"))
+	putReq.Header.Set("Content-Type", "text/plain")
+	putReq.Header.Set("Last-Modified", "Wed, 01 Jan 2025 00:00:00 GMT")
+	putRW := httptest.NewRecorder()
+	mux.ServeHTTP(putRW, putReq)
+	if putRW.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("PUT failed: %d %s", putRW.Result().StatusCode, putRW.Body.String())
+	}
+
+	// GET with If-Modified-Since set after the stored modtime (2026 > 2025):
+	// !modtime.After(2026) is true → 304 Not Modified.
+	getReq := httptest.NewRequest(http.MethodGet, "/media/cond2.txt", nil)
+	getReq.Header.Set("If-Modified-Since", "Thu, 01 Jan 2026 00:00:00 GMT")
+	getRW := httptest.NewRecorder()
+	mux.ServeHTTP(getRW, getReq)
+	if getRW.Result().StatusCode != http.StatusNotModified {
+		t.Errorf("expected 304 Not Modified, got %d", getRW.Result().StatusCode)
+	}
+}
+
+// Test_objectUpload_partLastModified verifies that a Last-Modified header on a
+// multipart file part is stored as the object's modification time.
+func Test_objectUpload_partLastModified(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaPath := tempDir + "/media"
+	mustMkDir(t, mediaPath)
+
+	mgr := newTestManager(t, "file://media"+mediaPath)
+	mux := serveMux(mgr)
+
+	const fixedModTime = "Wed, 01 Jan 2025 12:00:00 GMT"
+	req := newMultipartRequestFromSpecs(t, "/media/",
+		[]partSpec{
+			{
+				filename: "timed.txt",
+				content:  "content",
+				headers:  map[string]string{"Last-Modified": fixedModTime},
+			},
+		},
+		nil,
+	)
+	rw := httptest.NewRecorder()
+	mux.ServeHTTP(rw, req)
+	if rw.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rw.Result().StatusCode, rw.Body.String())
+	}
+
+	var objs []schema.Object
+	if err := json.NewDecoder(rw.Body).Decode(&objs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(objs) != 1 {
+		t.Fatalf("expected 1 object, got %d", len(objs))
+	}
+
+	expected, _ := http.ParseTime(fixedModTime)
+	if !objs[0].ModTime.Equal(expected) {
+		t.Errorf("expected modtime %v, got %v", expected, objs[0].ModTime)
+	}
+}
+
+// Test_objectDelete_rootNonRecursive verifies that DELETE /media (no path, no
+// ?recursive) uses bulk-delete semantics defaulting to non-recursive — i.e. it
+// only deletes immediate root-level objects and leaves sub-directories intact.
+// Previously this fell through to a single-object DeleteObject("/") which was
+// meaningless at the virtual root.
+func Test_objectDelete_rootNonRecursive(t *testing.T) {
+	for _, url := range []string{
+		"/media",                 // no ?recursive: must now default to Recursive=false
+		"/media?recursive=false", // explicit non-recursive: same behaviour
+	} {
+		t.Run(url, func(t *testing.T) {
+			tempDir := t.TempDir()
+			mediaPath := tempDir + "/media"
+			mustMkDir(t, mediaPath+"/subdir")
+
+			for _, f := range []string{"root.txt", "subdir/nested.txt"} {
+				if err := os.WriteFile(mediaPath+"/"+f, []byte("x"), 0644); err != nil {
+					t.Fatalf("create %s: %v", f, err)
+				}
+			}
+
+			mgr := newTestManager(t, "file://media"+mediaPath)
+			mux := serveMux(mgr)
+
+			req := httptest.NewRequest(http.MethodDelete, url, nil)
+			rw := httptest.NewRecorder()
+			mux.ServeHTTP(rw, req)
+			if rw.Result().StatusCode != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rw.Result().StatusCode, rw.Body.String())
+			}
+
+			// root.txt (immediate child) must be gone.
+			if _, err := os.Stat(mediaPath + "/root.txt"); !os.IsNotExist(err) {
+				t.Error("expected root.txt to be deleted")
+			}
+			// subdir/nested.txt (nested) must survive non-recursive delete.
+			if _, err := os.Stat(mediaPath + "/subdir/nested.txt"); err != nil {
+				t.Errorf("expected subdir/nested.txt to survive, got: %v", err)
+			}
+		})
+	}
+}
