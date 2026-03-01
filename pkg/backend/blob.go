@@ -17,6 +17,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	otelaws "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 	blob "gocloud.dev/blob"
 	s3blob "gocloud.dev/blob/s3blob"
 	gcerrors "gocloud.dev/gcerrors"
@@ -98,6 +99,11 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 				o.BaseEndpoint = aws.String(epURL)
 				o.UsePathStyle = true
 			})
+		}
+		// Inject OTel instrumentation so each S3 API call produces a child span,
+		// but only when a tracer is configured to avoid overhead in non-tracing deployments.
+		if self.tracer != nil {
+			otelaws.AppendMiddlewares(&cfg.APIOptions)
 		}
 		client := s3svc.NewFromConfig(cfg, s3Opts...)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)

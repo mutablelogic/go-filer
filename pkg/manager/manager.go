@@ -10,6 +10,7 @@ import (
 	backend "github.com/mutablelogic/go-filer/pkg/backend"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -74,7 +75,10 @@ func (manager *Manager) CreateObject(ctx context.Context, name string, req schem
 
 	// OTEL span
 	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("CreateObject"))
+	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("CreateObject"),
+		attribute.String("name", name),
+		attribute.String("request", req.String()),
+	)
 	defer func() { endFunc(result) }()
 
 	// Run the backend
@@ -91,7 +95,10 @@ func (manager *Manager) ReadObject(ctx context.Context, name string, req schema.
 
 	// OTEL span
 	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ReadObject"))
+	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ReadObject"),
+		attribute.String("name", name),
+		attribute.String("request", req.String()),
+	)
 	defer func() { endFunc(result) }()
 
 	// Run the backend
@@ -108,7 +115,10 @@ func (manager *Manager) ListObjects(ctx context.Context, name string, req schema
 
 	// OTEL span
 	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ListObjects"))
+	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ListObjects"),
+		attribute.String("name", name),
+		attribute.String("request", req.String()),
+	)
 	defer func() { endFunc(result) }()
 
 	// Clamp Limit to MaxListLimit when set
@@ -130,7 +140,10 @@ func (manager *Manager) DeleteObject(ctx context.Context, name string, req schem
 
 	// OTEL span
 	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("DeleteObject"))
+	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("DeleteObject"),
+		attribute.String("name", name),
+		attribute.String("request", req.String()),
+	)
 	defer func() { endFunc(result) }()
 
 	// Run the backend
@@ -147,7 +160,10 @@ func (manager *Manager) DeleteObjects(ctx context.Context, name string, req sche
 
 	// OTEL span
 	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("DeleteObjects"))
+	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("DeleteObjects"),
+		attribute.String("name", name),
+		attribute.String("request", req.String()),
+	)
 	defer func() { endFunc(result) }()
 
 	// Run the backend
@@ -164,7 +180,10 @@ func (manager *Manager) GetObject(ctx context.Context, name string, req schema.G
 
 	// OTEL span
 	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("GetObject"))
+	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("GetObject"),
+		attribute.String("name", name),
+		attribute.String("request", req.String()),
+	)
 	defer func() { endFunc(result) }()
 
 	// Run the backend
