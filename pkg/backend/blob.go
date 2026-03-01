@@ -100,8 +100,11 @@ func NewBlobBackend(ctx context.Context, u string, opts ...Opt) (Backend, error)
 				o.UsePathStyle = true
 			})
 		}
-		// Inject OTel instrumentation so each S3 API call produces a child span.
-		otelaws.AppendMiddlewares(&cfg.APIOptions)
+		// Inject OTel instrumentation so each S3 API call produces a child span,
+		// but only when a tracer is configured to avoid overhead in non-tracing deployments.
+		if self.tracer != nil {
+			otelaws.AppendMiddlewares(&cfg.APIOptions)
+		}
 		client := s3svc.NewFromConfig(cfg, s3Opts...)
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {

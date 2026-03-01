@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -56,20 +57,21 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 	// Make backends
 	backends := cmd.Backend
 	if len(backends) == 0 {
-		def, err := defaultBackendURL()
+		def, err := ctx.defaultBackendURL()
 		if err != nil {
 			return err
 		}
 		backends = []string{def}
 	}
 
-	// Make client opts
+	// Make manager opts — WithTracer must come before WithBackend so the tracer
+	// is already set on the opts struct when each backend is opened.
 	opts := []manager.Opt{}
-	for _, url := range backends {
-		opts = append(opts, manager.WithBackend(ctx.ctx, url, bOpts...))
-	}
 	if ctx.tracer != nil {
 		opts = append(opts, manager.WithTracer(ctx.tracer))
+	}
+	for _, url := range backends {
+		opts = append(opts, manager.WithBackend(ctx.ctx, url, bOpts...))
 	}
 
 	// Create manager
@@ -81,7 +83,7 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 
 	// Log the backends
 	for _, name := range mgr.Backends() {
-		ctx.logger.Printf(ctx.ctx, "registered backend: %s", name, mgr.Backend(name).URL())
+		ctx.logger.Printf(ctx.ctx, "registered backend: %s (%s)", name, mgr.Backend(name).URL())
 	}
 
 	// Serve until context is done
@@ -199,12 +201,8 @@ func serve(ctx *Globals, mgr *manager.Manager) error {
 
 // defaultBackendURL returns a file:// backend URL rooted at
 // os.UserCacheDir()/<execName>, creating the directory if needed.
-func defaultBackendURL() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine executable name: %w", err)
-	}
-	name := filepath.Base(exe)
+func (ctx *Globals) defaultBackendURL() (string, error) {
+	name := ctx.execName
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine user cache dir: %w", err)
@@ -213,6 +211,6 @@ func defaultBackendURL() (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("cannot create cache dir %s: %w", dir, err)
 	}
-	// file://<name><absolute-path>
-	return "file://" + name + dir, nil
+	u := &url.URL{Scheme: "file", Host: name, Path: filepath.ToSlash(dir)}
+	return u.String(), nil
 }

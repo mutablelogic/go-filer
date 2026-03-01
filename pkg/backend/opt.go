@@ -6,6 +6,7 @@ import (
 
 	// Packages
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -14,8 +15,9 @@ import (
 type opt struct {
 	url       *url.URL
 	awsConfig *aws.Config
-	endpoint  string // raw endpoint URL set via WithEndpoint; wired into awsConfig when both are present
-	anonymous bool   // forces anonymous credentials; wired into awsConfig when both are present
+	endpoint  string       // raw endpoint URL set via WithEndpoint; wired into awsConfig when both are present
+	anonymous bool         // forces anonymous credentials; wired into awsConfig when both are present
+	tracer    trace.Tracer // optional OTel tracer; when set, AWS SDK middleware is injected
 }
 
 type Opt func(*opt) error
@@ -73,6 +75,17 @@ func WithAnonymous() Opt {
 func WithCreateDir() Opt {
 	return func(o *opt) error {
 		o.set("create_dir", "true")
+		return nil
+	}
+}
+
+// WithTracer sets the OpenTelemetry tracer for the backend.
+// When set on an s3:// backend, AWS SDK middleware is injected so each S3 API
+// call (PutObject, GetObject, etc.) produces a child span. When not set no SDK
+// middleware is added, avoiding unnecessary overhead in non-tracing deployments.
+func WithTracer(tracer trace.Tracer) Opt {
+	return func(o *opt) error {
+		o.tracer = tracer
 		return nil
 	}
 }

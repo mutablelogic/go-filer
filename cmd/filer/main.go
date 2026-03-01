@@ -71,7 +71,7 @@ func main() {
 	var execName string
 	if exe, err := os.Executable(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(-1)
+		os.Exit(1)
 	} else {
 		execName = filepath.Base(exe)
 	}
@@ -117,9 +117,13 @@ func run(ctx *kong.Context, globals *Globals) int {
 		provider, err := otel.NewProvider(globals.OTel.Endpoint, globals.OTel.Header, globals.OTel.Name)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
-			return -2
+			return 2
 		}
-		defer provider.Shutdown(context.Background())
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			provider.Shutdown(shutdownCtx)
+		}()
 
 		// Set as global so instrumentation libraries (e.g. otelaws) pick it up.
 		gootel.SetTracerProvider(provider)
@@ -131,7 +135,7 @@ func run(ctx *kong.Context, globals *Globals) int {
 	// Call the Run() method of the selected parsed command.
 	if err := ctx.Run(globals); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		return -1
+		return 1
 	}
 
 	// Return success
