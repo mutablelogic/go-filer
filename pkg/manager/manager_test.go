@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	assert "github.com/stretchr/testify/assert"
 )
 
@@ -458,4 +460,24 @@ func Test_Manager_Tracer_DefaultNil(t *testing.T) {
 	defer mgr.Close()
 
 	assert.Nil(mgr.Tracer())
+}
+
+func Test_isExpectedOutcome(t *testing.T) {
+	assert := assert.New(t)
+
+	// 404 Not Found → expected (object absent).
+	assert.True(isExpectedOutcome(httpresponse.ErrNotFound))
+	assert.True(isExpectedOutcome(httpresponse.ErrNotFound.Withf("object %q not found", "/foo")))
+
+	// ErrAlreadyExists sentinel → expected (IfNotExists conditional miss).
+	assert.True(isExpectedOutcome(schema.ErrAlreadyExists))
+	assert.True(isExpectedOutcome(fmt.Errorf("%w: %w", schema.ErrAlreadyExists, httpresponse.ErrConflict)))
+
+	// Other HTTP errors → not expected.
+	assert.False(isExpectedOutcome(httpresponse.ErrInternalError))
+	assert.False(isExpectedOutcome(httpresponse.ErrConflict))
+	assert.False(isExpectedOutcome(httpresponse.ErrBadRequest))
+
+	// Nil → not an error, not relevant, but must not panic.
+	assert.False(isExpectedOutcome(nil))
 }

@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -30,7 +31,10 @@ func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectR
 	if req.IfNotExists {
 		_, err := b.bucket.Attributes(ctx, sk)
 		if err == nil {
-			return nil, httpresponse.ErrConflict.Withf("object %q already exists", b.Name()+":"+objPath)
+			return nil, fmt.Errorf("%w: %w",
+				schema.ErrAlreadyExists,
+				httpresponse.ErrConflict.Withf("object %q already exists", b.Name()+":"+objPath),
+			)
 		} else if gcerrors.Code(err) != gcerrors.NotFound {
 			return nil, blobErr(err, b.Name()+":"+objPath)
 		}

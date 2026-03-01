@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -79,13 +80,20 @@ func (manager *Manager) CreateObject(ctx context.Context, name string, req schem
 		return nil, err
 	}
 
-	// OTEL span
+	// OTEL span — ErrAlreadyExists (IfNotExists=true) is a legitimate outcome,
+	// not a span error.
 	var result error
 	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("CreateObject"),
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
-	defer func() { endFunc(result) }()
+	defer func() {
+		if isExpectedOutcome(result) {
+			endFunc(nil)
+		} else {
+			endFunc(result)
+		}
+	}()
 
 	// Run the backend
 	obj, result := backend.CreateObject(child, req)
@@ -99,13 +107,20 @@ func (manager *Manager) ReadObject(ctx context.Context, name string, req schema.
 		return nil, nil, err
 	}
 
-	// OTEL span
+	// OTEL span — 404 Not Found is a legitimate outcome (object may not exist),
+	// not a span error.
 	var result error
 	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ReadObject"),
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
-	defer func() { endFunc(result) }()
+	defer func() {
+		if isExpectedOutcome(result) {
+			endFunc(nil)
+		} else {
+			endFunc(result)
+		}
+	}()
 
 	// Run the backend
 	r, obj, result := backend.ReadObject(child, req)
@@ -184,13 +199,20 @@ func (manager *Manager) GetObject(ctx context.Context, name string, req schema.G
 		return nil, err
 	}
 
-	// OTEL span
+	// OTEL span — 404 Not Found is a legitimate outcome (object may not exist),
+	// not a span error.
 	var result error
 	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("GetObject"),
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
-	defer func() { endFunc(result) }()
+	defer func() {
+		if isExpectedOutcome(result) {
+			endFunc(nil)
+		} else {
+			endFunc(result)
+		}
+	}()
 
 	// Run the backend
 	obj, result := backend.GetObject(child, req)
@@ -209,4 +231,18 @@ func (manager *Manager) backendForName(name string) (backend.Backend, error) {
 
 func spanManagerName(op string) string {
 	return schema.SchemaName + ".manager." + op
+}
+
+// isExpectedOutcome reports whether err represents a well-defined, non-error
+// outcome that should not set a span error status:
+//
+//   - 404 Not Found    — used by GetObject/ReadObject to signal "absent"
+//   - ErrAlreadyExists — CreateObject with IfNotExists=true; the object existed,
+//     which is the clean answer to a conditional-create check
+func isExpectedOutcome(err error) bool {
+	if errors.Is(err, schema.ErrAlreadyExists) {
+		return true
+	}
+	var code httpresponse.Err
+	return errors.As(err, &code) && int(code) == http.StatusNotFound
 }
