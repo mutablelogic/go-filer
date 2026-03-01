@@ -1,24 +1,27 @@
 package httphandler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	manager "github.com/mutablelogic/go-filer/pkg/manager"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	openapi "github.com/mutablelogic/go-server/pkg/openapi/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -391,7 +394,7 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
 	}
 
-	maxFiles := uploadMaxFilesLimit()
+	maxFiles := schema.MaxUploadFiles
 	resultsCap := 0
 	if declared := strings.TrimSpace(r.Header.Get("X-Upload-Count")); declared != "" {
 		n, err := strconv.Atoi(declared)
@@ -411,12 +414,23 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 	name := r.PathValue("name")
 	isDir := basePath == "/" || strings.HasSuffix(r.URL.Path, "/")
 
+	var spanErr error
+	ctx, endSpan := otel.StartSpan(mgr.Tracer(), r.Context(), "filer.handler.Upload",
+		attribute.String("name", name),
+		attribute.String("path", basePath),
+	)
+	defer func() { endSpan(spanErr) }()
+
 	results := make([]schema.Object, 0, resultsCap)
 	uploadedPaths := make([]string, 0, resultsCap)
 	rollback := func(uploadErr error) error {
 		var errs []error
 		for _, p := range uploadedPaths {
-			if _, err := mgr.DeleteObject(r.Context(), name, schema.DeleteObjectRequest{Path: p}); err != nil {
+			// Use a detached context so rollback deletes succeed even if
+			// the request context was cancelled (e.g. client disconnected).
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer rollbackCancel()
+			if _, err := mgr.DeleteObject(rollbackCtx, name, schema.DeleteObjectRequest{Path: p}); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -470,8 +484,9 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 			Header:      part.Header,
 		}
 
-		obj, err := mgr.CreateObject(r.Context(), name, buildCreateRequest(f, sharedMeta, destPath, part))
+		obj, err := mgr.CreateObject(ctx, name, buildCreateRequest(f, sharedMeta, destPath, part))
 		if err != nil {
+			spanErr = err
 			return httpresponse.Error(w, rollback(err))
 		}
 		uploadedPaths = append(uploadedPaths, obj.Path)
@@ -483,17 +498,4 @@ func objectUploadJSONStream(w http.ResponseWriter, r *http.Request, mgr *manager
 	}
 
 	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), results)
-}
-
-func uploadMaxFilesLimit() int {
-	const def = 1000
-	v := strings.TrimSpace(os.Getenv("FILER_UPLOAD_MAX_FILES"))
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return def
-	}
-	return n
 }

@@ -15,6 +15,9 @@ import (
 // single ListObjects call. Clients must paginate using Offset for larger sets.
 const MaxListLimit = 1000
 
+// MaxUploadFiles is the maximum number of files accepted in a single multipart upload request.
+const MaxUploadFiles = 1000
+
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 

@@ -113,8 +113,8 @@ func WithCheck(fn func(fs.FileInfo, *schema.Object) bool) UploadOpt {
 
 // WithBatchSize sets the maximum number of files sent in each multipart POST.
 // Smaller batches reduce peak memory on both client and server at the cost of
-// more round-trips. The default is 50. Pass 0 to send all files in one request
-// (equivalent to the pre-batching behaviour).
+// more round-trips. The default is 50. Values above schema.MaxUploadFiles or
+// 0 are both treated as schema.MaxUploadFiles (the server-side per-request limit).
 func WithBatchSize(n int) UploadOpt {
 	return func(o *uploadOpts) error {
 		if n < 0 {
@@ -208,8 +208,8 @@ func (c *Client) CreateObjects(ctx context.Context, name string, fsys fs.FS, opt
 	// This caps the number of concurrently-open file handles to batchSize and
 	// keeps server-side per-request metadata proportionally small.
 	bsz := o.batchSize
-	if bsz <= 0 {
-		bsz = len(entries) // zero means "all in one request"
+	if bsz <= 0 || bsz > schema.MaxUploadFiles {
+		bsz = schema.MaxUploadFiles // never exceed the server-side per-request limit
 	}
 	all := make([]schema.Object, 0, len(entries))
 	total := len(entries)

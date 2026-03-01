@@ -11,6 +11,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	attribute "go.opentelemetry.io/otel/attribute"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -51,6 +52,11 @@ func (manager *Manager) Close() error {
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+// Tracer returns the tracer used by this manager, or nil if not set.
+func (manager *Manager) Tracer() trace.Tracer {
+	return manager.tracer
+}
 
 // Backends returns the list of backend names
 func (manager *Manager) Backends() []string {

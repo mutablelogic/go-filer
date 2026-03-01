@@ -13,6 +13,11 @@ import (
 	gcerrors "gocloud.dev/gcerrors"
 )
 
+// deleteTimeout is the maximum time allowed for a best-effort rollback delete
+// after a failed upload. It is intentionally independent of the request context,
+// which may already be cancelled (e.g. CTRL+C).
+const deleteTimeout = 30 * time.Second
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
@@ -52,10 +57,17 @@ func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectR
 		return nil, blobErr(err, b.Name()+":"+objPath)
 	} else if _, err := io.Copy(w, req.Body); err != nil {
 		err = errors.Join(err, w.Close())
-		b.bucket.Delete(ctx, sk)
+		// Use a detached context for rollback: the request context may already be
+		// cancelled (e.g. CTRL+C), but we still need to delete the partial upload.
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), deleteTimeout)
+		defer cancel()
+		b.bucket.Delete(rollbackCtx, sk)
 		return nil, blobErr(err, b.Name()+":"+objPath)
 	} else if err := w.Close(); err != nil {
-		b.bucket.Delete(ctx, sk)
+		// Same: roll back with a fresh context so cancellation doesn't prevent cleanup.
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), deleteTimeout)
+		defer cancel()
+		b.bucket.Delete(rollbackCtx, sk)
 		return nil, blobErr(err, b.Name()+":"+objPath)
 	}
 
