@@ -11,8 +11,10 @@ import (
 	"time"
 
 	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	httpclient "github.com/mutablelogic/go-filer/pkg/httpclient"
 	schema "github.com/mutablelogic/go-filer/pkg/schema"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -61,16 +63,21 @@ type DownloadCommand struct {
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (cmd *ListCommand) Run(ctx *Globals) error {
+func (cmd *ListCommand) Run(ctx *Globals) (err error) {
 	c, err := ctx.Client()
 	if err != nil {
 		return err
 	}
+	cmdCtx, endSpan := otel.StartSpan(ctx.tracer, ctx.ctx, "filer.cli.List",
+		attribute.String("backend", cmd.Backend),
+		attribute.String("path", cmd.Path),
+	)
+	defer func() { endSpan(err) }()
 	limit := cmd.Limit
 	if limit == 0 {
 		limit = schema.MaxListLimit
 	}
-	resp, err := c.ListObjects(ctx.ctx, cmd.Backend, schema.ListObjectsRequest{
+	resp, err := c.ListObjects(cmdCtx, cmd.Backend, schema.ListObjectsRequest{
 		Path:      cmd.Path,
 		Recursive: cmd.Recursive,
 		Limit:     limit,
@@ -85,12 +92,17 @@ func (cmd *ListCommand) Run(ctx *Globals) error {
 	return printListing(resp)
 }
 
-func (cmd *HeadCommand) Run(ctx *Globals) error {
+func (cmd *HeadCommand) Run(ctx *Globals) (err error) {
 	c, err := ctx.Client()
 	if err != nil {
 		return err
 	}
-	obj, err := c.GetObject(ctx.ctx, cmd.Backend, schema.GetObjectRequest{
+	cmdCtx, endSpan := otel.StartSpan(ctx.tracer, ctx.ctx, "filer.cli.Head",
+		attribute.String("backend", cmd.Backend),
+		attribute.String("path", cmd.Path),
+	)
+	defer func() { endSpan(err) }()
+	obj, err := c.GetObject(cmdCtx, cmd.Backend, schema.GetObjectRequest{
 		Path: cmd.Path,
 	})
 	if err != nil {
@@ -99,11 +111,16 @@ func (cmd *HeadCommand) Run(ctx *Globals) error {
 	return prettyJSON(obj)
 }
 
-func (cmd *GetCommand) Run(ctx *Globals) error {
+func (cmd *GetCommand) Run(ctx *Globals) (err error) {
 	c, err := ctx.Client()
 	if err != nil {
 		return err
 	}
+	cmdCtx, endSpan := otel.StartSpan(ctx.tracer, ctx.ctx, "filer.cli.Get",
+		attribute.String("backend", cmd.Backend),
+		attribute.String("path", cmd.Path),
+	)
+	defer func() { endSpan(err) }()
 	var out io.Writer = os.Stdout
 	var outFile *os.File
 	if cmd.Output != "" {
@@ -113,7 +130,7 @@ func (cmd *GetCommand) Run(ctx *Globals) error {
 		}
 		out = outFile
 	}
-	_, err = c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
+	_, err = c.ReadObject(cmdCtx, cmd.Backend, schema.ReadObjectRequest{
 		GetObjectRequest: schema.GetObjectRequest{Path: cmd.Path},
 	}, func(chunk []byte) error {
 		_, err := out.Write(chunk)
@@ -128,11 +145,16 @@ func (cmd *GetCommand) Run(ctx *Globals) error {
 	return err
 }
 
-func (cmd *DeleteCommand) Run(ctx *Globals) error {
+func (cmd *DeleteCommand) Run(ctx *Globals) (err error) {
 	c, err := ctx.Client()
 	if err != nil {
 		return err
 	}
+	cmdCtx, endSpan := otel.StartSpan(ctx.tracer, ctx.ctx, "filer.cli.Delete",
+		attribute.String("backend", cmd.Backend),
+		attribute.String("path", cmd.Path),
+	)
+	defer func() { endSpan(err) }()
 
 	// Route to the appropriate client call based on path and flags:
 	//
@@ -152,7 +174,7 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 	isPrefix := cmd.Recursive || cmd.Path == "/" || strings.HasSuffix(cmd.Path, "/")
 
 	if isPrefix {
-		resp, err := c.DeleteObjects(ctx.ctx, cmd.Backend, schema.DeleteObjectsRequest{
+		resp, err := c.DeleteObjects(cmdCtx, cmd.Backend, schema.DeleteObjectsRequest{
 			Path:      cmd.Path,
 			Recursive: cmd.Recursive,
 		})
@@ -166,7 +188,7 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 	}
 
 	// Single-object delete: the server returns 404 if the object does not exist.
-	obj, err := c.DeleteObject(ctx.ctx, cmd.Backend, schema.DeleteObjectRequest{Path: cmd.Path})
+	obj, err := c.DeleteObject(cmdCtx, cmd.Backend, schema.DeleteObjectRequest{Path: cmd.Path})
 	if err != nil {
 		return err
 	}
@@ -176,11 +198,15 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 	return printObjects([]schema.Object{*obj})
 }
 
-func (cmd *DownloadCommand) Run(ctx *Globals) error {
+func (cmd *DownloadCommand) Run(ctx *Globals) (err error) {
 	c, err := ctx.Client()
 	if err != nil {
 		return err
 	}
+	cmdCtx, endSpan := otel.StartSpan(ctx.tracer, ctx.ctx, "filer.cli.Download",
+		attribute.String("backend", cmd.Backend),
+	)
+	defer func() { endSpan(err) }()
 
 	// Resolve local download directory.
 	localDir := cmd.Path
@@ -202,7 +228,7 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 	if cmd.Prefix != "" {
 		remotePath = "/" + strings.TrimPrefix(cmd.Prefix, "/")
 	}
-	resp, err := c.ListObjects(ctx.ctx, cmd.Backend, schema.ListObjectsRequest{
+	resp, err := c.ListObjects(cmdCtx, cmd.Backend, schema.ListObjectsRequest{
 		Path:      remotePath,
 		Recursive: true,
 		Limit:     schema.MaxListLimit,
@@ -224,7 +250,7 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 		for i, obj := range resp.Body {
 			headReqs[i] = schema.GetObjectRequest{Path: obj.Path}
 		}
-		accObjs, _ = c.GetObjects(ctx.ctx, cmd.Backend, headReqs)
+		accObjs, _ = c.GetObjects(cmdCtx, cmd.Backend, headReqs)
 		for i, acc := range accObjs {
 			if acc != nil {
 				resp.Body[i].ModTime = acc.ModTime
@@ -295,7 +321,7 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 		fileSize := e.obj.Size
 		var written int64
 		var lastPct int64 = -1
-		_, err = c.ReadObject(ctx.ctx, cmd.Backend, schema.ReadObjectRequest{
+		_, err = c.ReadObject(cmdCtx, cmd.Backend, schema.ReadObjectRequest{
 			GetObjectRequest: schema.GetObjectRequest{Path: e.obj.Path},
 		}, func(chunk []byte) error {
 			if _, werr := f.Write(chunk); werr != nil {
@@ -338,11 +364,15 @@ func (cmd *DownloadCommand) Run(ctx *Globals) error {
 	return nil
 }
 
-func (cmd *UploadCommand) Run(ctx *Globals) error {
+func (cmd *UploadCommand) Run(ctx *Globals) (err error) {
 	c, err := ctx.Client()
 	if err != nil {
 		return err
 	}
+	cmdCtx, endSpan := otel.StartSpan(ctx.tracer, ctx.ctx, "filer.cli.Upload",
+		attribute.String("backend", cmd.Backend),
+	)
+	defer func() { endSpan(err) }()
 
 	// Resolve the local path: default to cwd.
 	local := cmd.Path
@@ -422,7 +452,7 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 		}
 	}))
 
-	objs, err := c.CreateObjects(ctx.ctx, cmd.Backend, fsys, uploadOpts...)
+	objs, err := c.CreateObjects(cmdCtx, cmd.Backend, fsys, uploadOpts...)
 	if err != nil {
 		return err
 	}

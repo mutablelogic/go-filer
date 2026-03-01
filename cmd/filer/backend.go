@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"os"
+
+	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -13,12 +16,14 @@ type BackendsCommand struct{}
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (cmd *BackendsCommand) Run(ctx *Globals) error {
+func (cmd *BackendsCommand) Run(ctx *Globals) (err error) {
 	c, err := ctx.Client()
 	if err != nil {
 		return err
 	}
-	resp, err := c.ListBackends(ctx.ctx)
+	cmdCtx, endSpan := otel.StartSpan(ctx.tracer, ctx.ctx, "filer.cli.Backends")
+	defer func() { endSpan(err) }()
+	resp, err := c.ListBackends(cmdCtx)
 	if err != nil {
 		return err
 	}
