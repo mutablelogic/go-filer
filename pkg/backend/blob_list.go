@@ -74,7 +74,7 @@ func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsReq
 				ModTime: obj.ModTime,
 			}
 			if len(obj.MD5) > 0 {
-				o.ETag = fmt.Sprintf("%x", obj.MD5)
+				o.ETag = normaliseETag(fmt.Sprintf("%x", obj.MD5))
 			}
 			all = append(all, o)
 		}

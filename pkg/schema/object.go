@@ -41,7 +41,7 @@ type Object struct {
 	Path        string     `json:"path,omitempty"`
 	IsDir       bool       `json:"dir,omitempty"`
 	Size        int64      `json:"size"`
-	ModTime     time.Time  `json:"modtime,omitzero"`
+	ModTime     time.Time  `json:"last-modified,omitzero"`
 	ContentType string     `json:"type,omitempty"`
 	ETag        string     `json:"etag,omitempty"`
 	Meta        ObjectMeta `json:"meta,omitempty"`

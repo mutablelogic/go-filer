@@ -121,7 +121,7 @@ func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObject
 				ModTime: obj.ModTime,
 			}
 			if len(obj.MD5) > 0 {
-				o.ETag = fmt.Sprintf("%x", obj.MD5)
+				o.ETag = normaliseETag(fmt.Sprintf("%x", obj.MD5))
 			}
 			response.Body = append(response.Body, o)
 			deletedInPass++

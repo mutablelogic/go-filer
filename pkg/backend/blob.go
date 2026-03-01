@@ -251,10 +251,11 @@ func (b *blobbackend) attrsToObject(objPath string, attrs *blob.Attributes) *sch
 	}
 	// Prefer MD5-as-hex for ETag to stay consistent with the list iterator,
 	// which only exposes MD5. Fall back to the raw ETag string when MD5 is absent.
+	// Always normalise to RFC 7232 double-quoted format.
 	if len(attrs.MD5) > 0 {
-		obj.ETag = fmt.Sprintf("%x", attrs.MD5)
+		obj.ETag = normaliseETag(fmt.Sprintf("%x", attrs.MD5))
 	} else if attrs.ETag != "" {
-		obj.ETag = attrs.ETag
+		obj.ETag = normaliseETag(attrs.ETag)
 	}
 	if len(attrs.Metadata) > 0 {
 		obj.Meta = attrs.Metadata
@@ -331,4 +332,19 @@ func blobErr(err error, ref string) error {
 	default:
 		return httpresponse.ErrInternalError.Withf("blob operation failed: %v", err)
 	}
+}
+
+// normaliseETag ensures the ETag value is in the RFC 7232 double-quoted format
+// (e.g. "\"abc123\""). S3 multipart ETags are returned by the SDK already quoted;
+// MD5-derived ETags and some other backends return them as bare hex strings.
+// This function is idempotent: already-quoted or weak (W/) values are left as-is.
+func normaliseETag(etag string) string {
+	if etag == "" {
+		return ""
+	}
+	// Already a valid strong or weak ETag.
+	if strings.HasPrefix(etag, `"`) || strings.HasPrefix(etag, "W/") {
+		return etag
+	}
+	return `"` + etag + `"`
 }

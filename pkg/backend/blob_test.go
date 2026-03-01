@@ -200,3 +200,27 @@ func TestNewFileBackend(t *testing.T) {
 		})
 	}
 }
+func Test_normaliseETag(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		// Bare MD5 hex (single-part S3 upload) → must be quoted.
+		{"a828f16f116f67e6ac37e409a9e7ced9", `"a828f16f116f67e6ac37e409a9e7ced9"`},
+		// Already RFC 7232 quoted strong ETag → unchanged.
+		{`"3d862beccbda836b05c87d3a79cfdc0a-40"`, `"3d862beccbda836b05c87d3a79cfdc0a-40"`},
+		// Already RFC 7232 quoted simple ETag → unchanged.
+		{`"abc123"`, `"abc123"`},
+		// Weak ETag → unchanged.
+		{`W/"abc123"`, `W/"abc123"`},
+		// Empty → stays empty.
+		{"", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			got := normaliseETag(tc.in)
+			if got != tc.want {
+				t.Errorf("normaliseETag(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
