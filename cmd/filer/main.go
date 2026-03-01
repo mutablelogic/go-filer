@@ -122,7 +122,9 @@ func run(ctx *kong.Context, globals *Globals) int {
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			provider.Shutdown(shutdownCtx)
+			if err := provider.Shutdown(shutdownCtx); err != nil {
+				fmt.Fprintln(os.Stderr, "Warning: OTel shutdown:", err)
+			}
 		}()
 
 		// Set as global so instrumentation libraries (e.g. otelaws) pick it up.
