@@ -18,6 +18,7 @@ import (
 // Path: /{name}
 // GET lists objects at the backend root. POST uploads via multipart/form-data
 // (field name: "file", repeatable for multiple files) to the backend root.
+// DELETE removes objects at the backend root (use ?recursive to widen scope).
 func ObjectListHandler(mgr *manager.Manager) (string, http.HandlerFunc, *openapi.PathItem) {
 	return "/{name}", func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
@@ -25,6 +26,8 @@ func ObjectListHandler(mgr *manager.Manager) (string, http.HandlerFunc, *openapi
 				_ = objectList(w, r, mgr)
 			case http.MethodPost:
 				_ = objectUpload(w, r, mgr)
+			case http.MethodDelete:
+				_ = objectDelete(w, r, mgr)
 			default:
 				_ = httpresponse.Error(w, httpresponse.Err(http.StatusMethodNotAllowed), r.Method)
 			}
@@ -34,6 +37,9 @@ func ObjectListHandler(mgr *manager.Manager) (string, http.HandlerFunc, *openapi
 			},
 			Post: &openapi.Operation{
 				Description: "Upload one or more files using multipart/form-data (field name: \"file\", repeatable)",
+			},
+			Delete: &openapi.Operation{
+				Description: "Delete objects at the backend root",
 			},
 		})
 }

@@ -40,7 +40,7 @@ type HeadCommand struct {
 type DeleteCommand struct {
 	Backend   string `arg:"" name:"backend" help:"Backend name"`
 	Path      string `arg:"" name:"path" help:"Object path or prefix"`
-	Recursive bool   `name:"recursive" short:"r" help:"Delete all objects under path"`
+	Recursive bool   `name:"recursive" short:"r" help:"Delete all objects under path, including subdirectories"`
 }
 
 type UploadCommand struct {
@@ -133,32 +133,17 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	if cmd.Recursive {
-		resp, err := c.DeleteObjects(ctx.ctx, cmd.Backend, schema.DeleteObjectsRequest{
-			Path:      cmd.Path,
-			Recursive: true,
-		})
-		if err != nil {
-			return err
-		}
-		if ctx.Debug {
-			return prettyJSON(resp)
-		}
-		return printObjects(resp.Body)
-	}
-	obj, err := c.DeleteObject(ctx.ctx, cmd.Backend, schema.DeleteObjectRequest{
-		Path: cmd.Path,
+	resp, err := c.DeleteObjects(ctx.ctx, cmd.Backend, schema.DeleteObjectsRequest{
+		Path:      cmd.Path,
+		Recursive: cmd.Recursive,
 	})
 	if err != nil {
 		return err
 	}
 	if ctx.Debug {
-		return prettyJSON(obj)
+		return prettyJSON(resp)
 	}
-	if obj == nil {
-		return nil
-	}
-	return printObjects([]schema.Object{*obj})
+	return printObjects(resp.Body)
 }
 
 func (cmd *DownloadCommand) Run(ctx *Globals) error {

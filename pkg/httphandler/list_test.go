@@ -274,7 +274,6 @@ func Test_objectList_methodNotAllowed(t *testing.T) {
 	for _, method := range []string{
 		http.MethodPut,
 		http.MethodPatch,
-		http.MethodDelete,
 		http.MethodOptions,
 	} {
 		t.Run(method, func(t *testing.T) {
