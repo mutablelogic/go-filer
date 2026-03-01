@@ -36,6 +36,11 @@ func WithTracer(tracer trace.Tracer) Opt {
 // Returns an error if a backend with the same name already exists.
 func WithBackend(ctx context.Context, url string, backendOpts ...backend.Opt) Opt {
 	return func(o *opts) error {
+		// Thread the tracer down into the backend so S3 SDK calls are instrumented
+		// only when OTel is actually configured.
+		if o.tracer != nil {
+			backendOpts = append(backendOpts, backend.WithTracer(o.tracer))
+		}
 		b, err := backend.NewBlobBackend(ctx, url, backendOpts...)
 		if err != nil {
 			return err
@@ -55,6 +60,9 @@ func WithBackend(ctx context.Context, url string, backendOpts ...backend.Opt) Op
 // name must be a valid identifier; dir must be an absolute path.
 func WithFileBackend(ctx context.Context, name, dir string, backendOpts ...backend.Opt) Opt {
 	return func(o *opts) error {
+		if o.tracer != nil {
+			backendOpts = append(backendOpts, backend.WithTracer(o.tracer))
+		}
 		b, err := backend.NewFileBackend(ctx, name, dir, backendOpts...)
 		if err != nil {
 			return err

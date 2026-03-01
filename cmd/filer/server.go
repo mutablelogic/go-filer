@@ -14,6 +14,7 @@ import (
 	aws "github.com/aws/aws-sdk-go-v2/aws"
 	config "github.com/aws/aws-sdk-go-v2/config"
 	credentials "github.com/aws/aws-sdk-go-v2/credentials"
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	backend "github.com/mutablelogic/go-filer/pkg/backend"
 	httphandler "github.com/mutablelogic/go-filer/pkg/httphandler"
 	manager "github.com/mutablelogic/go-filer/pkg/manager"
@@ -53,40 +54,39 @@ func (cmd *RunServerCommand) Run(ctx *Globals) error {
 		return err
 	}
 
+	// Make backends
 	backends := cmd.Backend
 	if len(backends) == 0 {
-		def, err := defaultBackendURL()
+		def, err := ctx.defaultBackendURL()
 		if err != nil {
 			return err
 		}
 		backends = []string{def}
 	}
 
+	// Make manager opts — WithTracer must come before WithBackend so the tracer
+	// is already set on the opts struct when each backend is opened.
 	opts := []manager.Opt{}
+	if ctx.tracer != nil {
+		opts = append(opts, manager.WithTracer(ctx.tracer))
+	}
 	for _, url := range backends {
 		opts = append(opts, manager.WithBackend(ctx.ctx, url, bOpts...))
 	}
+
+	// Create manager
 	mgr, err := manager.New(ctx.ctx, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to create manager: %w", err)
 	}
 	defer mgr.Close()
 
-	// Log the sanitised backend URLs (no credentials, no raw input query params)
-	for i, rawURL := range backends {
-		u, err := url.Parse(rawURL)
-		if err != nil {
-			ctx.logger.Printf(ctx.ctx, "backend[%d] invalid URL: %v", i, err)
-			continue
-		}
-		if b := mgr.Backend(u.Host); b != nil {
-			ctx.logger.Printf(ctx.ctx, "backend[%d] %s", i, b.URL().String())
-		} else {
-			// Backend not found in manager; log scheme+host only to avoid leaking credentials
-			ctx.logger.Printf(ctx.ctx, "backend[%d] %s://%s (not registered)", i, u.Scheme, u.Host)
-		}
+	// Log the backends
+	for _, name := range mgr.Backends() {
+		ctx.logger.Printf(ctx.ctx, "registered backend: %s (%s)", name, mgr.Backend(name).URL())
 	}
 
+	// Serve until context is done
 	return serve(ctx, mgr)
 }
 
@@ -167,6 +167,9 @@ func serve(ctx *Globals, mgr *manager.Manager) error {
 	if mw, ok := ctx.logger.(server.HTTPMiddleware); ok {
 		middleware = append(middleware, mw.WrapFunc)
 	}
+	if ctx.tracer != nil {
+		middleware = append(middleware, otel.HTTPHandlerFunc(ctx.tracer))
+	}
 
 	// Create the router
 	router, err := httprouter.NewRouter(ctx.ctx, ctx.HTTP.Prefix, ctx.HTTP.Origin, "filer", version.Version(), middleware...)
@@ -198,12 +201,8 @@ func serve(ctx *Globals, mgr *manager.Manager) error {
 
 // defaultBackendURL returns a file:// backend URL rooted at
 // os.UserCacheDir()/<execName>, creating the directory if needed.
-func defaultBackendURL() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine executable name: %w", err)
-	}
-	name := filepath.Base(exe)
+func (ctx *Globals) defaultBackendURL() (string, error) {
+	name := ctx.execName
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine user cache dir: %w", err)
@@ -212,6 +211,6 @@ func defaultBackendURL() (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("cannot create cache dir %s: %w", dir, err)
 	}
-	// file://<name><absolute-path>
-	return "file://" + name + dir, nil
+	u := &url.URL{Scheme: "file", Host: name, Path: filepath.ToSlash(dir)}
+	return u.String(), nil
 }
