@@ -134,12 +134,21 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 		return err
 	}
 
-	// Use bulk (prefix) semantics when:
-	//   --recursive is set, OR
-	//   path is the backend root ("/"), OR
-	//   path has a trailing slash (explicit prefix notation).
-	// Otherwise fall through to single-object semantics so that a missing
-	// path produces a not-found error rather than silent success.
+	// Route to the appropriate client call based on path and flags:
+	//
+	//   Single-object path (default):
+	//     filer delete media /dir/file.txt
+	//       → DeleteObject — server returns 404 if the object does not exist.
+	//
+	//   Bulk / prefix path (any of the following):
+	//     filer delete media /           → non-recursive root sweep (Recursive=false)
+	//     filer delete media /dir/       → non-recursive prefix sweep (trailing slash)
+	//     filer delete media /dir -r     → recursive subtree wipe   (Recursive=true)
+	//       → DeleteObjects — succeeds with 0 results when nothing matches.
+	//
+	// A plain path without a trailing slash and without -r is treated as a
+	// specific object name, not a prefix, so callers get an explicit error on
+	// a missing path rather than silent success.
 	isPrefix := cmd.Recursive || cmd.Path == "/" || strings.HasSuffix(cmd.Path, "/")
 
 	if isPrefix {

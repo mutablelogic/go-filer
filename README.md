@@ -130,6 +130,19 @@ All endpoints are prefixed with `--http.prefix` (default `/api/filer`).
 
 Object metadata is returned in the `X-Object-Meta` response header as a JSON blob. Multi-file uploads are streamed as multipart requests and return JSON on completion.
 
+### Object JSON fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Backend name (listing responses only) |
+| `path` | string | Object path, e.g. `/docs/report.pdf` |
+| `dir` | bool | `true` for directory entries in non-recursive listings |
+| `size` | int64 | Size in bytes (0 for directories) |
+| `modtime` | RFC3339 | Last-modified timestamp |
+| `type` | string | MIME content type |
+| `etag` | string | ETag (S3 backends only) |
+| `meta` | object | User-defined key-value metadata |
+
 ## Go SDK
 
 ```go
