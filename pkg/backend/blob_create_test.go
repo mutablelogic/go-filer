@@ -352,3 +352,49 @@ func TestCreateObject_S3(t *testing.T) {
 		assert.NoError(err)
 	})
 }
+
+// errReader reads from data successfully until pos reaches failAt, then
+// always returns os.ErrClosed to simulate a mid-stream connection failure.
+type errReader struct {
+	data   string
+	pos    int
+	failAt int
+}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if r.pos >= r.failAt {
+		return 0, os.ErrClosed
+	}
+	end := r.pos + len(p)
+	if end > r.failAt {
+		end = r.failAt
+	}
+	n := copy(p, r.data[r.pos:end])
+	r.pos += n
+	if r.pos >= r.failAt {
+		return n, os.ErrClosed
+	}
+	return n, nil
+}
+
+// TestCreateObject_RollbackOnReadError verifies that when the body reader errors
+// mid-stream, CreateObject returns an error and rolls back the partial upload so
+// that no object remains in storage.
+func TestCreateObject_RollbackOnReadError(t *testing.T) {
+	ctx := context.Background()
+
+	backend, err := NewBlobBackend(ctx, "mem://testbucket")
+	require.NoError(t, err)
+	defer backend.Close()
+
+	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
+		Path:        "/partial.txt",
+		Body:        &errReader{data: "hello world — this is the full content", failAt: 3},
+		ContentType: "text/plain",
+	})
+	require.Error(t, err, "expected error when reader fails mid-stream")
+
+	// The partial upload must have been rolled back — GetObject must return not-found.
+	_, getErr := backend.GetObject(ctx, schema.GetObjectRequest{Path: "/partial.txt"})
+	assert.Error(t, getErr, "partial upload must have been rolled back; object must be absent")
+}

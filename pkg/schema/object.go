@@ -35,9 +35,11 @@ type CreateObjectRequest struct {
 // metadata keys to lowercase.
 type ObjectMeta map[string]string
 
+// Object represents a single stored item returned by the API.
 type Object struct {
 	Name        string     `json:"name,omitempty"`
 	Path        string     `json:"path,omitempty"`
+	IsDir       bool       `json:"dir,omitempty"`
 	Size        int64      `json:"size"`
 	ModTime     time.Time  `json:"modtime,omitzero"`
 	ContentType string     `json:"type,omitempty"`

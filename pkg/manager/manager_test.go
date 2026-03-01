@@ -422,3 +422,40 @@ func Test_Manager_RoutesToCorrectBackend(t *testing.T) {
 	_, err = os.Stat(filepath.Join(tmpDir2, "test1.txt"))
 	assert.True(os.IsNotExist(err))
 }
+
+// Test_Manager_Backend verifies that Backend() returns the correct backend by
+// name (or nil for an unknown name).
+func Test_Manager_Backend(t *testing.T) {
+	assert := assert.New(t)
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	mgr, err := New(ctx, WithFileBackend(ctx, "mybackend", tmpDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// Known backend name returns the backend with the correct name.
+	b := mgr.Backend("mybackend")
+	assert.NotNil(b)
+	assert.Equal("mybackend", b.Name())
+
+	// Unknown name returns nil.
+	assert.Nil(mgr.Backend("nonexistent"))
+}
+
+// Test_Manager_Tracer_DefaultNil verifies that Tracer() returns nil when no
+// WithTracer option was provided.
+func Test_Manager_Tracer_DefaultNil(t *testing.T) {
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	mgr, err := New(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	assert.Nil(mgr.Tracer())
+}

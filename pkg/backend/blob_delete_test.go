@@ -673,3 +673,47 @@ func TestDeleteObjects_S3(t *testing.T) {
 		})
 	})
 }
+
+// TestDeleteObjects_PhantomDirectory exercises the isRealObject edge-case where
+// a 0-byte key shares its name with a directory prefix ("phantom directory").
+// DeleteObjects must treat it as a directory prefix and delete the children.
+func TestDeleteObjects_PhantomDirectory(t *testing.T) {
+	ctx := context.Background()
+
+	backend, err := NewBlobBackend(ctx, "mem://testbucket")
+	require.NoError(t, err)
+	defer backend.Close()
+
+	// 0-byte object at /phantom and a real child underneath.
+	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
+		Path: "/phantom",
+		Body: strings.NewReader(""),
+	})
+	require.NoError(t, err)
+
+	_, err = backend.CreateObject(ctx, schema.CreateObjectRequest{
+		Path:        "/phantom/child.txt",
+		Body:        strings.NewReader("child content"),
+		ContentType: "text/plain",
+	})
+	require.NoError(t, err)
+
+	// DeleteObjects on /phantom: isRealObject sees size=0 AND children present
+	// → treats as phantom directory → sweeps children via prefix.
+	resp, err := backend.DeleteObjects(ctx, schema.DeleteObjectsRequest{
+		Path:      "/phantom",
+		Recursive: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	deleted := make([]string, 0, len(resp.Body))
+	for _, o := range resp.Body {
+		deleted = append(deleted, o.Path)
+	}
+	assert.Contains(t, deleted, "/phantom/child.txt", "child object must be deleted via prefix sweep")
+
+	// child.txt must no longer be readable.
+	_, getErr := backend.GetObject(ctx, schema.GetObjectRequest{Path: "/phantom/child.txt"})
+	assert.Error(t, getErr, "child.txt must not exist after phantom directory delete")
+}

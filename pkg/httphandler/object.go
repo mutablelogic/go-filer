@@ -103,6 +103,28 @@ func objectPut(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) err
 	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), obj)
 }
 
+// objectDeleteRoot handles DELETE /{name} (no path segment). It always uses
+// bulk-delete semantics targeting the backend root ("/") so a request without
+// ?recursive safely deletes only the immediate root-level objects (Recursive
+// defaults to false). This avoids the ambiguity of treating "/" as a single
+// object when no {path} is present in the URL.
+func objectDeleteRoot(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
+	var params struct {
+		Recursive bool `json:"recursive,omitempty"`
+	}
+	if err := httprequest.Query(r.URL.Query(), &params); err != nil {
+		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+	}
+	resp, err := mgr.DeleteObjects(r.Context(), r.PathValue("name"), schema.DeleteObjectsRequest{
+		Path:      "/",
+		Recursive: params.Recursive,
+	})
+	if err != nil {
+		return httpresponse.Error(w, err)
+	}
+	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
+}
+
 func objectDelete(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) error {
 	path := types.NormalisePath(r.PathValue("path"))
 

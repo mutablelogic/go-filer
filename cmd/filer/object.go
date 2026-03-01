@@ -40,7 +40,7 @@ type HeadCommand struct {
 type DeleteCommand struct {
 	Backend   string `arg:"" name:"backend" help:"Backend name"`
 	Path      string `arg:"" name:"path" help:"Object path or prefix"`
-	Recursive bool   `name:"recursive" short:"r" help:"Delete all objects under path"`
+	Recursive bool   `name:"recursive" short:"r" help:"Delete all objects under path, including subdirectories"`
 }
 
 type UploadCommand struct {
@@ -133,10 +133,28 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 	if err != nil {
 		return err
 	}
-	if cmd.Recursive {
+
+	// Route to the appropriate client call based on path and flags:
+	//
+	//   Single-object path (default):
+	//     filer delete media /dir/file.txt
+	//       → DeleteObject — server returns 404 if the object does not exist.
+	//
+	//   Bulk / prefix path (any of the following):
+	//     filer delete media /           → non-recursive root sweep (Recursive=false)
+	//     filer delete media /dir/       → non-recursive prefix sweep (trailing slash)
+	//     filer delete media /dir -r     → recursive subtree wipe   (Recursive=true)
+	//       → DeleteObjects — succeeds with 0 results when nothing matches.
+	//
+	// A plain path without a trailing slash and without -r is treated as a
+	// specific object name, not a prefix, so callers get an explicit error on
+	// a missing path rather than silent success.
+	isPrefix := cmd.Recursive || cmd.Path == "/" || strings.HasSuffix(cmd.Path, "/")
+
+	if isPrefix {
 		resp, err := c.DeleteObjects(ctx.ctx, cmd.Backend, schema.DeleteObjectsRequest{
 			Path:      cmd.Path,
-			Recursive: true,
+			Recursive: cmd.Recursive,
 		})
 		if err != nil {
 			return err
@@ -146,17 +164,14 @@ func (cmd *DeleteCommand) Run(ctx *Globals) error {
 		}
 		return printObjects(resp.Body)
 	}
-	obj, err := c.DeleteObject(ctx.ctx, cmd.Backend, schema.DeleteObjectRequest{
-		Path: cmd.Path,
-	})
+
+	// Single-object delete: the server returns 404 if the object does not exist.
+	obj, err := c.DeleteObject(ctx.ctx, cmd.Backend, schema.DeleteObjectRequest{Path: cmd.Path})
 	if err != nil {
 		return err
 	}
 	if ctx.Debug {
 		return prettyJSON(obj)
-	}
-	if obj == nil {
-		return nil
 	}
 	return printObjects([]schema.Object{*obj})
 }
@@ -431,10 +446,14 @@ func (cmd *UploadCommand) Run(ctx *Globals) error {
 func printListing(resp *schema.ListObjectsResponse) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	writeObjectRows(w, resp.Body)
+	sep := ""
+	if len(resp.Body) > 0 {
+		sep = "\n"
+	}
 	if len(resp.Body) < resp.Count {
-		fmt.Fprintf(os.Stdout, "\n  %d of %d object(s)\n", len(resp.Body), resp.Count)
+		fmt.Fprintf(os.Stdout, "%s  %d of %d object(s)\n", sep, len(resp.Body), resp.Count)
 	} else {
-		fmt.Fprintf(os.Stdout, "\n  %d object(s)\n", resp.Count)
+		fmt.Fprintf(os.Stdout, "%s  %d object(s)\n", sep, resp.Count)
 	}
 	return nil
 }
@@ -444,7 +463,11 @@ func printListing(resp *schema.ListObjectsResponse) error {
 func printObjects(objs []schema.Object) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	writeObjectRows(w, objs)
-	fmt.Fprintf(os.Stdout, "\n  %d object(s) deleted\n", len(objs))
+	sep := ""
+	if len(objs) > 0 {
+		sep = "\n"
+	}
+	fmt.Fprintf(os.Stdout, "%s  %d object(s) deleted\n", sep, len(objs))
 	return nil
 }
 
@@ -453,11 +476,18 @@ func writeObjectRows(w *tabwriter.Writer, objs []schema.Object) {
 	bold := isTerminal(os.Stdout)
 	for _, obj := range objs {
 		name := strings.TrimPrefix(obj.Path, "/")
+		if obj.IsDir {
+			name = name + "/"
+		}
 		if bold {
 			name = "\x1b[1m" + name + "\x1b[0m"
 		}
+		sizeCol := humanSize(obj.Size)
+		if obj.IsDir {
+			sizeCol = "DIR"
+		}
 		fmt.Fprintf(w, "%8s\t%s\t%-30s\t%s\n",
-			humanSize(obj.Size),
+			sizeCol,
 			formatModTime(obj.ModTime),
 			shortContentType(obj.ContentType, obj.Path),
 			name,
