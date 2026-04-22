@@ -8,13 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	// Packages
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
+	tui "github.com/mutablelogic/go-server/pkg/tui"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -22,7 +22,7 @@ import (
 // TYPES
 
 type ListCommand struct {
-	Backend   string `arg:"" name:"backend" help:"Backend name"`
+	Volume    string `name:"volume" short:"v" help:"Backend volume name (saved as default for future commands)." optional:""`
 	Path      string `arg:"" name:"path" help:"Path prefix to list" optional:"" default:"/"`
 	Recursive bool   `name:"recursive" short:"r" help:"List recursively"`
 	Limit     int    `name:"limit" short:"n" help:"Maximum number of objects to return (default: all)."`
@@ -30,35 +30,35 @@ type ListCommand struct {
 }
 
 type GetCommand struct {
-	Backend string `arg:"" name:"backend" help:"Backend name"`
-	Path    string `arg:"" name:"path" help:"Object path (e.g. /dir/file.txt)"`
-	Output  string `name:"output" short:"o" help:"Write to file instead of stdout"`
+	Volume string `name:"volume" short:"v" help:"Backend volume name (saved as default for future commands)." optional:""`
+	Path   string `arg:"" name:"path" help:"Object path (e.g. /dir/file.txt)"`
+	Output string `name:"output" short:"o" help:"Write to file instead of stdout"`
 }
 
 type HeadCommand struct {
-	Backend string `arg:"" name:"backend" help:"Backend name"`
-	Path    string `arg:"" name:"path" help:"Object path"`
+	Volume string `name:"volume" short:"v" help:"Backend volume name (saved as default for future commands)." optional:""`
+	Path   string `arg:"" name:"path" help:"Object path"`
 }
 
 type DeleteCommand struct {
-	Backend   string `arg:"" name:"backend" help:"Backend name"`
+	Volume    string `name:"volume" short:"v" help:"Backend volume name (saved as default for future commands)." optional:""`
 	Path      string `arg:"" name:"path" help:"Object path or prefix"`
 	Recursive bool   `name:"recursive" short:"r" help:"Delete all objects under path, including subdirectories"`
 }
 
 type UploadCommand struct {
-	Backend string `arg:"" name:"backend" help:"Backend name"`
-	Path    string `arg:"" name:"path" help:"Local file or directory to upload (defaults to current directory)." optional:""`
-	Prefix  string `name:"prefix" short:"p" help:"Remote path prefix (e.g. backups/2026)."`
-	Hidden  bool   `name:"hidden" help:"Include files and directories whose names begin with '.'."`
-	Force   bool   `name:"force" short:"f" help:"Upload every file even when the remote copy appears up to date."`
+	Volume string `name:"volume" short:"v" help:"Backend volume name (saved as default for future commands)." optional:""`
+	Path   string `arg:"" name:"path" help:"Local file or directory to upload (defaults to current directory)." optional:""`
+	Prefix string `name:"prefix" short:"p" help:"Remote path prefix (e.g. backups/2026)."`
+	Hidden bool   `name:"hidden" help:"Include files and directories whose names begin with '.'."`
+	Force  bool   `name:"force" short:"f" help:"Upload every file even when the remote copy appears up to date."`
 }
 
 type DownloadCommand struct {
-	Backend string `arg:"" name:"backend" help:"Backend name"`
-	Path    string `arg:"" name:"path" help:"Local directory to download into (defaults to current directory)." optional:""`
-	Prefix  string `name:"prefix" short:"p" help:"Remote path prefix to download (e.g. backups/2026)."`
-	Force   bool   `name:"force" short:"f" help:"Download every file even when the local copy appears up to date."`
+	Volume string `name:"volume" short:"v" help:"Backend volume name (saved as default for future commands)." optional:""`
+	Path   string `arg:"" name:"path" help:"Local directory to download into (defaults to current directory)." optional:""`
+	Prefix string `name:"prefix" short:"p" help:"Remote path prefix to download (e.g. backups/2026)."`
+	Force  bool   `name:"force" short:"f" help:"Download every file even when the local copy appears up to date."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -66,13 +66,17 @@ type DownloadCommand struct {
 
 func (cmd *ListCommand) Run(globals server.Cmd) (err error) {
 	return withClient(globals, "List", nil, func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := resolveVolume(ctx, globals, client, cmd.Volume)
+		if err != nil {
+			return err
+		}
 
 		limit := cmd.Limit
 		if limit == 0 {
 			limit = schema.MaxListLimit
 		}
-		resp, err := client.ListObjects(ctx, cmd.Backend, schema.ListObjectsRequest{
-			Path:      cmd.Path,
+		resp, err := client.ListObjects(ctx, volume, schema.ListObjectsRequest{
+			Path:      normalizeRemotePath(cmd.Path),
 			Recursive: cmd.Recursive,
 			Limit:     limit,
 			Offset:    cmd.Offset,
@@ -83,14 +87,18 @@ func (cmd *ListCommand) Run(globals server.Cmd) (err error) {
 		if globals.IsDebug() {
 			fmt.Println(types.Stringify(resp))
 		}
-		return printListing(resp)
+		return printListing(globals.IsTerm(), resp)
 	})
 }
 
 func (cmd *HeadCommand) Run(globals server.Cmd) (err error) {
 	return withClient(globals, "Head", nil, func(ctx context.Context, client *httpclient.Client) error {
-		obj, err := client.GetObject(ctx, cmd.Backend, schema.GetObjectRequest{
-			Path: cmd.Path,
+		volume, err := resolveVolume(ctx, globals, client, cmd.Volume)
+		if err != nil {
+			return err
+		}
+		obj, err := client.GetObject(ctx, volume, schema.GetObjectRequest{
+			Path: normalizeRemotePath(cmd.Path),
 		})
 		if err != nil {
 			return err
@@ -102,6 +110,10 @@ func (cmd *HeadCommand) Run(globals server.Cmd) (err error) {
 
 func (cmd *GetCommand) Run(globals server.Cmd) (err error) {
 	return withClient(globals, "Get", nil, func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := resolveVolume(ctx, globals, client, cmd.Volume)
+		if err != nil {
+			return err
+		}
 
 		var out io.Writer = os.Stdout
 		var outFile *os.File
@@ -112,8 +124,8 @@ func (cmd *GetCommand) Run(globals server.Cmd) (err error) {
 			}
 			out = outFile
 		}
-		_, err = client.ReadObject(ctx, cmd.Backend, schema.ReadObjectRequest{
-			GetObjectRequest: schema.GetObjectRequest{Path: cmd.Path},
+		_, err = client.ReadObject(ctx, volume, schema.ReadObjectRequest{
+			GetObjectRequest: schema.GetObjectRequest{Path: normalizeRemotePath(cmd.Path)},
 		}, func(chunk []byte) error {
 			_, err := out.Write(chunk)
 			return err
@@ -130,6 +142,10 @@ func (cmd *GetCommand) Run(globals server.Cmd) (err error) {
 
 func (cmd *DeleteCommand) Run(globals server.Cmd) (err error) {
 	return withClient(globals, "Delete", nil, func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := resolveVolume(ctx, globals, client, cmd.Volume)
+		if err != nil {
+			return err
+		}
 		// Route to the appropriate client call based on path and flags:
 		//
 		//   Single-object path (default):
@@ -145,11 +161,12 @@ func (cmd *DeleteCommand) Run(globals server.Cmd) (err error) {
 		// A plain path without a trailing slash and without -r is treated as a
 		// specific object name, not a prefix, so callers get an explicit error on
 		// a missing path rather than silent success.
-		isPrefix := cmd.Recursive || cmd.Path == "/" || strings.HasSuffix(cmd.Path, "/")
+		path := normalizeRemotePath(cmd.Path)
+		isPrefix := cmd.Recursive || path == "/" || strings.HasSuffix(path, "/")
 
 		if isPrefix {
-			resp, err := client.DeleteObjects(ctx, cmd.Backend, schema.DeleteObjectsRequest{
-				Path:      cmd.Path,
+			resp, err := client.DeleteObjects(ctx, volume, schema.DeleteObjectsRequest{
+				Path:      path,
 				Recursive: cmd.Recursive,
 			})
 			if err != nil {
@@ -159,11 +176,11 @@ func (cmd *DeleteCommand) Run(globals server.Cmd) (err error) {
 				fmt.Println(types.Stringify(resp))
 				return nil
 			}
-			return printObjects(resp.Body)
+			return printObjects(globals.IsTerm(), resp.Body)
 		}
 
 		// Single-object delete: the server returns 404 if the object does not exist.
-		obj, err := client.DeleteObject(ctx, cmd.Backend, schema.DeleteObjectRequest{Path: cmd.Path})
+		obj, err := client.DeleteObject(ctx, volume, schema.DeleteObjectRequest{Path: path})
 		if err != nil {
 			return err
 		}
@@ -171,12 +188,16 @@ func (cmd *DeleteCommand) Run(globals server.Cmd) (err error) {
 			fmt.Println(types.Stringify(obj))
 			return nil
 		}
-		return printObjects([]schema.Object{*obj})
+		return printObjects(globals.IsTerm(), []schema.Object{*obj})
 	})
 }
 
 func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 	return withClient(globals, "Download", nil, func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := resolveVolume(ctx, globals, client, cmd.Volume)
+		if err != nil {
+			return err
+		}
 		// Resolve local download directory.
 		localDir := cmd.Path
 		if localDir == "" {
@@ -197,7 +218,7 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 		if cmd.Prefix != "" {
 			remotePath = "/" + strings.TrimPrefix(cmd.Prefix, "/")
 		}
-		resp, err := client.ListObjects(ctx, cmd.Backend, schema.ListObjectsRequest{
+		resp, err := client.ListObjects(ctx, volume, schema.ListObjectsRequest{
 			Path:      remotePath,
 			Recursive: true,
 			Limit:     schema.MaxListLimit,
@@ -219,7 +240,7 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 			for i, obj := range resp.Body {
 				headReqs[i] = schema.GetObjectRequest{Path: obj.Path}
 			}
-			accObjs, _ = client.GetObjects(ctx, cmd.Backend, headReqs)
+			accObjs, _ = client.GetObjects(ctx, volume, headReqs)
 			for i, acc := range accObjs {
 				if acc != nil {
 					resp.Body[i].ModTime = acc.ModTime
@@ -290,7 +311,7 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 			fileSize := e.obj.Size
 			var written int64
 			var lastPct int64 = -1
-			_, err = client.ReadObject(ctx, cmd.Backend, schema.ReadObjectRequest{
+			_, err = client.ReadObject(ctx, volume, schema.ReadObjectRequest{
 				GetObjectRequest: schema.GetObjectRequest{Path: e.obj.Path},
 			}, func(chunk []byte) error {
 				if _, werr := f.Write(chunk); werr != nil {
@@ -336,6 +357,10 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 
 func (cmd *UploadCommand) Run(globals server.Cmd) (err error) {
 	return withClient(globals, "Upload", nil, func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := resolveVolume(ctx, globals, client, cmd.Volume)
+		if err != nil {
+			return err
+		}
 		// Resolve the local path: default to cwd.
 		local := cmd.Path
 		if local == "" {
@@ -414,7 +439,7 @@ func (cmd *UploadCommand) Run(globals server.Cmd) (err error) {
 			}
 		}))
 
-		objs, err := client.CreateObjects(ctx, cmd.Backend, fsys, uploadOpts...)
+		objs, err := client.CreateObjects(ctx, volume, fsys, uploadOpts...)
 		if err != nil {
 			return err
 		}
@@ -435,58 +460,97 @@ func (cmd *UploadCommand) Run(globals server.Cmd) (err error) {
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// printListing renders a schema.ListObjectsResponse in an ls-style table.
-func printListing(resp *schema.ListObjectsResponse) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	writeObjectRows(w, resp.Body)
-	sep := ""
-	if len(resp.Body) > 0 {
-		sep = "\n"
+// normalizeRemotePath converts a user-supplied remote path to an absolute
+// server path. Shell shortcuts like ".", "./foo", and empty strings are
+// mapped to their rooted equivalents so they don't produce dot-segments in
+// URLs (which the HTTP router redirects away, breaking DELETE requests).
+//
+// Trailing slashes are preserved because they carry semantic meaning
+// (prefix vs. exact-object selection).
+func normalizeRemotePath(p string) string {
+	// Strip a single leading "./" produced by shell tab-completion.
+	p = strings.TrimPrefix(p, "./")
+	// Bare "." or empty means the root of the volume.
+	if p == "." || p == "" {
+		return "/"
 	}
-	if len(resp.Body) < resp.Count {
-		fmt.Fprintf(os.Stdout, "%s  %d of %d object(s)\n", sep, len(resp.Body), resp.Count)
-	} else {
-		fmt.Fprintf(os.Stdout, "%s  %d object(s)\n", sep, resp.Count)
+	// Ensure the path is rooted.
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
 	}
-	return nil
+	return p
 }
 
-// printObjects renders a slice of objects in the same ls-style table used by
-// printListing. It is used by DeleteCommand to display deleted objects.
-func printObjects(objs []schema.Object) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	writeObjectRows(w, objs)
-	sep := ""
-	if len(objs) > 0 {
-		sep = "\n"
-	}
-	fmt.Fprintf(os.Stdout, "%s  %d object(s) deleted\n", sep, len(objs))
-	return nil
+///////////////////////////////////////////////////////////////////////////////
+// OBJECT TABLE
+
+// objectRow adapts a schema.Object for tui.TableFor.
+type objectRow struct {
+	schema.Object
 }
 
-// writeObjectRows writes one tabwriter row per object and flushes the writer.
-func writeObjectRows(w *tabwriter.Writer, objs []schema.Object) {
-	bold := true
-	for _, obj := range objs {
-		name := strings.TrimPrefix(obj.Path, "/")
-		if obj.IsDir {
-			name = name + "/"
+func (r objectRow) Header() []string {
+	return []string{"Name", "Size", "Date", "Type"}
+}
+
+func (r objectRow) Cell(col int) string {
+	switch col {
+	case 0:
+		name := strings.TrimPrefix(r.Path, "/")
+		if r.IsDir {
+			name += "/"
 		}
-		if bold {
-			name = "\x1b[1m" + name + "\x1b[0m"
+		return name
+	case 1:
+		if r.IsDir {
+			return "DIR"
 		}
-		sizeCol := humanSize(obj.Size)
-		if obj.IsDir {
-			sizeCol = "DIR"
-		}
-		fmt.Fprintf(w, "%8s\t%s\t%-30s\t%s\n",
-			sizeCol,
-			formatModTime(obj.ModTime),
-			shortContentType(obj.ContentType, obj.Path),
-			name,
-		)
+		return humanSize(r.Size)
+	case 2:
+		return formatModTime(r.ModTime)
+	case 3:
+		return shortContentType(r.ContentType, r.Path)
 	}
-	w.Flush()
+	return ""
+}
+
+func (r objectRow) Width(col int) int {
+	switch col {
+	case 3:
+		return 30
+	}
+	return 0
+}
+
+// printListing renders a schema.ListObjectsResponse using the tui table.
+func printListing(termWidth int, resp *schema.ListObjectsResponse) error {
+	table := tui.TableFor[objectRow](tui.SetWidth(termWidth))
+	rows := make([]objectRow, len(resp.Body))
+	for i, obj := range resp.Body {
+		rows[i] = objectRow{obj}
+	}
+	if _, err := table.Write(os.Stdout, rows...); err != nil {
+		return err
+	}
+	limit := uint64(resp.Count)
+	_, err := tui.TableSummary("object(s)", uint(resp.Count), 0, &limit).Write(os.Stdout)
+	return err
+}
+
+// printObjects renders a slice of objects using the tui table (used by delete).
+func printObjects(termWidth int, objs []schema.Object) error {
+	table := tui.TableFor[objectRow](tui.SetWidth(termWidth))
+	rows := make([]objectRow, len(objs))
+	for i, obj := range objs {
+		rows[i] = objectRow{obj}
+	}
+	if _, err := table.Write(os.Stdout, rows...); err != nil {
+		return err
+	}
+	n := uint(len(objs))
+	limit := uint64(n)
+	_, err := tui.TableSummary("object(s) deleted", n, 0, &limit).Write(os.Stdout)
+	return err
 }
 
 // shortContentType strips parameters from a MIME type. When ct is empty or
