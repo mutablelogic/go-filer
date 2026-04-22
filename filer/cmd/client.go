@@ -1,15 +1,23 @@
 package cmd
 
 import (
-	// Packages
 	"context"
 
-	"github.com/mutablelogic/go-client/pkg/otel"
+	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	server "github.com/mutablelogic/go-server"
-	"github.com/mutablelogic/go-server/pkg/types"
-	"go.opentelemetry.io/otel/attribute"
+	types "github.com/mutablelogic/go-server/pkg/types"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
+
+///////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+type ClientCommands struct {
+	Backends BackendsCommand `cmd:"" name:"backends" help:"Return list of backends." group:"SERVER"`
+	List     ListCommand     `cmd:"" name:"ls" help:"List objects at the backend root." group:"OBJECTS"`
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS

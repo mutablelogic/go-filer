@@ -32,6 +32,8 @@ import (
 
 type CLI struct {
 	filer.ServerCommands
+	cmd.OpenAPICommands
+	filer.ClientCommands
 }
 
 ///////////////////////////////////////////////////////////////////////////////

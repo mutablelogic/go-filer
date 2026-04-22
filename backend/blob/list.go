@@ -20,7 +20,7 @@ import (
 // Use Recursive=true to list nested objects, or Recursive=false for immediate children only.
 // Response.Count reflects the total number of matches before Offset/Limit are applied.
 // Limit=0 returns only the count (Body is nil); Limit>0 returns up to Limit objects starting at Offset.
-func (b *blobbackend) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
+func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
 	sk := b.key(req.Path)
 
 	// Collect all matching objects first so Count can reflect the full result set

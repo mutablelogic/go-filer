@@ -23,7 +23,7 @@ const deleteTimeout = 30 * time.Second
 // PUBLIC METHODS
 
 // CreateObject creates an object in the backend
-func (b *blobbackend) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
+func (b *backend) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
 

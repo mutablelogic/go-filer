@@ -16,7 +16,7 @@ import (
 // PUBLIC METHODS
 
 // DeleteObject deletes an object
-func (b *blobbackend) DeleteObject(ctx context.Context, req schema.DeleteObjectRequest) (*schema.Object, error) {
+func (b *backend) DeleteObject(ctx context.Context, req schema.DeleteObjectRequest) (*schema.Object, error) {
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
 
@@ -48,7 +48,7 @@ func (b *blobbackend) DeleteObject(ctx context.Context, req schema.DeleteObjectR
 // If a single object exists at the path, it deletes just that object.
 // Otherwise, it treats the path as a prefix and deletes all matching objects.
 // Use Recursive=true to delete nested objects, or Recursive=false for immediate children only.
-func (b *blobbackend) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
+func (b *backend) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	sk := b.key(req.Path)
 
 	// Response

@@ -40,17 +40,6 @@ func New(ctx context.Context, opts ...Opt) (*Manager, error) {
 	return self, nil
 }
 
-// Close all backends
-func (manager *Manager) Close() error {
-	var result error
-	for _, backend := range manager.backends {
-		if err := backend.Close(); err != nil {
-			result = errors.Join(result, err)
-		}
-	}
-	return result
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 

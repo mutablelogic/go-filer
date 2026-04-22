@@ -11,7 +11,7 @@ import (
 // PUBLIC METHODS
 
 // GetObject gets object metadata
-func (b *blobbackend) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+func (b *backend) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
 

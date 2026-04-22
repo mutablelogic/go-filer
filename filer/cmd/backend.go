@@ -19,7 +19,7 @@ type BackendsCommand struct{}
 // PUBLIC METHODS
 
 func (cmd *BackendsCommand) Run(ctx server.Cmd) (err error) {
-	return withClient(ctx, "BackEnds", nil, func(ctx context.Context, client *httpclient.Client) error {
+	return withClient(ctx, "BackendsCommand", nil, func(ctx context.Context, client *httpclient.Client) error {
 		resp, err := client.ListBackends(ctx)
 		if err != nil {
 			return err

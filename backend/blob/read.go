@@ -12,7 +12,7 @@ import (
 // PUBLIC METHODS
 
 // ReadObject reads object content
-func (b *blobbackend) ReadObject(ctx context.Context, req schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
+func (b *backend) ReadObject(ctx context.Context, req schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
 

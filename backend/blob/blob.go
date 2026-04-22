@@ -14,7 +14,7 @@ import (
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
 	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
-	backend "github.com/mutablelogic/go-filer/backend"
+	backends "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -32,13 +32,13 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type blobbackend struct {
+type backend struct {
 	*opt
 	bucket       *blob.Bucket
 	bucketPrefix string // key prefix for bucket operations (empty for file://)
 }
 
-var _ backend.Backend = (*blobbackend)(nil)
+var _ backends.Backend = (*backend)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -52,8 +52,8 @@ var _ backend.Backend = (*blobbackend)(nil)
 //
 // For S3 URLs, you can optionally provide an aws.Config via WithAWSConfig()
 // for full control over AWS SDK configuration.
-func New(ctx context.Context, u string, opts ...Opt) (backend.Backend, error) {
-	self := new(blobbackend)
+func New(ctx context.Context, u string, opts ...Opt) (*backend, error) {
+	self := new(backend)
 
 	// Set the options
 	if url, err := url.Parse(u); err != nil {
@@ -151,8 +151,20 @@ func New(ctx context.Context, u string, opts ...Opt) (backend.Backend, error) {
 	return self, nil
 }
 
+// NewFileBackend creates a file-based backend with a logical name.
+// name must be a valid identifier (see types.IsIdentifier): starts with a
+// letter, contains only letters, digits, underscores, or hyphens, max 64 chars.
+// dir must be an absolute path; if it doesn't start with "/" an error is returned.
+func NewFileBackend(ctx context.Context, name, dir string, opts ...Opt) (*backend, error) {
+	if !path.IsAbs(dir) {
+		return nil, fmt.Errorf("backend dir %q must be an absolute path", dir)
+	}
+	u := types.Ptr(url.URL{Scheme: "file", Host: name, Path: path.Clean(dir)})
+	return New(ctx, u.String(), opts...)
+}
+
 // Close the backend
-func (b *blobbackend) Close() error {
+func (b *backend) Close() error {
 	var result error
 	if b.bucket != nil {
 		result = errors.Join(result, b.bucket.Close())
@@ -163,23 +175,11 @@ func (b *blobbackend) Close() error {
 	return result
 }
 
-// NewFileBackend creates a file-based backend with a logical name.
-// name must be a valid identifier (see types.IsIdentifier): starts with a
-// letter, contains only letters, digits, underscores, or hyphens, max 64 chars.
-// dir must be an absolute path; if it doesn't start with "/" an error is returned.
-func NewFileBackend(ctx context.Context, name, dir string, opts ...Opt) (backend.Backend, error) {
-	if !path.IsAbs(dir) {
-		return nil, fmt.Errorf("backend dir %q must be an absolute path", dir)
-	}
-	u := types.Ptr(url.URL{Scheme: "file", Host: name, Path: path.Clean(dir)})
-	return New(ctx, u.String(), opts...)
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
 // Name returns the name of the backend (the host component of the URL)
-func (b *blobbackend) Name() string {
+func (b *backend) Name() string {
 	return b.url.Host
 }
 
@@ -188,7 +188,7 @@ func (b *blobbackend) Name() string {
 //   - region: AWS region (S3 only, when an awsConfig is present)
 //   - endpoint: custom S3-compatible endpoint (when set)
 //   - anonymous: "true" when anonymous credentials are used
-func (b *blobbackend) URL() *url.URL {
+func (b *backend) URL() *url.URL {
 	u := &url.URL{
 		Scheme: b.url.Scheme,
 		Host:   b.url.Host,
@@ -224,7 +224,7 @@ func (b *blobbackend) URL() *url.URL {
 
 // key returns the blob storage key for a given request path.
 // Cleans the path, strips the leading slash, and prepends the bucket prefix.
-func (b *blobbackend) key(p string) string {
+func (b *backend) key(p string) string {
 	sk := strings.TrimPrefix(cleanPath(p), "/")
 	if b.bucketPrefix != "" {
 		if sk == "" {
@@ -243,7 +243,7 @@ func cleanPath(p string) string {
 	return path.Clean(p)
 }
 
-func (b *blobbackend) attrsToObject(objPath string, attrs *blob.Attributes) *schema.Object {
+func (b *backend) attrsToObject(objPath string, attrs *blob.Attributes) *schema.Object {
 	obj := &schema.Object{
 		Path:        objPath,
 		Size:        attrs.Size,
@@ -273,7 +273,7 @@ func (b *blobbackend) attrsToObject(objPath string, attrs *blob.Attributes) *sch
 
 // pathFromStorageKey converts a blob storage key back to a logical path
 // by stripping the bucket prefix (for s3/mem with bucket prefix).
-func (b *blobbackend) pathFromStorageKey(sk string) string {
+func (b *backend) pathFromStorageKey(sk string) string {
 	if b.bucketPrefix != "" {
 		sk = strings.TrimPrefix(sk, b.bucketPrefix+"/")
 	}
@@ -287,7 +287,7 @@ func (b *blobbackend) pathFromStorageKey(sk string) string {
 // (as opposed to a phantom directory — a size-0 pseudo-object with children).
 // Returns the object's attributes if real, nil otherwise.
 // Permission errors are propagated as a non-nil error instead of being swallowed.
-func (b *blobbackend) isRealObject(ctx context.Context, sk string) (*blob.Attributes, error) {
+func (b *backend) isRealObject(ctx context.Context, sk string) (*blob.Attributes, error) {
 	if sk == "" || strings.HasSuffix(sk, "/") {
 		return nil, nil
 	}

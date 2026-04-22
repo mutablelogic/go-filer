@@ -9,13 +9,18 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/mutablelogic/go-filer/backend/blob"
-	"github.com/mutablelogic/go-filer/filer/manager"
+	// Packages
+	aws "github.com/aws/aws-sdk-go-v2/aws"
+	config "github.com/aws/aws-sdk-go-v2/config"
+	credentials "github.com/aws/aws-sdk-go-v2/credentials"
+	blob "github.com/mutablelogic/go-filer/backend/blob"
+	"github.com/mutablelogic/go-filer/filer/httphandler"
+	manager "github.com/mutablelogic/go-filer/filer/manager"
 	server "github.com/mutablelogic/go-server"
+	cmd "github.com/mutablelogic/go-server/pkg/cmd"
+	"github.com/mutablelogic/go-server/pkg/httprouter"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	"golang.org/x/sync/errgroup"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -37,6 +42,7 @@ type AWSConfig struct {
 type RunServerCommand struct {
 	Backend []string  `arg:"" name:"backend" help:"Backend URL (e.g. mem://name, file://name/path, s3://bucket)." optional:""`
 	AWS     AWSConfig `embed:"" prefix:"aws."`
+	cmd.RunServer
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -68,15 +74,32 @@ func (cmd *RunServerCommand) Run(globals server.Cmd) error {
 		}
 	}
 
-	return cmd.withManager(globals, opts, func(ctx context.Context, mgr *manager.Manager) error {
+	return cmd.withManager(globals, opts, func(ctx context.Context, manager *manager.Manager) error {
+
+		// Register the handlers for the manager
+		cmd.RunServer.Register(func(router *httprouter.Router) error {
+			return httphandler.RegisterHandlers(router, manager)
+		})
+
 		// Log the backends
 		globals.Logger().InfoContext(globals.Context(), "filer manager started", "name", globals.Name(), "version", globals.Version())
-		for _, name := range mgr.Backends() {
-			globals.Logger().InfoContext(globals.Context(), "registered backend", "name", name, "url", mgr.Backend(name).URL().String())
+		for _, name := range manager.Backends() {
+			globals.Logger().InfoContext(globals.Context(), "registered backend", "name", name, "url", manager.Backend(name).URL().String())
 		}
 
-		<-globals.Context().Done()
-		return nil
+		// Create an error group for the different components
+		errgroup, errctx := errgroup.WithContext(globals.Context())
+
+		// Run the manager
+		errgroup.Go(func() error {
+			return manager.Run(errctx)
+		})
+
+		// Run the server
+		errgroup.Go(func() error {
+			return cmd.RunServer.Run(globals)
+		})
+		return errgroup.Wait()
 	})
 }
 
@@ -128,7 +151,6 @@ func (cmd *RunServerCommand) withManager(globals server.Cmd, opts []manager.Opt,
 	if err != nil {
 		return err
 	}
-	defer manager.Close()
 
 	// Run the function
 	return fn(globals.Context(), manager)
@@ -150,103 +172,3 @@ func defaultBackendURL(globals server.Cmd) (string, error) {
 		return types.Ptr(url.URL{Scheme: "file", Host: name, Path: filepath.ToSlash(dir)}).String(), nil
 	}
 }
-
-/*
-// backendOpts builds a []backend.Opt from the server flags.
-//
-// Credential priority: --aws.profile / AWS_PROFILE > --aws.access-key / AWS_ACCESS_KEY_ID > anonymous.
-// When a profile is given, config.LoadDefaultConfig is called with
-// config.WithSharedConfigProfile so SSO and assume-role profiles work correctly.
-// When --aws.access-key is set (and no profile), static credentials are used.
-// Otherwise anonymous credentials are used (suitable for public buckets or
-// S3-compatible services that don't require authentication).
-func (cmd *RunServerCommand) backendOpts(ctx context.Context) ([]backend.Opt, error) {
-	var opts []backend.Opt
-
-	if cmd.AWS.Profile != "" {
-		// Profile takes priority: load via the SDK's config chain so SSO profiles work.
-		cfgOpts := []func(*config.LoadOptions) error{
-			config.WithSharedConfigProfile(cmd.AWS.Profile),
-		}
-		if cmd.AWS.Region != "" {
-			cfgOpts = append(cfgOpts, config.WithRegion(cmd.AWS.Region))
-		}
-		awsCfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load AWS config for profile %q: %w", cmd.AWS.Profile, err)
-		}
-		opts = append(opts, backend.WithAWSConfig(awsCfg))
-		if cmd.AWS.Endpoint != "" {
-			opts = append(opts, backend.WithEndpoint(cmd.AWS.Endpoint))
-		}
-	} else if cmd.AWS.AccessKey != "" {
-		// Static credentials (no profile set).
-		if cmd.AWS.SecretKey == "" {
-			return nil, fmt.Errorf("--aws.secret-key is required when --aws.access-key is set")
-		}
-		cfg := aws.Config{
-			Credentials: credentials.NewStaticCredentialsProvider(
-				cmd.AWS.AccessKey, cmd.AWS.SecretKey, cmd.AWS.SessionToken,
-			),
-		}
-		if cmd.AWS.Region != "" {
-			cfg.Region = cmd.AWS.Region
-		}
-		opts = append(opts, backend.WithAWSConfig(cfg))
-		if cmd.AWS.Endpoint != "" {
-			opts = append(opts, backend.WithEndpoint(cmd.AWS.Endpoint))
-		}
-	} else {
-	}
-
-	return opts, nil
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
-
-// serve registers HTTP handlers and runs the server until context is done.
-func serve(ctx *Globals, mgr *manager.Manager) error {
-	// Ensure TMPDIR exists so Go's os.TempDir() is usable for fileblob temp files.
-	if tmpdir := os.Getenv("TMPDIR"); tmpdir != "" {
-		if err := os.MkdirAll(tmpdir, 0o755); err != nil {
-			ctx.logger.Printf(ctx.ctx, "warning: could not create TMPDIR %s: %v", tmpdir, err)
-		}
-	}
-	// Build middleware
-	middleware := []httprouter.HTTPMiddlewareFunc{}
-	if mw, ok := ctx.logger.(server.HTTPMiddleware); ok {
-		middleware = append(middleware, mw.WrapFunc)
-	}
-	if ctx.tracer != nil {
-		middleware = append(middleware, otel.HTTPHandlerFunc(ctx.tracer))
-	}
-
-	// Create the router
-	router, err := httprouter.NewRouter(ctx.ctx, ctx.HTTP.Prefix, ctx.HTTP.Origin, "filer", version.Version(), middleware...)
-	if err != nil {
-		return fmt.Errorf("failed to create router: %w", err)
-	}
-
-	// Register filer HTTP handlers
-	if err := httphandler.RegisterHandlers(mgr, router); err != nil {
-		return fmt.Errorf("failed to register handlers: %w", err)
-	}
-
-	// Create and run the HTTP server
-	srv, err := httpserver.New(ctx.HTTP.Addr, http.Handler(router), nil,
-		httpserver.WithReadTimeout(ctx.HTTP.Timeout),
-		httpserver.WithWriteTimeout(ctx.HTTP.Timeout),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create server: %w", err)
-	}
-
-	ctx.logger.Printf(ctx.ctx, "filer@%s started on %s", version.Version(), ctx.HTTP.Addr)
-	if err := srv.Run(ctx.ctx); err != nil {
-		return err
-	}
-	ctx.logger.Printf(context.Background(), "filer stopped")
-	return nil
-}
-*/
