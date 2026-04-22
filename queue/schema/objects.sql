@@ -40,20 +40,16 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."task" (
     FOREIGN KEY ("queue") REFERENCES ${"schema"}."queue" ("queue") ON DELETE CASCADE
 ) PARTITION BY RANGE (id);
 
--- pgqueue.partition
-CREATE TABLE IF NOT EXISTS ${"schema"}."task${serial}" PARTITION OF ${"schema"}."task"
-    FOR VALUES FROM (${start}) TO (${end});
-
 -- pgqueue.queue_status_index
 -- Covers 'new' and 'retry' states
-CREATE INDEX IF NOT EXISTS ${"schema"}."task_queue_status_idx"
+CREATE INDEX IF NOT EXISTS "task_queue_status_idx"
     ON ${"schema"}."task" ("queue", "delayed_at")
     WHERE "started_at" IS NULL 
       AND "finished_at" IS NULL 
       AND "retries" > 0;
 
 -- pgqueue.worker_index
-CREATE INDEX IF NOT EXISTS ${"schema"}."task_worker_idx"
+CREATE INDEX IF NOT EXISTS "task_worker_idx"
     ON ${"schema"}."task" ("worker")
     WHERE "started_at" IS NOT NULL 
       AND "finished_at" IS NULL;
@@ -70,7 +66,7 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."ticker" (
 );
 
 -- pgqueue.ticker_queue_index
-CREATE INDEX IF NOT EXISTS ${"schema"}."idx_ticker_next"
+CREATE INDEX IF NOT EXISTS "idx_ticker_next"
     ON ${"schema"}."ticker" ("last_at" NULLS FIRST) 
     WHERE "interval" IS NOT NULL;
 
