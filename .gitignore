@@ -21,7 +21,4 @@ go.work.sum
 
 # env file
 .env
-.claude
-
-# Binaries
-/filer
+.DS_Store
