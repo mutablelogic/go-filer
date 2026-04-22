@@ -277,6 +277,7 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 		}
 
 		tty := globals.IsTerm() > 0
+		bar := tui.Progress(tui.SetWidth(globals.IsTerm()))
 
 		if len(todo) == 0 {
 			if skipped > 0 {
@@ -291,13 +292,11 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 		for i, e := range todo {
 			fileTag := fmt.Sprintf("[%*d/%d]", w, i+1, total)
 			name := strings.TrimPrefix(e.obj.Path, "/")
+			label := progressStatus(fileTag, e.obj.Size, name)
 
 			if tty {
-				if e.obj.Size > 0 {
-					fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %5d%%  \x1b[1m%s\x1b[0m", fileTag, 0, name)
-				} else {
-					fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %6s  \x1b[1m%s\x1b[0m", fileTag, "?", name)
-				}
+				fmt.Fprintf(os.Stderr, "\r\x1b[K")
+				bar.Write(os.Stderr, label, 0) //nolint:errcheck
 			}
 
 			if err := os.MkdirAll(filepath.Dir(e.localAbs), 0o755); err != nil {
@@ -322,7 +321,8 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 					pct := written * 100 / fileSize
 					if pct != lastPct {
 						lastPct = pct
-						fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %5d%%  \x1b[1m%s\x1b[0m", fileTag, pct, name)
+						fmt.Fprintf(os.Stderr, "\r\x1b[K")
+						bar.Write(os.Stderr, label, float64(pct)) //nolint:errcheck
 					}
 				}
 				return nil
@@ -336,20 +336,17 @@ func (cmd *DownloadCommand) Run(globals server.Cmd) (err error) {
 				_ = os.Chtimes(e.localAbs, e.obj.ModTime, e.obj.ModTime)
 			}
 
-			size := fmt.Sprintf("%6s", humanSize(written))
+			size := humanSize(written)
 			if tty {
-				fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %s  \x1b[1m%s\x1b[0m\n", fileTag, size, name)
-			} else {
-				fmt.Fprintf(os.Stderr, "  %s  %s  %s\n", fileTag, size, name)
+				fmt.Fprintf(os.Stderr, "\r\x1b[K")
 			}
+			fmt.Fprintf(os.Stderr, "  %s  %6s  %s\n", fileTag, size, name)
 		}
 
-		if tty || len(todo) > 0 || skipped > 0 {
-			if skipped > 0 {
-				fmt.Fprintf(os.Stderr, "%d object(s) downloaded, %d skipped (up to date)\n", len(todo), skipped)
-			} else {
-				fmt.Fprintf(os.Stderr, "%d object(s) downloaded\n", len(todo))
-			}
+		if skipped > 0 {
+			fmt.Fprintf(os.Stderr, "%d object(s) downloaded, %d skipped (up to date)\n", len(todo), skipped)
+		} else if len(todo) > 0 {
+			fmt.Fprintf(os.Stderr, "%d object(s) downloaded\n", len(todo))
 		}
 		return nil
 	})
@@ -408,6 +405,7 @@ func (cmd *UploadCommand) Run(globals server.Cmd) (err error) {
 		}))
 
 		tty := globals.IsTerm() > 0
+		bar := tui.Progress(tui.SetWidth(globals.IsTerm()))
 		var skipped int
 		if !cmd.Force {
 			// Wrap the default skip check to count files that are already up to date.
@@ -423,19 +421,19 @@ func (cmd *UploadCommand) Run(globals server.Cmd) (err error) {
 			w := len(fmt.Sprintf("%d", count))
 			fileTag := fmt.Sprintf("[%*d/%d]", w, index+1, count)
 			name := strings.TrimPrefix(path, "/")
+			label := progressStatus(fileTag, total, name)
 			if written == total {
 				// File committed (including empty files where written == total == 0).
-				size := fmt.Sprintf("%6s", humanSize(total))
 				if tty {
-					fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %s  \x1b[1m%s\x1b[0m\n", fileTag, size, name)
-				} else {
-					fmt.Fprintf(os.Stderr, "  %s  %s  %s\n", fileTag, size, name)
+					fmt.Fprintf(os.Stderr, "\r\x1b[K")
 				}
+				fmt.Fprintf(os.Stderr, "  %s  %6s  %s\n", fileTag, humanSize(total), name)
 			} else if tty && total > 0 {
-				pct := fmt.Sprintf("%5d%%", written*100/total)
-				fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  %s  \x1b[1m%s\x1b[0m", fileTag, pct, name)
+				fmt.Fprintf(os.Stderr, "\r\x1b[K")
+				bar.Write(os.Stderr, label, float64(written*100/total)) //nolint:errcheck
 			} else if tty {
-				fmt.Fprintf(os.Stderr, "\r\x1b[K  %s  \x1b[1m%s\x1b[0m", fileTag, name)
+				fmt.Fprintf(os.Stderr, "\r\x1b[K")
+				bar.Write(os.Stderr, label, 0) //nolint:errcheck
 			}
 		}))
 
@@ -569,6 +567,31 @@ func shortContentType(ct, path string) string {
 		ct = strings.TrimSpace(ct[:i])
 	}
 	return ct
+}
+
+// progressStatus formats an in-flight progress label so it aligns with the
+// completed output row: counter, size, then name. If the label would exceed the
+// progress widget's fixed status column, only the name portion is truncated.
+func progressStatus(fileTag string, size int64, name string) string {
+	const progressStatusWidth = 40
+	const ellipsis = "..."
+
+	prefix := fmt.Sprintf("  %s  %6s  ", fileTag, humanSize(size))
+	available := progressStatusWidth - len([]rune(prefix))
+	if available <= 0 {
+		return prefix
+	}
+
+	runes := []rune(name)
+	if len(runes) > available {
+		if available <= len(ellipsis) {
+			name = string(runes[:available])
+		} else {
+			name = string(runes[:available-len(ellipsis)]) + ellipsis
+		}
+	}
+
+	return prefix + name
 }
 
 // humanSize formats a byte count as a human-readable string.
