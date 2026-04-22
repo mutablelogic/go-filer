@@ -14,11 +14,10 @@ VERSION ?= $(shell git describe --tags --always | sed 's/^v//')
 
 # Set build flags
 BUILD_MODULE = $(shell cat go.mod | head -1 | cut -d ' ' -f 2)
-BUILD_LD_FLAGS += -X $(BUILD_MODULE)/pkg/version.GitSource=${BUILD_MODULE}
-BUILD_LD_FLAGS += -X $(BUILD_MODULE)/pkg/version.GitTag=$(shell git describe --tags --always)
-BUILD_LD_FLAGS += -X $(BUILD_MODULE)/pkg/version.GitBranch=$(shell git name-rev HEAD --name-only --always)
-BUILD_LD_FLAGS += -X $(BUILD_MODULE)/pkg/version.GitHash=$(shell git rev-parse HEAD)
-BUILD_LD_FLAGS += -X $(BUILD_MODULE)/pkg/version.GoBuildTime=$(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+BUILD_VERSION_PACKAGE = github.com/mutablelogic/go-server/pkg/version
+BUILD_LD_FLAGS += -X $(BUILD_VERSION_PACKAGE).GitTag=${VERSION}
+BUILD_LD_FLAGS += -X $(BUILD_VERSION_PACKAGE).GitBranch=$(shell git name-rev HEAD --name-only --always)
+BUILD_LD_FLAGS += -X $(BUILD_VERSION_PACKAGE).BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}" 
 
 # Docker
@@ -47,19 +46,6 @@ build-docker: tidy $(PLUGIN_DIR) $(CMD_DIR)
 $(CMD_DIR): go-dep mkdir
 	@echo Build command $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
 	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
-
-# Build the plugins
-.PHONY: plugins
-plugins: $(PLUGIN_DIR) 
-	@for plugin in log httprouter httpserver pg pgqueue; do \
-		echo "Build plugin $$plugin GOOS=${OS} GOARCH=${ARCH}"; \
-		GOOS=${OS} GOARCH=${ARCH} ${GO} build -buildmode=plugin ${BUILD_FLAGS} -o ${BUILD_DIR}/$$plugin.plugin github.com/mutablelogic/go-server/plugin/$$plugin; \
-	done
-
-# Build the plugins
-$(PLUGIN_DIR): go-dep mkdir
-	@echo Build plugin $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
-	@GOOS=${OS} GOARCH=${ARCH} ${GO} build -buildmode=plugin ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@).plugin ./$@
 
 # Build the docker image
 .PHONY: docker
