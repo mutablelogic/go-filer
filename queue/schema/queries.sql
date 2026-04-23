@@ -90,7 +90,8 @@ SELECT
     "started_at",
     "finished_at",
     "dies_at",
-    "retries"
+	"retries",
+	${"schema"}.queue_task_status("dies_at", "started_at", "finished_at", "retries", "initial_retries") AS "status"
 FROM
     ${"schema"}."task"
 WHERE
@@ -151,7 +152,7 @@ FROM (
         t."finished_at",
         t."dies_at",
         t."retries",
-        ${"schema"}.queue_task_status(t."id") AS "status"
+		${"schema"}.queue_task_status(t."dies_at", t."started_at", t."finished_at", t."retries", t."initial_retries") AS "status"
     FROM
         ${"schema"}."task" t
     ${taskwhere}

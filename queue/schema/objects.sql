@@ -69,18 +69,23 @@ CREATE INDEX IF NOT EXISTS "idx_ticker_next"
     WHERE "interval" IS NOT NULL;
 
 -- pgqueue.queue_task_status_func
-CREATE OR REPLACE FUNCTION ${"schema"}.queue_task_status(t BIGINT) RETURNS ${"schema"}.task_status AS $$
+CREATE OR REPLACE FUNCTION ${"schema"}.queue_task_status(
+    dies_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    retries INTEGER,
+    initial_retries INTEGER
+) RETURNS ${"schema"}.task_status AS $$
     SELECT CASE
-        WHEN "dies_at" IS NOT NULL AND "dies_at" < NOW()                                        THEN 'expired'::${"schema"}.task_status
-        WHEN "started_at" IS NULL AND "finished_at" IS NULL AND "retries" = "initial_retries"   THEN 'new'::${"schema"}.task_status
-        WHEN "started_at" IS NULL AND "finished_at" IS NULL AND "retries" = 0                   THEN 'failed'::${"schema"}.task_status
-        WHEN "started_at" IS NULL AND "finished_at" IS NULL                                     THEN 'retry'::${"schema"}.task_status
-        WHEN "started_at" IS NOT NULL AND "finished_at" IS NULL                                 THEN 'running'::${"schema"}.task_status
-        WHEN "started_at" IS NOT NULL AND "finished_at" IS NOT NULL                             THEN 'done'::${"schema"}.task_status
+        WHEN dies_at IS NOT NULL AND dies_at < NOW()                           THEN 'expired'::${"schema"}.task_status
+        WHEN started_at IS NULL AND finished_at IS NULL AND retries = 0        THEN 'failed'::${"schema"}.task_status
+        WHEN started_at IS NULL AND finished_at IS NULL AND retries = initial_retries
+                                                                            THEN 'new'::${"schema"}.task_status
+        WHEN started_at IS NULL AND finished_at IS NULL                        THEN 'retry'::${"schema"}.task_status
+        WHEN started_at IS NOT NULL AND finished_at IS NULL                    THEN 'running'::${"schema"}.task_status
+        WHEN started_at IS NOT NULL AND finished_at IS NOT NULL                THEN 'done'::${"schema"}.task_status
         ELSE NULL
-    END AS "status"
-    FROM ${"schema"}."task"
-    WHERE "id" = t;
+    END AS "status";
 $$ LANGUAGE SQL STABLE;
 
 -- pgqueue.queue_insert_func
@@ -234,7 +239,15 @@ CREATE OR REPLACE FUNCTION ${"schema"}."queue_clean"(q TEXT) RETURNS TABLE (
         "id" IN (
             WITH sq AS (
                 SELECT
-                    "id", "created_at", ${"schema"}.queue_task_status("id") AS "status"
+                    "id",
+                    "created_at",
+                    ${"schema"}.queue_task_status(
+                        "dies_at",
+                        "started_at",
+                        "finished_at",
+                        "retries",
+                        "initial_retries"
+                    ) AS "status"
                 FROM
                     ${"schema"}."task"
                 WHERE
@@ -265,7 +278,20 @@ FROM
 CROSS JOIN
     (SELECT UNNEST(enum_range(NULL::${"schema"}.task_status)) AS "status") S
 LEFT JOIN
-    (SELECT "id", "queue", ${"schema"}.queue_task_status("id") AS "status" FROM ${"schema"}."task") T
+    (
+        SELECT
+            "id",
+            "queue",
+            ${"schema"}.queue_task_status(
+                "dies_at",
+                "started_at",
+                "finished_at",
+                "retries",
+                "initial_retries"
+            ) AS "status"
+        FROM
+            ${"schema"}."task"
+    ) T
 ON
     S."status" = T."status" AND Q."queue" = T."queue"
 GROUP BY

@@ -137,3 +137,55 @@ func TestGetUpdateDeleteQueue(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, pg.ErrNotFound))
 }
+
+func TestZeroRetryQueueTasksStartFailed(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	beforeSeq, err := mgr.GetPartitionSeq(ctx)
+	require.NoError(t, err)
+
+	nextID := beforeSeq + 1
+	partitions, err := mgr.ListPartitions(ctx)
+	require.NoError(t, err)
+
+	createdPartition := ""
+	if !partitionContains(partitions, nextID) {
+		meta := schema.PartitionMeta{
+			Partition: "task_partition_zero_retries_failed",
+			Start:     1,
+			End:       1000000,
+		}
+		require.NoError(t, mgr.DeletePartition(ctx, meta.Partition))
+		require.NoError(t, mgr.CreatePartition(ctx, meta))
+		createdPartition = meta.Partition
+	}
+
+	retries := uint64(0)
+	queue, err := mgr.RegisterQueue(ctx, "queue_zero_retries_failed", schema.QueueMeta{Retries: &retries}, noopTask)
+	require.NoError(t, err)
+	defer func() {
+		_, _ = mgr.DeleteQueue(ctx, queue.Queue)
+		if createdPartition != "" {
+			_ = mgr.DeletePartition(ctx, createdPartition)
+		}
+	}()
+
+	var taskID schema.TaskId
+	require.NoError(t, mgr.With("id", queue.Queue).Insert(ctx, &taskID, schema.TaskMeta{Payload: json.RawMessage(`{"kind":"zero-retry"}`)}))
+
+	next, err := mgr.NextTask(ctx, "worker-zero-retries", queue.Queue)
+	require.NoError(t, err)
+	assert.Nil(t, next)
+
+	var list schema.TaskList
+	err = mgr.With("id", queue.Queue).List(ctx, &list, schema.TaskListRequest{Status: "failed"})
+	require.NoError(t, err)
+	assert.NotZero(t, list.Count)
+
+	ids := make([]uint64, 0, len(list.Body))
+	for _, item := range list.Body {
+		ids = append(ids, item.Id)
+	}
+	assert.Contains(t, ids, uint64(taskID))
+}
