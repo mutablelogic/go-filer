@@ -84,6 +84,12 @@ func New(ctx context.Context, pool pg.PoolConn, name, version string, opts ...Op
 		return nil, err
 	}
 
+	// Register the metrics
+	if err := self.registerMetrics(); err != nil {
+		endBootstrapSpan(err)
+		return nil, err
+	}
+
 	// Return success
 	endBootstrapSpan(nil)
 	return self, nil

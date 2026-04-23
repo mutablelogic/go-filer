@@ -41,6 +41,7 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 	// Shared completion channel for ticker callbacks
 	results := make(chan *Result, 16)
 	defer close(results)
+	releaseCtx := context.WithoutCancel(ctx)
 
 	// Shutdown handling
 	ctxDone := ctx.Done()
@@ -148,7 +149,7 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 					releaseResult = data
 				}
 				status := ""
-				if _, err := manager.ReleaseTask(ctx, result.TaskId, success, releaseResult, &status); err != nil {
+				if _, err := manager.ReleaseTask(releaseCtx, result.TaskId, success, releaseResult, &status); err != nil {
 					log.ErrorContext(ctx, "ReleaseTask failed", "queue", result.Queue, "task_id", result.TaskId, "error", err.Error())
 					continue
 				}
