@@ -89,8 +89,7 @@ func (cmd *RunServerCommand) Run(globals server.Cmd) error {
 			}
 		}
 
-		return cmd.withManager(globals, opts, func(ctx context.Context, manager *manager.Manager) error {
-
+		return cmd.withManager(globals, queue, opts, func(ctx context.Context, manager *manager.Manager) error {
 			// Register the handlers for the manager
 			cmd.RunServer.Register(func(router *httprouter.Router) error {
 				return httphandler.RegisterHandlers(router, manager)
@@ -166,9 +165,9 @@ func (cmd *RunServerCommand) OptsForBackend(ctx context.Context, backend string)
 	return opts, nil
 }
 
-func (cmd *RunServerCommand) withManager(globals server.Cmd, opts []manager.Opt, fn func(context.Context, *manager.Manager) error) (err error) {
+func (cmd *RunServerCommand) withManager(globals server.Cmd, queue *queuemanager.Manager, opts []manager.Opt, fn func(context.Context, *manager.Manager) error) (err error) {
 	// Create manager
-	manager, err := manager.New(globals.Context(), opts...)
+	manager, err := manager.New(globals.Context(), queue, opts...)
 	if err != nil {
 		return err
 	}

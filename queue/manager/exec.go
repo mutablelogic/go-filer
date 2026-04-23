@@ -28,11 +28,12 @@ type exec struct {
 }
 
 type Result struct {
-	Queue  string          `json:"queue,omitempty"`
-	TaskId uint64          `json:"task_id,omitempty"`
-	Ticker string          `json:"ticker,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  error           `json:"error,omitempty"`
+	Queue  string            `json:"queue,omitempty"`
+	Task   *schema.Task      `json:"task,omitempty"`
+	Ticker string            `json:"ticker,omitempty"`
+	Result json.RawMessage   `json:"result,omitempty"`
+	Error  error             `json:"error,omitempty"`
+	Trace  trace.SpanContext `json:"-"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -134,6 +135,7 @@ func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker, resu
 		if resp == nil {
 			resp = new(Result)
 		}
+		resp.Trace = trace.SpanContextFromContext(spanCtx)
 		endSpan(resp.Error)
 		resp.Ticker = ticker.Ticker
 		result <- resp
@@ -149,7 +151,7 @@ func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result ch
 	defer exec.RUnlock()
 
 	if task.DiesAt.IsZero() {
-		result <- &Result{Queue: task.Queue, TaskId: task.Id, Error: httpresponse.ErrBadRequest.With("missing task deadline")}
+		result <- &Result{Queue: task.Queue, Task: task, Error: httpresponse.ErrBadRequest.With("missing task deadline")}
 		return
 	}
 
@@ -158,7 +160,7 @@ func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result ch
 	// Get the task function for the ticker's name
 	fn, exists := exec.t[task.Queue]
 	if !exists {
-		result <- &Result{Queue: task.Queue, TaskId: task.Id, Error: httpresponse.ErrNotFound.Withf("task callback %q not found", task.Queue)}
+		result <- &Result{Queue: task.Queue, Task: task, Error: httpresponse.ErrNotFound.Withf("task callback %q not found", task.Queue)}
 		return
 	}
 
@@ -176,9 +178,10 @@ func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result ch
 		if resp == nil {
 			resp = new(Result)
 		}
+		resp.Trace = trace.SpanContextFromContext(spanCtx)
 		endSpan(resp.Error)
 		resp.Queue = task.Queue
-		resp.TaskId = task.Id
+		resp.Task = task
 		result <- resp
 	})
 }

@@ -115,7 +115,9 @@ func TestRunQueueTaskUsesTaskTTLDeadline(t *testing.T) {
 		require.NotNil(t, result)
 		require.NoError(t, result.Error)
 		assert.Equal(t, task.Queue, result.Queue)
-		assert.Equal(t, task.Id, result.TaskId)
+		if assert.NotNil(t, result.Task) {
+			assert.Equal(t, task.Id, result.Task.Id)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for queue task result")
 	}
@@ -143,7 +145,9 @@ func TestRunQueueTaskRequiresTaskDeadline(t *testing.T) {
 		require.Error(t, result.Error)
 		assert.True(t, errors.Is(result.Error, httpresponse.ErrBadRequest))
 		assert.Equal(t, task.Queue, result.Queue)
-		assert.Equal(t, task.Id, result.TaskId)
+		if assert.NotNil(t, result.Task) {
+			assert.Equal(t, task.Id, result.Task.Id)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for queue task error result")
 	}

@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 
+	// Packages
 	attribute "go.opentelemetry.io/otel/attribute"
 	metric "go.opentelemetry.io/otel/metric"
 )

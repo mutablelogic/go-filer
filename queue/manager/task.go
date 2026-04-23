@@ -93,7 +93,7 @@ func (manager *Manager) NextTask(ctx context.Context, worker string, queues ...s
 // ReleaseTask releases a task, optionally marking it as failed, and returns it.
 func (manager *Manager) ReleaseTask(ctx context.Context, taskId uint64, success bool, result json.RawMessage, status *string) (resp *schema.Task, err error) {
 	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ReleaseTask",
-		attribute.Int64("task_id", int64(taskId)),
+		attribute.Int64("task", int64(taskId)),
 		attribute.Bool("success", success),
 		attribute.String("result", string(result)),
 		attribute.Bool("status", status != nil),

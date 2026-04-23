@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/http"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	queuemanager "github.com/mutablelogic/go-filer/queue/manager"
+	queueschema "github.com/mutablelogic/go-filer/queue/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 	trace "go.opentelemetry.io/otel/trace"
 )
@@ -20,20 +22,36 @@ import (
 
 type Manager struct {
 	opts
+	queue *queuemanager.Manager
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 // New creates a new filer manager.
-func New(ctx context.Context, opts ...Opt) (*Manager, error) {
+func New(ctx context.Context, queue *queuemanager.Manager, opts ...Opt) (*Manager, error) {
 	self := new(Manager)
+
+	// Set queue manager
+	if queue == nil {
+		return nil, errors.New("queue manager is required")
+	} else {
+		self.queue = queue
+	}
 
 	// Apply options
 	if opt, err := applyOpts(opts); err != nil {
 		return nil, err
 	} else {
 		self.opts = opt
+	}
+
+	// Register a queue for indexing tasks. This is used by the manager to schedule background tasks
+	// for indexing objects.
+	if _, err := self.queue.RegisterQueue(ctx, schema.IndexingQueueName, queueschema.QueueMeta{
+		TTL: types.Ptr(schema.IndexingTTL),
+	}, self.RunIndexer); err != nil {
+		return nil, err
 	}
 
 	// Return success
@@ -62,74 +80,61 @@ func (manager *Manager) Backend(name string) backend.Backend {
 	return manager.backends[name]
 }
 
-func (manager *Manager) CreateObject(ctx context.Context, name string, req schema.CreateObjectRequest) (*schema.Object, error) {
-	// Find the right backend
-	backend, err := manager.backendForName(name)
-	if err != nil {
-		return nil, err
-	}
-
-	// OTEL span — ErrAlreadyExists (IfNotExists=true) is a legitimate outcome,
-	// not a span error.
-	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("CreateObject"),
+func (manager *Manager) CreateObject(ctx context.Context, name string, req schema.CreateObjectRequest) (obj *schema.Object, err error) {
+	// OTEL span
+	child, endSpan := otel.StartSpan(manager.tracer, ctx, "CreateObject",
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
 	defer func() {
-		if isExpectedOutcome(result) {
-			endFunc(nil)
+		if errors.Is(err, schema.ErrAlreadyExists) {
+			endSpan(nil)
 		} else {
-			endFunc(result)
+			endSpan(err)
 		}
 	}()
 
-	// Run the backend
-	obj, result := backend.CreateObject(child, req)
-	return obj, result
+	// Find the right backend
+	backend, err := manager.backendForName(name)
+	if err != nil {
+		return nil, err
+	} else if obj, err := backend.CreateObject(child, req); err != nil {
+		return nil, err
+	} else {
+		return obj, manager.QueueIndexTask(ctx, types.Value(obj))
+	}
 }
 
-func (manager *Manager) ReadObject(ctx context.Context, name string, req schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
+func (manager *Manager) ReadObject(ctx context.Context, name string, req schema.ReadObjectRequest) (r io.ReadCloser, obj *schema.Object, err error) {
+	// OTEL span
+	child, endSpan := otel.StartSpan(manager.tracer, ctx, "ReadObject",
+		attribute.String("name", name),
+		attribute.String("request", req.String()),
+	)
+	defer func() { endSpan(err) }()
+
 	// Find the right backend
 	backend, err := manager.backendForName(name)
 	if err != nil {
 		return nil, nil, err
+	} else {
+		return backend.ReadObject(child, req)
 	}
+}
 
-	// OTEL span — 404 Not Found is a legitimate outcome (object may not exist),
-	// not a span error.
-	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ReadObject"),
+func (manager *Manager) ListObjects(ctx context.Context, name string, req schema.ListObjectsRequest) (resp *schema.ListObjectsResponse, err error) {
+	// OTEL span
+	child, endSpan := otel.StartSpan(manager.tracer, ctx, "ListObjects",
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
-	defer func() {
-		if isExpectedOutcome(result) {
-			endFunc(nil)
-		} else {
-			endFunc(result)
-		}
-	}()
+	defer func() { endSpan(err) }()
 
-	// Run the backend
-	r, obj, result := backend.ReadObject(child, req)
-	return r, obj, result
-}
-
-func (manager *Manager) ListObjects(ctx context.Context, name string, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
 	// Find the right backend
 	backend, err := manager.backendForName(name)
 	if err != nil {
 		return nil, err
 	}
-
-	// OTEL span
-	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("ListObjects"),
-		attribute.String("name", name),
-		attribute.String("request", req.String()),
-	)
-	defer func() { endFunc(result) }()
 
 	// Clamp Limit to MaxListLimit when set
 	if req.Limit > schema.MaxListLimit {
@@ -137,75 +142,62 @@ func (manager *Manager) ListObjects(ctx context.Context, name string, req schema
 	}
 
 	// Delegate to the backend; it owns Count, Offset, and Limit.
-	resp, result := backend.ListObjects(child, req)
-	return resp, result
+	return backend.ListObjects(child, req)
 }
 
-func (manager *Manager) DeleteObject(ctx context.Context, name string, req schema.DeleteObjectRequest) (*schema.Object, error) {
-	// Find the right backend
-	backend, err := manager.backendForName(name)
-	if err != nil {
-		return nil, err
-	}
-
+func (manager *Manager) DeleteObject(ctx context.Context, name string, req schema.DeleteObjectRequest) (obj *schema.Object, err error) {
 	// OTEL span
-	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("DeleteObject"),
+	child, endSpan := otel.StartSpan(manager.tracer, ctx, "DeleteObject",
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
-	defer func() { endFunc(result) }()
+	defer func() { endSpan(err) }()
 
-	// Run the backend
-	obj, result := backend.DeleteObject(child, req)
-	return obj, result
-}
-
-func (manager *Manager) DeleteObjects(ctx context.Context, name string, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	// Find the right backend
 	backend, err := manager.backendForName(name)
 	if err != nil {
 		return nil, err
+	} else if obj, err := backend.DeleteObject(child, req); err != nil {
+		return nil, err
+	} else {
+		return obj, manager.QueueIndexTask(ctx, types.Value(obj))
 	}
+}
 
+func (manager *Manager) DeleteObjects(ctx context.Context, name string, req schema.DeleteObjectsRequest) (resp *schema.DeleteObjectsResponse, err error) {
 	// OTEL span
-	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("DeleteObjects"),
+	child, endSpan := otel.StartSpan(manager.tracer, ctx, "DeleteObjects",
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
-	defer func() { endFunc(result) }()
+	defer func() { endSpan(err) }()
 
-	// Run the backend
-	resp, result := backend.DeleteObjects(child, req)
-	return resp, result
-}
-
-func (manager *Manager) GetObject(ctx context.Context, name string, req schema.GetObjectRequest) (*schema.Object, error) {
 	// Find the right backend
 	backend, err := manager.backendForName(name)
 	if err != nil {
 		return nil, err
+	} else if resp, err := backend.DeleteObjects(child, req); err != nil {
+		return nil, err
+	} else {
+		return resp, manager.QueueIndexTask(ctx, resp.Body...)
 	}
+}
 
-	// OTEL span — 404 Not Found is a legitimate outcome (object may not exist),
-	// not a span error.
-	var result error
-	child, endFunc := otel.StartSpan(manager.tracer, ctx, spanManagerName("GetObject"),
+func (manager *Manager) GetObject(ctx context.Context, name string, req schema.GetObjectRequest) (obj *schema.Object, err error) {
+	// OTEL span
+	child, endSpan := otel.StartSpan(manager.tracer, ctx, "GetObject",
 		attribute.String("name", name),
 		attribute.String("request", req.String()),
 	)
-	defer func() {
-		if isExpectedOutcome(result) {
-			endFunc(nil)
-		} else {
-			endFunc(result)
-		}
-	}()
+	defer func() { endSpan(err) }()
 
-	// Run the backend
-	obj, result := backend.GetObject(child, req)
-	return obj, result
+	// Find the right backend
+	backend, err := manager.backendForName(name)
+	if err != nil {
+		return nil, err
+	} else {
+		return backend.GetObject(child, req)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -214,24 +206,7 @@ func (manager *Manager) GetObject(ctx context.Context, name string, req schema.G
 func (manager *Manager) backendForName(name string) (backend.Backend, error) {
 	if b, ok := manager.backends[name]; ok {
 		return b, nil
+	} else {
+		return nil, httpresponse.ErrNotFound.Withf("no backend found for name %q", name)
 	}
-	return nil, httpresponse.ErrNotFound.Withf("no backend found for name %q", name)
-}
-
-func spanManagerName(op string) string {
-	return schema.SchemaName + ".manager." + op
-}
-
-// isExpectedOutcome reports whether err represents a well-defined, non-error
-// outcome that should not set a span error status:
-//
-//   - 404 Not Found    — used by GetObject/ReadObject to signal "absent"
-//   - ErrAlreadyExists — CreateObject with IfNotExists=true; the object existed,
-//     which is the clean answer to a conditional-create check
-func isExpectedOutcome(err error) bool {
-	if errors.Is(err, schema.ErrAlreadyExists) {
-		return true
-	}
-	var code httpresponse.Err
-	return errors.As(err, &code) && int(code) == http.StatusNotFound
 }

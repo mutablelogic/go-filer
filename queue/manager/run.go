@@ -14,6 +14,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/queue/schema"
 	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -80,6 +81,8 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 		child, endSpan := otel.StartSpan(manager.tracer, ctx, spanName)
 		defer func() { endSpan(err) }()
 
+		// Process as many tasks as we have capacity for, until there are
+		// no more tasks or an error occurs.
 		for i := 0; i < runtime.GOMAXPROCS(0); i++ {
 			// Get next task for the queue
 			var task *schema.Task
@@ -136,35 +139,43 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 			}
 		case result := <-results:
 			switch {
-			case result != nil && result.TaskId != 0:
+			case result != nil && result.Task != nil:
+				resultCtx := releaseCtx
+				if result.Trace.IsValid() {
+					resultCtx = trace.ContextWithSpanContext(resultCtx, result.Trace)
+				}
 				// Completed queue task
 				success := result.Error == nil
 				releaseResult := result.Result
 				if result.Error != nil {
 					data, err := json.Marshal(result.Error.Error())
 					if err != nil {
-						log.ErrorContext(ctx, "Marshal queue task error failed", "queue", result.Queue, "task_id", result.TaskId, "error", err.Error())
+						log.ErrorContext(resultCtx, "Marshal queue task error failed", "queue", result.Queue, "task", result.Task.Id, "error", err.Error())
 						continue
 					}
 					releaseResult = data
 				}
 				status := ""
-				if _, err := manager.ReleaseTask(releaseCtx, result.TaskId, success, releaseResult, &status); err != nil {
-					log.ErrorContext(ctx, "ReleaseTask failed", "queue", result.Queue, "task_id", result.TaskId, "error", err.Error())
+				if _, err := manager.ReleaseTask(resultCtx, result.Task.Id, success, releaseResult, &status); err != nil {
+					log.ErrorContext(resultCtx, "ReleaseTask failed", "queue", result.Queue, "task", result.Task.Id, "error", err.Error())
 					continue
 				}
 				if result.Error != nil {
-					log.ErrorContext(ctx, "RunQueueTask result failed", "queue", result.Queue, "task_id", result.TaskId, "status", status, "error", result.Error.Error())
+					log.ErrorContext(resultCtx, "RunQueueTask result failed", "queue", result.Queue, "task", result.Task.Id, "status", status, "error", result.Error.Error())
 				} else {
-					log.InfoContext(ctx, "RunQueueTask result", "queue", result.Queue, "task_id", result.TaskId, "status", status, "result", result)
+					log.InfoContext(resultCtx, "RunQueueTask result", "queue", result.Queue, "task", result.Task.Id, "status", status, "result", result)
 				}
 				continue
 			case result != nil && result.Ticker != "":
+				resultCtx := ctx
+				if result.Trace.IsValid() {
+					resultCtx = trace.ContextWithSpanContext(resultCtx, result.Trace)
+				}
 				// Completed ticker task
 				if result.Error != nil {
-					log.ErrorContext(ctx, "RunTickerTask result failed", "ticker", result.Ticker, "error", result.Error.Error())
+					log.ErrorContext(resultCtx, "RunTickerTask result failed", "ticker", result.Ticker, "error", result.Error.Error())
 				} else {
-					log.InfoContext(ctx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
+					log.InfoContext(resultCtx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
 				}
 			}
 		case <-timerC:

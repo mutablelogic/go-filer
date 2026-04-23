@@ -2,6 +2,7 @@ package schema
 
 import (
 	"errors"
+	"time"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -19,6 +20,13 @@ const (
 	// AttrLastModified is the metadata key used to store the object modification time.
 	// S3 normalizes metadata keys to lowercase, so we use lowercase for consistency.
 	AttrLastModified = "last-modified"
+
+	// IndexingQueueName is the name of the queue used by the manager to schedule
+	// background tasks for indexing objects.
+	IndexingQueueName = "filer-index"
+
+	// Maximum of 15 minutes for each indexing task
+	IndexingTTL = time.Minute * 15
 )
 
 // ErrAlreadyExists is returned by CreateObject when IfNotExists is true and the
