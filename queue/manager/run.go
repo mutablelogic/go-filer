@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	// Packages
@@ -22,77 +23,81 @@ type queueNotification struct {
 // PUBLIC METHODS
 
 func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
-	notifications, err := manager.Subscribe(ctx, schema.DefaultNotifyChannel)
-	if err != nil {
-		return err
-	}
-
 	// Timer for next ticker
 	timer_retries, timer_period := 0, schema.DefaultTickerPeriod
 	timer := time.NewTimer(timer_period)
 	defer timer.Stop()
-	timerC := timer.C
-	ctxDone := ctx.Done()
-	notifyC := notifications
 
-	// Shared completion channel for both ticker callbacks and future queue-task
-	// executions. The queue path should retain a task, call RunQueueTask, then
-	// consume the resulting Queue/TaskId fields here to release or fail the task.
+	// Notification of new tasks in queues
+	notify_ctx, notify_cancel := context.WithCancel(ctx)
+	defer notify_cancel()
+	notifications, err := manager.Subscribe(notify_ctx, schema.DefaultNotifyChannel)
+	if err != nil {
+		return err
+	}
+
+	// Shared completion channel for ticker callbacks
 	results := make(chan *Result, 16)
 	defer close(results)
+
+	// Shutdown handling
+	ctxDone := ctx.Done()
+	timerC := timer.C
 	shutdownDone := make(chan struct{})
-	shuttingDown := false
 
-	tick := func(trigger string) error {
-		var tickErr error
-
+	// Tick handler
+	tick := func(trigger string) (err error) {
 		// Otel span
 		child, endSpan := otel.StartSpan(manager.tracer, ctx, strings.Join([]string{"tick", trigger}, "."))
-		defer func() { endSpan(tickErr) }()
+		defer func() { endSpan(err) }()
 
 		// Get matured ticker
 		ticker, err := manager.NextTicker(child)
 		if err != nil {
-			tickErr = err
 			log.ErrorContext(ctx, "NextTicker failed", "trigger", trigger, "error", err.Error())
 			return err
 		} else if ticker == nil {
-			// TODO: No ticker matured, so this is the next place to try queue work.
-			// The intended flow is:
-			// 1. Decode the notification payload and/or use a worker name to call NextTask.
-			// 2. If a task is retained, call manager.queues.RunQueueTask(child, task, results).
-			// 3. When a queue result comes back on results, call ReleaseTask with success/failure
-			//    and propagate the callback result payload.
 			return nil
 		} else if err = manager.tickers.RunTickerTask(child, ticker, results); err != nil {
-			tickErr = err
 			log.ErrorContext(ctx, "RunTickerTask failed", "trigger", trigger, "ticker", ticker, "error", err.Error())
 			return err
 		}
-
 		return nil
 	}
 
+	// The run loop
+	var wg sync.WaitGroup
 	for {
 		select {
 		case <-ctxDone:
-			if shuttingDown {
-				continue
-			}
-
 			// Stop scheduling new work, but keep the loop alive to drain in-flight results.
-			shuttingDown = true
 			ctxDone = nil
 			timerC = nil
-			notifyC = nil
+			notify_cancel()
 
-			go func() {
+			// Wait for remaining tasks in the background to finish before returning from Run.
+			wg.Go(func() {
 				manager.tickers.Close()
 				manager.queues.Close()
 				close(shutdownDone)
-			}()
+			})
 		case <-shutdownDone:
+			wg.Wait()
 			return nil
+		case notification, ok := <-notifications:
+			if !ok {
+				notifications = nil
+				continue
+			}
+			if payload := decodeNotification(notification); payload != nil {
+				log.DebugContext(ctx, "Got notification", "channel", notification.Channel, "schema", payload.Schema, "queue", payload.Queue)
+				// TODO: No ticker matured, so this is the next place to try queue work.
+				// The intended flow is:
+				// 1. Decode the notification payload and/or use a worker name to call NextTask.
+				// 2. If a task is retained, call manager.queues.RunQueueTask(child, task, results).
+				// 3. When a queue result comes back on results, call ReleaseTask with success/failure
+				//    and propagate the callback result payload.
+			}
 		case result := <-results:
 			// TODO: When queue execution is wired in, branch on result.TaskId/result.Queue
 			// here and release the retained task with ReleaseTask before logging.
@@ -101,21 +106,6 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 			} else {
 				log.InfoContext(ctx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
 			}
-		case notification, ok := <-notifyC:
-			if !ok {
-				notifyC = nil
-				continue
-			}
-
-			payload := decodeNotification(notification)
-			if payload == nil {
-				log.DebugContext(ctx, "Got notification", "channel", notification.Channel, "payload", string(notification.Payload))
-			} else {
-				log.DebugContext(ctx, "Got notification", "channel", notification.Channel, "schema", payload.Schema, "queue", payload.Queue)
-			}
-
-			timer_retries, timer_period = backoffPeriod(timer_retries, schema.DefaultTickerPeriod, tick("notify") != nil)
-			resetTimer(timer, timer_period)
 		case <-timerC:
 			timer_retries, timer_period = backoffPeriod(timer_retries, schema.DefaultTickerPeriod, tick("timer") != nil)
 			resetTimer(timer, timer_period)
