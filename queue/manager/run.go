@@ -6,6 +6,7 @@ import (
 	"time"
 
 	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/queue/schema"
 )
 
@@ -13,42 +14,48 @@ import (
 // PUBLIC METHODS
 
 func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
-
 	// Timer for next ticker
 	timer_retries, timer_period := 0, schema.DefaultTickerPeriod
 	timer := time.NewTimer(timer_period)
 	defer timer.Stop()
 
-	// Timer for adding partition tables (maintenance)
-	maintenance_retries, maintenance_period := 0, schema.DefaultMaintenancePeriod
-	maintenance := time.NewTimer(time.Second)
-	defer maintenance.Stop()
+	// Create a channel for ticker task results
+	results := make(chan *Result, 16)
+	defer close(results)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-maintenance.C:
-			// Create new partition tables if needed, and drop old drained partitions
-			err := manager.maintain(ctx, log)
-			if err != nil {
-				log.ErrorContext(ctx, "maintenance failed", "error", err.Error())
-			}
+			// Wait on execution of any in-flight tasks to complete before returning
+			manager.tickers.Close()
+			manager.queues.Close()
 
-			// Next tick
-			maintenance_retries, maintenance_period = backoffPeriod(maintenance_retries, schema.DefaultMaintenancePeriod, err != nil)
-			maintenance.Reset(maintenance_period)
+			// Return success
+			return nil
+		case result := <-results:
+			if result != nil && result.Error != nil {
+				log.ErrorContext(ctx, "RunTickerTask result failed", "ticker", result.Ticker, "error", result.Error.Error())
+			} else {
+				log.InfoContext(ctx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
+			}
 		case <-timer.C:
+			// Otel span
+			child, endSpan := otel.StartSpan(manager.tracer, ctx, "tick")
+
 			// Get matured ticker
-			ticker, err := manager.NextTicker(ctx)
+			ticker, err := manager.NextTicker(child)
 			if err != nil {
 				log.ErrorContext(ctx, "NextTicker failed", "error", err.Error())
+			} else if ticker == nil {
+				// Do nothing - no ticker matured
+			} else {
+				if err = manager.tickers.RunTickerTask(child, ticker, results); err != nil {
+					log.ErrorContext(ctx, "RunTickerTask failed", "ticker", ticker, "error", err.Error())
+				}
 			}
 
-			// Fired ticker
-			if ticker != nil {
-				log.DebugContext(ctx, "fired", "ticker", ticker)
-			}
+			// Otel span
+			endSpan(err)
 
 			// Next tick
 			timer_retries, timer_period = backoffPeriod(timer_retries, schema.DefaultTickerPeriod, err != nil)
@@ -59,28 +66,6 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
-
-func (manager *Manager) maintain(ctx context.Context, log *slog.Logger) error {
-	// Create next partition if needed
-	created, err := manager.CreateNextPartition(ctx)
-	if err != nil {
-		return err
-	}
-	if created != "" {
-		log.InfoContext(ctx, "created partition", "partition", created)
-	}
-
-	// Drop old drained partitions
-	dropped, err := manager.DropDrainedPartition(ctx)
-	if err != nil {
-		return err
-	}
-	if dropped != "" {
-		log.InfoContext(ctx, "dropped partition", "partition", dropped)
-	}
-
-	return nil
-}
 
 func backoffPeriod(retries int, dur time.Duration, err bool) (int, time.Duration) {
 	const maxRetries = 5

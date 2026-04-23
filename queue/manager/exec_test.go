@@ -19,8 +19,10 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	// Packages
+	schema "github.com/mutablelogic/go-filer/queue/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -52,4 +54,43 @@ func TestRemoveTask(t *testing.T) {
 	err := registry.RemoveTask("remove_task")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, httpresponse.ErrNotFound))
+}
+
+func TestRunRecoversPanic(t *testing.T) {
+	result := run(context.Background(), func(context.Context, json.RawMessage) (any, error) {
+		panic("boom")
+	}, nil)
+
+	require.NotNil(t, result)
+	require.Error(t, result.Error)
+	assert.EqualError(t, result.Error, "panic: boom")
+	assert.Nil(t, result.Result)
+}
+
+func TestRunTickerTaskKeepsContextAlive(t *testing.T) {
+	exec := NewExec(nil)
+	results := make(chan *Result, 1)
+	ticker := &schema.Ticker{Ticker: "alive_context"}
+
+	require.NoError(t, exec.RegisterTask(ticker.Ticker, func(ctx context.Context, _ json.RawMessage) (any, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return map[string]bool{"ok": true}, nil
+		}
+	}))
+
+	require.NoError(t, exec.RunTickerTask(context.Background(), ticker, results))
+
+	select {
+	case result := <-results:
+		require.NotNil(t, result)
+		require.NoError(t, result.Error)
+		assert.Equal(t, ticker.Ticker, result.Ticker)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ticker result")
+	}
+
+	exec.Close()
 }

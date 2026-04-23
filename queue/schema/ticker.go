@@ -66,11 +66,11 @@ func (t TickerNext) String() string {
 // SELECTOR
 
 func (t TickerName) Select(bind *pg.Bind, op pg.Op) (string, error) {
-	name, err := t.tickerName()
-	if err != nil {
+	if name, err := t.Validate(); err != nil {
 		return "", err
+	} else {
+		bind.Set("id", name)
 	}
-	bind.Set("id", name)
 
 	switch op {
 	case pg.Get:
@@ -127,18 +127,19 @@ func (l *TickerList) ScanCount(row pg.Row) error {
 ////////////////////////////////////////////////////////////////////////////////
 // WRITER
 
-func (t Ticker) Insert(bind *pg.Bind) (string, error) {
-	name, err := TickerName(t.Ticker).tickerName()
-	if err != nil {
-		return "", err
+func (t TickerMeta) Insert(bind *pg.Bind) (string, error) {
+	if !bind.Has("id") {
+		return "", httpresponse.ErrBadRequest.With("missing id parameter")
 	}
-	bind.Set("ticker", name)
+
+	name, _ := bind.Get("id").(string)
+	if ticker, err := TickerName(name).Validate(); err != nil {
+		return "", err
+	} else {
+		bind.Set("ticker", ticker)
+	}
 
 	return bind.Query("pgqueue.ticker_insert"), nil
-}
-
-func (t Ticker) Update(bind *pg.Bind) error {
-	return t.TickerMeta.Update(bind)
 }
 
 func (t TickerMeta) Update(bind *pg.Bind) error {
@@ -164,7 +165,15 @@ func (t TickerMeta) Update(bind *pg.Bind) error {
 	return nil
 }
 
-func (t TickerName) tickerName() (string, error) {
+////////////////////////////////////////////////////////////////////////////////
+// VALIDATION HELPERS
+
+func (t TickerName) Validate() (string, error) {
+	// Reserved ticker names
+	if string(t) == DefaultMaintenanceTickerName || string(t) == DefaultCleanupTickerName {
+		return string(t), nil
+	}
+	// User-defined ticker names must be valid identifiers
 	if name := strings.ToLower(strings.TrimSpace(string(t))); !types.IsIdentifier(name) {
 		return "", httpresponse.ErrBadRequest.Withf("invalid ticker name: %q", name)
 	} else {

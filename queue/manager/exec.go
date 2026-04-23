@@ -2,15 +2,19 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	// Packages
-	"sync"
-
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/queue/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	attribute "go.opentelemetry.io/otel/attribute"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -18,7 +22,30 @@ import (
 
 type exec struct {
 	sync.RWMutex
-	t map[string]schema.TaskFunc
+	t      map[string]schema.TaskFunc
+	wg     sync.WaitGroup
+	tracer trace.Tracer
+}
+
+type Result struct {
+	Ticker string          `json:"ticker,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  error           `json:"error,omitempty"`
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// LIFECYCLE
+
+func NewExec(tracer trace.Tracer) *exec {
+	self := new(exec)
+	self.t = make(map[string]schema.TaskFunc)
+	self.tracer = tracer
+	return self
+}
+
+// Wait for all tasks to complete
+func (exec *exec) Close() {
+	exec.wg.Wait()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -27,51 +54,51 @@ type exec struct {
 // RegisterTask stores a named task callback. Names are normalized to lowercase
 // identifiers and must be unique.
 func (exec *exec) RegisterTask(name string, fn schema.TaskFunc) error {
-	name, err := taskName(name)
-	if err != nil {
-		return err
-	}
-	if fn == nil {
-		return httpresponse.ErrBadRequest.With("missing task callback")
-	}
-
 	exec.Lock()
 	defer exec.Unlock()
 
-	if exec.t == nil {
-		exec.t = make(map[string]schema.TaskFunc)
+	// Validate the input parameters
+	name, err := schema.TickerName(name).Validate()
+	if err != nil {
+		return err
+	} else if fn == nil {
+		return httpresponse.ErrBadRequest.With("missing task callback")
 	}
+
+	// Check if the task name already exists
 	if _, exists := exec.t[name]; exists {
 		return httpresponse.ErrConflict.Withf("task %q already registered", name)
 	}
 	exec.t[name] = fn
 
+	// Return success
 	return nil
 }
 
 // RemoveTask removes a named task callback.
 func (exec *exec) RemoveTask(name string) error {
-	name, err := taskName(name)
+	exec.Lock()
+	defer exec.Unlock()
+
+	// Validate the name and normalize it to lowercase identifier
+	name, err := schema.TickerName(name).Validate()
 	if err != nil {
 		return err
 	}
 
-	exec.Lock()
-	defer exec.Unlock()
-
-	if exec.t == nil {
-		return httpresponse.ErrNotFound.Withf("task %q not found", name)
-	}
+	// Delete the task if it exists, otherwise return not found error
 	if _, exists := exec.t[name]; !exists {
 		return httpresponse.ErrNotFound.Withf("task %q not found", name)
+	} else {
+		delete(exec.t, name)
 	}
-	delete(exec.t, name)
 
+	// Return success
 	return nil
 }
 
 // RunQueueTask executes a named task callback with the given payload.
-func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker) error {
+func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker, result chan<- *Result) error {
 	// Create a deadline for the task execution based on the ticker's period
 	// and the current time. This ensures that the task will not run indefinitely
 	// and will be cancelled if it exceeds the ticker's period.
@@ -82,22 +109,33 @@ func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker) erro
 
 	// Create the context
 	child, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
 
 	// TODO: Add the ticker into the context
 
 	// Get the task function for the ticker's name
 	exec.RLock()
 	defer exec.RUnlock()
+
+	// Run the task function with the provided payload and deadline
 	if fn, exists := exec.t[ticker.Ticker]; exists {
-		// Run the task function with the provided payload and deadline
-		// TODO: Make a span for the ticker
-		_, err := fn(child, ticker.Payload)
-		if err != nil {
-			// TODO: Emit the error with the span
-			return err
-		}
+		exec.wg.Go(func() {
+			defer cancel()
+
+			// Otel span
+			spanCtx, endSpan := otel.StartSpan(exec.tracer, child, strings.Join([]string{"ticker", ticker.Ticker}, "."),
+				attribute.String("ticker", types.Stringify(ticker)),
+			)
+
+			resp := run(spanCtx, fn, ticker.Payload)
+			if resp == nil {
+				resp = new(Result)
+			}
+			endSpan(resp.Error)
+			resp.Ticker = ticker.Ticker
+			result <- resp
+		})
 	} else {
+		cancel()
 		return httpresponse.ErrNotFound.Withf("task callback %q not found", ticker.Ticker)
 	}
 
@@ -105,13 +143,32 @@ func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker) erro
 	return nil
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
+func run(ctx context.Context, fn schema.TaskFunc, payload json.RawMessage) (resp *Result) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			var err error
+			switch value := recovered.(type) {
+			case error:
+				err = value
+			default:
+				err = fmt.Errorf("panic: %v", value)
+			}
+			resp = types.Ptr(Result{Error: err})
+		}
+	}()
 
-func taskName(name string) (string, error) {
-	if name = strings.ToLower(strings.TrimSpace(name)); !types.IsIdentifier(name) {
-		return "", httpresponse.ErrBadRequest.Withf("invalid task name: %q", name)
-	} else {
-		return name, nil
+	// Execute the method
+	result, err := fn(ctx, payload)
+	if err != nil {
+		return types.Ptr(Result{Error: err})
 	}
+
+	// Convert the result to JSON
+	data, err := json.Marshal(result)
+	if err != nil {
+		return types.Ptr(Result{Error: err})
+	}
+
+	// Return the result
+	return types.Ptr(Result{Result: data})
 }

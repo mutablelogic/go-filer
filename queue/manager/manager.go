@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/queue/schema"
 	pg "github.com/mutablelogic/go-pg"
+	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
 
@@ -18,8 +20,8 @@ import (
 type Manager struct {
 	opt
 	pg.PoolConn
-	queues  exec
-	tickers exec
+	queues  *exec
+	tickers *exec
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -39,6 +41,10 @@ func New(ctx context.Context, pool pg.PoolConn, name, version string, opts ...Op
 	if err := self.apply(opts...); err != nil {
 		return nil, err
 	}
+
+	// Create execution objects after options are applied so they inherit the configured tracer.
+	self.queues = NewExec(self.tracer)
+	self.tickers = NewExec(self.tracer)
 
 	// Parse and register named queries so bind.Query(...) can resolve them.
 	queries, err := pg.NewQueries(strings.NewReader(schema.Queries))
@@ -60,6 +66,20 @@ func New(ctx context.Context, pool pg.PoolConn, name, version string, opts ...Op
 	} else {
 		endBootstrapSpan(nil)
 		self.PoolConn = pool
+	}
+
+	// Register a maintenance ticker
+	if _, err := self.RegisterTicker(ctx, schema.DefaultMaintenanceTickerName, schema.TickerMeta{
+		Interval: types.Ptr(schema.DefaultMaintenancePeriod),
+	}, self.maintenance); err != nil {
+		return nil, err
+	}
+
+	// Register a cleanup ticker
+	if _, err := self.RegisterTicker(ctx, schema.DefaultCleanupTickerName, schema.TickerMeta{
+		Interval: types.Ptr(schema.DefaultCleanupPeriod),
+	}, self.cleanup); err != nil {
+		return nil, err
 	}
 
 	// Return success
@@ -90,4 +110,60 @@ func bootstrap(ctx context.Context, conn pg.Conn, schemaName string) error {
 
 	// Return success
 	return nil
+}
+
+func (manager *Manager) maintenance(ctx context.Context, _ json.RawMessage) (any, error) {
+	messages := []string{}
+
+	// Create next partition if needed
+	created, err := manager.CreateNextPartition(ctx)
+	if err != nil {
+		return nil, err
+	} else if created != "" {
+		messages = append(messages, fmt.Sprintf("created partition %q", created))
+	}
+
+	// Drop old drained partitions
+	dropped, err := manager.DropDrainedPartition(ctx)
+	if err != nil {
+		return nil, err
+	} else if dropped != "" {
+		messages = append(messages, fmt.Sprintf("dropped partition %q", dropped))
+	}
+
+	// Return success
+	return messages, nil
+}
+
+func (manager *Manager) cleanup(ctx context.Context, _ json.RawMessage) (any, error) {
+	messages := make([]string, 0)
+	pageSize := uint64(schema.QueueListLimit)
+	offset := uint64(0)
+
+	for {
+		pageLimit := pageSize
+		request := schema.QueueListRequest{OffsetLimit: pg.OffsetLimit{Offset: offset, Limit: &pageLimit}}
+
+		queues, err := manager.ListQueues(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, queue := range queues.Body {
+			removed, err := manager.CleanQueue(ctx, queue.Queue)
+			if err != nil {
+				return nil, err
+			}
+			if len(removed) > 0 {
+				messages = append(messages, fmt.Sprintf("cleaned queue %q removed %d tasks", queue.Queue, len(removed)))
+			}
+		}
+
+		if len(queues.Body) < int(pageSize) {
+			break
+		}
+		offset += uint64(len(queues.Body))
+	}
+
+	return messages, nil
 }

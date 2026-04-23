@@ -15,6 +15,9 @@ func (cmd Queue) WithQueueManager(globals server.Cmd, conn pg.PoolConn, fn func(
 		queue.WithMeter(globals.Meter()),
 		queue.WithTracer(globals.Tracer()),
 	}
+	if cmd.Schema != "" {
+		opts = append(opts, queue.WithSchema(cmd.Schema))
+	}
 
 	// Create a queue
 	manager, err := queue.New(globals.Context(), conn, globals.Name(), globals.Version(), opts...)
