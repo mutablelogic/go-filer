@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"time"
@@ -9,7 +10,13 @@ import (
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/queue/schema"
+	pg "github.com/mutablelogic/go-pg"
 )
+
+type queueNotification struct {
+	Schema string `json:"schema"`
+	Queue  string `json:"queue"`
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -28,7 +35,9 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 	ctxDone := ctx.Done()
 	notifyC := notifications
 
-	// Create a channel for ticker task results
+	// Shared completion channel for both ticker callbacks and future queue-task
+	// executions. The queue path should retain a task, call RunQueueTask, then
+	// consume the resulting Queue/TaskId fields here to release or fail the task.
 	results := make(chan *Result, 16)
 	defer close(results)
 	shutdownDone := make(chan struct{})
@@ -48,7 +57,12 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 			log.ErrorContext(ctx, "NextTicker failed", "trigger", trigger, "error", err.Error())
 			return err
 		} else if ticker == nil {
-			// TODO: Get a queue task
+			// TODO: No ticker matured, so this is the next place to try queue work.
+			// The intended flow is:
+			// 1. Decode the notification payload and/or use a worker name to call NextTask.
+			// 2. If a task is retained, call manager.queues.RunQueueTask(child, task, results).
+			// 3. When a queue result comes back on results, call ReleaseTask with success/failure
+			//    and propagate the callback result payload.
 			return nil
 		} else if err = manager.tickers.RunTickerTask(child, ticker, results); err != nil {
 			tickErr = err
@@ -80,16 +94,24 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 		case <-shutdownDone:
 			return nil
 		case result := <-results:
+			// TODO: When queue execution is wired in, branch on result.TaskId/result.Queue
+			// here and release the retained task with ReleaseTask before logging.
 			if result != nil && result.Error != nil {
 				log.ErrorContext(ctx, "RunTickerTask result failed", "ticker", result.Ticker, "error", result.Error.Error())
 			} else {
 				log.InfoContext(ctx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
 			}
-		case _, ok := <-notifyC:
-			// TODO
+		case notification, ok := <-notifyC:
 			if !ok {
 				notifyC = nil
 				continue
+			}
+
+			payload := decodeNotification(notification)
+			if payload == nil {
+				log.DebugContext(ctx, "Got notification", "channel", notification.Channel, "payload", string(notification.Payload))
+			} else {
+				log.DebugContext(ctx, "Got notification", "channel", notification.Channel, "schema", payload.Schema, "queue", payload.Queue)
 			}
 
 			timer_retries, timer_period = backoffPeriod(timer_retries, schema.DefaultTickerPeriod, tick("notify") != nil)
@@ -124,4 +146,12 @@ func resetTimer(timer *time.Timer, dur time.Duration) {
 		}
 	}
 	timer.Reset(dur)
+}
+
+func decodeNotification(notification pg.Notification) *queueNotification {
+	var payload queueNotification
+	if err := json.Unmarshal(notification.Payload, &payload); err != nil {
+		return nil
+	}
+	return &payload
 }
