@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -213,8 +214,19 @@ func TestNextTaskRespectsQueueConcurrency(t *testing.T) {
 		createdPartition = meta.Partition
 	}
 
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+	})
+	started := make(chan struct{}, 2)
+
 	concurrency := uint64(1)
-	queue, err := mgr.RegisterQueue(ctx, "queue_concurrency_limit", schema.QueueMeta{Concurrency: &concurrency}, noopTask)
+	queue, err := mgr.RegisterQueue(ctx, "queue_concurrency_limit", schema.QueueMeta{Concurrency: &concurrency}, func(context.Context, json.RawMessage) (any, error) {
+		started <- struct{}{}
+		<-release
+		return nil, nil
+	})
 	require.NoError(t, err)
 	defer func() {
 		_, _ = mgr.DeleteQueue(ctx, queue.Queue)
@@ -225,29 +237,24 @@ func TestNextTaskRespectsQueueConcurrency(t *testing.T) {
 
 	first, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":1}`)})
 	require.NoError(t, err)
-	second, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":2}`)})
+	_, err = mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":2}`)})
 	require.NoError(t, err)
 
-	retained, err := mgr.NextTask(ctx, "worker-concurrency-1", queue.Queue)
-	require.NoError(t, err)
-	require.NotNil(t, retained)
-	assert.Equal(t, first.Id, retained.Id)
+	assert.NotZero(t, first.Id)
 
-	blocked, err := mgr.NextTask(ctx, "worker-concurrency-2", queue.Queue)
-	require.NoError(t, err)
-	assert.Nil(t, blocked)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first queued task to start")
+	}
 
-	released, err := mgr.ReleaseTask(ctx, retained.Id, true, nil, nil)
-	require.NoError(t, err)
-	require.NotNil(t, released)
+	select {
+	case <-started:
+		t.Fatal("second queued task started despite concurrency limit")
+	case <-time.After(200 * time.Millisecond):
+	}
 
-	next, err := mgr.NextTask(ctx, "worker-concurrency-2", queue.Queue)
-	require.NoError(t, err)
-	require.NotNil(t, next)
-	assert.Equal(t, second.Id, next.Id)
-
-	_, err = mgr.ReleaseTask(ctx, next.Id, true, nil, nil)
-	require.NoError(t, err)
+	releaseOnce.Do(func() { close(release) })
 }
 
 func TestNextTaskWithZeroConcurrencyKeepsUnlimitedBehavior(t *testing.T) {
@@ -273,8 +280,19 @@ func TestNextTaskWithZeroConcurrencyKeepsUnlimitedBehavior(t *testing.T) {
 		createdPartition = meta.Partition
 	}
 
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+	})
+	started := make(chan struct{}, 2)
+
 	concurrency := uint64(0)
-	queue, err := mgr.RegisterQueue(ctx, "queue_concurrency_unlimited", schema.QueueMeta{Concurrency: &concurrency}, noopTask)
+	queue, err := mgr.RegisterQueue(ctx, "queue_concurrency_unlimited", schema.QueueMeta{Concurrency: &concurrency}, func(context.Context, json.RawMessage) (any, error) {
+		started <- struct{}{}
+		<-release
+		return nil, nil
+	})
 	require.NoError(t, err)
 	defer func() {
 		_, _ = mgr.DeleteQueue(ctx, queue.Queue)
@@ -288,18 +306,140 @@ func TestNextTaskWithZeroConcurrencyKeepsUnlimitedBehavior(t *testing.T) {
 	second, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":2}`)})
 	require.NoError(t, err)
 
-	retained1, err := mgr.NextTask(ctx, "worker-unlimited-1", queue.Queue)
-	require.NoError(t, err)
-	require.NotNil(t, retained1)
-	assert.Equal(t, first.Id, retained1.Id)
+	assert.NotZero(t, first.Id)
+	assert.NotZero(t, second.Id)
 
-	retained2, err := mgr.NextTask(ctx, "worker-unlimited-2", queue.Queue)
-	require.NoError(t, err)
-	require.NotNil(t, retained2)
-	assert.Equal(t, second.Id, retained2.Id)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first queued task to start")
+	}
 
-	_, err = mgr.ReleaseTask(ctx, retained1.Id, true, nil, nil)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second queued task to start")
+	}
+
+	releaseOnce.Do(func() { close(release) })
+}
+
+func TestRunQueueTaskResultIsReleasedDone(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	beforeSeq, err := mgr.GetPartitionSeq(ctx)
 	require.NoError(t, err)
-	_, err = mgr.ReleaseTask(ctx, retained2.Id, true, nil, nil)
+
+	nextID := beforeSeq + 1
+	partitions, err := mgr.ListPartitions(ctx)
 	require.NoError(t, err)
+
+	createdPartition := ""
+	if !partitionContains(partitions, nextID) {
+		meta := schema.PartitionMeta{
+			Partition: "task_partition_queue_release_done",
+			Start:     1,
+			End:       1000000,
+		}
+		require.NoError(t, mgr.DeletePartition(ctx, meta.Partition))
+		require.NoError(t, mgr.CreatePartition(ctx, meta))
+		createdPartition = meta.Partition
+	}
+
+	started := make(chan struct{}, 1)
+	queue, err := mgr.RegisterQueue(ctx, "queue_release_done", schema.QueueMeta{}, func(context.Context, json.RawMessage) (any, error) {
+		started <- struct{}{}
+		return map[string]bool{"ok": true}, nil
+	})
+	require.NoError(t, err)
+	defer func() {
+		_, _ = mgr.DeleteQueue(ctx, queue.Queue)
+		if createdPartition != "" {
+			_ = mgr.DeletePartition(ctx, createdPartition)
+		}
+	}()
+
+	task, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":"done"}`)})
+	require.NoError(t, err)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for queue task to start")
+	}
+
+	require.Eventually(t, func() bool {
+		list, err := mgr.ListTasks(ctx, schema.TaskListRequest{Status: "done"})
+		if err != nil {
+			return false
+		}
+		for _, item := range list.Body {
+			if item.Id == task.Id {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 50*time.Millisecond)
+}
+
+func TestRunQueueTaskResultIsReleasedFailed(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	beforeSeq, err := mgr.GetPartitionSeq(ctx)
+	require.NoError(t, err)
+
+	nextID := beforeSeq + 1
+	partitions, err := mgr.ListPartitions(ctx)
+	require.NoError(t, err)
+
+	createdPartition := ""
+	if !partitionContains(partitions, nextID) {
+		meta := schema.PartitionMeta{
+			Partition: "task_partition_queue_release_failed",
+			Start:     1,
+			End:       1000000,
+		}
+		require.NoError(t, mgr.DeletePartition(ctx, meta.Partition))
+		require.NoError(t, mgr.CreatePartition(ctx, meta))
+		createdPartition = meta.Partition
+	}
+
+	retries := uint64(1)
+	started := make(chan struct{}, 1)
+	queue, err := mgr.RegisterQueue(ctx, "queue_release_failed", schema.QueueMeta{Retries: &retries}, func(context.Context, json.RawMessage) (any, error) {
+		started <- struct{}{}
+		return nil, errors.New("boom")
+	})
+	require.NoError(t, err)
+	defer func() {
+		_, _ = mgr.DeleteQueue(ctx, queue.Queue)
+		if createdPartition != "" {
+			_ = mgr.DeletePartition(ctx, createdPartition)
+		}
+	}()
+
+	task, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":"failed"}`)})
+	require.NoError(t, err)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for failing queue task to start")
+	}
+
+	require.Eventually(t, func() bool {
+		list, err := mgr.ListTasks(ctx, schema.TaskListRequest{Status: "failed"})
+		if err != nil {
+			return false
+		}
+		for _, item := range list.Body {
+			if item.Id == task.Id {
+				assert.JSONEq(t, `"boom"`, string(item.Result))
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 50*time.Millisecond)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -12,12 +13,8 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/queue/schema"
 	pg "github.com/mutablelogic/go-pg"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
-
-type queueNotification struct {
-	Schema string `json:"schema"`
-	Queue  string `json:"queue"`
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -27,6 +24,11 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 	timer_retries, timer_period := 0, schema.DefaultTickerPeriod
 	timer := time.NewTimer(timer_period)
 	defer timer.Stop()
+
+	// Timer for delayed/failed queue tasks
+	queue_retries, queue_period := 0, schema.DefaultQueuePeriod
+	queueTimer := time.NewTimer(time.Second * 5)
+	defer queueTimer.Stop()
 
 	// Notification of new tasks in queues
 	notify_ctx, notify_cancel := context.WithCancel(ctx)
@@ -43,7 +45,9 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 	// Shutdown handling
 	ctxDone := ctx.Done()
 	timerC := timer.C
+	queueTimerC := queueTimer.C
 	shutdownDone := make(chan struct{})
+	// Close is done later
 
 	// Tick handler
 	tick := func(trigger string) (err error) {
@@ -65,6 +69,40 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 		return nil
 	}
 
+	// Queue handler
+	queue := func(name string) (err error) {
+		// Otel span
+		spanName := "queue.any"
+		if name != "" {
+			spanName = strings.Join([]string{"queue", name}, ".")
+		}
+		child, endSpan := otel.StartSpan(manager.tracer, ctx, spanName)
+		defer func() { endSpan(err) }()
+
+		for i := 0; i < runtime.GOMAXPROCS(0); i++ {
+			// Get next task for the queue
+			var task *schema.Task
+			if name == "" {
+				task, err = manager.NextTask(child, manager.worker)
+			} else {
+				task, err = manager.NextTask(child, manager.worker, name)
+			}
+			if err != nil {
+				return err
+			} else if task == nil {
+				// No more tasks
+				return nil
+			}
+
+			// Run the task callback - results are logged in the callback,
+			// so we don't need to do anything with them here.
+			manager.queues.RunQueueTask(child, task, results)
+		}
+
+		// Return success
+		return nil
+	}
+
 	// The run loop
 	var wg sync.WaitGroup
 	for {
@@ -73,6 +111,7 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 			// Stop scheduling new work, but keep the loop alive to drain in-flight results.
 			ctxDone = nil
 			timerC = nil
+			queueTimerC = nil
 			notify_cancel()
 
 			// Wait for remaining tasks in the background to finish before returning from Run.
@@ -90,25 +129,49 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 				continue
 			}
 			if payload := decodeNotification(notification); payload != nil {
-				log.DebugContext(ctx, "Got notification", "channel", notification.Channel, "schema", payload.Schema, "queue", payload.Queue)
-				// TODO: No ticker matured, so this is the next place to try queue work.
-				// The intended flow is:
-				// 1. Decode the notification payload and/or use a worker name to call NextTask.
-				// 2. If a task is retained, call manager.queues.RunQueueTask(child, task, results).
-				// 3. When a queue result comes back on results, call ReleaseTask with success/failure
-				//    and propagate the callback result payload.
+				if err := queue(payload.Queue); err != nil {
+					log.ErrorContext(ctx, "RunQueueTask failed", "queue", payload.Queue, "error", err.Error())
+				}
 			}
 		case result := <-results:
-			// TODO: When queue execution is wired in, branch on result.TaskId/result.Queue
-			// here and release the retained task with ReleaseTask before logging.
-			if result != nil && result.Error != nil {
-				log.ErrorContext(ctx, "RunTickerTask result failed", "ticker", result.Ticker, "error", result.Error.Error())
-			} else {
-				log.InfoContext(ctx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
+			switch {
+			case result != nil && result.TaskId != 0:
+				// Completed queue task
+				success := result.Error == nil
+				releaseResult := result.Result
+				if result.Error != nil {
+					data, err := json.Marshal(result.Error.Error())
+					if err != nil {
+						log.ErrorContext(ctx, "Marshal queue task error failed", "queue", result.Queue, "task_id", result.TaskId, "error", err.Error())
+						continue
+					}
+					releaseResult = data
+				}
+				status := ""
+				if _, err := manager.ReleaseTask(ctx, result.TaskId, success, releaseResult, &status); err != nil {
+					log.ErrorContext(ctx, "ReleaseTask failed", "queue", result.Queue, "task_id", result.TaskId, "error", err.Error())
+					continue
+				}
+				if result.Error != nil {
+					log.ErrorContext(ctx, "RunQueueTask result failed", "queue", result.Queue, "task_id", result.TaskId, "status", status, "error", result.Error.Error())
+				} else {
+					log.InfoContext(ctx, "RunQueueTask result", "queue", result.Queue, "task_id", result.TaskId, "status", status, "result", result)
+				}
+				continue
+			case result != nil && result.Ticker != "":
+				// Completed ticker task
+				if result.Error != nil {
+					log.ErrorContext(ctx, "RunTickerTask result failed", "ticker", result.Ticker, "error", result.Error.Error())
+				} else {
+					log.InfoContext(ctx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
+				}
 			}
 		case <-timerC:
 			timer_retries, timer_period = backoffPeriod(timer_retries, schema.DefaultTickerPeriod, tick("timer") != nil)
 			resetTimer(timer, timer_period)
+		case <-queueTimerC:
+			queue_retries, queue_period = backoffPeriod(queue_retries, schema.DefaultQueuePeriod, queue("") != nil)
+			resetTimer(queueTimer, queue_period)
 		}
 	}
 }
@@ -119,10 +182,7 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 func backoffPeriod(retries int, dur time.Duration, err bool) (int, time.Duration) {
 	const maxRetries = 5
 	if err {
-		nextRetries := retries + 1
-		if nextRetries > maxRetries {
-			nextRetries = maxRetries
-		}
+		nextRetries := min(retries+1, maxRetries)
 		return nextRetries, time.Duration(nextRetries*nextRetries) * dur
 	}
 	return 0, dur
@@ -138,10 +198,15 @@ func resetTimer(timer *time.Timer, dur time.Duration) {
 	timer.Reset(dur)
 }
 
+type queueNotification struct {
+	Schema string `json:"schema"`
+	Queue  string `json:"queue"`
+}
+
 func decodeNotification(notification pg.Notification) *queueNotification {
 	var payload queueNotification
 	if err := json.Unmarshal(notification.Payload, &payload); err != nil {
 		return nil
 	}
-	return &payload
+	return types.Ptr(payload)
 }

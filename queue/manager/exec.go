@@ -144,12 +144,13 @@ func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker, resu
 }
 
 // RunQueueTask executes a named queue callback with the given payload.
-func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result chan<- *Result) error {
+func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result chan<- *Result) {
 	exec.RLock()
 	defer exec.RUnlock()
 
-	if task.DiesAt == nil {
-		return httpresponse.ErrBadRequest.With("missing task deadline")
+	if task.DiesAt.IsZero() {
+		result <- &Result{Queue: task.Queue, TaskId: task.Id, Error: httpresponse.ErrBadRequest.With("missing task deadline")}
+		return
 	}
 
 	// TODO: Add the task into the context
@@ -157,7 +158,8 @@ func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result ch
 	// Get the task function for the ticker's name
 	fn, exists := exec.t[task.Queue]
 	if !exists {
-		return httpresponse.ErrNotFound.Withf("task callback %q not found", task.Queue)
+		result <- &Result{Queue: task.Queue, TaskId: task.Id, Error: httpresponse.ErrNotFound.Withf("task callback %q not found", task.Queue)}
+		return
 	}
 
 	// Run the task function with the provided payload and deadline
@@ -179,9 +181,6 @@ func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result ch
 		resp.TaskId = task.Id
 		result <- resp
 	})
-
-	// Return success
-	return nil
 }
 
 func run(ctx context.Context, fn schema.TaskFunc, payload json.RawMessage) (resp *Result) {

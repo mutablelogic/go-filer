@@ -17,6 +17,8 @@ package manager
 import (
 
 	// Packages
+	"os"
+
 	schema "github.com/mutablelogic/go-filer/queue/schema"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
@@ -32,6 +34,7 @@ type Opt func(*opt) error
 type opt struct {
 	name    string
 	version string
+	worker  string
 	schema  string
 	tracer  trace.Tracer
 	metrics metric.Meter
@@ -56,6 +59,11 @@ func (o *opt) defaults(name, version string) {
 	o.name = name
 	o.version = version
 	o.schema = schema.DefaultSchema
+	if hostname, err := os.Hostname(); err == nil {
+		o.worker = hostname
+	} else {
+		o.worker = o.name
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -66,6 +74,16 @@ func WithSchema(schemaName string) Opt {
 	return func(o *opt) error {
 		if schemaName != "" {
 			o.schema = schemaName
+		}
+		return nil
+	}
+}
+
+// WithWorker sets the worker name used for manager tasks. If not set the hostname is used.
+func WithWorker(workerName string) Opt {
+	return func(o *opt) error {
+		if workerName != "" {
+			o.worker = workerName
 		}
 		return nil
 	}

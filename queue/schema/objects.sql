@@ -1,12 +1,22 @@
 -- pgqueue.queue 
 CREATE TABLE IF NOT EXISTS ${"schema"}."queue" (
     "queue"         TEXT NOT NULL,
-    "ttl"           INTERVAL DEFAULT INTERVAL '1 hour',
+    "ttl"           INTERVAL NOT NULL DEFAULT INTERVAL '1 hour',
     "retries"       INTEGER NOT NULL DEFAULT 3 CHECK ("retries" >= 0),
     "retry_delay"   INTERVAL NOT NULL DEFAULT INTERVAL '2 minute',
     "concurrency"   INTEGER NOT NULL DEFAULT 0 CHECK ("concurrency" >= 0), -- 0 = unlimited
     PRIMARY KEY ("queue")
 );
+
+ALTER TABLE ${"schema"}."queue"
+    ALTER COLUMN "ttl" SET DEFAULT INTERVAL '1 hour';
+
+UPDATE ${"schema"}."queue"
+SET "ttl" = INTERVAL '1 hour'
+WHERE "ttl" IS NULL;
+
+ALTER TABLE ${"schema"}."queue"
+    ALTER COLUMN "ttl" SET NOT NULL;
 
 -- pgqueue.task_status_type
 DO $$ BEGIN
@@ -33,12 +43,21 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."task" (
     "delayed_at"        TIMESTAMPTZ,
     "started_at"        TIMESTAMPTZ,
     "finished_at"       TIMESTAMPTZ,
-    "dies_at"           TIMESTAMPTZ,
+    "dies_at"           TIMESTAMPTZ NOT NULL,
     "retries"           INTEGER NOT NULL CHECK ("retries" >= 0),
     "initial_retries"   INTEGER NOT NULL CHECK ("initial_retries" >= 0),
     PRIMARY KEY ("id"),
     FOREIGN KEY ("queue") REFERENCES ${"schema"}."queue" ("queue") ON DELETE CASCADE
 ) PARTITION BY RANGE (id);
+
+UPDATE ${"schema"}."task" t
+SET "dies_at" = COALESCE(t."finished_at", t."delayed_at", t."created_at", NOW()) + q."ttl"
+FROM ${"schema"}."queue" q
+WHERE t."queue" = q."queue"
+AND t."dies_at" IS NULL;
+
+ALTER TABLE ${"schema"}."task"
+    ALTER COLUMN "dies_at" SET NOT NULL;
 
 -- pgqueue.queue_status_index
 -- Covers 'new' and 'retry' states
@@ -77,13 +96,13 @@ CREATE OR REPLACE FUNCTION ${"schema"}.queue_task_status(
     initial_retries INTEGER
 ) RETURNS ${"schema"}.task_status AS $$
     SELECT CASE
-        WHEN dies_at IS NOT NULL AND dies_at < NOW()                           THEN 'expired'::${"schema"}.task_status
+        WHEN started_at IS NOT NULL AND finished_at IS NOT NULL                THEN 'done'::${"schema"}.task_status
+        WHEN dies_at < NOW()                                                   THEN 'expired'::${"schema"}.task_status
         WHEN started_at IS NULL AND finished_at IS NULL AND retries = 0        THEN 'failed'::${"schema"}.task_status
         WHEN started_at IS NULL AND finished_at IS NULL AND retries = initial_retries
                                                                             THEN 'new'::${"schema"}.task_status
         WHEN started_at IS NULL AND finished_at IS NULL                        THEN 'retry'::${"schema"}.task_status
         WHEN started_at IS NOT NULL AND finished_at IS NULL                    THEN 'running'::${"schema"}.task_status
-        WHEN started_at IS NOT NULL AND finished_at IS NOT NULL                THEN 'done'::${"schema"}.task_status
         ELSE NULL
     END AS "status";
 $$ LANGUAGE SQL STABLE;
@@ -98,7 +117,6 @@ BEGIN
     -- Get queue defaults, raise if queue doesn't exist
     SELECT
         "retries", CASE
-            WHEN "ttl" IS NULL THEN NULL
             WHEN delayed_at IS NULL OR delayed_at < NOW() THEN NOW() + "ttl"
             ELSE delayed_at + "ttl"
         END
@@ -178,7 +196,7 @@ WHERE "id" = (
     AND
         (t."started_at" IS NULL AND t."finished_at" IS NULL)
     AND
-        (t."dies_at" IS NULL OR t."dies_at" > NOW())
+        t."dies_at" > NOW()
     AND
         (t."delayed_at" IS NULL OR t."delayed_at" <= NOW())
     AND
@@ -196,7 +214,6 @@ $$ LANGUAGE SQL;
 CREATE OR REPLACE FUNCTION ${"schema"}.queue_unlock(tid BIGINT, r JSONB) RETURNS BIGINT AS $$
     UPDATE ${"schema"}."task" SET
         "finished_at" = NOW(),
-        "dies_at" = NULL,
         "result" = r
     WHERE
         "id" = tid

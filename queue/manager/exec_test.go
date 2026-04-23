@@ -99,7 +99,7 @@ func TestRunQueueTaskUsesTaskTTLDeadline(t *testing.T) {
 	exec := NewExec(nil)
 	results := make(chan *Result, 1)
 	diesAt := time.Now().Add(2 * time.Second)
-	task := &schema.Task{Id: 42, Queue: "queue_deadline", DiesAt: &diesAt}
+	task := &schema.Task{Id: 42, Queue: "queue_deadline", DiesAt: diesAt}
 
 	require.NoError(t, exec.RegisterTask(task.Queue, func(ctx context.Context, _ json.RawMessage) (any, error) {
 		deadline, ok := ctx.Deadline()
@@ -108,7 +108,7 @@ func TestRunQueueTaskUsesTaskTTLDeadline(t *testing.T) {
 		return map[string]bool{"ok": true}, nil
 	}))
 
-	require.NoError(t, exec.RunQueueTask(context.Background(), task, results))
+	exec.RunQueueTask(context.Background(), task, results)
 
 	select {
 	case result := <-results:
@@ -134,15 +134,18 @@ func TestRunQueueTaskRequiresTaskDeadline(t *testing.T) {
 		return nil, nil
 	}))
 
-	err := exec.RunQueueTask(context.Background(), task, results)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, httpresponse.ErrBadRequest))
+	exec.RunQueueTask(context.Background(), task, results)
 	assert.False(t, called)
 
 	select {
 	case result := <-results:
-		t.Fatalf("unexpected queue task result: %+v", result)
-	default:
+		require.NotNil(t, result)
+		require.Error(t, result.Error)
+		assert.True(t, errors.Is(result.Error, httpresponse.ErrBadRequest))
+		assert.Equal(t, task.Queue, result.Queue)
+		assert.Equal(t, task.Id, result.TaskId)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for queue task error result")
 	}
 
 	exec.Close()
