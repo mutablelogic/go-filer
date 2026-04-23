@@ -18,19 +18,33 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 	timer_retries, timer_period := 0, schema.DefaultTickerPeriod
 	timer := time.NewTimer(timer_period)
 	defer timer.Stop()
+	timerC := timer.C
+	ctxDone := ctx.Done()
 
 	// Create a channel for ticker task results
 	results := make(chan *Result, 16)
 	defer close(results)
+	shutdownDone := make(chan struct{})
+	shuttingDown := false
 
 	for {
 		select {
-		case <-ctx.Done():
-			// Wait on execution of any in-flight tasks to complete before returning
-			manager.tickers.Close()
-			manager.queues.Close()
+		case <-ctxDone:
+			if shuttingDown {
+				continue
+			}
 
-			// Return success
+			// Stop scheduling new work, but keep the loop alive to drain in-flight results.
+			shuttingDown = true
+			ctxDone = nil
+			timerC = nil
+
+			go func() {
+				manager.tickers.Close()
+				manager.queues.Close()
+				close(shutdownDone)
+			}()
+		case <-shutdownDone:
 			return nil
 		case result := <-results:
 			if result != nil && result.Error != nil {
@@ -38,7 +52,7 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 			} else {
 				log.InfoContext(ctx, "RunTickerTask result", "ticker", result.Ticker, "result", result)
 			}
-		case <-timer.C:
+		case <-timerC:
 			// Otel span
 			child, endSpan := otel.StartSpan(manager.tracer, ctx, "tick")
 

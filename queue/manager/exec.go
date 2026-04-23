@@ -28,6 +28,8 @@ type exec struct {
 }
 
 type Result struct {
+	Queue  string          `json:"queue,omitempty"`
+	TaskId uint64          `json:"task_id,omitempty"`
 	Ticker string          `json:"ticker,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  error           `json:"error,omitempty"`
@@ -97,8 +99,19 @@ func (exec *exec) RemoveTask(name string) error {
 	return nil
 }
 
-// RunQueueTask executes a named task callback with the given payload.
+// RunTickerTask executes a named task callback with the given payload.
 func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker, result chan<- *Result) error {
+	exec.RLock()
+	defer exec.RUnlock()
+
+	// TODO: Add the ticker into the context
+
+	// Get the task function for the ticker's name
+	fn, exists := exec.t[ticker.Ticker]
+	if !exists {
+		return httpresponse.ErrNotFound.Withf("task callback %q not found", ticker.Ticker)
+	}
+
 	// Create a deadline for the task execution based on the ticker's period
 	// and the current time. This ensures that the task will not run indefinitely
 	// and will be cancelled if it exceeds the ticker's period.
@@ -107,37 +120,65 @@ func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker, resu
 		deadline = time.Now().Add(interval)
 	}
 
-	// Create the context
+	// Run the task function with the provided payload and deadline
 	child, cancel := context.WithDeadline(ctx, deadline)
+	exec.wg.Go(func() {
+		defer cancel()
 
-	// TODO: Add the ticker into the context
+		// Otel span
+		spanCtx, endSpan := otel.StartSpan(exec.tracer, child, strings.Join([]string{"ticker", ticker.Ticker}, "."),
+			attribute.String("ticker", types.Stringify(ticker)),
+		)
 
-	// Get the task function for the ticker's name
+		resp := run(spanCtx, fn, ticker.Payload)
+		if resp == nil {
+			resp = new(Result)
+		}
+		endSpan(resp.Error)
+		resp.Ticker = ticker.Ticker
+		result <- resp
+	})
+
+	// Return success
+	return nil
+}
+
+// RunQueueTask executes a named queue callback with the given payload.
+func (exec *exec) RunQueueTask(ctx context.Context, task *schema.Task, result chan<- *Result) error {
 	exec.RLock()
 	defer exec.RUnlock()
 
-	// Run the task function with the provided payload and deadline
-	if fn, exists := exec.t[ticker.Ticker]; exists {
-		exec.wg.Go(func() {
-			defer cancel()
-
-			// Otel span
-			spanCtx, endSpan := otel.StartSpan(exec.tracer, child, strings.Join([]string{"ticker", ticker.Ticker}, "."),
-				attribute.String("ticker", types.Stringify(ticker)),
-			)
-
-			resp := run(spanCtx, fn, ticker.Payload)
-			if resp == nil {
-				resp = new(Result)
-			}
-			endSpan(resp.Error)
-			resp.Ticker = ticker.Ticker
-			result <- resp
-		})
-	} else {
-		cancel()
-		return httpresponse.ErrNotFound.Withf("task callback %q not found", ticker.Ticker)
+	if task.DiesAt == nil {
+		return httpresponse.ErrBadRequest.With("missing task deadline")
 	}
+
+	// TODO: Add the task into the context
+
+	// Get the task function for the ticker's name
+	fn, exists := exec.t[task.Queue]
+	if !exists {
+		return httpresponse.ErrNotFound.Withf("task callback %q not found", task.Queue)
+	}
+
+	// Run the task function with the provided payload and deadline
+	child, cancel := context.WithDeadline(ctx, task.DiesAt.UTC())
+	exec.wg.Go(func() {
+		defer cancel()
+
+		// Otel span
+		spanCtx, endSpan := otel.StartSpan(exec.tracer, child, strings.Join([]string{"queue", task.Queue}, "."),
+			attribute.String("task", types.Stringify(task)),
+		)
+
+		resp := run(spanCtx, fn, task.Payload)
+		if resp == nil {
+			resp = new(Result)
+		}
+		endSpan(resp.Error)
+		resp.Queue = task.Queue
+		resp.TaskId = task.Id
+		result <- resp
+	})
 
 	// Return success
 	return nil

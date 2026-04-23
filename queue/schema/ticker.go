@@ -153,7 +153,7 @@ func (t TickerMeta) Update(bind *pg.Bind) error {
 		bind.Append("patch", `"interval" = `+bind.Set("interval", t.Interval))
 	}
 	if len(t.Payload) > 0 {
-		bind.Append("patch", `"payload" = `+bind.Set("payload", string(t.Payload)))
+		bind.Append("patch", `"payload" = CAST(`+bind.Set("payload", string(t.Payload))+` AS JSONB)`)
 	}
 
 	if patch := bind.Join("patch", ", "); patch == "" {

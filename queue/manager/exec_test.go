@@ -29,7 +29,7 @@ import (
 )
 
 func TestRegisterTask(t *testing.T) {
-	var registry exec
+	registry := NewExec(nil)
 	fn := func(context.Context, json.RawMessage) (any, error) { return nil, nil }
 
 	err := registry.RegisterTask("  Example_Task  ", fn)
@@ -45,7 +45,7 @@ func TestRegisterTask(t *testing.T) {
 }
 
 func TestRemoveTask(t *testing.T) {
-	var registry exec
+	registry := NewExec(nil)
 	fn := func(context.Context, json.RawMessage) (any, error) { return nil, nil }
 
 	require.NoError(t, registry.RegisterTask("remove_task", fn))
@@ -90,6 +90,59 @@ func TestRunTickerTaskKeepsContextAlive(t *testing.T) {
 		assert.Equal(t, ticker.Ticker, result.Ticker)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for ticker result")
+	}
+
+	exec.Close()
+}
+
+func TestRunQueueTaskUsesTaskTTLDeadline(t *testing.T) {
+	exec := NewExec(nil)
+	results := make(chan *Result, 1)
+	diesAt := time.Now().Add(2 * time.Second)
+	task := &schema.Task{Id: 42, Queue: "queue_deadline", DiesAt: &diesAt}
+
+	require.NoError(t, exec.RegisterTask(task.Queue, func(ctx context.Context, _ json.RawMessage) (any, error) {
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		assert.WithinDuration(t, diesAt.UTC(), deadline.UTC(), 50*time.Millisecond)
+		return map[string]bool{"ok": true}, nil
+	}))
+
+	require.NoError(t, exec.RunQueueTask(context.Background(), task, results))
+
+	select {
+	case result := <-results:
+		require.NotNil(t, result)
+		require.NoError(t, result.Error)
+		assert.Equal(t, task.Queue, result.Queue)
+		assert.Equal(t, task.Id, result.TaskId)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for queue task result")
+	}
+
+	exec.Close()
+}
+
+func TestRunQueueTaskRequiresTaskDeadline(t *testing.T) {
+	exec := NewExec(nil)
+	results := make(chan *Result, 1)
+	task := &schema.Task{Id: 99, Queue: "queue_deadline_required"}
+	called := false
+
+	require.NoError(t, exec.RegisterTask(task.Queue, func(ctx context.Context, _ json.RawMessage) (any, error) {
+		called = true
+		return nil, nil
+	}))
+
+	err := exec.RunQueueTask(context.Background(), task, results)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, httpresponse.ErrBadRequest))
+	assert.False(t, called)
+
+	select {
+	case result := <-results:
+		t.Fatalf("unexpected queue task result: %+v", result)
+	default:
 	}
 
 	exec.Close()

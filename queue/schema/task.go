@@ -178,7 +178,7 @@ func (t TaskMeta) Update(bind *pg.Bind) error {
 	}
 
 	if t.Payload != nil {
-		bind.Append("patch", `payload = `+bind.Set("payload", string(t.Payload)))
+		bind.Append("patch", `payload = CAST(`+bind.Set("payload", string(t.Payload))+` AS JSONB)`)
 	}
 
 	if patch := bind.Join("patch", ", "); patch == "" {
