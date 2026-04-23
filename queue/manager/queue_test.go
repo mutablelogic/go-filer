@@ -1,0 +1,139 @@
+package manager_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	// Packages
+	schema "github.com/mutablelogic/go-filer/queue/schema"
+	test "github.com/mutablelogic/go-filer/queue/test"
+	pg "github.com/mutablelogic/go-pg"
+	assert "github.com/stretchr/testify/assert"
+	require "github.com/stretchr/testify/require"
+)
+
+func noopTask(context.Context, json.RawMessage) (any, error) {
+	return nil, nil
+}
+
+func TestCreateQueueDefaults(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	queue, err := mgr.RegisterQueue(ctx, "queue_create_defaults", schema.QueueMeta{}, noopTask)
+	require.NoError(t, err)
+	require.NotNil(t, queue)
+	assert.Equal(t, "queue_create_defaults", queue.Queue)
+	if assert.NotNil(t, queue.TTL) {
+		assert.Equal(t, time.Hour, *queue.TTL)
+	}
+	if assert.NotNil(t, queue.Retries) {
+		assert.EqualValues(t, 3, *queue.Retries)
+	}
+	if assert.NotNil(t, queue.RetryDelay) {
+		assert.Equal(t, 2*time.Minute, *queue.RetryDelay)
+	}
+	if assert.NotNil(t, queue.Concurrency) {
+		assert.EqualValues(t, 0, *queue.Concurrency)
+	}
+
+	_, _ = mgr.DeleteQueue(ctx, queue.Queue)
+}
+
+func TestCreateQueueWithPatch(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	ttl := 3 * time.Hour
+	retries := uint64(7)
+	retryDelay := 5 * time.Minute
+	concurrency := uint64(2)
+
+	queue, err := mgr.RegisterQueue(ctx, "queue_create_patch", schema.QueueMeta{
+		TTL:         &ttl,
+		Retries:     &retries,
+		RetryDelay:  &retryDelay,
+		Concurrency: &concurrency,
+	}, noopTask)
+	require.NoError(t, err)
+	require.NotNil(t, queue)
+	assert.Equal(t, "queue_create_patch", queue.Queue)
+	if assert.NotNil(t, queue.TTL) {
+		assert.Equal(t, ttl, *queue.TTL)
+	}
+	if assert.NotNil(t, queue.Retries) {
+		assert.Equal(t, retries, *queue.Retries)
+	}
+	if assert.NotNil(t, queue.RetryDelay) {
+		assert.Equal(t, retryDelay, *queue.RetryDelay)
+	}
+	if assert.NotNil(t, queue.Concurrency) {
+		assert.Equal(t, concurrency, *queue.Concurrency)
+	}
+
+	_, _ = mgr.DeleteQueue(ctx, queue.Queue)
+}
+
+func TestListQueues(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	queue1, err := mgr.RegisterQueue(ctx, "queue_list_one", schema.QueueMeta{}, noopTask)
+	require.NoError(t, err)
+	queue2, err := mgr.RegisterQueue(ctx, "queue_list_two", schema.QueueMeta{}, noopTask)
+	require.NoError(t, err)
+	defer func() {
+		_, _ = mgr.DeleteQueue(ctx, queue1.Queue)
+		_, _ = mgr.DeleteQueue(ctx, queue2.Queue)
+	}()
+
+	limit := uint64(10)
+	result, err := mgr.ListQueues(ctx, schema.QueueListRequest{OffsetLimit: pg.OffsetLimit{Limit: &limit}})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.GreaterOrEqual(t, result.Count, uint64(2))
+	assert.GreaterOrEqual(t, len(result.Body), 2)
+	if assert.NotNil(t, result.Limit) {
+		assert.Equal(t, min(limit, result.Count), *result.Limit)
+	}
+
+	names := make([]string, 0, len(result.Body))
+	for _, queue := range result.Body {
+		names = append(names, queue.Queue)
+	}
+	assert.Contains(t, names, queue1.Queue)
+	assert.Contains(t, names, queue2.Queue)
+}
+
+func TestGetUpdateDeleteQueue(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	queue, err := mgr.RegisterQueue(ctx, "queue_get_update_delete", schema.QueueMeta{}, noopTask)
+	require.NoError(t, err)
+
+	fetched, err := mgr.GetQueue(ctx, queue.Queue)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, queue.Queue, fetched.Queue)
+
+	retries := uint64(9)
+	updated, err := mgr.UpdateQueue(ctx, queue.Queue, schema.QueueMeta{Retries: &retries})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	if assert.NotNil(t, updated.Retries) {
+		assert.Equal(t, retries, *updated.Retries)
+	}
+
+	deleted, err := mgr.DeleteQueue(ctx, queue.Queue)
+	require.NoError(t, err)
+	require.NotNil(t, deleted)
+	assert.Equal(t, queue.Queue, deleted.Queue)
+
+	_, err = mgr.GetQueue(ctx, queue.Queue)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pg.ErrNotFound))
+}

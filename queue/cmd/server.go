@@ -17,7 +17,7 @@ func (cmd Queue) WithQueueManager(globals server.Cmd, conn pg.PoolConn, fn func(
 	}
 
 	// Create a queue
-	manager, err := queue.New(globals.Context(), globals.Name(), globals.Version(), conn, opts...)
+	manager, err := queue.New(globals.Context(), conn, globals.Name(), globals.Version(), opts...)
 	if err != nil {
 		return err
 	}

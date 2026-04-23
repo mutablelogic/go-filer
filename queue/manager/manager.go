@@ -18,12 +18,14 @@ import (
 type Manager struct {
 	opt
 	pg.PoolConn
+	queues  exec
+	tickers exec
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func New(ctx context.Context, name, version string, pool pg.PoolConn, opts ...Opt) (*Manager, error) {
+func New(ctx context.Context, pool pg.PoolConn, name, version string, opts ...Opt) (*Manager, error) {
 	// Set default values
 	self := new(Manager)
 	self.defaults(name, version)

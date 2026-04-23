@@ -58,11 +58,9 @@ CREATE INDEX IF NOT EXISTS "task_worker_idx"
 -- pgqueue.ticker
 CREATE TABLE IF NOT EXISTS ${"schema"}."ticker" (
     "ticker"        TEXT NOT NULL PRIMARY KEY,
-    "queue"         TEXT NOT NULL,                    -- which queue to post tasks to
     "payload"       JSONB NOT NULL DEFAULT '{}',
     "interval"      INTERVAL DEFAULT INTERVAL '1 minute',
-    "last_at"       TIMESTAMPTZ,                      -- when it last fired (NULL = never)
-    FOREIGN KEY ("queue") REFERENCES ${"schema"}."queue" ("queue") ON DELETE CASCADE
+    "last_at"       TIMESTAMPTZ                       -- when it last fired (NULL = never)
 );
 
 -- pgqueue.ticker_queue_index
@@ -276,7 +274,6 @@ GROUP BY
 -- pgqueue.ticker_next_func
 CREATE OR REPLACE FUNCTION ${"schema"}.ticker_next() RETURNS TABLE (
     "ticker"    TEXT,
-    "queue"     TEXT,
     "interval"  INTERVAL,
     "payload"   JSONB,
     "last_at"   TIMESTAMPTZ
@@ -299,5 +296,5 @@ CREATE OR REPLACE FUNCTION ${"schema"}.ticker_next() RETURNS TABLE (
             LIMIT 1
         )
     RETURNING
-        "ticker", "queue", "interval", "payload", "last_at";
+        "ticker", "interval", "payload", "last_at";
 $$ LANGUAGE SQL;

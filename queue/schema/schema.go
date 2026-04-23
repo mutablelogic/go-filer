@@ -2,6 +2,7 @@ package schema
 
 import (
 	_ "embed"
+	"time"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -14,5 +15,8 @@ var Objects string
 var Queries string
 
 const (
-	DefaultSchema = "queue"
+	DefaultSchema       = "queue"
+	QueueListLimit      = 100
+	TickerListLimit     = 100
+	DefaultTickerPeriod = 5 * time.Second
 )

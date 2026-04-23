@@ -63,7 +63,7 @@ func (cmd *RunServerCommand) Run(globals server.Cmd) error {
 	}
 
 	// Wrap in a queue manager
-	return cmd.Queue.WithQueueManager(globals, conn, func(_ *queuemanager.Manager) error {
+	return cmd.Queue.WithQueueManager(globals, conn, func(queue *queuemanager.Manager) error {
 		// Gather backend options
 		opts := []manager.Opt{
 			manager.WithTracer(globals.Tracer()),
@@ -105,9 +105,14 @@ func (cmd *RunServerCommand) Run(globals server.Cmd) error {
 			// Create an error group for the different components
 			errgroup, errctx := errgroup.WithContext(globals.Context())
 
-			// Run the manager
+			// Run the filer manager
 			errgroup.Go(func() error {
 				return manager.Run(errctx)
+			})
+
+			// Run the queue manager
+			errgroup.Go(func() error {
+				return queue.Run(errctx, globals.Logger())
 			})
 
 			// Run the server
