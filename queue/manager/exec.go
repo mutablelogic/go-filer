@@ -1,7 +1,10 @@
 package manager
 
 import (
+	"context"
 	"strings"
+	"time"
+
 	// Packages
 	"sync"
 
@@ -67,16 +70,48 @@ func (exec *exec) RemoveTask(name string) error {
 	return nil
 }
 
+// RunQueueTask executes a named task callback with the given payload.
+func (exec *exec) RunTickerTask(ctx context.Context, ticker *schema.Ticker) error {
+	// Create a deadline for the task execution based on the ticker's period
+	// and the current time. This ensures that the task will not run indefinitely
+	// and will be cancelled if it exceeds the ticker's period.
+	deadline := time.Now().Add(time.Minute)
+	if interval := types.Value(ticker.Interval); interval > 0 {
+		deadline = time.Now().Add(interval)
+	}
+
+	// Create the context
+	child, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
+	// TODO: Add the ticker into the context
+
+	// Get the task function for the ticker's name
+	exec.RLock()
+	defer exec.RUnlock()
+	if fn, exists := exec.t[ticker.Ticker]; exists {
+		// Run the task function with the provided payload and deadline
+		// TODO: Make a span for the ticker
+		_, err := fn(child, ticker.Payload)
+		if err != nil {
+			// TODO: Emit the error with the span
+			return err
+		}
+	} else {
+		return httpresponse.ErrNotFound.Withf("task callback %q not found", ticker.Ticker)
+	}
+
+	// Return success
+	return nil
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
 func taskName(name string) (string, error) {
-	name = strings.ToLower(strings.TrimSpace(name))
-	if name == "" {
-		return "", httpresponse.ErrBadRequest.With("missing task name")
-	}
-	if !types.IsIdentifier(name) {
+	if name = strings.ToLower(strings.TrimSpace(name)); !types.IsIdentifier(name) {
 		return "", httpresponse.ErrBadRequest.Withf("invalid task name: %q", name)
+	} else {
+		return name, nil
 	}
-	return name, nil
 }

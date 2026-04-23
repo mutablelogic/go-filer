@@ -252,7 +252,41 @@ WHERE
 ORDER BY
     q."queue",
     q."status";
-
--- pgqueue.partition
-CREATE TABLE IF NOT EXISTS ${"schema"}."task${serial}" PARTITION OF ${"schema"}."task"
+    
+-- pgqueue.partition_create
+CREATE TABLE IF NOT EXISTS ${"schema"}.${"partition"} PARTITION OF ${"schema"}."task"
     FOR VALUES FROM (${start}) TO (${end});
+
+-- pgqueue.partition_list
+-- Returns all partitions for the task table, ordered oldest first
+SELECT
+    c.relname AS "name",
+    pg_get_expr(c.relpartbound, c.oid) AS "bounds",
+    COALESCE(t."count", 0) AS "count"
+FROM pg_inherits i
+JOIN pg_class c ON i.inhrelid = c.oid
+JOIN pg_class p ON i.inhparent = p.oid
+JOIN pg_namespace n ON c.relnamespace = n.oid
+LEFT JOIN (
+    SELECT
+        tableoid AS "oid",
+        COUNT(*) AS "count"
+    FROM
+        ${"schema"}."task"
+    WHERE
+        ("started_at" IS NULL AND "finished_at" IS NULL AND "retries" > 0)
+    OR
+        ("started_at" IS NOT NULL AND "finished_at" IS NULL)
+    GROUP BY
+        tableoid
+) t ON t."oid" = c.oid
+WHERE p.relname = 'task'
+AND n.nspname = ${'schema'}
+ORDER BY c.relname ASC;
+
+-- pgqueue.partition_seq
+-- Returns the current sequence value for the task table
+SELECT last_value FROM ${"schema"}."task_id_seq";
+
+-- pgqueue.partition_drop
+DROP TABLE IF EXISTS ${"schema"}.${"partition"};

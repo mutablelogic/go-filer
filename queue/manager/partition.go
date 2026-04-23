@@ -1,0 +1,102 @@
+package manager
+
+import (
+	"context"
+	"fmt"
+
+	// Packages
+	schema "github.com/mutablelogic/go-filer/queue/schema"
+)
+
+///////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+func (manager *Manager) CreateNextPartition(ctx context.Context) (string, error) {
+	// Get current sequence value
+	seq, err := manager.GetPartitionSeq(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	// Get existing partitions to find the highest upper bound
+	partitions, err := manager.ListPartitions(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	// Find the highest upper bound
+	var maxEnd uint64
+	for _, p := range partitions {
+		if p.End > maxEnd {
+			maxEnd = p.End
+		}
+	}
+
+	// Create next partition if no partitions exist, or seq is within 80% of upper bound
+	if maxEnd == 0 || seq >= uint64(float64(maxEnd)*0.8) {
+		start := maxEnd
+		if start == 0 {
+			start = 1
+		}
+		end := start + schema.DefaultPartitionSize
+		name := fmt.Sprintf("task_%08d_%08d", start, end)
+		if err := manager.CreatePartition(ctx, schema.PartitionMeta{
+			Partition: name,
+			Start:     start,
+			End:       end,
+		}); err != nil {
+			return "", err
+		}
+		return name, nil
+	}
+
+	return "", nil
+}
+
+func (manager *Manager) DropDrainedPartition(ctx context.Context) (string, error) {
+	// Get all the current partitions, and drop the oldest drained partition if it exists.
+	partitions, err := manager.ListPartitions(ctx)
+	if err != nil {
+		return "", err
+	}
+	// Always keep at least one partition
+	if len(partitions) <= 1 {
+		return "", nil
+	}
+	// Oldest is first (ORDER BY relname ASC)
+	oldest := partitions[0]
+	if oldest.Count > 0 {
+		return "", nil
+	}
+	if err := manager.DeletePartition(ctx, oldest.Partition); err != nil {
+		return "", err
+	}
+	return oldest.Partition, nil
+}
+
+func (manager *Manager) CreatePartition(ctx context.Context, meta schema.PartitionMeta) error {
+	return manager.PoolConn.Insert(ctx, nil, meta)
+
+}
+
+func (manager *Manager) GetPartitionSeq(ctx context.Context) (uint64, error) {
+	var seq schema.PartitionSeq
+	if err := manager.Get(ctx, &seq, schema.PartitionSeqRequest{}); err != nil {
+		return 0, err
+	}
+	return uint64(seq), nil
+}
+
+func (manager *Manager) ListPartitions(ctx context.Context) ([]schema.Partition, error) {
+	var result schema.PartitionList
+	if err := manager.List(ctx, &result, schema.PartitionListRequest{}); err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
+func (manager *Manager) DeletePartition(ctx context.Context, name string) error {
+	return manager.Delete(ctx, nil, schema.PartitionName(name))
+}
+
+///////////////////////////////////////////////////////////////////////////////
