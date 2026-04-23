@@ -189,3 +189,117 @@ func TestZeroRetryQueueTasksStartFailed(t *testing.T) {
 	}
 	assert.Contains(t, ids, uint64(taskID))
 }
+
+func TestNextTaskRespectsQueueConcurrency(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	beforeSeq, err := mgr.GetPartitionSeq(ctx)
+	require.NoError(t, err)
+
+	nextID := beforeSeq + 1
+	partitions, err := mgr.ListPartitions(ctx)
+	require.NoError(t, err)
+
+	createdPartition := ""
+	if !partitionContains(partitions, nextID) {
+		meta := schema.PartitionMeta{
+			Partition: "task_partition_queue_concurrency",
+			Start:     1,
+			End:       1000000,
+		}
+		require.NoError(t, mgr.DeletePartition(ctx, meta.Partition))
+		require.NoError(t, mgr.CreatePartition(ctx, meta))
+		createdPartition = meta.Partition
+	}
+
+	concurrency := uint64(1)
+	queue, err := mgr.RegisterQueue(ctx, "queue_concurrency_limit", schema.QueueMeta{Concurrency: &concurrency}, noopTask)
+	require.NoError(t, err)
+	defer func() {
+		_, _ = mgr.DeleteQueue(ctx, queue.Queue)
+		if createdPartition != "" {
+			_ = mgr.DeletePartition(ctx, createdPartition)
+		}
+	}()
+
+	first, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":1}`)})
+	require.NoError(t, err)
+	second, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":2}`)})
+	require.NoError(t, err)
+
+	retained, err := mgr.NextTask(ctx, "worker-concurrency-1", queue.Queue)
+	require.NoError(t, err)
+	require.NotNil(t, retained)
+	assert.Equal(t, first.Id, retained.Id)
+
+	blocked, err := mgr.NextTask(ctx, "worker-concurrency-2", queue.Queue)
+	require.NoError(t, err)
+	assert.Nil(t, blocked)
+
+	released, err := mgr.ReleaseTask(ctx, retained.Id, true, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, released)
+
+	next, err := mgr.NextTask(ctx, "worker-concurrency-2", queue.Queue)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	assert.Equal(t, second.Id, next.Id)
+
+	_, err = mgr.ReleaseTask(ctx, next.Id, true, nil, nil)
+	require.NoError(t, err)
+}
+
+func TestNextTaskWithZeroConcurrencyKeepsUnlimitedBehavior(t *testing.T) {
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	beforeSeq, err := mgr.GetPartitionSeq(ctx)
+	require.NoError(t, err)
+
+	nextID := beforeSeq + 1
+	partitions, err := mgr.ListPartitions(ctx)
+	require.NoError(t, err)
+
+	createdPartition := ""
+	if !partitionContains(partitions, nextID) {
+		meta := schema.PartitionMeta{
+			Partition: "task_partition_queue_concurrency_zero",
+			Start:     1,
+			End:       1000000,
+		}
+		require.NoError(t, mgr.DeletePartition(ctx, meta.Partition))
+		require.NoError(t, mgr.CreatePartition(ctx, meta))
+		createdPartition = meta.Partition
+	}
+
+	concurrency := uint64(0)
+	queue, err := mgr.RegisterQueue(ctx, "queue_concurrency_unlimited", schema.QueueMeta{Concurrency: &concurrency}, noopTask)
+	require.NoError(t, err)
+	defer func() {
+		_, _ = mgr.DeleteQueue(ctx, queue.Queue)
+		if createdPartition != "" {
+			_ = mgr.DeletePartition(ctx, createdPartition)
+		}
+	}()
+
+	first, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":1}`)})
+	require.NoError(t, err)
+	second, err := mgr.CreateTask(ctx, queue.Queue, schema.TaskMeta{Payload: json.RawMessage(`{"task":2}`)})
+	require.NoError(t, err)
+
+	retained1, err := mgr.NextTask(ctx, "worker-unlimited-1", queue.Queue)
+	require.NoError(t, err)
+	require.NotNil(t, retained1)
+	assert.Equal(t, first.Id, retained1.Id)
+
+	retained2, err := mgr.NextTask(ctx, "worker-unlimited-2", queue.Queue)
+	require.NoError(t, err)
+	require.NotNil(t, retained2)
+	assert.Equal(t, second.Id, retained2.Id)
+
+	_, err = mgr.ReleaseTask(ctx, retained1.Id, true, nil, nil)
+	require.NoError(t, err)
+	_, err = mgr.ReleaseTask(ctx, retained2.Id, true, nil, nil)
+	require.NoError(t, err)
+}

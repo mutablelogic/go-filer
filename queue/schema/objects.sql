@@ -151,22 +151,43 @@ UPDATE ${"schema"}."task" SET
     "result" = 'null'
 WHERE "id" = (
     SELECT
-        "id"
+        t."id"
     FROM
-        ${"schema"}."task"
+        ${"schema"}."task" t
+    JOIN
+        ${"schema"}."queue" queue
+    ON
+        queue."queue" = t."queue"
+    LEFT JOIN (
+        SELECT
+            "queue",
+            COUNT(*) AS "retained"
+        FROM
+            ${"schema"}."task"
+        WHERE
+            "started_at" IS NOT NULL
+        AND
+            "finished_at" IS NULL
+        GROUP BY
+            "queue"
+    ) retained
+    ON
+        retained."queue" = t."queue"
     WHERE
-        (CARDINALITY(q) = 0 OR "queue" = ANY(q))
+        (CARDINALITY(q) = 0 OR t."queue" = ANY(q))
     AND
-        ("started_at" IS NULL AND "finished_at" IS NULL)
+        (t."started_at" IS NULL AND t."finished_at" IS NULL)
     AND
-        ("dies_at" IS NULL OR "dies_at" > NOW())
+        (t."dies_at" IS NULL OR t."dies_at" > NOW())
     AND
-        ("delayed_at" IS NULL OR "delayed_at" <= NOW())
+        (t."delayed_at" IS NULL OR t."delayed_at" <= NOW())
     AND
-        "retries" > 0
+        t."retries" > 0
+    AND
+        (queue."concurrency" = 0 OR COALESCE(retained."retained", 0) < queue."concurrency")
     ORDER BY
-        "created_at"
-    FOR UPDATE SKIP LOCKED LIMIT 1
+        t."created_at"
+    FOR UPDATE OF t SKIP LOCKED LIMIT 1
 )
 RETURNING "id";
 $$ LANGUAGE SQL;
