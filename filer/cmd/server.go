@@ -14,13 +14,15 @@ import (
 	config "github.com/aws/aws-sdk-go-v2/config"
 	credentials "github.com/aws/aws-sdk-go-v2/credentials"
 	blob "github.com/mutablelogic/go-filer/backend/blob"
-	"github.com/mutablelogic/go-filer/filer/httphandler"
+	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
 	manager "github.com/mutablelogic/go-filer/filer/manager"
+	queue "github.com/mutablelogic/go-filer/queue/cmd"
+	queuemanager "github.com/mutablelogic/go-filer/queue/manager"
 	server "github.com/mutablelogic/go-server"
 	cmd "github.com/mutablelogic/go-server/pkg/cmd"
-	"github.com/mutablelogic/go-server/pkg/httprouter"
+	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	types "github.com/mutablelogic/go-server/pkg/types"
-	"golang.org/x/sync/errgroup"
+	errgroup "golang.org/x/sync/errgroup"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -40,8 +42,10 @@ type AWSConfig struct {
 }
 
 type RunServerCommand struct {
-	Backend []string  `arg:"" name:"backend" help:"Backend URL (e.g. mem://name, file://name/path, s3://bucket)." optional:""`
-	AWS     AWSConfig `embed:"" prefix:"aws."`
+	Backend             []string  `arg:"" name:"backend" help:"Backend URL (e.g. mem://name, file://name/path, s3://bucket)." optional:""`
+	AWS                 AWSConfig `embed:"" prefix:"aws."`
+	queue.PostgresFlags `embed:"" prefix:"pg."`
+	queue.Queue         `embed:"" prefix:"queue."`
 	cmd.RunServer
 }
 
@@ -49,57 +53,73 @@ type RunServerCommand struct {
 // COMMANDS
 
 func (cmd *RunServerCommand) Run(globals server.Cmd) error {
-	// Gather backend options
-	opts := []manager.Opt{
-		manager.WithTracer(globals.Tracer()),
+	conn, err := cmd.PostgresFlags.Connect(globals)
+	if err != nil {
+		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+	} else if conn == nil {
+		return fmt.Errorf("PostgreSQL connection URL is required")
+	} else {
+		defer conn.Close()
 	}
 
-	// If there are no backends, then register one with a default file:// URL rooted in the user cache dir.
-	if len(cmd.Backend) == 0 {
-		backend, err := defaultBackendURL(globals)
-		if err != nil {
-			return err
-		} else {
-			cmd.Backend = append(cmd.Backend, backend)
-		}
-	}
-
-	// Create the backends
-	for _, backend := range cmd.Backend {
-		backend_opts, err := cmd.OptsForBackend(globals.Context(), backend)
-		if err != nil {
-			return fmt.Errorf("failed to create backend for %q: %w", backend, err)
-		} else {
-			opts = append(opts, manager.WithBackend(globals.Context(), backend, backend_opts...))
-		}
-	}
-
-	return cmd.withManager(globals, opts, func(ctx context.Context, manager *manager.Manager) error {
-
-		// Register the handlers for the manager
-		cmd.RunServer.Register(func(router *httprouter.Router) error {
-			return httphandler.RegisterHandlers(router, manager)
-		})
-
-		// Log the backends
-		globals.Logger().InfoContext(globals.Context(), "filer manager started", "name", globals.Name(), "version", globals.Version())
-		for _, name := range manager.Backends() {
-			globals.Logger().InfoContext(globals.Context(), "registered backend", "name", name, "url", manager.Backend(name).URL().String())
+	// Wrap in a queue manager
+	return cmd.Queue.WithQueueManager(globals, conn, func(queue *queuemanager.Manager) error {
+		// Gather backend options
+		opts := []manager.Opt{
+			manager.WithTracer(globals.Tracer()),
 		}
 
-		// Create an error group for the different components
-		errgroup, errctx := errgroup.WithContext(globals.Context())
+		// If there are no backends, then register one with a default file:// URL rooted in the user cache dir.
+		if len(cmd.Backend) == 0 {
+			backend, err := defaultBackendURL(globals)
+			if err != nil {
+				return err
+			} else {
+				cmd.Backend = append(cmd.Backend, backend)
+			}
+		}
 
-		// Run the manager
-		errgroup.Go(func() error {
-			return manager.Run(errctx)
-		})
+		// Create the backends
+		for _, backend := range cmd.Backend {
+			backend_opts, err := cmd.OptsForBackend(globals.Context(), backend)
+			if err != nil {
+				return fmt.Errorf("failed to create backend for %q: %w", backend, err)
+			} else {
+				opts = append(opts, manager.WithBackend(globals.Context(), backend, backend_opts...))
+			}
+		}
 
-		// Run the server
-		errgroup.Go(func() error {
-			return cmd.RunServer.Run(globals)
+		return cmd.withManager(globals, queue, opts, func(ctx context.Context, manager *manager.Manager) error {
+			// Register the handlers for the manager
+			cmd.RunServer.Register(func(router *httprouter.Router) error {
+				return httphandler.RegisterHandlers(router, manager)
+			})
+
+			// Log the backends
+			globals.Logger().InfoContext(globals.Context(), "filer manager started", "name", globals.Name(), "version", globals.Version())
+			for _, name := range manager.Backends() {
+				globals.Logger().InfoContext(globals.Context(), "registered backend", "name", name, "url", manager.Backend(name).URL().String())
+			}
+
+			// Create an error group for the different components
+			errgroup, errctx := errgroup.WithContext(globals.Context())
+
+			// Run the filer manager
+			errgroup.Go(func() error {
+				return manager.Run(errctx)
+			})
+
+			// Run the queue manager
+			errgroup.Go(func() error {
+				return queue.Run(errctx, globals.Logger())
+			})
+
+			// Run the server
+			errgroup.Go(func() error {
+				return cmd.RunServer.Run(globals)
+			})
+			return errgroup.Wait()
 		})
-		return errgroup.Wait()
 	})
 }
 
@@ -145,9 +165,9 @@ func (cmd *RunServerCommand) OptsForBackend(ctx context.Context, backend string)
 	return opts, nil
 }
 
-func (cmd *RunServerCommand) withManager(globals server.Cmd, opts []manager.Opt, fn func(context.Context, *manager.Manager) error) (err error) {
+func (cmd *RunServerCommand) withManager(globals server.Cmd, queue *queuemanager.Manager, opts []manager.Opt, fn func(context.Context, *manager.Manager) error) (err error) {
 	// Create manager
-	manager, err := manager.New(globals.Context(), opts...)
+	manager, err := manager.New(globals.Context(), queue, opts...)
 	if err != nil {
 		return err
 	}
