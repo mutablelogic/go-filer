@@ -16,6 +16,7 @@ var Queries string
 
 const (
 	DefaultSchema                = "queue"
+	DefaultNotifyChannel         = "queue_notify"
 	QueueListLimit               = 100
 	TickerListLimit              = 100
 	DefaultPartitionSize         = 100_000 // tasks per partition

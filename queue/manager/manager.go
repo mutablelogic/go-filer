@@ -53,6 +53,7 @@ func New(ctx context.Context, pool pg.PoolConn, name, version string, opts ...Op
 	} else {
 		pool = pool.WithQueries(queries).With(
 			"schema", self.schema,
+			"channel", schema.DefaultNotifyChannel,
 		).(pg.PoolConn)
 	}
 

@@ -130,7 +130,7 @@ $$ LANGUAGE PLPGSQL;
 -- pgqueue.queue_notify_func
 CREATE OR REPLACE FUNCTION ${"schema"}.queue_notify() RETURNS TRIGGER AS $$
 BEGIN
-    PERFORM pg_notify('queue_insert', json_build_object(
+    PERFORM pg_notify(${'channel'}, json_build_object(
         'schema', ${'schema'},
         'queue', NEW."queue"
     )::TEXT);
