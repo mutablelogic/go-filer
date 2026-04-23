@@ -65,25 +65,27 @@ func New(ctx context.Context, pool pg.PoolConn, name, version string, opts ...Op
 		endBootstrapSpan(err)
 		return nil, err
 	} else {
-		endBootstrapSpan(nil)
 		self.PoolConn = pool
 	}
 
 	// Register a maintenance ticker
-	if _, err := self.RegisterTicker(ctx, schema.DefaultMaintenanceTickerName, schema.TickerMeta{
+	if _, err := self.RegisterTicker(bootstrapCtx, schema.DefaultMaintenanceTickerName, schema.TickerMeta{
 		Interval: types.Ptr(schema.DefaultMaintenancePeriod),
 	}, self.maintenance); err != nil {
+		endBootstrapSpan(err)
 		return nil, err
 	}
 
 	// Register a cleanup ticker
-	if _, err := self.RegisterTicker(ctx, schema.DefaultCleanupTickerName, schema.TickerMeta{
+	if _, err := self.RegisterTicker(bootstrapCtx, schema.DefaultCleanupTickerName, schema.TickerMeta{
 		Interval: types.Ptr(schema.DefaultCleanupPeriod),
 	}, self.cleanup); err != nil {
+		endBootstrapSpan(err)
 		return nil, err
 	}
 
 	// Return success
+	endBootstrapSpan(nil)
 	return self, nil
 }
 

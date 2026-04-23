@@ -5,16 +5,25 @@ import (
 	"errors"
 
 	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/queue/schema"
 	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
 // RegisterQueue creates a new queue, or updates an existing queue, and returns it.
-func (manager *Manager) RegisterQueue(ctx context.Context, name string, meta schema.QueueMeta, callback schema.TaskFunc) (*schema.Queue, error) {
+func (manager *Manager) RegisterQueue(ctx context.Context, name string, meta schema.QueueMeta, callback schema.TaskFunc) (result *schema.Queue, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "RegisterQueue",
+		attribute.String("name", name),
+		attribute.String("meta", types.Stringify(meta)),
+		attribute.Bool("callback", callback != nil),
+	)
+	defer func() { endSpan(err) }()
+
 	var queue schema.Queue
 
 	// Register task callback if provided
@@ -22,7 +31,7 @@ func (manager *Manager) RegisterQueue(ctx context.Context, name string, meta sch
 		return nil, err
 	}
 
-	err := manager.Tx(ctx, func(conn pg.Conn) error {
+	err = manager.Tx(ctx, func(conn pg.Conn) error {
 		err := conn.Get(ctx, &queue, schema.QueueName(name))
 		switch {
 		case err == nil:
@@ -50,18 +59,28 @@ func (manager *Manager) RegisterQueue(ctx context.Context, name string, meta sch
 }
 
 // ListQueues returns all queues as a list.
-func (manager *Manager) ListQueues(ctx context.Context, req schema.QueueListRequest) (*schema.QueueList, error) {
-	result := schema.QueueList{QueueListRequest: req}
-	if err := manager.List(ctx, &result, req); err != nil {
+func (manager *Manager) ListQueues(ctx context.Context, req schema.QueueListRequest) (result *schema.QueueList, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListQueues",
+		attribute.String("req", types.Stringify(req)),
+	)
+	defer func() { endSpan(err) }()
+
+	resp := schema.QueueList{QueueListRequest: req}
+	if err := manager.List(ctx, &resp, req); err != nil {
 		return nil, err
 	} else {
-		result.OffsetLimit.Clamp(result.Count)
+		resp.OffsetLimit.Clamp(resp.Count)
 	}
-	return types.Ptr(result), nil
+	return types.Ptr(resp), nil
 }
 
 // GetQueue returns a queue by name.
-func (manager *Manager) GetQueue(ctx context.Context, name string) (*schema.Queue, error) {
+func (manager *Manager) GetQueue(ctx context.Context, name string) (result *schema.Queue, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "GetQueue",
+		attribute.String("name", name),
+	)
+	defer func() { endSpan(err) }()
+
 	var queue schema.Queue
 	if err := manager.Get(ctx, &queue, schema.QueueName(name)); err != nil {
 		return nil, err
@@ -70,7 +89,12 @@ func (manager *Manager) GetQueue(ctx context.Context, name string) (*schema.Queu
 }
 
 // DeleteQueue deletes an existing queue, and returns it.
-func (manager *Manager) DeleteQueue(ctx context.Context, name string) (*schema.Queue, error) {
+func (manager *Manager) DeleteQueue(ctx context.Context, name string) (result *schema.Queue, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "DeleteQueue",
+		attribute.String("name", name),
+	)
+	defer func() { endSpan(err) }()
+
 	var queue schema.Queue
 	if err := manager.Delete(ctx, &queue, schema.QueueName(name)); err != nil {
 		return nil, err
@@ -81,7 +105,13 @@ func (manager *Manager) DeleteQueue(ctx context.Context, name string) (*schema.Q
 }
 
 // UpdateQueue updates an existing queue, and returns it.
-func (manager *Manager) UpdateQueue(ctx context.Context, name string, meta schema.QueueMeta) (*schema.Queue, error) {
+func (manager *Manager) UpdateQueue(ctx context.Context, name string, meta schema.QueueMeta) (result *schema.Queue, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "UpdateQueue",
+		attribute.String("name", name),
+		attribute.String("meta", types.Stringify(meta)),
+	)
+	defer func() { endSpan(err) }()
+
 	var queue schema.Queue
 	if err := manager.Update(ctx, &queue, schema.QueueName(name), schema.Queue{Queue: name, QueueMeta: meta}); err != nil {
 		return nil, err
@@ -90,7 +120,12 @@ func (manager *Manager) UpdateQueue(ctx context.Context, name string, meta schem
 }
 
 // CleanQueue removes stale tasks from a queue, and returns the tasks removed.
-func (manager *Manager) CleanQueue(ctx context.Context, name string) ([]schema.Task, error) {
+func (manager *Manager) CleanQueue(ctx context.Context, name string) (result []schema.Task, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "CleanQueue",
+		attribute.String("name", name),
+	)
+	defer func() { endSpan(err) }()
+
 	var resp schema.QueueCleanResponse
 	if err := manager.List(ctx, &resp, schema.QueueCleanRequest{Queue: name}); err != nil {
 		return nil, err
@@ -99,7 +134,10 @@ func (manager *Manager) CleanQueue(ctx context.Context, name string) ([]schema.T
 }
 
 // ListQueueStatuses returns the status breakdown for all queues.
-func (manager *Manager) ListQueueStatuses(ctx context.Context) ([]schema.QueueStatus, error) {
+func (manager *Manager) ListQueueStatuses(ctx context.Context) (result []schema.QueueStatus, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListQueueStatuses")
+	defer func() { endSpan(err) }()
+
 	var resp schema.QueueStatusResponse
 	if err := manager.List(ctx, &resp, schema.QueueStatusRequest{}); err != nil {
 		return nil, err

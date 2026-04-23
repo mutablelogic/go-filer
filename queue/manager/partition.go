@@ -5,13 +5,19 @@ import (
 	"fmt"
 
 	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/queue/schema"
+	types "github.com/mutablelogic/go-server/pkg/types"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) CreateNextPartition(ctx context.Context) (string, error) {
+func (manager *Manager) CreateNextPartition(ctx context.Context) (result string, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "CreateNextPartition")
+	defer func() { endSpan(err) }()
+
 	// Get current sequence value
 	seq, err := manager.GetPartitionSeq(ctx)
 	if err != nil {
@@ -53,7 +59,10 @@ func (manager *Manager) CreateNextPartition(ctx context.Context) (string, error)
 	return "", nil
 }
 
-func (manager *Manager) DropDrainedPartition(ctx context.Context) (string, error) {
+func (manager *Manager) DropDrainedPartition(ctx context.Context) (result string, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "DropDrainedPartition")
+	defer func() { endSpan(err) }()
+
 	// Get all the current partitions, and drop the oldest drained partition if it exists.
 	partitions, err := manager.ListPartitions(ctx)
 	if err != nil {
@@ -74,12 +83,23 @@ func (manager *Manager) DropDrainedPartition(ctx context.Context) (string, error
 	return oldest.Partition, nil
 }
 
-func (manager *Manager) CreatePartition(ctx context.Context, meta schema.PartitionMeta) error {
-	return manager.PoolConn.Insert(ctx, nil, meta)
+func (manager *Manager) CreatePartition(ctx context.Context, meta schema.PartitionMeta) (err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "CreatePartition",
+		attribute.String("meta", types.Stringify(meta)),
+	)
+	defer func() { endSpan(err) }()
+
+	if err := manager.PoolConn.Insert(ctx, nil, meta); err != nil {
+		return err
+	}
+	return nil
 
 }
 
-func (manager *Manager) GetPartitionSeq(ctx context.Context) (uint64, error) {
+func (manager *Manager) GetPartitionSeq(ctx context.Context) (result uint64, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "GetPartitionSeq")
+	defer func() { endSpan(err) }()
+
 	var seq schema.PartitionSeq
 	if err := manager.Get(ctx, &seq, schema.PartitionSeqRequest{}); err != nil {
 		return 0, err
@@ -87,16 +107,27 @@ func (manager *Manager) GetPartitionSeq(ctx context.Context) (uint64, error) {
 	return uint64(seq), nil
 }
 
-func (manager *Manager) ListPartitions(ctx context.Context) ([]schema.Partition, error) {
-	var result schema.PartitionList
-	if err := manager.List(ctx, &result, schema.PartitionListRequest{}); err != nil {
+func (manager *Manager) ListPartitions(ctx context.Context) (result []schema.Partition, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListPartitions")
+	defer func() { endSpan(err) }()
+
+	var resp schema.PartitionList
+	if err := manager.List(ctx, &resp, schema.PartitionListRequest{}); err != nil {
 		return nil, err
 	}
-	return result.Body, nil
+	return resp.Body, nil
 }
 
-func (manager *Manager) DeletePartition(ctx context.Context, name string) error {
-	return manager.Delete(ctx, nil, schema.PartitionName(name))
+func (manager *Manager) DeletePartition(ctx context.Context, name string) (err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "DeletePartition",
+		attribute.String("name", name),
+	)
+	defer func() { endSpan(err) }()
+
+	if err := manager.Delete(ctx, nil, schema.PartitionName(name)); err != nil {
+		return err
+	}
+	return nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////
