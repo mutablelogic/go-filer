@@ -131,7 +131,7 @@ func TestBlobBackendKey(t *testing.T) {
 			backendURL, err := url.Parse(tt.backendURL)
 			assert.NoError(err)
 
-			b := &blobbackend{
+			b := &backend{
 				opt: &opt{
 					url: backendURL,
 				},
