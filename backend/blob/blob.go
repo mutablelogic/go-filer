@@ -38,6 +38,8 @@ type backend struct {
 	*opt
 	bucket       *blob.Bucket
 	bucketPrefix string // key prefix for bucket operations (empty for file://)
+	s3Client     *s3svc.Client
+	s3Bucket     string
 }
 
 var _ backendpkg.Backend = (*backend)(nil)
@@ -84,6 +86,9 @@ func New(ctx context.Context, u string, opts ...Opt) (*backend, error) {
 	if self.url.Scheme != "file" {
 		self.bucketPrefix = strings.TrimPrefix(strings.TrimSuffix(self.url.Path, "/"), "/")
 	}
+	if self.url.Scheme == "s3" {
+		self.s3Bucket = self.url.Host
+	}
 
 	// Open the bucket
 	var bucket *blob.Bucket
@@ -109,6 +114,7 @@ func New(ctx context.Context, u string, opts ...Opt) (*backend, error) {
 			otelaws.AppendMiddlewares(&cfg.APIOptions)
 		}
 		client := s3svc.NewFromConfig(cfg, s3Opts...)
+		self.s3Client = client
 		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
 	} else if self.url.Scheme == "file" {
 		// For file:// the path is the bucket root dir - open using just the path.
@@ -387,6 +393,47 @@ func addSpanAttrs(ctx context.Context, attrs ...attribute.KeyValue) {
 	if span := trace.SpanFromContext(ctx); span != nil {
 		span.SetAttributes(attrs...)
 	}
+}
+
+// keyExistsByList checks for an exact storage key via ListObjectsV2 semantics.
+func (b *backend) keyExistsByList(ctx context.Context, key string) (bool, error) {
+	iter := b.bucket.List(&blob.ListOptions{Prefix: key})
+	for {
+		obj, err := iter.Next(ctx)
+		if err == io.EOF {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		if obj.Key == key {
+			return true, nil
+		}
+		if !strings.HasPrefix(obj.Key, key) {
+			return false, nil
+		}
+	}
+}
+
+// deleteStorageKeyDirect performs an S3 DeleteObject call without a HeadObject precheck.
+func (b *backend) deleteStorageKeyDirect(ctx context.Context, key string) error {
+	if b.url.Scheme != "s3" || key == "" {
+		return errors.New("direct s3 delete unavailable")
+	}
+
+	client := b.s3Client
+	if client == nil {
+		var asClient *s3svc.Client
+		if b.bucket == nil || !b.bucket.As(&asClient) || asClient == nil {
+			return errors.New("direct s3 delete unavailable")
+		}
+		client = asClient
+	}
+
+	_, err := client.DeleteObject(ctx, &s3svc.DeleteObjectInput{
+		Bucket: aws.String(b.s3Bucket),
+		Key:    aws.String(key),
+	})
+	return err
 }
 
 // normaliseETag ensures the ETag value is in the RFC 7232 double-quoted format

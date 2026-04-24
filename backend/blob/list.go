@@ -44,9 +44,14 @@ func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest
 		obj.Name = b.Name()
 		all = []schema.Object{*obj}
 	} else {
-		// Object doesn't exist (or key is empty for root), treat as prefix
+		// Object doesn't exist (or key is empty for root), treat as prefix.
+		// For non-directory paths, probe the raw key prefix first so we can still
+		// discover the exact object when backends fail HeadObject but list it.
 		prefix := strings.TrimSuffix(sk, "/")
-		if prefix != "" {
+		exactPrefixProbe := sk != "" && !strings.HasSuffix(req.Path, "/")
+		if exactPrefixProbe {
+			prefix = sk
+		} else if prefix != "" {
 			prefix = prefix + "/"
 		}
 		addSpanAttrs(ctx, attribute.String("blob.list_prefix", prefix))
@@ -71,6 +76,10 @@ func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest
 
 			// Skip the prefix itself
 			if obj.Key == prefix {
+				continue
+			}
+
+			if exactPrefixProbe && obj.Key != sk && !strings.HasPrefix(obj.Key, sk+"/") {
 				continue
 			}
 

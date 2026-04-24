@@ -47,6 +47,23 @@ func (b *backend) DeleteObject(ctx context.Context, req schema.DeleteObjectReque
 
 	// Perform delete
 	if err := b.bucket.Delete(ctx, deleteKey); err != nil {
+		if gcerrors.Code(err) == gcerrors.NotFound && b.url.Scheme == "s3" {
+			exists, listErr := b.keyExistsByList(ctx, deleteKey)
+			if listErr != nil {
+				return nil, blobErr(listErr, b.Name()+":"+objPath)
+			}
+			if exists {
+				addSpanAttrs(ctx, attribute.Bool("blob.delete_direct_fallback", true))
+				if directErr := b.deleteStorageKeyDirect(ctx, deleteKey); directErr == nil {
+					obj := &schema.Object{Name: b.Name(), Path: objPath}
+					if attrs != nil {
+						obj = b.attrsToObject(objPath, attrs)
+						obj.Name = b.Name()
+					}
+					return obj, nil
+				}
+			}
+		}
 		return nil, blobErr(err, b.Name()+":"+objPath)
 	}
 
