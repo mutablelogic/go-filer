@@ -2,7 +2,6 @@ package schema
 
 import (
 	_ "embed"
-	"errors"
 	"time"
 )
 
@@ -28,14 +27,6 @@ const (
 
 	// Maximum of 15 minutes for each indexing task
 	IndexingTTL = time.Minute * 15
-)
-
-var (
-	// ErrAlreadyExists is returned by CreateObject when IfNotExists is true and the
-	// object already exists. It is a distinct sentinel so callers and tracing
-	// instrumentation can differentiate an intentional conditional-create miss from
-	// an unexpected conflict.
-	ErrAlreadyExists = errors.New("object already exists")
 )
 
 ////////////////////////////////////////////////////////////////////////////////

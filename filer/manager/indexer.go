@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
+	"time"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -24,12 +24,14 @@ func (manager *Manager) RunIndexer(ctx context.Context, payload json.RawMessage)
 		return nil, err
 	}
 
+	// Get the object and any error message
+	actual_object, err := manager.GetObject(ctx, object.Name, schema.GetObjectRequest{
+		Path: object.Path,
+	})
+
 	// Insert or delete the object, based on the remote state.
 	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
-		if actual_object, err := manager.GetObject(ctx, object.Name, schema.GetObjectRequest{
-			Path: object.Path,
-		}); errors.Is(err, filer.ErrNotFound) {
-			slog.Default().WarnContext(ctx, "Object not found, deleting from index", "object", object)
+		if errors.Is(err, filer.ErrNotFound) {
 			return conn.Delete(ctx, nil, schema.ObjectKey{
 				Name: object.Name,
 				Path: object.Path,
@@ -52,9 +54,11 @@ func (manager *Manager) QueueIndexTask(ctx context.Context, objects ...schema.Ob
 
 	// Create a task for each object to be indexed. This allows them to be processed in parallel by the indexer.
 	for _, obj := range objects {
+		obj := obj // capture current loop iteration value
 		errgroup.Go(func() error {
 			_, err := manager.queue.CreateTask(errctx, schema.IndexingQueueName, queueschema.TaskMeta{
-				Payload: []byte(types.Stringify(obj)),
+				DelayedAt: types.Ptr(time.Now().Add(10 * time.Second)), // delay slightly to allow for any concurrent updates to complete before indexing
+				Payload:   []byte(types.Stringify(obj)),
 			})
 			return err
 		})

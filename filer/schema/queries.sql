@@ -36,3 +36,20 @@ SET
 RETURNING
 	"name",	"path",	"size",	"modified_at",	"type",	"etag",	"meta"
 ;
+
+-- filer.metadata_insert
+INSERT INTO ${"schema"}."metadata" (
+	"name", "path", "title", "summary", "text", "tags"
+)
+VALUES (
+	@name, @path, @title, @summary, @text, CAST(@tags AS TEXT[])
+)
+ON CONFLICT ("name", "path") DO UPDATE
+SET
+	"title" = EXCLUDED."title",
+	"summary" = EXCLUDED."summary",
+	"text" = EXCLUDED."text",
+	"tags" = EXCLUDED."tags"
+RETURNING
+	"name", "path", "title", "summary", "text", "tags", "created_at"
+;

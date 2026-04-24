@@ -53,6 +53,8 @@ func New(ctx context.Context, pool pg.PoolConn, queue *queuemanager.Manager, opt
 	queries, err := pg.NewQueries(strings.NewReader(schema.Queries))
 	if err != nil {
 		return nil, fmt.Errorf("parse queries.sql: %w", err)
+	} else if pool == nil {
+		return nil, gofiler.ErrBadParameter.With("pg pool is required")
 	} else {
 		pool = pool.WithQueries(queries).With(
 			"schema", self.schema,
@@ -76,6 +78,7 @@ func New(ctx context.Context, pool pg.PoolConn, queue *queuemanager.Manager, opt
 		TTL:         types.Ptr(schema.IndexingTTL),
 		Concurrency: types.Ptr(uint64(runtime.GOMAXPROCS(0))),
 	}, self.RunIndexer); err != nil {
+		endBootstrapSpan(err)
 		return nil, err
 	}
 
@@ -139,7 +142,9 @@ func (manager *Manager) CreateObject(ctx context.Context, name string, req schem
 		attribute.String("request", req.String()),
 	)
 	defer func() {
-		if errors.Is(err, schema.ErrAlreadyExists) {
+		if errors.Is(err, gofiler.ErrConflict) {
+			// Already exists is a known error case for CreateObject
+			// so report it as a normal error rather than an internal error.
 			endSpan(nil)
 		} else {
 			endSpan(err)

@@ -22,7 +22,7 @@ func Test_ManagerFile_New(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	assert.NoError(err)
 	assert.NotNil(mgr)
 	defer mgr.Close()
@@ -34,7 +34,7 @@ func Test_ManagerFile_MultipleBackends(t *testing.T) {
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 
-	mgr, err := New(ctx,
+	mgr, err := newTestManager(ctx,
 		WithBackend(ctx, "file://testfiles1"+tmpDir1, backend.WithCreateDir()),
 		WithBackend(ctx, "file://testfiles2"+tmpDir2, backend.WithCreateDir()),
 	)
@@ -51,11 +51,10 @@ func Test_ManagerFile_Close(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	assert.NoError(err)
 
-	err = mgr.Close()
-	assert.NoError(err)
+	mgr.Close()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -66,7 +65,7 @@ func Test_ManagerFile_NoBackendError(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -102,7 +101,7 @@ func Test_ManagerFile_CreateObject(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -184,7 +183,7 @@ func Test_ManagerFile_ReadObject(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -229,7 +228,7 @@ func Test_ManagerFile_GetObject(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -269,7 +268,7 @@ func Test_ManagerFile_ListObjects(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -372,7 +371,7 @@ func Test_ManagerFile_DeleteObject(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -436,7 +435,7 @@ func Test_ManagerFile_FullWorkflow(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -493,7 +492,7 @@ func Test_ManagerFile_EdgeCases(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "file://testfiles"+tmpDir, backend.WithCreateDir()))
 	require.NoError(t, err)
 	defer mgr.Close()
 

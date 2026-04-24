@@ -6,9 +6,10 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	pg "github.com/mutablelogic/go-pg"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
-	"github.com/mutablelogic/go-server/pkg/types"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -183,7 +184,7 @@ func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	case pg.Delete:
 		return bind.Query("filer.object_delete"), nil
 	default:
-		return "", httpresponse.ErrInternalError.Withf("unsupported ObjectKey operation %q", op)
+		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectKey operation %q", op)
 	}
 }
 
@@ -192,10 +193,10 @@ func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 
 func (o Object) Insert(bind *pg.Bind) (string, error) {
 	if o.Name == "" {
-		return "", httpresponse.ErrBadRequest.With("missing object name")
+		return "", gofiler.ErrBadParameter.With("missing object name")
 	}
 	if o.Path == "" {
-		return "", httpresponse.ErrBadRequest.With("missing object path")
+		return "", gofiler.ErrBadParameter.With("missing object path")
 	}
 
 	bind.Set("name", o.Name)
@@ -225,5 +226,5 @@ func (o Object) Insert(bind *pg.Bind) (string, error) {
 }
 
 func (o Object) Update(bind *pg.Bind) error {
-	return httpresponse.ErrBadRequest.With("object update not implemented")
+	return gofiler.ErrInternalServerError.With("object update not implemented")
 }

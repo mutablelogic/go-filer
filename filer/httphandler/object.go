@@ -15,6 +15,7 @@ import (
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
+	gofiler "github.com/mutablelogic/go-filer"
 	manager "github.com/mutablelogic/go-filer/filer/manager"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
@@ -36,7 +37,7 @@ func objectList(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) er
 
 	response, err := mgr.ListObjects(r.Context(), r.PathValue("name"), request)
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, gofiler.HTTPErr(err))
 	}
 	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), response)
 }
@@ -53,7 +54,7 @@ func objectDeleteRoot(w http.ResponseWriter, r *http.Request, mgr *manager.Manag
 		Recursive: params.Recursive,
 	})
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, gofiler.HTTPErr(err))
 	}
 	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
 }
@@ -79,7 +80,7 @@ func objectPut(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) err
 
 	obj, err := mgr.CreateObject(r.Context(), r.PathValue("name"), req)
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, gofiler.HTTPErr(err))
 	}
 	return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), obj)
 }
@@ -107,14 +108,14 @@ func objectGet(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) err
 		GetObjectRequest: schema.GetObjectRequest{Path: path},
 	})
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, gofiler.HTTPErr(err))
 	}
 	defer reader.Close()
 
 	buffer := make([]byte, 512)
 	n, err := io.ReadFull(reader, buffer)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, gofiler.HTTPErr(err))
 	}
 
 	sniffed := http.DetectContentType(buffer[:n])
@@ -149,14 +150,14 @@ func objectDelete(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) 
 			Recursive: params.Recursive,
 		})
 		if err != nil {
-			return httpresponse.Error(w, err)
+			return httpresponse.Error(w, gofiler.HTTPErr(err))
 		}
 		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
 	}
 
 	obj, err := mgr.DeleteObject(r.Context(), r.PathValue("name"), schema.DeleteObjectRequest{Path: path})
 	if err != nil {
-		return httpresponse.Error(w, err)
+		return httpresponse.Error(w, gofiler.HTTPErr(err))
 	}
 	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), obj)
 }
@@ -257,7 +258,7 @@ func objectUpload(w http.ResponseWriter, r *http.Request, mgr *manager.Manager) 
 		obj, err := mgr.CreateObject(ctx, name, buildCreateRequest(f, sharedMeta, destPath, part))
 		if err != nil {
 			spanErr = err
-			return httpresponse.Error(w, rollback(err))
+			return httpresponse.Error(w, gofiler.HTTPErr(rollback(err)))
 		}
 		uploadedPaths = append(uploadedPaths, obj.Path)
 		results = append(results, *obj)
@@ -278,7 +279,7 @@ func fetchObjectMeta(w http.ResponseWriter, r *http.Request, mgr *manager.Manage
 		Path: types.NormalisePath(r.PathValue("path")),
 	})
 	if err != nil {
-		return nil, "", true, httpresponse.Error(w, err)
+		return nil, "", true, httpresponse.Error(w, gofiler.HTTPErr(err))
 	}
 	contentType := resolveContentType(obj.ContentType, "", filepath.Ext(r.PathValue("path")))
 	writeObjectHeaders(w, obj, contentType)
