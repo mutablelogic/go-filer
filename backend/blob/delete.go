@@ -8,6 +8,7 @@ import (
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	attribute "go.opentelemetry.io/otel/attribute"
 	blob "gocloud.dev/blob"
 	gcerrors "gocloud.dev/gcerrors"
 )
@@ -20,16 +21,23 @@ func (b *backend) DeleteObject(ctx context.Context, req schema.DeleteObjectReque
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
 	deleteKey := sk
+	candidates := b.storageKeyCandidates(sk)
+	addSpanAttrs(ctx,
+		attribute.String("blob.path", objPath),
+		attribute.String("blob.storage_key", sk),
+		attribute.String("blob.storage_candidates", strings.Join(candidates, ",")),
+	)
 
 	// Fetch attributes to return in the response.
 	// Only NotFound is tolerated (the object may have already been deleted);
 	// other errors (e.g. PermissionDenied) are propagated.
 	var attrs *blob.Attributes
-	for _, candidate := range b.storageKeyCandidates(sk) {
+	for _, candidate := range candidates {
 		a, err := b.bucket.Attributes(ctx, candidate)
 		if err == nil {
 			attrs = a
 			deleteKey = candidate
+			addSpanAttrs(ctx, attribute.String("blob.storage_hit_key", candidate))
 			break
 		}
 		if gcerrors.Code(err) == gcerrors.PermissionDenied {

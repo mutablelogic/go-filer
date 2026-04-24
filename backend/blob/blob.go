@@ -19,6 +19,8 @@ import (
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	otelaws "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
+	attribute "go.opentelemetry.io/otel/attribute"
+	trace "go.opentelemetry.io/otel/trace"
 	blob "gocloud.dev/blob"
 	s3blob "gocloud.dev/blob/s3blob"
 	gcerrors "gocloud.dev/gcerrors"
@@ -325,10 +327,13 @@ func (b *backend) isRealObject(ctx context.Context, sk string) (*blob.Attributes
 
 	var attrs *blob.Attributes
 	var foundKey string
-	for _, candidate := range b.storageKeyCandidates(sk) {
+	candidates := b.storageKeyCandidates(sk)
+	addSpanAttrs(ctx, attribute.String("blob.probe_candidates", strings.Join(candidates, ",")))
+	for _, candidate := range candidates {
 		a, err := b.bucket.Attributes(ctx, candidate)
 		if err == nil {
 			attrs, foundKey = a, candidate
+			addSpanAttrs(ctx, attribute.String("blob.probe_hit_key", candidate))
 			break
 		}
 		// Surface permission errors rather than masking them as "not found".
@@ -374,6 +379,13 @@ func blobErr(err error, ref string) error {
 		return gofiler.ErrConflict.Withf("precondition failed for %q: %v", ref, err)
 	default:
 		return gofiler.ErrInternalServerError.Withf("blob operation failed: %v", err)
+	}
+}
+
+// addSpanAttrs annotates the current span if one is present on the context.
+func addSpanAttrs(ctx context.Context, attrs ...attribute.KeyValue) {
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetAttributes(attrs...)
 	}
 }
 

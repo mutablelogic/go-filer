@@ -8,6 +8,7 @@ import (
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	attribute "go.opentelemetry.io/otel/attribute"
 	blob "gocloud.dev/blob"
 )
 
@@ -22,6 +23,12 @@ import (
 // Limit=0 returns only the count (Body is nil); Limit>0 returns up to Limit objects starting at Offset.
 func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
 	sk := b.key(req.Path)
+	candidates := b.storageKeyCandidates(sk)
+	addSpanAttrs(ctx,
+		attribute.String("blob.path", cleanPath(req.Path)),
+		attribute.String("blob.storage_key", sk),
+		attribute.String("blob.storage_candidates", strings.Join(candidates, ",")),
+	)
 
 	// Collect all matching objects first so Count can reflect the full result set
 	// before Offset/Limit pagination is applied.
@@ -42,6 +49,7 @@ func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest
 		if prefix != "" {
 			prefix = prefix + "/"
 		}
+		addSpanAttrs(ctx, attribute.String("blob.list_prefix", prefix))
 
 		// List objects with prefix
 		var delim string
