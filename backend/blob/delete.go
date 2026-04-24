@@ -19,20 +19,26 @@ import (
 func (b *backend) DeleteObject(ctx context.Context, req schema.DeleteObjectRequest) (*schema.Object, error) {
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
+	deleteKey := sk
 
 	// Fetch attributes to return in the response.
 	// Only NotFound is tolerated (the object may have already been deleted);
 	// other errors (e.g. PermissionDenied) are propagated.
-	attrs, err := b.bucket.Attributes(ctx, sk)
-	if err != nil {
-		if gcerrors.Code(err) != gcerrors.NotFound {
+	var attrs *blob.Attributes
+	for _, candidate := range b.storageKeyCandidates(sk) {
+		a, err := b.bucket.Attributes(ctx, candidate)
+		if err == nil {
+			attrs = a
+			deleteKey = candidate
+			break
+		}
+		if gcerrors.Code(err) == gcerrors.PermissionDenied {
 			return nil, blobErr(err, b.Name()+":"+objPath)
 		}
-		attrs = nil
 	}
 
 	// Perform delete
-	if err := b.bucket.Delete(ctx, sk); err != nil {
+	if err := b.bucket.Delete(ctx, deleteKey); err != nil {
 		return nil, blobErr(err, b.Name()+":"+objPath)
 	}
 

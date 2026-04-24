@@ -235,6 +235,37 @@ func (b *backend) key(p string) string {
 	return sk
 }
 
+// storageKeyCandidates returns storage keys to try for object-addressed operations.
+// The first key is always the canonical key already computed by key().
+//
+// We also try a legacy leading-slash variant because some
+// S3-compatible stores (or historical writers) may have persisted keys like
+// "/file" while current writers persist "file".
+func (b *backend) storageKeyCandidates(primary string) []string {
+	candidates := []string{primary}
+
+	if primary == "" {
+		return candidates
+	}
+
+	if b.bucketPrefix == "" {
+		if !strings.HasPrefix(primary, "/") {
+			candidates = append(candidates, "/"+primary)
+		}
+		return candidates
+	}
+
+	prefix := b.bucketPrefix + "/"
+	if strings.HasPrefix(primary, prefix) {
+		rel := strings.TrimPrefix(primary, prefix)
+		if rel != "" {
+			candidates = append(candidates, prefix+"/"+rel)
+		}
+	}
+
+	return candidates
+}
+
 // cleanPath normalises a request path for use as Object.Path.
 func cleanPath(p string) string {
 	if p == "" {
@@ -291,20 +322,31 @@ func (b *backend) isRealObject(ctx context.Context, sk string) (*blob.Attributes
 	if sk == "" || strings.HasSuffix(sk, "/") {
 		return nil, nil
 	}
-	attrs, err := b.bucket.Attributes(ctx, sk)
-	if err != nil {
+
+	var attrs *blob.Attributes
+	var foundKey string
+	for _, candidate := range b.storageKeyCandidates(sk) {
+		a, err := b.bucket.Attributes(ctx, candidate)
+		if err == nil {
+			attrs, foundKey = a, candidate
+			break
+		}
 		// Surface permission errors rather than masking them as "not found".
 		if gcerrors.Code(err) == gcerrors.PermissionDenied {
-			return nil, blobErr(err, sk)
+			return nil, blobErr(err, candidate)
 		}
+	}
+
+	if attrs == nil {
 		return nil, nil
 	}
+
 	if attrs.Size > 0 {
 		return attrs, nil
 	}
 	// Size is 0 — check if there are objects with this key as a prefix.
 	// If children exist, this is a phantom directory.
-	iter := b.bucket.List(&blob.ListOptions{Prefix: sk + "/"})
+	iter := b.bucket.List(&blob.ListOptions{Prefix: foundKey + "/"})
 	if _, err := iter.Next(ctx); err == io.EOF {
 		return attrs, nil // no children → real (empty) object
 	}

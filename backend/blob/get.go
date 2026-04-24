@@ -4,7 +4,9 @@ import (
 	"context"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	gcerrors "gocloud.dev/gcerrors"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -15,11 +17,17 @@ func (b *backend) GetObject(ctx context.Context, req schema.GetObjectRequest) (*
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
 
-	attrs, err := b.bucket.Attributes(ctx, sk)
-	if err != nil {
-		return nil, blobErr(err, b.Name()+":"+objPath)
+	for _, candidate := range b.storageKeyCandidates(sk) {
+		attrs, err := b.bucket.Attributes(ctx, candidate)
+		if err == nil {
+			obj := b.attrsToObject(objPath, attrs)
+			obj.Name = b.Name()
+			return obj, nil
+		}
+		if gcerrors.Code(err) == gcerrors.PermissionDenied {
+			return nil, blobErr(err, b.Name()+":"+objPath)
+		}
 	}
-	obj := b.attrsToObject(objPath, attrs)
-	obj.Name = b.Name()
-	return obj, nil
+
+	return nil, gofiler.ErrNotFound.Withf("object %q not found", b.Name()+":"+objPath)
 }
