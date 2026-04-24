@@ -74,8 +74,9 @@ func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest
 				return nil, blobErr(err, b.Name()+":"+req.Path)
 			}
 
-			// Skip the prefix itself
-			if obj.Key == prefix {
+			// Skip synthetic prefix placeholders, but keep exact-key matches when
+			// probing a concrete object path.
+			if obj.Key == prefix && !exactPrefixProbe {
 				continue
 			}
 
