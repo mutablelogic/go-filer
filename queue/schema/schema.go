@@ -23,7 +23,7 @@ const (
 	DefaultMaintenanceTickerName = "$maintenance$"
 	DefaultCleanupTickerName     = "$cleanup$"
 	DefaultTickerPeriod          = 5 * time.Second  // how often to look for matured tickers
-	DefaultQueuePeriod           = 30 * time.Second // how often to poll queues for retries and missed notifications
+	DefaultQueuePeriod           = 10 * time.Second // how often to poll queues for retries and missed notifications
 	DefaultCleanupPeriod         = 15 * time.Minute // how often to delete expired tasks
 	DefaultMaintenancePeriod     = time.Hour        // create and drop partitions
 )

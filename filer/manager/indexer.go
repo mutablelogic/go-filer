@@ -54,10 +54,9 @@ func (manager *Manager) QueueIndexTask(ctx context.Context, objects ...schema.Ob
 
 	// Create a task for each object to be indexed. This allows them to be processed in parallel by the indexer.
 	for _, obj := range objects {
-		obj := obj // capture current loop iteration value
 		errgroup.Go(func() error {
 			_, err := manager.queue.CreateTask(errctx, schema.IndexingQueueName, queueschema.TaskMeta{
-				DelayedAt: types.Ptr(time.Now().Add(10 * time.Second)), // delay slightly to allow for any concurrent updates to complete before indexing
+				DelayedAt: types.Ptr(time.Now().Add(5 * time.Second)), // delay slightly to allow for any concurrent updates to complete before indexing
 				Payload:   []byte(types.Stringify(obj)),
 			})
 			return err

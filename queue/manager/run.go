@@ -72,7 +72,7 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	// Queue handler
-	queue := func(name string) (err error) {
+	queue := func(name string) (more bool, err error) {
 		// Otel span
 		spanName := "queue.any"
 		if name != "" {
@@ -92,10 +92,10 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 				task, err = manager.NextTask(child, manager.worker, name)
 			}
 			if err != nil {
-				return err
+				return false, err
 			} else if task == nil {
 				// No more tasks
-				return nil
+				return false, nil
 			}
 
 			// Run the task callback - results are logged in the callback,
@@ -104,7 +104,7 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 		}
 
 		// Return success
-		return nil
+		return true, nil
 	}
 
 	// The run loop
@@ -133,8 +133,12 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 				continue
 			}
 			if payload := decodeNotification(notification); payload != nil {
-				if err := queue(payload.Queue); err != nil {
+				if more, err := queue(payload.Queue); err != nil {
 					log.ErrorContext(ctx, "RunQueueTask failed", "queue", payload.Queue, "error", err.Error())
+				} else if more {
+					queueTimer.Reset(time.Second) // immediately check for more tasks in the queue
+				} else {
+					queueTimer.Reset(schema.DefaultQueuePeriod)
 				}
 			}
 		case result := <-results:
@@ -182,7 +186,14 @@ func (manager *Manager) Run(ctx context.Context, log *slog.Logger) error {
 			timer_retries, timer_period = backoffPeriod(timer_retries, schema.DefaultTickerPeriod, tick("timer") != nil)
 			resetTimer(timer, timer_period)
 		case <-queueTimerC:
-			queue_retries, queue_period = backoffPeriod(queue_retries, schema.DefaultQueuePeriod, queue("") != nil)
+			if more, err := queue(""); err != nil {
+				queue_retries, queue_period = backoffPeriod(queue_retries, schema.DefaultQueuePeriod, true)
+			} else {
+				queue_retries, queue_period = backoffPeriod(queue_retries, schema.DefaultQueuePeriod, false)
+				if more {
+					queue_period = time.Second // immediately check for more tasks in the queue
+				}
+			}
 			resetTimer(queueTimer, queue_period)
 		}
 	}

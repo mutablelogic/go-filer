@@ -214,11 +214,16 @@ func (manager *Manager) DeleteObject(ctx context.Context, name string, req schem
 	backend, err := manager.backendForName(name)
 	if err != nil {
 		return nil, err
-	} else if obj, err := backend.DeleteObject(child, req); err != nil {
-		return nil, err
-	} else {
-		return obj, manager.QueueIndexTask(ctx, types.Value(obj))
 	}
+
+	// Delete the object from the backend, then schedule an indexing task to remove it from the index.
+	obj, err = backend.DeleteObject(child, req)
+	if !errors.Is(err, gofiler.ErrNotFound) {
+		err = errors.Join(manager.QueueIndexTask(ctx, types.Value(obj)), err)
+	}
+
+	// Return errors
+	return obj, err
 }
 
 func (manager *Manager) DeleteObjects(ctx context.Context, name string, req schema.DeleteObjectsRequest) (resp *schema.DeleteObjectsResponse, err error) {
