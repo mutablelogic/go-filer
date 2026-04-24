@@ -3,13 +3,14 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
-	"math/rand/v2"
-	"time"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	queueschema "github.com/mutablelogic/go-filer/queue/schema"
+	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	errgroup "golang.org/x/sync/errgroup"
 )
@@ -23,14 +24,27 @@ func (manager *Manager) RunIndexer(ctx context.Context, payload json.RawMessage)
 		return nil, err
 	}
 
-	slog.Default().InfoContext(ctx, "Running indexer task", "object", object)
-	delay := time.Duration(rand.IntN(100)+1) * time.Second
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(delay):
-		return nil, nil
+	// Insert or delete the object, based on the remote state.
+	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+		if actual_object, err := manager.GetObject(ctx, object.Name, schema.GetObjectRequest{
+			Path: object.Path,
+		}); errors.Is(err, filer.ErrNotFound) {
+			slog.Default().WarnContext(ctx, "Object not found, deleting from index", "object", object)
+			return conn.Delete(ctx, nil, schema.ObjectKey{
+				Name: object.Name,
+				Path: object.Path,
+			})
+		} else if err != nil {
+			return err
+		} else {
+			return conn.Insert(ctx, &object, actual_object)
+		}
+	}); err != nil {
+		return nil, err
 	}
+
+	// Return success
+	return nil, nil
 }
 
 func (manager *Manager) QueueIndexTask(ctx context.Context, objects ...schema.Object) error {

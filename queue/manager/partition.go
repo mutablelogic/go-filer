@@ -53,6 +53,10 @@ func (manager *Manager) CreateNextPartition(ctx context.Context) (result string,
 		}); err != nil {
 			return "", err
 		}
+
+		// Reset the connection
+		manager.PoolConn.Reset()
+
 		return name, nil
 	}
 
@@ -79,6 +83,9 @@ func (manager *Manager) DropDrainedPartition(ctx context.Context) (result string
 	}
 	if err := manager.DeletePartition(ctx, oldest.Partition); err != nil {
 		return "", err
+	} else {
+		// Reset the connection
+		manager.PoolConn.Reset()
 	}
 	return oldest.Partition, nil
 }

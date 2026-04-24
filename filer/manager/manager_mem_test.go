@@ -3,11 +3,12 @@ package manager
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
 
-	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -52,7 +53,7 @@ func Test_ManagerMem_Close(t *testing.T) {
 	assert.NoError(err)
 
 	err = mgr.Close()
-	assert.NoError(err)
+	assert.True(errors.Is(err, gofiler.ErrNotFound))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -255,6 +256,7 @@ func Test_ManagerMem_GetObject(t *testing.T) {
 
 		_, err := mgr.GetObject(ctx, "testbucket", schema.GetObjectRequest{Path: "/notfound.txt"})
 		assert.Error(err)
+		assert.True(errors.Is(err, gofiler.ErrNotFound))
 		assert.Contains(err.Error(), "not found")
 	})
 }

@@ -6,7 +6,7 @@ import (
 )
 
 // Run all backends
-func (manager *Manager) Run(ctx context.Context) error {
+func (manager *Manager) Run(ctx context.Context) (err error) {
 	var result error
 
 	// Wait for the context to be done

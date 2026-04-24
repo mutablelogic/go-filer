@@ -8,8 +8,8 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	blob "gocloud.dev/blob"
 	gcerrors "gocloud.dev/gcerrors"
 )
@@ -33,7 +33,7 @@ func (b *backend) CreateObject(ctx context.Context, req schema.CreateObjectReque
 		if err == nil {
 			return nil, fmt.Errorf("%w: %w",
 				schema.ErrAlreadyExists,
-				httpresponse.ErrConflict.Withf("object %q already exists", b.Name()+":"+objPath),
+				gofiler.ErrConflict.Withf("object %q already exists", b.Name()+":"+objPath),
 			)
 		} else if gcerrors.Code(err) != gcerrors.NotFound {
 			return nil, blobErr(err, b.Name()+":"+objPath)

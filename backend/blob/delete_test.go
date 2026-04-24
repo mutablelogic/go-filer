@@ -9,7 +9,7 @@ import (
 	"time"
 
 	// Packages
-	backend "github.com/mutablelogic/go-filer/backend"
+	backendpkg "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -327,7 +327,7 @@ func TestDeleteObjects_Mem(t *testing.T) {
 	ctx := context.Background()
 
 	// Helper to create a fresh backend with test objects
-	setupBackend := func(t *testing.T) backend.Backend {
+	setupBackend := func(t *testing.T) backendpkg.Backend {
 		backend, err := New(ctx, "mem://testbucket")
 		require.NoError(t, err)
 
