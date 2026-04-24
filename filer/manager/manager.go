@@ -3,15 +3,19 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"runtime"
+	"strings"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
+	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	queuemanager "github.com/mutablelogic/go-filer/queue/manager"
 	queueschema "github.com/mutablelogic/go-filer/queue/schema"
-	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 	trace "go.opentelemetry.io/otel/trace"
@@ -21,7 +25,8 @@ import (
 // TYPES
 
 type Manager struct {
-	opts
+	opt
+	pg.PoolConn
 	queue *queuemanager.Manager
 }
 
@@ -29,33 +34,83 @@ type Manager struct {
 // LIFECYCLE
 
 // New creates a new filer manager.
-func New(ctx context.Context, queue *queuemanager.Manager, opts ...Opt) (*Manager, error) {
+func New(ctx context.Context, pool pg.PoolConn, queue *queuemanager.Manager, opts ...Opt) (result *Manager, err error) {
 	self := new(Manager)
+
+	// Apply options
+	if err := self.opt.apply(opts); err != nil {
+		return nil, err
+	}
 
 	// Set queue manager
 	if queue == nil {
-		return nil, errors.New("queue manager is required")
+		return nil, gofiler.ErrBadParameter.With("queue manager is required")
 	} else {
 		self.queue = queue
 	}
 
-	// Apply options
-	if opt, err := applyOpts(opts); err != nil {
+	// Parse and register named queries so bind.Query(...) can resolve them.
+	queries, err := pg.NewQueries(strings.NewReader(schema.Queries))
+	if err != nil {
+		return nil, fmt.Errorf("parse queries.sql: %w", err)
+	} else if pool == nil {
+		return nil, gofiler.ErrBadParameter.With("pg pool is required")
+	} else {
+		pool = pool.WithQueries(queries).With(
+			"schema", self.schema,
+		).(pg.PoolConn)
+	}
+
+	// Create objects in the database schema. This is not done in a transaction
+	bootstrapCtx, endBootstrapSpan := otel.StartSpan(self.tracer, ctx, "bootstrap",
+		attribute.String("schema", self.schema),
+	)
+	if err := bootstrap(bootstrapCtx, pool, self.schema); err != nil {
+		endBootstrapSpan(err)
 		return nil, err
 	} else {
-		self.opts = opt
+		self.PoolConn = pool
 	}
 
 	// Register a queue for indexing tasks. This is used by the manager to schedule background tasks
 	// for indexing objects.
 	if _, err := self.queue.RegisterQueue(ctx, schema.IndexingQueueName, queueschema.QueueMeta{
-		TTL: types.Ptr(schema.IndexingTTL),
+		TTL:         types.Ptr(schema.IndexingTTL),
+		Concurrency: types.Ptr(uint64(runtime.GOMAXPROCS(0))),
 	}, self.RunIndexer); err != nil {
+		endBootstrapSpan(err)
 		return nil, err
 	}
 
 	// Return success
+	endBootstrapSpan(nil)
 	return self, nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+func bootstrap(ctx context.Context, conn pg.Conn, schemaName string) error {
+	// Get all objects
+	objects, err := pg.NewQueries(strings.NewReader(schema.Objects))
+	if err != nil {
+		return fmt.Errorf("parse objects.sql: %w", err)
+	}
+
+	// Create the schema
+	if err := pg.SchemaCreate(ctx, conn, schemaName); err != nil {
+		return fmt.Errorf("create schema %q: %w", schemaName, err)
+	}
+
+	// Create all objects - not in a transaction
+	for _, key := range objects.Keys() {
+		if err := conn.Exec(ctx, objects.Query(key)); err != nil {
+			return fmt.Errorf("create object %q: %w", key, err)
+		}
+	}
+
+	// Return success
+	return nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -87,7 +142,9 @@ func (manager *Manager) CreateObject(ctx context.Context, name string, req schem
 		attribute.String("request", req.String()),
 	)
 	defer func() {
-		if errors.Is(err, schema.ErrAlreadyExists) {
+		if errors.Is(err, gofiler.ErrConflict) {
+			// Already exists is a known error case for CreateObject
+			// so report it as a normal error rather than an internal error.
 			endSpan(nil)
 		} else {
 			endSpan(err)
@@ -157,11 +214,16 @@ func (manager *Manager) DeleteObject(ctx context.Context, name string, req schem
 	backend, err := manager.backendForName(name)
 	if err != nil {
 		return nil, err
-	} else if obj, err := backend.DeleteObject(child, req); err != nil {
-		return nil, err
-	} else {
-		return obj, manager.QueueIndexTask(ctx, types.Value(obj))
 	}
+
+	// Delete the object from the backend, then schedule an indexing task to remove it from the index.
+	obj, err = backend.DeleteObject(child, req)
+	if !errors.Is(err, gofiler.ErrNotFound) {
+		err = errors.Join(manager.QueueIndexTask(ctx, types.Value(obj)), err)
+	}
+
+	// Return errors
+	return obj, err
 }
 
 func (manager *Manager) DeleteObjects(ctx context.Context, name string, req schema.DeleteObjectsRequest) (resp *schema.DeleteObjectsResponse, err error) {
@@ -207,6 +269,6 @@ func (manager *Manager) backendForName(name string) (backend.Backend, error) {
 	if b, ok := manager.backends[name]; ok {
 		return b, nil
 	} else {
-		return nil, httpresponse.ErrNotFound.Withf("no backend found for name %q", name)
+		return nil, gofiler.ErrNotFound.Withf("no backend found for name %q", name)
 	}
 }

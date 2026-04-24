@@ -3,11 +3,12 @@ package manager
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
 
-	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -20,7 +21,7 @@ func Test_ManagerMem_New(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	assert.NoError(err)
 	assert.NotNil(mgr)
 	defer mgr.Close()
@@ -30,7 +31,7 @@ func Test_ManagerMem_MultipleBackends(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	mgr, err := New(ctx,
+	mgr, err := newTestManager(ctx,
 		WithBackend(ctx, "mem://bucket1"),
 		WithBackend(ctx, "mem://bucket2"),
 	)
@@ -48,11 +49,10 @@ func Test_ManagerMem_Close(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	assert.NoError(err)
 
-	err = mgr.Close()
-	assert.NoError(err)
+	mgr.Close()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -62,7 +62,7 @@ func Test_ManagerMem_NoBackendError(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -97,7 +97,7 @@ func Test_ManagerMem_NoBackendError(t *testing.T) {
 func Test_ManagerMem_CreateObject(t *testing.T) {
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -179,7 +179,7 @@ func Test_ManagerMem_CreateObject(t *testing.T) {
 func Test_ManagerMem_ReadObject(t *testing.T) {
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -224,7 +224,7 @@ func Test_ManagerMem_ReadObject(t *testing.T) {
 func Test_ManagerMem_GetObject(t *testing.T) {
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -255,6 +255,7 @@ func Test_ManagerMem_GetObject(t *testing.T) {
 
 		_, err := mgr.GetObject(ctx, "testbucket", schema.GetObjectRequest{Path: "/notfound.txt"})
 		assert.Error(err)
+		assert.True(errors.Is(err, gofiler.ErrNotFound))
 		assert.Contains(err.Error(), "not found")
 	})
 }
@@ -265,7 +266,7 @@ func Test_ManagerMem_GetObject(t *testing.T) {
 func Test_ManagerMem_ListObjects(t *testing.T) {
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -367,7 +368,7 @@ func Test_ManagerMem_ListObjects(t *testing.T) {
 func Test_ManagerMem_DeleteObject(t *testing.T) {
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -430,7 +431,7 @@ func Test_ManagerMem_RoutesToCorrectBackend(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	mgr, err := New(ctx,
+	mgr, err := newTestManager(ctx,
 		WithBackend(ctx, "mem://bucket1"),
 		WithBackend(ctx, "mem://bucket2"),
 	)
@@ -477,7 +478,7 @@ func Test_ManagerMem_FullWorkflow(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -534,7 +535,7 @@ func Test_ManagerMem_FullWorkflow(t *testing.T) {
 func Test_ManagerMem_EdgeCases(t *testing.T) {
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithBackend(ctx, "mem://testbucket"))
+	mgr, err := newTestManager(ctx, WithBackend(ctx, "mem://testbucket"))
 	require.NoError(t, err)
 	defer mgr.Close()
 

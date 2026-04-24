@@ -20,7 +20,7 @@ func Test_Manager_New(t *testing.T) {
 	assert := assert.New(t)
 
 	t.Run("NewManager", func(t *testing.T) {
-		mgr, err := New(context.TODO())
+		mgr, err := newTestManager(context.TODO())
 		assert.NoError(err)
 		assert.NotNil(mgr)
 	})
@@ -30,7 +30,7 @@ func Test_Manager_NewWithBackend(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	assert.NotNil(mgr)
 	defer mgr.Close()
@@ -41,7 +41,7 @@ func Test_Manager_NewWithMultipleBackends(t *testing.T) {
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 
-	mgr, err := New(context.TODO(),
+	mgr, err := newTestManager(context.TODO(),
 		WithBackend(context.TODO(), "file://backend1"+tmpDir1),
 		WithBackend(context.TODO(), "file://backend2"+tmpDir2),
 	)
@@ -55,7 +55,7 @@ func Test_Manager_DuplicateBackendName(t *testing.T) {
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 
-	_, err := New(context.TODO(),
+	_, err := newTestManager(context.TODO(),
 		WithBackend(context.TODO(), "file://samename"+tmpDir1),
 		WithBackend(context.TODO(), "file://samename"+tmpDir2),
 	)
@@ -66,11 +66,10 @@ func Test_Manager_Close(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 
-	err = mgr.Close()
-	assert.NoError(err)
+	mgr.Close()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -80,7 +79,7 @@ func Test_Manager_NoBackendError(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -122,7 +121,7 @@ func Test_Manager_CreateObject(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -154,7 +153,7 @@ func Test_Manager_ReadObject(t *testing.T) {
 	err := os.WriteFile(filepath.Join(tmpDir, "readable.txt"), content, 0644)
 	assert.NoError(err)
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -183,7 +182,7 @@ func Test_Manager_GetObject(t *testing.T) {
 	err := os.WriteFile(filepath.Join(tmpDir, "getme.txt"), content, 0644)
 	assert.NoError(err)
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -205,7 +204,7 @@ func Test_Manager_ListObjects(t *testing.T) {
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("one"), 0644))
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("two"), 0644))
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -226,7 +225,7 @@ func Test_Manager_DeleteObject(t *testing.T) {
 	filePath := filepath.Join(tmpDir, "deleteme.txt")
 	assert.NoError(os.WriteFile(filePath, []byte("delete me"), 0644))
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -251,7 +250,7 @@ func Test_Manager_DeleteObjects(t *testing.T) {
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "del1.txt"), []byte("one"), 0644))
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "del2.txt"), []byte("two"), 0644))
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -279,7 +278,7 @@ func Test_Manager_DeleteObjects_Recursive(t *testing.T) {
 	assert.NoError(os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("nested"), 0644))
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "top.txt"), []byte("top"), 0644))
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -301,7 +300,7 @@ func Test_Manager_ListObjects_LimitClamp(t *testing.T) {
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "b.txt"), []byte("b"), 0644))
 	assert.NoError(os.WriteFile(filepath.Join(tmpDir, "c.txt"), []byte("c"), 0644))
 
-	mgr, err := New(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
+	mgr, err := newTestManager(context.TODO(), WithBackend(context.TODO(), "file://test"+tmpDir))
 	assert.NoError(err)
 	defer mgr.Close()
 
@@ -324,7 +323,7 @@ func Test_Manager_WithFileBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	mgr, err := New(ctx, WithFileBackend(ctx, "myfiles", tmpDir))
+	mgr, err := newTestManager(ctx, WithFileBackend(ctx, "myfiles", tmpDir))
 	assert.NoError(err)
 	assert.NotNil(mgr)
 	defer mgr.Close()
@@ -350,7 +349,7 @@ func Test_Manager_WithFileBackend_Duplicate(t *testing.T) {
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 
-	_, err := New(ctx,
+	_, err := newTestManager(ctx,
 		WithFileBackend(ctx, "same", tmpDir1),
 		WithFileBackend(ctx, "same", tmpDir2),
 	)
@@ -364,7 +363,7 @@ func Test_Manager_WithBackend_InvalidURL(t *testing.T) {
 
 	// An unregistered scheme should cause NewBlobBackend to fail and return an error
 	// without leaking any resource
-	_, err := New(ctx, WithBackend(ctx, "invalid-scheme://bucket"))
+	_, err := newTestManager(ctx, WithBackend(ctx, "invalid-scheme://bucket"))
 	assert.Error(err)
 }
 
@@ -373,7 +372,7 @@ func Test_Manager_WithTracer(t *testing.T) {
 	ctx := context.Background()
 
 	// nil tracer is valid (OTEL helpers guard against nil)
-	mgr, err := New(ctx, WithTracer(nil))
+	mgr, err := newTestManager(ctx, WithTracer(nil))
 	assert.NoError(err)
 	assert.NotNil(mgr)
 	mgr.Close()
@@ -387,7 +386,7 @@ func Test_Manager_RoutesToCorrectBackend(t *testing.T) {
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 
-	mgr, err := New(context.TODO(),
+	mgr, err := newTestManager(context.TODO(),
 		WithBackend(context.TODO(), "file://backend1"+tmpDir1),
 		WithBackend(context.TODO(), "file://backend2"+tmpDir2),
 	)
@@ -430,7 +429,7 @@ func Test_Manager_Backend(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	mgr, err := New(ctx, WithFileBackend(ctx, "mybackend", tmpDir))
+	mgr, err := newTestManager(ctx, WithFileBackend(ctx, "mybackend", tmpDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +450,7 @@ func Test_Manager_Tracer_DefaultNil(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	mgr, err := New(ctx)
+	mgr, err := newTestManager(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

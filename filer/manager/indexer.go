@@ -3,13 +3,14 @@ package manager
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
-	"math/rand/v2"
+	"errors"
 	"time"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	queueschema "github.com/mutablelogic/go-filer/queue/schema"
+	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	errgroup "golang.org/x/sync/errgroup"
 )
@@ -23,14 +24,29 @@ func (manager *Manager) RunIndexer(ctx context.Context, payload json.RawMessage)
 		return nil, err
 	}
 
-	slog.Default().InfoContext(ctx, "Running indexer task", "object", object)
-	delay := time.Duration(rand.IntN(100)+1) * time.Second
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(delay):
-		return nil, nil
+	// Get the object and any error message
+	actual_object, err := manager.GetObject(ctx, object.Name, schema.GetObjectRequest{
+		Path: object.Path,
+	})
+
+	// Insert or delete the object, based on the remote state.
+	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+		if errors.Is(err, filer.ErrNotFound) {
+			return conn.Delete(ctx, nil, schema.ObjectKey{
+				Name: object.Name,
+				Path: object.Path,
+			})
+		} else if err != nil {
+			return err
+		} else {
+			return conn.Insert(ctx, &object, actual_object)
+		}
+	}); err != nil {
+		return nil, err
 	}
+
+	// Return success
+	return nil, nil
 }
 
 func (manager *Manager) QueueIndexTask(ctx context.Context, objects ...schema.Object) error {
@@ -40,7 +56,8 @@ func (manager *Manager) QueueIndexTask(ctx context.Context, objects ...schema.Ob
 	for _, obj := range objects {
 		errgroup.Go(func() error {
 			_, err := manager.queue.CreateTask(errctx, schema.IndexingQueueName, queueschema.TaskMeta{
-				Payload: []byte(types.Stringify(obj)),
+				DelayedAt: types.Ptr(time.Now().Add(5 * time.Second)), // delay slightly to allow for any concurrent updates to complete before indexing
+				Payload:   []byte(types.Stringify(obj)),
 			})
 			return err
 		})

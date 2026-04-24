@@ -167,7 +167,7 @@ func (cmd *RunServerCommand) OptsForBackend(ctx context.Context, backend string)
 
 func (cmd *RunServerCommand) withManager(globals server.Cmd, queue *queuemanager.Manager, opts []manager.Opt, fn func(context.Context, *manager.Manager) error) (err error) {
 	// Create manager
-	manager, err := manager.New(globals.Context(), queue, opts...)
+	manager, err := manager.New(globals.Context(), queue.PoolConn, queue, opts...)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func defaultBackendURL(globals server.Cmd) (string, error) {
 		return "", fmt.Errorf("cannot determine user cache dir: %w", err)
 	}
 
-	dir := filepath.Join(cacheDir, name)
+	dir := filepath.Join(cacheDir, name, "volume")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("cannot create cache dir %s: %w", dir, err)
 	} else {

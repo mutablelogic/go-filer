@@ -14,9 +14,9 @@ import (
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
 	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
-	backends "github.com/mutablelogic/go-filer/backend"
+	gofiler "github.com/mutablelogic/go-filer"
+	backendpkg "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	otelaws "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 	blob "gocloud.dev/blob"
@@ -38,7 +38,7 @@ type backend struct {
 	bucketPrefix string // key prefix for bucket operations (empty for file://)
 }
 
-var _ backends.Backend = (*backend)(nil)
+var _ backendpkg.Backend = (*backend)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -311,7 +311,7 @@ func (b *backend) isRealObject(ctx context.Context, sk string) (*blob.Attributes
 	return nil, nil // has children → phantom directory
 }
 
-// blobErr wraps a go-cloud blob error with the appropriate httpresponse error
+// blobErr maps go-cloud blob errors onto module-level gofiler errors.
 func blobErr(err error, ref string) error {
 	if err == nil {
 		return nil
@@ -319,19 +319,19 @@ func blobErr(err error, ref string) error {
 	// Check for OS-level errors before go-cloud classification, since the
 	// gcerrors default path wraps with %v and breaks the chain.
 	if errors.Is(err, syscall.EISDIR) || errors.Is(err, syscall.EEXIST) {
-		return httpresponse.ErrBadRequest.Withf("cannot overwrite directory with file: %q", ref)
+		return gofiler.ErrBadParameter.Withf("cannot overwrite directory with file: %q", ref)
 	}
 	switch gcerrors.Code(err) {
 	case gcerrors.NotFound:
-		return httpresponse.ErrNotFound.Withf("object %q not found", ref)
+		return gofiler.ErrNotFound.Withf("object %q not found", ref)
 	case gcerrors.PermissionDenied:
-		return httpresponse.ErrForbidden.Withf("permission denied for %q", ref)
+		return gofiler.ErrForbidden.Withf("permission denied for %q", ref)
 	case gcerrors.InvalidArgument:
-		return httpresponse.ErrBadRequest.Withf("invalid argument for %q: %v", ref, err)
+		return gofiler.ErrBadParameter.Withf("invalid argument for %q: %v", ref, err)
 	case gcerrors.FailedPrecondition:
-		return httpresponse.ErrConflict.Withf("precondition failed for %q: %v", ref, err)
+		return gofiler.ErrConflict.Withf("precondition failed for %q: %v", ref, err)
 	default:
-		return httpresponse.ErrInternalError.Withf("blob operation failed: %v", err)
+		return gofiler.ErrInternalServerError.Withf("blob operation failed: %v", err)
 	}
 }
 

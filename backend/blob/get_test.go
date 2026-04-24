@@ -2,12 +2,14 @@ package blob
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	"github.com/mutablelogic/go-filer/filer/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,6 +87,7 @@ func TestGetObject_Mem(t *testing.T) {
 
 			if tt.wantErr {
 				assert.Error(err)
+				assert.True(errors.Is(err, gofiler.ErrNotFound))
 				if tt.errContains != "" {
 					assert.Contains(err.Error(), tt.errContains)
 				}
@@ -163,6 +166,7 @@ func TestGetObject_File(t *testing.T) {
 
 			if tt.wantErr {
 				assert.Error(err)
+				assert.True(errors.Is(err, gofiler.ErrNotFound))
 				if tt.errContains != "" {
 					assert.Contains(err.Error(), tt.errContains)
 				}
@@ -233,6 +237,7 @@ func TestGetObject_S3(t *testing.T) {
 		_, err := backend.GetObject(ctx, schema.GetObjectRequest{Path: bURL.Path + "/non-existent-file.txt"})
 
 		assert.Error(err)
+		assert.True(errors.Is(err, gofiler.ErrNotFound))
 		assert.Contains(err.Error(), "not found")
 	})
 }

@@ -1,11 +1,15 @@
 package schema
 
 import (
+	"encoding/json"
 	"io"
 	"time"
 
 	// Packages
-	"github.com/mutablelogic/go-server/pkg/types"
+	gofiler "github.com/mutablelogic/go-filer"
+	pg "github.com/mutablelogic/go-pg"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -36,6 +40,11 @@ type CreateObjectRequest struct {
 // Keys should be lowercase for S3 compatibility, as S3 normalizes all
 // metadata keys to lowercase.
 type ObjectMeta map[string]string
+
+type ObjectKey struct {
+	Name string `json:"name,omitempty"`
+	Path string `json:"path,omitempty"`
+}
 
 // Object represents a single stored item returned by the API.
 type Object struct {
@@ -91,6 +100,10 @@ func (o Object) String() string {
 	return types.Stringify(o)
 }
 
+func (k ObjectKey) String() string {
+	return types.Stringify(k)
+}
+
 func (r CreateObjectRequest) String() string {
 	return types.Stringify(r)
 }
@@ -117,4 +130,101 @@ func (r DeleteObjectsRequest) String() string {
 
 func (r DeleteObjectsResponse) String() string {
 	return types.Stringify(r)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// READER
+
+func (o *Object) Scan(row pg.Row) error {
+	var meta []byte
+
+	if err := row.Scan(
+		&o.Name,
+		&o.Path,
+		&o.Size,
+		&o.ModTime,
+		&o.ContentType,
+		&o.ETag,
+		&meta,
+	); err != nil {
+		return err
+	}
+
+	if len(meta) == 0 {
+		o.Meta = nil
+		return nil
+	}
+
+	var objectMeta ObjectMeta
+	if err := json.Unmarshal(meta, &objectMeta); err != nil {
+		return err
+	}
+	o.Meta = objectMeta
+
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SELECTOR
+
+func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	if k.Name == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object name")
+	}
+	if k.Path == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object path")
+	}
+
+	bind.Set("name", k.Name)
+	bind.Set("path", k.Path)
+
+	switch op {
+	case pg.Get:
+		return bind.Query("filer.object_get"), nil
+	case pg.Delete:
+		return bind.Query("filer.object_delete"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectKey operation %q", op)
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// WRITER
+
+func (o Object) Insert(bind *pg.Bind) (string, error) {
+	if o.Name == "" {
+		return "", gofiler.ErrBadParameter.With("missing object name")
+	}
+	if o.Path == "" {
+		return "", gofiler.ErrBadParameter.With("missing object path")
+	}
+
+	bind.Set("name", o.Name)
+	bind.Set("path", o.Path)
+	bind.Set("size", o.Size)
+
+	if o.ModTime.IsZero() {
+		bind.Set("modified_at", nil)
+	} else {
+		bind.Set("modified_at", o.ModTime.UTC())
+	}
+
+	bind.Set("type", o.ContentType)
+	bind.Set("etag", o.ETag)
+
+	meta := o.Meta
+	if meta == nil {
+		meta = ObjectMeta{}
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return "", err
+	}
+	bind.Set("meta", string(data))
+
+	return bind.Query("filer.object_insert"), nil
+}
+
+func (o Object) Update(bind *pg.Bind) error {
+	return gofiler.ErrInternalServerError.With("object update not implemented")
 }

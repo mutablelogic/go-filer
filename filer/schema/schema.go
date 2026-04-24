@@ -1,7 +1,7 @@
 package schema
 
 import (
-	"errors"
+	_ "embed"
 	"time"
 )
 
@@ -9,7 +9,7 @@ import (
 // TYPES
 
 const (
-	SchemaName = "filer"
+	DefaultSchema = "filer"
 
 	// HTTP headers
 	ObjectMetaHeader = "X-Object-Meta"
@@ -29,10 +29,11 @@ const (
 	IndexingTTL = time.Minute * 15
 )
 
-// ErrAlreadyExists is returned by CreateObject when IfNotExists is true and the
-// object already exists. It is a distinct sentinel so callers and tracing
-// instrumentation can differentiate an intentional conditional-create miss from
-// an unexpected conflict.
-var (
-	ErrAlreadyExists = errors.New("object already exists")
-)
+////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+//go:embed objects.sql
+var Objects string
+
+//go:embed queries.sql
+var Queries string
