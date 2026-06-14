@@ -84,7 +84,7 @@ func byReader(name string, r io.Reader) (string, error) {
 
 	// Read the first 512 bytes to sniff the content type
 	var buf [512]byte
-	if n, err := io.ReadFull(r, buf[:]); err != nil {
+	if n, err := io.ReadFull(r, buf[:]); err != nil && err != io.ErrUnexpectedEOF {
 		return "", err
 	} else if sniffed := http.DetectContentType(buf[:n]); sniffed != types.ContentTypeBinary {
 		// If text/plain then check by extension to see if we can get a more specific type

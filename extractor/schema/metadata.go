@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -72,9 +73,13 @@ type MetadataList struct {
 // LIFECYCLE
 
 func AppendMetadataKV(metadata []MetadataKV, key string, value any) []MetadataKV {
-	if value == nil {
+	// Check for zero or nil value
+	kv := reflect.ValueOf(value)
+	if kv.IsZero() {
 		return metadata
 	}
+
+	// Marshal the value to JSON
 	b, err := json.Marshal(value)
 	if err != nil {
 		return metadata

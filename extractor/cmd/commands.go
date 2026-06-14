@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	manager "github.com/mutablelogic/go-filer/extractor/manager"
 	schema "github.com/mutablelogic/go-filer/extractor/schema"
 	pgcmd "github.com/mutablelogic/go-pg/pkg/cmd"
@@ -19,9 +21,9 @@ import (
 	_ "github.com/mutablelogic/go-filer/extractor/image"
 	_ "github.com/mutablelogic/go-filer/extractor/markdown"
 	_ "github.com/mutablelogic/go-filer/extractor/pdf"
+	_ "github.com/mutablelogic/go-filer/extractor/srt"
 	_ "github.com/mutablelogic/go-filer/extractor/text"
 	_ "github.com/mutablelogic/go-filer/extractor/video"
-	// _ "github.com/mutablelogic/go-filer/extractor/zip"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -79,12 +81,19 @@ func (c IndexCommand) Run(ctx server.Cmd) error {
 				}
 				return nil
 			}
+
 			// We use the path as the key
+			var warn error
 			start := time.Now()
-			if _, err := manager.IndexFileAtPath(ctx.Context(), filepath.Clean(path), filepath.Clean(path), info, c.Force); err != nil {
+			if indexed, err := manager.IndexFileAtPath(ctx.Context(), filepath.Clean(path), filepath.Clean(path), info, c.Force, &warn); err != nil {
 				return err
+			} else if errors.Is(warn, gofiler.ErrNotIndexed) {
+				ctx.Logger().Debug("Not modified", "path", path)
+			} else if err != nil {
+				ctx.Logger().Warn("Indexing error", "path", path, "error", warn.Error(), "elapsed", time.Since(start).Truncate(time.Millisecond).String())
+			} else {
+				ctx.Logger().Debug("Indexed", "path", path, "elapsed", time.Since(start).Truncate(time.Millisecond).String(), "metadata", indexed)
 			}
-			ctx.Logger().Debug("Indexed", "path", path, "elapsed", time.Since(start).Truncate(time.Millisecond).String())
 			return nil
 		})
 	})

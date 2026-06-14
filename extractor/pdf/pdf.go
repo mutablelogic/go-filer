@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	// Packages
 	reader "github.com/carlos7ags/folio/reader"
-	"github.com/mutablelogic/go-filer/extractor"
+	extractor "github.com/mutablelogic/go-filer/extractor"
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
 	schema "github.com/mutablelogic/go-filer/extractor/schema"
+	text "github.com/mutablelogic/go-filer/extractor/text"
 	llm "github.com/mutablelogic/go-llm"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
 )
@@ -28,7 +31,7 @@ type pdfextractor struct {
 // GLOBALS
 
 const (
-	chunkSize = 60000
+	maxTextSize = 64 * 1024
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -47,6 +50,12 @@ func (e *pdfextractor) MediaType() *regexp.Regexp {
 
 // Extract metadata from the file at the given path
 func (e *pdfextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
+	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
+	summarizer, err := text.NewTextSummarizer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -64,6 +73,43 @@ func (e *pdfextractor) ExtractMetadata(ctx context.Context, path string) ([]sche
 	metadata = appendMetadata(metadata, extractor.PDFCreator, creator)
 	metadata = appendMetadata(metadata, extractor.PDFProducer, producer)
 	metadata = appendMetadata(metadata, extractor.PDFPages, pdf.PageCount())
+
+	// Summarize the PDF by collecting page text up to 64K.
+	var builder strings.Builder
+	for i := 0; i < pdf.PageCount() && builder.Len() < maxTextSize; i++ {
+		if err := ctx.Err(); err != nil {
+			return metadata, err
+		}
+
+		page, err := pdf.Page(i)
+		if err != nil {
+			continue
+		}
+
+		pageText, err := page.ExtractText()
+		if err != nil || strings.TrimSpace(pageText) == "" {
+			continue
+		}
+
+		remaining := maxTextSize - builder.Len()
+		if len(pageText) > remaining {
+			pageText = pageText[:remaining]
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString(pageText)
+	}
+
+	// Now summarize the text
+	if metadata_, err := summarizer.Summarize(ctx, builder.String()); err != nil {
+		return metadata, err
+	} else if len(metadata_) > 0 {
+		metadata = append(metadata, metadata_...)
+	}
+
+	fmt.Println(metadata)
+
 	return metadata, nil
 }
 

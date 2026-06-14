@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	// Packages
-	extractor "github.com/mutablelogic/go-filer/extractor"
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
 	schema "github.com/mutablelogic/go-filer/extractor/schema"
 	text "github.com/mutablelogic/go-filer/extractor/text"
@@ -18,23 +16,23 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type mdextractor struct{}
+type srtextractor struct{}
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 func init() {
-	registry.RegisterExtractor(new(mdextractor))
+	registry.RegisterExtractor(new(srtextractor))
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (e *mdextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`text/markdown`)
+func (e *srtextractor) MediaType() *regexp.Regexp {
+	return regexp.MustCompile(`^(application/x-subrip|text/srt)$`)
 }
 
-func (e *mdextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
+func (e *srtextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
@@ -47,16 +45,9 @@ func (e *mdextractor) ExtractMetadata(ctx context.Context, path string) ([]schem
 	}
 	defer f.Close()
 
-	title := ""
-	lines := []string{}
+	var lines []string
 	metadata, err := text.NewTextReader(f).Read(ctx, func(_ int, line string) error {
 		lines = append(lines, line)
-		if title == "" {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "#") {
-				title = strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
-			}
-		}
 		return nil
 	})
 	if err != nil {
@@ -64,15 +55,10 @@ func (e *mdextractor) ExtractMetadata(ctx context.Context, path string) ([]schem
 	}
 
 	// Now summarize the text
-	if metadata_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), fmt.Sprintf("This is a markdown formatted file with filename %q.", filepath.Base(path))); err != nil {
+	if metadata_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), fmt.Sprintf("This file contains subtitles in a file with path %q. Summarize the contents of the subtitles.", path)); err != nil {
 		return metadata, err
 	} else if len(metadata_) > 0 {
 		metadata = append(metadata, metadata_...)
-	}
-
-	// Append the actual title
-	if title != "" {
-		metadata = schema.AppendMetadataKV(metadata, extractor.TextTitle, title)
 	}
 
 	// Return the metadata

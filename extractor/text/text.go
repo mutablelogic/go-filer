@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"regexp"
@@ -34,23 +35,35 @@ type textreader struct {
 }
 
 type textsummarizer struct {
-	Title    string
-	Summary  string
-	Keywords []string
+	Author   string   `json:"author,omitempty"`
+	Title    string   `json:"title,omitempty"`
+	Summary  string   `json:"summary,omitempty"`
+	Keywords []string `json:"keywords,omitempty"`
+	Language string   `json:"language,omitempty"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
 const (
-	OllamaUrl   = "http://nestor.local:11434"
-	OllamaModel = "phi4"
+	OllamaUrl            = "http://nestor.local:11434"
+	OllamaModel          = "phi4"
+	OllamaMaxInputTokens = 16384
+	OllamaTokensPerWord  = 3.5
+	SystemPrompt         = `
+		Summarize the contents of the following text into a short paragraph in English, 
+		with author, title, summary paragraph and ISO two-letter written language.
+		Include key concepts, names, countries, regions and categories as keywords 
+		when the text is substantive about those concepts. If any field is unknown,
+		leave it blank.
+	`
 )
 
 var (
-	ollamaOnce   sync.Once
-	ollamaClient *ollama.Client
-	ollamaModel  *llmschema.Model
+	ollamaOnce           sync.Once
+	ollamaClient         *ollama.Client
+	ollamaModel          *llmschema.Model
+	ollamaMaxInputTokens float64
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -76,6 +89,11 @@ func NewTextSummarizer(ctx context.Context) (*textsummarizer, error) {
 		} else {
 			ollamaClient = client
 			ollamaModel = model
+			if model.InputTokenLimit != nil && types.Value(model.InputTokenLimit) > 0 {
+				ollamaMaxInputTokens = float64(types.Value(model.InputTokenLimit))
+			} else {
+				ollamaMaxInputTokens = OllamaMaxInputTokens
+			}
 		}
 	})
 	if err != nil {
@@ -92,6 +110,12 @@ func (e *textextractor) MediaType() *regexp.Regexp {
 }
 
 func (e *textextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
+	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
+	summarizer, err := NewTextSummarizer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Open the file
 	f, err := os.Open(path)
 	if err != nil {
@@ -99,27 +123,52 @@ func (e *textextractor) ExtractMetadata(ctx context.Context, path string) ([]sch
 	}
 	defer f.Close()
 
-	// Read the lines, summarize the text and extract metadata
-	return NewTextReader(f).Read(ctx, nil)
+	// Read the lines, capped by the model's token limit
+	var lines []string
+	metadata, err := NewTextReader(f).Read(ctx, func(num int, line string) error {
+		lines = append(lines, line)
+		return nil
+	})
+	if !errors.Is(err, io.EOF) && err != nil {
+		return metadata, err
+	}
+
+	// Summarize the text
+	if metadata_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n")); err != nil {
+		return metadata, err
+	} else if len(metadata_) > 0 {
+		metadata = append(metadata, metadata_...)
+	}
+
+	// Return the metadata
+	return metadata, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - READER
 
 func (r *textreader) Read(ctx context.Context, fn func(int, string) error) ([]schema.MetadataKV, error) {
-	var text string
+	var tokens float64
 	for r.scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		text += r.scanner.Text() + "\n"
 		r.linecount++
-		if fn == nil {
+		line := strings.TrimSpace(r.scanner.Text())
+		if fn != nil {
+			if err := fn(r.linecount, line); errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				return nil, err
+			}
+		}
+		if line == "" {
 			continue
 		}
-		if err := fn(r.linecount, strings.TrimSpace(r.scanner.Text())); err != nil {
-			return nil, err
+		tokens += float64(len(strings.Fields(line))) * OllamaTokensPerWord
+		if ollamaMaxInputTokens > 0 && tokens > ollamaMaxInputTokens {
+			break
 		}
 	}
 	if err := r.scanner.Err(); err != nil {
@@ -128,21 +177,6 @@ func (r *textreader) Read(ctx context.Context, fn func(int, string) error) ([]sc
 
 	// Append the line count metadata
 	metadata := schema.AppendMetadataKV([]schema.MetadataKV{}, extractor.TextLines, r.linecount)
-
-	// Now summarize the text
-	summarizer, err := NewTextSummarizer(ctx)
-	if err != nil {
-		return metadata, err
-	} else if err := summarizer.Summarize(ctx, text); err != nil {
-		return metadata, err
-	}
-
-	// Append the summarization metadata
-	metadata = schema.AppendMetadataKV(metadata, extractor.TextTitle, summarizer.Title)
-	metadata = schema.AppendMetadataKV(metadata, extractor.TextSummary, summarizer.Summary)
-	if len(summarizer.Keywords) > 0 {
-		metadata = schema.AppendMetadataKV(metadata, extractor.TextTags, summarizer.Keywords)
-	}
 
 	// Return the metadata
 	return metadata, nil
@@ -155,24 +189,33 @@ func (r *textreader) LineCount() int {
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - SUMMARIZER
 
-func (r *textsummarizer) Summarize(ctx context.Context, text string) error {
+func (r *textsummarizer) Summarize(ctx context.Context, text string, prompts ...string) ([]schema.MetadataKV, error) {
+	prompts = append([]string{SystemPrompt}, prompts...)
 	opts := []llmopt.Opt{
-		llmopt.AddString(llmopt.SystemPromptKey, "Summarize the purpose of the following text into a short paragraph in English, with title, summary paragraph. Include concepts, names, countries, regions and categories as keywords when the text is substantive about those concepts."),
+		llmopt.AddString(llmopt.SystemPromptKey, strings.Join(prompts, "\n\n")),
 		ollama.WithJSONOutput(jsonschema.MustFor[textsummarizer]()),
 	}
 
 	message, err := llmschema.NewMessage(llmschema.RoleUser, text)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	response, _, err := ollamaClient.WithoutSession(ctx, types.Value(ollamaModel), message, opts...)
 	if err != nil {
-		return err
+		return nil, err
 	} else if err := json.Unmarshal([]byte(response.Text()), r); err != nil {
-		return err
+		return nil, err
 	}
 
+	// Append the summarization metadata
+	metadata := []schema.MetadataKV{}
+	metadata = schema.AppendMetadataKV(metadata, extractor.TextAuthor, r.Author)
+	metadata = schema.AppendMetadataKV(metadata, extractor.TextTitle, r.Title)
+	metadata = schema.AppendMetadataKV(metadata, extractor.TextSummary, r.Summary)
+	metadata = schema.AppendMetadataKV(metadata, extractor.TextTags, r.Keywords)
+	metadata = schema.AppendMetadataKV(metadata, extractor.TextLanguage, r.Language)
+
 	// Return success
-	return nil
+	return metadata, nil
 }

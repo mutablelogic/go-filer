@@ -3,6 +3,7 @@ package gofiler
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	// Packages
 	"github.com/mutablelogic/go-pg"
@@ -21,6 +22,7 @@ const (
 	ErrInternalServerError
 	ErrServiceUnavailable
 	ErrForbidden
+	ErrNotIndexed
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -50,6 +52,8 @@ func (e Err) Error() string {
 		return "service unavailable"
 	case ErrForbidden:
 		return "forbidden"
+	case ErrNotIndexed:
+		return "not indexed"
 	}
 	return fmt.Sprintf("error code %d", int(e))
 }
@@ -78,6 +82,8 @@ func (e Err) HTTP() httpresponse.Err {
 		return httpresponse.ErrServiceUnavailable
 	case ErrForbidden:
 		return httpresponse.ErrForbidden
+	case ErrNotIndexed:
+		return httpresponse.Err(http.StatusNotModified)
 	default:
 		return httpresponse.ErrInternalError
 	}
@@ -87,7 +93,6 @@ func HTTPErr(err error) error {
 	if err == nil {
 		return nil
 	}
-
 	var httpErr httpresponse.Err
 	if errors.As(err, &httpErr) {
 		return err

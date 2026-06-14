@@ -9,6 +9,7 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	extractor "github.com/mutablelogic/go-filer/extractor"
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
 	schema "github.com/mutablelogic/go-filer/extractor/schema"
@@ -21,64 +22,68 @@ const extractMetadataTimeout = 5 * time.Minute
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) IndexFileAtPath(ctx context.Context, key, path string, info os.FileInfo, force bool) (_ *schema.Metadata, err error) {
+func (manager *Manager) IndexFileAtPath(ctx context.Context, key, path string, info os.FileInfo, force bool, warn *error) (_ *schema.Metadata, err error) {
 	// Get metadata for the file at the path
 	metadata, err := schema.MetadataFromPath(path, info)
 	if err != nil {
 		return nil, err
 	}
 
-	// Extract additional metadata from the file.
-	// If extraction is slow or fails, continue indexing base metadata.
-	if extractor, err := registry.Get(metadata.Type); err == nil {
-		if additional, err := extractMetadataWithTimeout(ctx, extractor, path, extractMetadataTimeout); err == nil {
-			for _, kv := range additional {
-				metadata.Metadata = append(metadata.Metadata, kv)
-			}
-		}
-	}
-
-	// Copy across some well-known metadata keys to the top-level fields
-	for _, kv := range metadata.Metadata {
-		switch kv.Key {
-		case extractor.TextTitle, extractor.PDFTitle, extractor.AudioTitle, extractor.VideoTitle, extractor.ImageTitle:
-			if value, err := strconv.Unquote(string(kv.Value)); err == nil && value != "" {
-				metadata.Title = value
-			}
-		case extractor.VideoDescription, extractor.VideoSynopsis:
-			if value, err := strconv.Unquote(string(kv.Value)); err == nil && value != "" {
-				metadata.Summary = types.Ptr(value)
-			}
-		case extractor.TextSummary, extractor.ImageSummary:
-			if value, err := strconv.Unquote(string(kv.Value)); err == nil && value != "" {
-				metadata.Summary = types.Ptr(value)
-			}
-		case extractor.TextTags, extractor.ImageTags:
-			var tags []string
-			if err := json.Unmarshal(kv.Value, &tags); err == nil && len(tags) > 0 {
-				metadata.Tags = tags
-			}
-		}
-
-	}
-
 	// Perform the indexing in a transaction, so that if there are any errors, the database changes will be rolled back.
 	var result schema.Metadata
 	if err := manager.Tx(ctx, func(conn pg.Conn) error {
-		// Retrieve an existing metadata record for the same key, and delete it
+		// Retrieve an existing metadata record for the same key and check for it being modified
 		if err := conn.Get(ctx, &result, schema.MetadataKey(key)); errors.Is(err, pg.ErrNotFound) {
 			// OK, no existing record
 		} else if err != nil {
 			return err
 		} else if metadata.Etag == result.Etag && !force {
 			// No changes needed
+			if warn != nil {
+				*warn = gofiler.ErrNotIndexed.With("file has not changed since last indexing")
+			}
 			return nil
-		} else if err := conn.Delete(ctx, &result, schema.MetadataKey(key)); err != nil {
-			return err
 		}
 
-		// Insert a new metadata record
-		if err := conn.With("key", key).Insert(ctx, &result, metadata); err != nil {
+		// Extract additional metadata from the file.
+		// If extraction is slow or fails, continue indexing base metadata.
+		if extractor, err := registry.Get(metadata.Type); err == nil {
+			if additional, err := extractMetadataWithTimeout(ctx, extractor, path, extractMetadataTimeout); err == nil {
+				for _, kv := range additional {
+					metadata.Metadata = append(metadata.Metadata, kv)
+				}
+			} else if warn != nil {
+				*warn = err
+			}
+		}
+
+		// Copy across some well-known metadata keys to the top-level fields
+		for _, kv := range metadata.Metadata {
+			switch kv.Key {
+			case extractor.TextTitle, extractor.PDFTitle, extractor.AudioTitle, extractor.VideoTitle, extractor.ImageTitle:
+				if value, err := strconv.Unquote(string(kv.Value)); err == nil && value != "" {
+					metadata.Title = value
+				}
+			case extractor.VideoDescription, extractor.VideoSynopsis:
+				if value, err := strconv.Unquote(string(kv.Value)); err == nil && value != "" {
+					metadata.Summary = types.Ptr(value)
+				}
+			case extractor.TextSummary, extractor.ImageSummary:
+				if value, err := strconv.Unquote(string(kv.Value)); err == nil && value != "" {
+					metadata.Summary = types.Ptr(value)
+				}
+			case extractor.TextTags, extractor.ImageTags:
+				var tags []string
+				if err := json.Unmarshal(kv.Value, &tags); err == nil && len(tags) > 0 {
+					metadata.Tags = tags
+				}
+			}
+		}
+
+		// Insert or replace the metadata record for the key
+		if err := conn.Delete(ctx, &result, schema.MetadataKey(key)); err != nil {
+			return err
+		} else if err := conn.With("key", key).Insert(ctx, &result, metadata); err != nil {
 			return err
 		}
 
