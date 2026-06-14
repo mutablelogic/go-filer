@@ -42,6 +42,7 @@ func (manager *Manager) IndexFileAtPath(ctx context.Context, key, path string, i
 			if warn != nil {
 				*warn = gofiler.ErrNotIndexed.With("file has not changed since last indexing")
 			}
+			// TODO: We still want to update the last indexed time, so we know the file is "valid"
 			return nil
 		}
 
