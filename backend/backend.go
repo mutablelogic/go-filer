@@ -6,7 +6,7 @@ import (
 	"net/url"
 
 	// Packages
-	schema "github.com/mutablelogic/go-filer/filer/schema"
+	schema "github.com/mutablelogic/go-filer/extractor/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -38,7 +38,4 @@ type Backend interface {
 
 	// Delete objects in the backend (single object or prefix)
 	DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error)
-
-	// Delete a single object from the backend
-	DeleteObject(context.Context, schema.DeleteObjectRequest) (*schema.Object, error)
 }

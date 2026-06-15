@@ -8,6 +8,7 @@ import (
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
+	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/extractor/schema"
 	pg "github.com/mutablelogic/go-pg"
 	attribute "go.opentelemetry.io/otel/attribute"
@@ -19,12 +20,13 @@ import (
 type Manager struct {
 	pg.PoolConn
 	opt
+	backend.Registry
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-// New creates a new filer manager.
+// New creates a new manager object
 func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err error) {
 	self := new(Manager)
 
