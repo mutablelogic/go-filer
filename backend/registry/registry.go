@@ -1,10 +1,12 @@
-package backend
+package registry
 
 import (
 	"net/url"
 
+	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	"github.com/mutablelogic/go-filer/backend/file"
+	backend "github.com/mutablelogic/go-filer/backend"
+	file "github.com/mutablelogic/go-filer/backend/file"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -16,7 +18,7 @@ type Registry struct {
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func (Registry) NewBackend(url *url.URL) (Backend, error) {
+func (Registry) NewBackend(url *url.URL) (backend.Backend, error) {
 	if url == nil || url.Scheme == "" {
 		return nil, gofiler.ErrBadParameter.With("url with scheme is required")
 	}

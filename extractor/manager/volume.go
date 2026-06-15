@@ -21,10 +21,9 @@ type volumeCreate struct {
 // PUBLIC METHODS
 
 func (manager *Manager) CreateVolume(ctx context.Context, url *url.URL, meta schema.VolumeMeta) (_ *schema.Volume, err error) {
-
 	// Check parameters
 	if url == nil {
 		return nil, gofiler.ErrBadParameter.With("url is required")
 	}
-
+	return nil, gofiler.ErrNotImplemented
 }

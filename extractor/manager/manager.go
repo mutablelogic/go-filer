@@ -8,7 +8,7 @@ import (
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
-	backend "github.com/mutablelogic/go-filer/backend"
+	backend "github.com/mutablelogic/go-filer/backend/registry"
 	schema "github.com/mutablelogic/go-filer/extractor/schema"
 	pg "github.com/mutablelogic/go-pg"
 	attribute "go.opentelemetry.io/otel/attribute"
