@@ -33,6 +33,17 @@ type Volume struct {
 	IndexedAt time.Time `json:"indexed_at,omitempty"`
 }
 
+type VolumeListRequest struct {
+	Enabled *bool `json:"enabled,omitempty"`
+	pg.OffsetLimit
+}
+
+type VolumeList struct {
+	VolumeListRequest
+	Count uint64    `json:"count,omitempty"`
+	Body  []*Volume `json:"body,omitempty"`
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // STRINGIFY
 
@@ -41,6 +52,14 @@ func (v Volume) String() string {
 }
 
 func (v VolumeMeta) String() string {
+	return types.Stringify(v)
+}
+
+func (v VolumeListRequest) String() string {
+	return types.Stringify(v)
+}
+
+func (v VolumeList) String() string {
 	return types.Stringify(v)
 }
 
@@ -58,6 +77,20 @@ func (v *Volume) Scan(row pg.Row) error {
 	)
 }
 
+func (v *VolumeList) Scan(row pg.Row) error {
+	var volume Volume
+	if err := volume.Scan(row); err != nil {
+		return err
+	} else {
+		v.Body = append(v.Body, &volume)
+	}
+	return nil
+}
+
+func (v *VolumeList) ScanCount(row pg.Row) error {
+	return row.Scan(&v.Count)
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // SELECTOR
 
@@ -70,11 +103,37 @@ func (v VolumeName) Select(bind *pg.Bind, op pg.Op) (string, error) {
 
 	switch op {
 	case pg.Get:
-		return bind.Query("extractor.volume_get"), nil
+		return bind.Query("filer.volume_get"), nil
 	case pg.Update:
-		return bind.Query("extractor.volume_patch"), nil
+		return bind.Query("filer.volume_patch"), nil
 	default:
 		return "", gofiler.ErrInternalServerError.Withf("unsupported VolumeName operation %q", op)
+	}
+}
+
+func (v *VolumeListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	bind.Set("orderby", "ORDER BY created_at DESC")
+
+	// Where
+	bind.Del("where")
+	if v.Enabled != nil {
+		bind.Append("where", `"enabled" = `+bind.Set("enabled", v.Enabled))
+	}
+	if where := bind.Join("where", " AND "); where != "" {
+		bind.Set("where", `WHERE `+where)
+	} else {
+		bind.Set("where", "")
+	}
+
+	// Bind offset and limit
+	v.OffsetLimit.Bind(bind, VolumeListLimit)
+
+	// Return query
+	switch op {
+	case pg.List:
+		return bind.Query("filer.volume_list"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported VolumeListRequest operation %q", op)
 	}
 }
 
@@ -101,11 +160,11 @@ func (v VolumeCreate) Insert(bind *pg.Bind) (string, error) {
 
 	bind.Set("index_delta", v.IndexDelta)
 
-	return bind.Query("extractor.volume_insert"), nil
+	return bind.Query("filer.volume_insert"), nil
 }
 
 func (v VolumeMeta) Insert(bind *pg.Bind) (string, error) {
-	return "", gofiler.ErrBadParameter.With("volume meta insert is not supported; use volumeCreate")
+	return "", gofiler.ErrBadParameter.With("volume meta insert is not supported; use VolumeCreate")
 }
 
 func (v VolumeMeta) Update(bind *pg.Bind) error {

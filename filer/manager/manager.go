@@ -8,7 +8,8 @@ import (
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
-	backend "github.com/mutablelogic/go-filer/backend/registry"
+	backend "github.com/mutablelogic/go-filer/backend"
+	backendregistry "github.com/mutablelogic/go-filer/backend/registry"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	pg "github.com/mutablelogic/go-pg"
 	attribute "go.opentelemetry.io/otel/attribute"
@@ -20,7 +21,11 @@ import (
 type Manager struct {
 	pg.PoolConn
 	opt
-	backend.Registry
+	backendregistry.Registry
+}
+
+type volumes struct {
+	byname map[string]backend.Backend
 }
 
 ////////////////////////////////////////////////////////////////////////////////

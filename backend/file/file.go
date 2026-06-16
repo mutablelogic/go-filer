@@ -15,7 +15,8 @@ import (
 // TYPES
 
 type FileBackend struct {
-	url *url.URL
+	name string
+	path string
 }
 
 var _ backend.Backend = (*FileBackend)(nil)
@@ -26,7 +27,13 @@ var _ backend.Backend = (*FileBackend)(nil)
 func New(url *url.URL) (*FileBackend, error) {
 	self := new(FileBackend)
 
-	// TODO
+	name, err := Validate(url)
+	if err != nil {
+		return nil, err
+	} else {
+		self.name = name
+		self.path = url.Path
+	}
 
 	return self, nil
 }
@@ -39,15 +46,19 @@ func (FileBackend) Close() error {
 // PUBLIC METHODS
 
 // Name returns the name of the backend
-func (FileBackend) Name() string {
-	return "file"
+func (self *FileBackend) Name() string {
+	return self.name
 }
 
 // URL returns the backend destination URL. The scheme, host (bucket/name),
 // and path (prefix/directory) identify the storage location. Query
 // parameters carry useful non-credential details: region, endpoint, anonymous.
-func (FileBackend) URL() *url.URL {
-	return nil
+func (self *FileBackend) URL() *url.URL {
+	url := new(url.URL)
+	url.Scheme = "file"
+	url.Host = self.name
+	url.Path = self.path
+	return url
 }
 
 // Create object in the backend

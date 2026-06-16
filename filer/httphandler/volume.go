@@ -14,6 +14,7 @@ import (
 	"github.com/mutablelogic/go-server/pkg/httprouter"
 	"github.com/mutablelogic/go-server/pkg/jsonschema"
 	"github.com/mutablelogic/go-server/pkg/openapi"
+	"github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -31,6 +32,15 @@ func RegisterVolumeHandlers(manager *manager.Manager, router *httprouter.Router)
 
 	return errors.Join(
 		router.RegisterPath("volume", nil, httprequest.NewPathItem("Volumes", "Manage volumes").
+			Get(
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = ListVolumes(w, r, manager)
+				},
+				"List volumes",
+				openapi.WithTags("Volumes"),
+				openapi.WithJSONRequest(jsonschema.MustFor[schema.VolumeListRequest]()),
+				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.VolumeList]()),
+			).
 			Post(
 				func(w http.ResponseWriter, r *http.Request) {
 					_ = CreateVolume(w, r, manager)
@@ -46,6 +56,17 @@ func RegisterVolumeHandlers(manager *manager.Manager, router *httprouter.Router)
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+func ListVolumes(w http.ResponseWriter, r *http.Request, manager *manager.Manager) error {
+	var req schema.VolumeListRequest
+	if err := httprequest.Query(r.URL.Query(), &req); err != nil {
+		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+	} else if resp, err := manager.ListVolumes(r.Context(), req); err != nil {
+		return httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
+	} else {
+		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
+	}
+}
 
 func CreateVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager) error {
 	var meta schema.VolumeCreate

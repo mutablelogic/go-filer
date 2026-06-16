@@ -1,13 +1,20 @@
--- extractor.volume_get
+-- filer.volume_get
 SELECT
-	"name", "enabled", "index_delta", "created_at", "indexed_at"
+	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
 FROM
 	${"schema"}."volume"
 WHERE
 	"name" = @name
 ;
 
--- extractor.volume_insert
+-- filer.volume_list
+SELECT
+	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+FROM
+	${"schema"}."volume"
+${where}
+
+-- filer.volume_insert
 INSERT INTO ${"schema"}."volume" (
 	"name", "url", "enabled", "index_delta"
 )
@@ -18,7 +25,7 @@ RETURNING
 	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
 ;
 
--- extractor.volume_patch
+-- filer.volume_patch
 UPDATE ${"schema"}."volume"
 SET
 	${patch}
@@ -28,7 +35,7 @@ RETURNING
 	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
 ;
 
--- extractor.metadata_get
+-- filer.metadata_get
 SELECT
 	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags", "indexed_at"
 FROM
@@ -37,7 +44,7 @@ WHERE
 	"key" = @key
 ;
 
--- extractor.metadata_delete
+-- filer.metadata_delete
 DELETE FROM ${"schema"}."metadata"
 WHERE
 	"key" = @key
@@ -46,7 +53,7 @@ RETURNING
 ;
 
 
--- extractor.metadata_list
+-- filer.metadata_list
 SELECT
 	m."key",
 	m."etag",
@@ -89,7 +96,7 @@ ORDER BY
 	m."key"
 
 
--- extractor.metadata_query
+-- filer.metadata_query
 SELECT
 	m."key",
 	m."etag",
@@ -133,7 +140,7 @@ ORDER BY
 	m."key"
 
     
--- extractor.metadata_insert
+-- filer.metadata_insert
 INSERT INTO ${"schema"}."metadata" (
 	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags"
 )
@@ -155,7 +162,7 @@ RETURNING
 	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags", "indexed_at"
 ;
 
--- extractor.metadata_kv_insert
+-- filer.metadata_kv_insert
 INSERT INTO ${"schema"}."metadata_kv" (
 	"metadata", "key", "value"
 )
