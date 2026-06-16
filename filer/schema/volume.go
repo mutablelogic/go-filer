@@ -28,9 +28,9 @@ type VolumeCreate struct {
 
 type Volume struct {
 	VolumeCreate
-	Name      string    `json:"name,omitempty"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	IndexedAt time.Time `json:"indexed_at,omitempty"`
+	Name      string     `json:"name,omitempty"`
+	CreatedAt time.Time  `json:"created_at,omitempty"`
+	IndexedAt *time.Time `json:"indexed_at,omitempty"`
 }
 
 type VolumeListRequest struct {
