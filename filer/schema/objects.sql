@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
     "type"        TEXT NOT NULL,
     "etag"        TEXT,
     "modified_at" TIMESTAMPTZ NOT NULL,
+    "indexed_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY ("volume", "path"),
     FOREIGN KEY ("volume") REFERENCES ${"schema"}."volume"("name") ON DELETE CASCADE
 );
