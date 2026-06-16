@@ -151,11 +151,40 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object) 
 
 	// Get the metadata for the object
 	metadata, err := manager.metadata.Get(ctx, object.ContentType, reader)
+	if metadata == nil && err != nil {
+		return err
+	} else if err != nil {
+		fmt.Println("Failed to get metadata for object", "object", types.Stringify(object), "error", err.Error())
+	}
+
+	// Make a map of the metadata for easier access when creating the object in the database
+	metamap := make(map[string]json.RawMessage, len(metadata))
+	for _, meta := range metadata {
+		metamap[meta.Key] = meta.Value
+	}
+
+	fmt.Println("createObject", types.Stringify(object))
+
+	// Create the object in a transaction
+	_, err = manager.createObject(ctx, schema.ObjectCreate{
+		ObjectKey: schema.ObjectKey{
+			Volume: object.Volume,
+			Path:   object.Path,
+		},
+		ObjectAttr: schema.ObjectAttr{
+			Size:    object.Size,
+			ETag:    object.ETag,
+			ModTime: object.ModTime,
+			IsDir:   object.IsDir,
+		},
+		ObjectMeta: schema.ObjectMeta{
+			ContentType: object.ContentType,
+			Meta:        metamap,
+		},
+	})
 	if err != nil {
 		return err
 	}
-
-	fmt.Println("Metadata for object", object.Path, ":", types.Stringify(metadata))
 
 	// Touch indexed_at for the volume
 	var touched schema.Volume

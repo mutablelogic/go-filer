@@ -3,40 +3,35 @@ package schema
 import (
 	"encoding/json"
 	"io"
+	"strings"
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	pg "github.com/mutablelogic/go-pg"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type CreateObjectRequest struct {
-	Body        io.Reader `json:"-"`
-	IfNotExists bool      // if true, fail with ErrConflict when the object already exists
-	ObjectMeta
-}
-
 // Meta is a string key-value map for user-defined object metadata.
 // Keys should be lowercase for S3 compatibility, as S3 normalizes all
 // metadata keys to lowercase.
 type Meta map[string]json.RawMessage
 
-type ObjectKey struct {
-	Volume string `json:"volume,omitempty"`
-	Path   string `json:"path,omitempty"`
-}
-
 // Object represents a single stored item returned by the API.
 type Object struct {
 	ObjectKey
 	ObjectMeta
-	Size    int64     `json:"size"`
-	ETag    *string   `json:"etag,omitempty"`
-	ModTime time.Time `json:"last-modified,omitzero"`
-	IsDir   bool      `json:"dir,omitempty"`
+	ObjectAttr
+}
+
+// ObjectKey represents the unique identifier of an object, which consists of a volume and a path.
+type ObjectKey struct {
+	Volume string `json:"volume,omitempty"`
+	Path   string `json:"path,omitempty"`
 }
 
 // ObjectMeta represents the metadata of an object, which can be updated.
@@ -45,11 +40,48 @@ type ObjectMeta struct {
 	Meta        Meta   `json:"meta,omitempty"`
 }
 
+// ObjectAttr represents the attributes of an object, which are immutable and cannot be updated.
+type ObjectAttr struct {
+	Size    int64     `json:"size"`
+	ETag    *string   `json:"etag,omitempty"`
+	ModTime time.Time `json:"last-modified,omitzero"`
+	IsDir   bool      `json:"dir,omitempty"`
+}
+
 // ObjectCreate represents the result of creating an object in the database as part of indexing
 type ObjectCreate struct {
 	ObjectKey
 	ObjectMeta
-	Size int64 `json:"size"`
+	ObjectAttr
+}
+
+// Operations
+type CreateObjectRequest struct {
+	Body        io.Reader `json:"-"`
+	IfNotExists bool      // if true, fail with ErrConflict when the object already exists
+	ObjectMeta
+}
+
+type GetObjectRequest struct {
+	Path string
+}
+
+type ReadObjectRequest struct {
+	GetObjectRequest
+}
+
+type DeleteObjectRequest struct {
+	GetObjectRequest
+}
+
+type DeleteObjectsRequest struct {
+	Path      string `json:"path,omitempty"`
+	Recursive bool   `json:"recursive,omitempty"` // if true, delete all objects recursively; if false, delete only immediate children
+}
+
+type DeleteObjectsResponse struct {
+	Volume string   `json:"volume,omitempty"`
+	Body   []Object `json:"body,omitempty"` // list of deleted objects
 }
 
 type ListObjectsRequest struct {
@@ -62,28 +94,6 @@ type ObjectList struct {
 	ListObjectsRequest
 	Count int       `json:"count"`          // total number of matching objects, before offset/limit
 	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
-}
-
-type GetObjectRequest struct {
-	Path string
-}
-
-type ReadObjectRequest struct {
-	GetObjectRequest
-}
-
-type DeleteObjectRequest struct {
-	Path string
-}
-
-type DeleteObjectsRequest struct {
-	Path      string `json:"path,omitempty"`
-	Recursive bool   `json:"recursive,omitempty"` // if true, delete all objects recursively; if false, delete only immediate children
-}
-
-type DeleteObjectsResponse struct {
-	Volume string   `json:"volume,omitempty"`
-	Body   []Object `json:"body,omitempty"` // list of deleted objects
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -123,4 +133,113 @@ func (r DeleteObjectsRequest) String() string {
 
 func (r DeleteObjectsResponse) String() string {
 	return types.Stringify(r)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// WRITER
+
+func (o ObjectCreate) Insert(bind *pg.Bind) (string, error) {
+	if o.Volume == "" {
+		return "", gofiler.ErrBadParameter.With("missing object volume")
+	} else {
+		bind.Set("volume", o.Volume)
+	}
+	if o.Path == "" {
+		return "", gofiler.ErrBadParameter.With("missing object path")
+	} else {
+		bind.Set("path", o.Path)
+	}
+	if o.ModTime.IsZero() {
+		return "", gofiler.ErrBadParameter.With("missing modified time")
+	} else {
+		bind.Set("modified_at", o.ModTime)
+	}
+	if o.Size < 0 {
+		return "", gofiler.ErrBadParameter.With("invalid object size")
+	} else {
+		bind.Set("size", o.Size)
+	}
+	if contentType := strings.TrimSpace(o.ContentType); contentType == "" {
+		return "", gofiler.ErrBadParameter.With("missing content type")
+	} else {
+		bind.Set("type", contentType)
+	}
+
+	return bind.Query("filer.object_upsert"), nil
+}
+
+func (m ObjectMeta) Update(bind *pg.Bind) error {
+	bind.Del("patch")
+
+	if m.ContentType != "" {
+		bind.Append("patch", `"type" = `+bind.Set("type", m.ContentType))
+	}
+	if m.Meta != nil {
+		data, err := json.Marshal(m.Meta)
+		if err != nil {
+			return err
+		}
+		bind.Append("patch", `"meta" = `+bind.Set("meta", string(data)))
+	}
+
+	if patch := bind.Join("patch", ", "); patch == "" {
+		return gofiler.ErrBadParameter.With("no patch values")
+	} else {
+		bind.Set("patch", patch)
+	}
+
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// READER
+
+func (o *Object) Scan(row pg.Row) error {
+	return row.Scan(
+		&o.Volume,
+		&o.Path,
+		&o.Size,
+		&o.ContentType,
+		&o.ETag,
+		&o.ModTime,
+	)
+}
+
+func (l *ObjectList) Scan(row pg.Row) error {
+	var object Object
+	if err := object.Scan(row); err != nil {
+		return err
+	}
+	l.Body = append(l.Body, &object)
+	return nil
+}
+
+func (l *ObjectList) ScanCount(row pg.Row) error {
+	return row.Scan(&l.Count)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SELECTOR
+
+func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	if k.Volume == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object volume")
+	}
+	if k.Path == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object path")
+	}
+
+	bind.Set("volume", k.Volume)
+	bind.Set("path", k.Path)
+
+	switch op {
+	case pg.Get:
+		return bind.Query("filer.object_get"), nil
+	case pg.Delete:
+		return bind.Query("filer.object_delete"), nil
+	case pg.Update:
+		return bind.Query("filer.object_patch"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectKey operation %q", op)
+	}
 }

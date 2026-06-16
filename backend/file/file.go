@@ -109,12 +109,18 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 	}
 
 	return &schema.Object{
-		Volume:      self.name,
-		Path:        resultPath,
-		IsDir:       info.IsDir(),
-		Size:        info.Size(),
-		ModTime:     info.ModTime(),
-		ContentType: contentType,
+		ObjectKey: schema.ObjectKey{
+			Volume: self.name,
+			Path:   resultPath,
+		},
+		ObjectMeta: schema.ObjectMeta{
+			ContentType: contentType,
+		},
+		ObjectAttr: schema.ObjectAttr{
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+			IsDir:   info.IsDir(),
+		},
 	}, nil
 }
 
@@ -227,12 +233,18 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ListObjectsR
 		}
 
 		body = append(body, &schema.Object{
-			Volume:      self.name,
-			Path:        objectPath,
-			IsDir:       info.IsDir(),
-			Size:        info.Size(),
-			ModTime:     info.ModTime(),
-			ContentType: contentType,
+			ObjectKey: schema.ObjectKey{
+				Volume: self.name,
+				Path:   objectPath,
+			},
+			ObjectMeta: schema.ObjectMeta{
+				ContentType: contentType,
+			},
+			ObjectAttr: schema.ObjectAttr{
+				Size:    info.Size(),
+				ModTime: info.ModTime(),
+				IsDir:   info.IsDir(),
+			},
 		})
 
 		return nil
