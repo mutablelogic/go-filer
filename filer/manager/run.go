@@ -131,7 +131,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 func (manager *Manager) indexObject(ctx context.Context, object *schema.Object) (err error) {
 	// Obtain the backend of the object - backend might be disabled, so don't error
-	backend := manager.volumes.Get(object.Name)
+	backend := manager.volumes.Get(object.Volume)
 	if backend == nil {
 		return nil
 	}

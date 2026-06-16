@@ -30,7 +30,7 @@ func (b *backend) GetObject(ctx context.Context, req schema.GetObjectRequest) (*
 		if err == nil {
 			addSpanAttrs(ctx, attribute.String("blob.storage_hit_key", candidate))
 			obj := b.attrsToObject(objPath, attrs)
-			obj.Name = b.Name()
+			obj.Volume = b.Name()
 			return obj, nil
 		}
 		if gcerrors.Code(err) == gcerrors.PermissionDenied {

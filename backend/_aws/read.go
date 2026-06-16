@@ -36,7 +36,7 @@ func (b *backend) ReadObject(ctx context.Context, req schema.ReadObjectRequest) 
 	}
 
 	obj := &schema.Object{
-		Name:        b.Name(),
+		Volume:      b.Name(),
 		Path:        objPath,
 		ContentType: awssdk.ToString(out.ContentType),
 		Size:        awssdk.ToInt64(out.ContentLength),

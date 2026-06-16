@@ -41,7 +41,7 @@ func (m Metadata) String() string {
 
 func (m *Metadata) Scan(row pg.Row) error {
 	return row.Scan(
-		&m.Name,
+		&m.Volume,
 		&m.Path,
 		&m.Title,
 		&m.Summary,
@@ -55,8 +55,8 @@ func (m *Metadata) Scan(row pg.Row) error {
 // WRITER
 
 func (m MetadataMeta) Insert(bind *pg.Bind) (string, error) {
-	if !bind.Has("name") {
-		return "", gofiler.ErrBadParameter.With("missing object name")
+	if !bind.Has("volume") {
+		return "", gofiler.ErrBadParameter.With("missing object volume")
 	}
 	if !bind.Has("path") {
 		return "", gofiler.ErrBadParameter.With("missing object path")
@@ -76,7 +76,7 @@ func (m MetadataMeta) Insert(bind *pg.Bind) (string, error) {
 }
 
 func (m Metadata) Insert(bind *pg.Bind) (string, error) {
-	bind.Set("name", m.Name)
+	bind.Set("volume", m.Volume)
 	bind.Set("path", m.Path)
 	return m.MetadataMeta.Insert(bind)
 }

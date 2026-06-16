@@ -11,30 +11,66 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."volume" (
     UNIQUE ("url")
 );
 
--- filer.metadata
-CREATE TABLE IF NOT EXISTS ${"schema"}."metadata" (
-    "key"         TEXT NOT NULL,
-    "etag"        TEXT NOT NULL,
-    "filename"    TEXT NOT NULL,
+-- filter.object
+CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
+    "volume"      TEXT NOT NULL,
+    "path"        TEXT NOT NULL,        -- absolute path or S3 key
     "size"        BIGINT NOT NULL,
-    "modified_at" TIMESTAMPTZ,
-    "title"       TEXT,
-    "media_type"  TEXT,
-    "summary"     TEXT,
-    "tags"        TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-    "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY ("key")
+    "type"        TEXT NOT NULL,
+    "etag"        TEXT,
+    "modified_at" TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY ("volume", "path"),
+    FOREIGN KEY ("volume") REFERENCES ${"schema"}."volume"("name") ON DELETE CASCADE
 );
 
--- filer.metadata_kv
-CREATE TABLE IF NOT EXISTS ${"schema"}."metadata_kv" (
-    "metadata"    TEXT NOT NULL,
+-- filter.meta
+CREATE TABLE IF NOT EXISTS ${"schema"}."meta" (
+    "volume"      TEXT NOT NULL,
+    "path"        TEXT NOT NULL,
     "key"         TEXT NOT NULL,
     "value"       JSONB,
-    PRIMARY KEY ("metadata", "key"),
+    PRIMARY KEY ("volume", "path", "key"),
     CHECK ("key" ~ '^[A-Za-z_][A-Za-z0-9_-]*$'),
-    FOREIGN KEY ("metadata") REFERENCES ${"schema"}."metadata"("key") ON DELETE CASCADE
+    FOREIGN KEY ("volume", "path") REFERENCES ${"schema"}."object"("volume", "path") ON DELETE CASCADE
 );
+
+-- filer.search
+CREATE TABLE IF NOT EXISTS ${"schema"}."search" (
+    "volume"     TEXT NOT NULL,
+    "path"       TEXT NOT NULL,
+    "tsv"        TSVECTOR NOT NULL,
+    "indexed_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY ("volume", "path"),
+    FOREIGN KEY ("volume", "path") REFERENCES ${"schema"}."object"("volume", "path") ON DELETE CASCADE
+);
+
+-- filer.search.index
+CREATE INDEX IF NOT EXISTS idx_search_tsv ON ${"schema"}."search" USING GIN("tsv");
+
+-- filer.metadata
+-- CREATE TABLE IF NOT EXISTS ${"schema"}."metadata" (
+--     "key"         TEXT NOT NULL,
+--     "etag"        TEXT NOT NULL,
+--     "filename"    TEXT NOT NULL,
+--     "size"        BIGINT NOT NULL,
+--     "modified_at" TIMESTAMPTZ,
+--     "title"       TEXT,
+--     "media_type"  TEXT,
+--     "summary"     TEXT,
+--     "tags"        TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+--     "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
+--     PRIMARY KEY ("key")
+-- );
+
+-- -- filer.metadata_kv
+-- CREATE TABLE IF NOT EXISTS ${"schema"}."metadata_kv" (
+--     "metadata"    TEXT NOT NULL,
+--     "key"         TEXT NOT NULL,
+--     "value"       JSONB,
+--     PRIMARY KEY ("metadata", "key"),
+--     CHECK ("key" ~ '^[A-Za-z_][A-Za-z0-9_-]*$'),
+--     FOREIGN KEY ("metadata") REFERENCES ${"schema"}."metadata"("key") ON DELETE CASCADE
+-- );
 
 -- filer.metadata.tsv
 ALTER TABLE ${"schema"}."metadata"

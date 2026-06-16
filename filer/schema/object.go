@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"io"
 	"time"
 
@@ -13,34 +14,42 @@ import (
 // TYPES
 
 type CreateObjectRequest struct {
-	Path        string
-	Body        io.Reader  `json:"-"`
-	ContentType string     // optional: MIME type of the object
-	ModTime     time.Time  // optional: modification time (stored as metadata)
-	Meta        ObjectMeta // optional: user-defined metadata
-	IfNotExists bool       // if true, fail with ErrConflict when the object already exists
+	Body        io.Reader `json:"-"`
+	IfNotExists bool      // if true, fail with ErrConflict when the object already exists
+	ObjectMeta
 }
 
-// ObjectMeta is a string key-value map for user-defined object metadata.
+// Meta is a string key-value map for user-defined object metadata.
 // Keys should be lowercase for S3 compatibility, as S3 normalizes all
 // metadata keys to lowercase.
-type ObjectMeta map[string]string
+type Meta map[string]json.RawMessage
 
 type ObjectKey struct {
-	Name string `json:"name,omitempty"`
-	Path string `json:"path,omitempty"`
+	Volume string `json:"volume,omitempty"`
+	Path   string `json:"path,omitempty"`
 }
 
 // Object represents a single stored item returned by the API.
 type Object struct {
-	Name        string     `json:"name,omitempty"`
-	Path        string     `json:"path,omitempty"`
-	IsDir       bool       `json:"dir,omitempty"`
-	Size        int64      `json:"size"`
-	ModTime     time.Time  `json:"last-modified,omitzero"`
-	ContentType string     `json:"type,omitempty"`
-	ETag        string     `json:"etag,omitempty"`
-	Meta        ObjectMeta `json:"meta,omitempty"`
+	ObjectKey
+	ObjectMeta
+	Size    int64     `json:"size"`
+	ETag    *string   `json:"etag,omitempty"`
+	ModTime time.Time `json:"last-modified,omitzero"`
+	IsDir   bool      `json:"dir,omitempty"`
+}
+
+// ObjectMeta represents the metadata of an object, which can be updated.
+type ObjectMeta struct {
+	ContentType string `json:"type,omitempty"`
+	Meta        Meta   `json:"meta,omitempty"`
+}
+
+// ObjectCreate represents the result of creating an object in the database as part of indexing
+type ObjectCreate struct {
+	ObjectKey
+	ObjectMeta
+	Size int64 `json:"size"`
 }
 
 type ListObjectsRequest struct {
@@ -73,8 +82,8 @@ type DeleteObjectsRequest struct {
 }
 
 type DeleteObjectsResponse struct {
-	Name string   `json:"name,omitempty"`
-	Body []Object `json:"body,omitempty"` // list of deleted objects
+	Volume string   `json:"volume,omitempty"`
+	Body   []Object `json:"body,omitempty"` // list of deleted objects
 }
 
 ////////////////////////////////////////////////////////////////////////////////

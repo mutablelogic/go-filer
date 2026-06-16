@@ -34,7 +34,6 @@ func (b *backend) CreateObject(ctx context.Context, req schema.CreateObjectReque
 		} else if gcerrors.Code(err) != gcerrors.NotFound {
 			return nil, blobErr(err, b.Name()+":"+objPath)
 		}
-		// NotFound → safe to create
 	}
 
 	// Clone metadata to avoid mutating the caller's map
@@ -78,7 +77,7 @@ func (b *backend) CreateObject(ctx context.Context, req schema.CreateObjectReque
 		// Return a partial object rather than an error to avoid spurious retries
 		// that would duplicate the object in storage.
 		obj := &schema.Object{
-			Name:        b.Name(),
+			Volume:      b.Name(),
 			Path:        objPath,
 			ContentType: req.ContentType,
 		}
@@ -87,6 +86,6 @@ func (b *backend) CreateObject(ctx context.Context, req schema.CreateObjectReque
 
 	// Return success
 	obj := b.attrsToObject(objPath, attrs)
-	obj.Name = b.Name()
+	obj.Volume = b.Name()
 	return obj, nil
 }

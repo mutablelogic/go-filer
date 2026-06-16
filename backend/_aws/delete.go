@@ -56,7 +56,7 @@ func (b *backend) DeleteObject(ctx context.Context, req schema.DeleteObjectReque
 func (b *backend) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	sk := b.key(req.Path)
 	objPath := cleanPath(req.Path)
-	response := schema.DeleteObjectsResponse{Name: b.Name()}
+	response := schema.DeleteObjectsResponse{Volume: b.Name()}
 	addSpanAttrs(ctx,
 		attribute.String("s3.path", objPath),
 		attribute.String("s3.key", sk),

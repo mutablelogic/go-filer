@@ -40,7 +40,7 @@ func (b *backend) ReadObject(ctx context.Context, req schema.ReadObjectRequest) 
 			return nil, nil, blobErr(err, b.Name()+":"+objPath)
 		}
 		obj := b.attrsToObject(objPath, attrs)
-		obj.Name = b.Name()
+		obj.Volume = b.Name()
 		return r, obj, nil
 	}
 

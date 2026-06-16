@@ -180,7 +180,7 @@ func cleanPath(p string) string {
 // attrsFromHead builds an Object from a HeadObject response.
 func (b *backend) attrsFromHead(objPath string, out *s3.HeadObjectOutput) *schema.Object {
 	obj := &schema.Object{
-		Name:        b.Name(),
+		Volume:      b.Name(),
 		Path:        objPath,
 		ContentType: awssdk.ToString(out.ContentType),
 		Size:        awssdk.ToInt64(out.ContentLength),
@@ -209,9 +209,9 @@ func (b *backend) attrsFromHead(objPath string, out *s3.HeadObjectOutput) *schem
 // attrsFromListItem builds an Object from a ListObjectsV2 result item.
 func (b *backend) attrsFromListItem(item s3types.Object) schema.Object {
 	obj := schema.Object{
-		Name: b.Name(),
-		Path: b.pathFromStorageKey(awssdk.ToString(item.Key)),
-		Size: awssdk.ToInt64(item.Size),
+		Volume: b.Name(),
+		Path:   b.pathFromStorageKey(awssdk.ToString(item.Key)),
+		Size:   awssdk.ToInt64(item.Size),
 	}
 	if item.LastModified != nil {
 		obj.ModTime = *item.LastModified

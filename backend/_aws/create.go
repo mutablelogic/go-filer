@@ -72,7 +72,7 @@ func (b *backend) CreateObject(ctx context.Context, req schema.CreateObjectReque
 		// Write succeeded but metadata fetch failed — return a partial object
 		// to avoid spurious retries that would duplicate the upload.
 		obj := &schema.Object{
-			Name:        b.Name(),
+			Volume:      b.Name(),
 			Path:        objPath,
 			ContentType: req.ContentType,
 		}

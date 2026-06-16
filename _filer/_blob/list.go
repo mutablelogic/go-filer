@@ -41,7 +41,7 @@ func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest
 	}
 	if attrs != nil {
 		obj := b.attrsToObject(cleanPath(req.Path), attrs)
-		obj.Name = b.Name()
+		obj.Volume = b.Name()
 		all = []schema.Object{*obj}
 	} else {
 		// Object doesn't exist (or key is empty for root), treat as prefix.
@@ -85,7 +85,7 @@ func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest
 			}
 
 			o := schema.Object{
-				Name:    b.Name(),
+				Volume:  b.Name(),
 				Path:    b.pathFromStorageKey(obj.Key),
 				IsDir:   obj.IsDir,
 				Size:    obj.Size,

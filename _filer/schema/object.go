@@ -42,13 +42,13 @@ type CreateObjectRequest struct {
 type ObjectMeta map[string]string
 
 type ObjectKey struct {
-	Name string `json:"name,omitempty"`
-	Path string `json:"path,omitempty"`
+	Volume string `json:"volume,omitempty"`
+	Path   string `json:"path,omitempty"`
 }
 
 // Object represents a single stored item returned by the API.
 type Object struct {
-	Name        string     `json:"name,omitempty"`
+	Volume      string     `json:"volume,omitempty"`
 	Path        string     `json:"path,omitempty"`
 	IsDir       bool       `json:"dir,omitempty"`
 	Size        int64      `json:"size"`
@@ -89,8 +89,8 @@ type DeleteObjectsRequest struct {
 }
 
 type DeleteObjectsResponse struct {
-	Name string   `json:"name,omitempty"`
-	Body []Object `json:"body,omitempty"` // list of deleted objects
+	Volume string   `json:"volume,omitempty"`
+	Body   []Object `json:"body,omitempty"` // list of deleted objects
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -168,14 +168,14 @@ func (o *Object) Scan(row pg.Row) error {
 // SELECTOR
 
 func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
-	if k.Name == "" {
-		return "", httpresponse.ErrBadRequest.With("missing object name")
+	if k.Volume == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object volume")
 	}
 	if k.Path == "" {
 		return "", httpresponse.ErrBadRequest.With("missing object path")
 	}
 
-	bind.Set("name", k.Name)
+	bind.Set("volume", k.Volume)
 	bind.Set("path", k.Path)
 
 	switch op {
@@ -192,14 +192,14 @@ func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 // WRITER
 
 func (o Object) Insert(bind *pg.Bind) (string, error) {
-	if o.Name == "" {
-		return "", gofiler.ErrBadParameter.With("missing object name")
+	if o.Volume == "" {
+		return "", gofiler.ErrBadParameter.With("missing object volume")
 	}
 	if o.Path == "" {
 		return "", gofiler.ErrBadParameter.With("missing object path")
 	}
 
-	bind.Set("name", o.Name)
+	bind.Set("volume", o.Volume)
 	bind.Set("path", o.Path)
 	bind.Set("size", o.Size)
 

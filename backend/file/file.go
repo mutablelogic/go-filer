@@ -109,7 +109,7 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 	}
 
 	return &schema.Object{
-		Name:        self.name,
+		Volume:      self.name,
 		Path:        resultPath,
 		IsDir:       info.IsDir(),
 		Size:        info.Size(),
@@ -203,6 +203,10 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ListObjectsR
 		if err != nil {
 			return err
 		}
+		if !info.Mode().IsRegular() {
+			// Skip non-regular files (e.g. symlinks, devices)
+			return nil
+		}
 
 		count++
 		if count <= int(req.Offset) || !collect {
@@ -223,7 +227,7 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ListObjectsR
 		}
 
 		body = append(body, &schema.Object{
-			Name:        self.name,
+			Volume:      self.name,
 			Path:        objectPath,
 			IsDir:       info.IsDir(),
 			Size:        info.Size(),

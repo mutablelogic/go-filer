@@ -1,6 +1,6 @@
 -- filer.object
 CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
-    "name"        TEXT NOT NULL,
+    "volume"      TEXT NOT NULL,
     "path"        TEXT NOT NULL,        -- relative or absolute path
     "size"        BIGINT,
     "modified_at" TIMESTAMPTZ,
@@ -8,20 +8,21 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
     "etag"        TEXT,
     "meta"        JSONB NOT NULL DEFAULT '{}'::JSONB,
     "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY ("name", "path")
+    PRIMARY KEY ("volume", "path"),
+    FOREIGN KEY ("volume") REFERENCES ${"schema"}."volume"("name") ON DELETE CASCADE
 );
 
 -- filer.metadata
 CREATE TABLE IF NOT EXISTS ${"schema"}."metadata" (
-    "name"       TEXT NOT NULL,
+    "volume"     TEXT NOT NULL,
     "path"       TEXT NOT NULL,
     "title"      TEXT,
     "summary"    TEXT,
     "text"       TEXT,
     "tags"       TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
     "created_at" TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY ("name", "path"),
-    FOREIGN KEY ("name", "path") REFERENCES ${"schema"}."object"("name", "path") ON DELETE CASCADE
+    PRIMARY KEY ("volume", "path"),
+    FOREIGN KEY ("volume", "path") REFERENCES ${"schema"}."object"("volume", "path") ON DELETE CASCADE
 );
 
 -- filer.metadata.tsv

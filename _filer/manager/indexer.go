@@ -25,7 +25,7 @@ func (manager *Manager) RunIndexer(ctx context.Context, payload json.RawMessage)
 	}
 
 	// Get the object and any error message
-	actual_object, err := manager.GetObject(ctx, object.Name, schema.GetObjectRequest{
+	actual_object, err := manager.GetObject(ctx, object.Volume, schema.GetObjectRequest{
 		Path: object.Path,
 	})
 
@@ -33,8 +33,8 @@ func (manager *Manager) RunIndexer(ctx context.Context, payload json.RawMessage)
 	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
 		if errors.Is(err, filer.ErrNotFound) {
 			return conn.Delete(ctx, nil, schema.ObjectKey{
-				Name: object.Name,
-				Path: object.Path,
+				Volume: object.Volume,
+				Path:   object.Path,
 			})
 		} else if err != nil {
 			return err

@@ -146,7 +146,7 @@ func (b *backend) DeleteObjects(ctx context.Context, req schema.DeleteObjectsReq
 
 			// Add to response
 			o := schema.Object{
-				Name:    b.Name(),
+				Volume:  b.Name(),
 				Path:    objPath,
 				Size:    obj.Size,
 				ModTime: obj.ModTime,
