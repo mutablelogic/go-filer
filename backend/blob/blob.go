@@ -13,16 +13,15 @@ import (
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
-	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
+	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	gofiler "github.com/mutablelogic/go-filer"
 	backendpkg "github.com/mutablelogic/go-filer/backend"
+	opt "github.com/mutablelogic/go-filer/backend/opt"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
-	otelaws "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 	attribute "go.opentelemetry.io/otel/attribute"
 	trace "go.opentelemetry.io/otel/trace"
 	blob "gocloud.dev/blob"
-	s3blob "gocloud.dev/blob/s3blob"
 	gcerrors "gocloud.dev/gcerrors"
 
 	// Drivers
@@ -35,10 +34,10 @@ import (
 // TYPES
 
 type backend struct {
-	*opt
+	opt.Opts
 	bucket       *blob.Bucket
 	bucketPrefix string // key prefix for bucket operations (empty for file://)
-	s3Client     *s3svc.Client
+	s3Client     *s3.Client
 	s3Bucket     string
 }
 
@@ -56,81 +55,32 @@ var _ backendpkg.Backend = (*backend)(nil)
 //
 // For S3 URLs, you can optionally provide an aws.Config via WithAWSConfig()
 // for full control over AWS SDK configuration.
-func New(ctx context.Context, u string, opts ...Opt) (*backend, error) {
+func New(ctx context.Context, u string, opts ...opt.Opt) (*backend, error) {
 	self := new(backend)
 
 	// Set the options
 	if url, err := url.Parse(u); err != nil {
 		return nil, err
-	} else if opt, err := apply(url, opts...); err != nil {
+	} else if opt, err := opt.Apply(url, opts...); err != nil {
 		return nil, err
 	} else {
-		self.opt = opt
-	}
-
-	// Reject unsupported schemes up front
-	switch self.url.Scheme {
-	case "s3", "file", "mem":
-		// supported
-	default:
-		return nil, fmt.Errorf("unsupported backend scheme %q: supported schemes are s3://, file://, mem://", self.url.Scheme)
+		self.Opts = opt
 	}
 
 	// Validate the backend name (URL host) is a valid identifier
-	if !types.IsIdentifier(self.url.Host) {
-		return nil, fmt.Errorf("backend name %q must be a valid identifier (letter, digits, underscores, hyphens; max 64 chars)", self.url.Host)
+	if !types.IsIdentifier(self.Host()) {
+		return nil, fmt.Errorf("backend name %q must be a valid identifier (letter, digits, underscores, hyphens; max 64 chars)", self.Host())
 	}
 
-	// For s3/mem: bucketPrefix is prepended to paths to form storage keys
-	// (bucket opens at host level). For file://: no prefix needed.
-	if self.url.Scheme != "file" {
-		self.bucketPrefix = strings.TrimPrefix(strings.TrimSuffix(self.url.Path, "/"), "/")
-	}
-	if self.url.Scheme == "s3" {
-		self.s3Bucket = self.url.Host
-	}
-
-	// Open the bucket
-	var bucket *blob.Bucket
-	var err error
-	if self.url.Scheme == "s3" && self.awsConfig != nil {
-		// Use the provided AWS config to open S3 bucket directly.
-		// Honour WithEndpoint and WithAnonymous even though they bypass URL query parameters.
-		cfg := *self.awsConfig
-		if self.anonymous {
-			cfg.Credentials = aws.AnonymousCredentials{}
+	// Reject unsupported schemes up front
+	switch self.Scheme() {
+	case "file":
+		if bucket, err = blob.OpenBucket(ctx, self.Opts.URL()); err != nil {
+			return nil, err
+		} else {
+			self.bucket = bucket
 		}
-		var s3Opts []func(*s3svc.Options)
-		if self.endpoint != "" {
-			epURL := self.endpoint
-			s3Opts = append(s3Opts, func(o *s3svc.Options) {
-				o.BaseEndpoint = aws.String(epURL)
-				o.UsePathStyle = true
-			})
-		}
-		// Inject OTel instrumentation so each S3 API call produces a child span,
-		// but only when a tracer is configured to avoid overhead in non-tracing deployments.
-		if self.tracer != nil {
-			otelaws.AppendMiddlewares(&cfg.APIOptions)
-		}
-		client := s3svc.NewFromConfig(cfg, s3Opts...)
-		self.s3Client = client
-		bucket, err = s3blob.OpenBucket(ctx, client, self.url.Host, nil)
-	} else if self.url.Scheme == "file" {
-		// For file:// the path is the bucket root dir - open using just the path.
-		// Only forward fileblob-recognised query params; S3 params (endpoint,
-		// disable_https, etc.) are stored on the shared URL but must not reach fileblob.
-		// Temp files are written to os.TempDir() (TMPDIR env var), which should be
-		// on the same filesystem as the data dir to avoid cross-device link errors.
-		fileblobParams := url.Values{}
-		for _, key := range []string{"create_dir", "no_tmp_dir", "dir_file_mode"} {
-			if v := self.url.Query().Get(key); v != "" {
-				fileblobParams.Set(key, v)
-			}
-		}
-		openURL := &url.URL{Scheme: "file", Path: self.url.Path, RawQuery: fileblobParams.Encode()}
-		bucket, err = blob.OpenBucket(ctx, openURL.String())
-	} else {
+	case "mem":
 		// For mem:// (and URL-based s3://): strip to root and filter out any
 		// params that aren't valid for the target driver.
 		openURL := *self.url
@@ -146,15 +96,15 @@ func New(ctx context.Context, u string, opts ...Opt) (*backend, error) {
 			openURL.RawQuery = memParams.Encode()
 		}
 		bucket, err = blob.OpenBucket(ctx, openURL.String())
+	default:
+		return nil, gofiler.ErrNotImplemented.Withf("unsupported backend scheme %q", self.Scheme())
 	}
 
-	// Check for errors opening the bucket
-	if err != nil {
-		return nil, fmt.Errorf("failed to open bucket: %w", err)
+	// For s3/mem: bucketPrefix is prepended to paths to form storage keys
+	// (bucket opens at host level). For file://: no prefix needed.
+	if self.Scheme() != "file" {
+		self.bucketPrefix = strings.TrimPrefix(strings.TrimSuffix(self.url.Path, "/"), "/")
 	}
-
-	// Success
-	self.bucket = bucket
 
 	return self, nil
 }

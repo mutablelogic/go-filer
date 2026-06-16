@@ -31,7 +31,7 @@ type Backend interface {
 	GetObject(context.Context, schema.GetObjectRequest) (*schema.Object, error)
 
 	// Read object content from the backend. Caller must close the returned reader.
-	ReadObject(context.Context, schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error)
+	ReadObject(context.Context, schema.GetObjectRequest) (io.ReadCloser, *schema.Object, error)
 
 	// List objects in the backend
 	ListObjects(context.Context, schema.ListObjectsRequest) (*schema.ObjectList, error)

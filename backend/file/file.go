@@ -77,7 +77,7 @@ func (FileBackend) CreateObject(context.Context, schema.CreateObjectRequest) (*s
 }
 
 // Get object metadata from the backend
-func (self FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -119,8 +119,23 @@ func (self FileBackend) GetObject(ctx context.Context, req schema.GetObjectReque
 }
 
 // Read object content from the backend. Caller must close the returned reader.
-func (FileBackend) ReadObject(context.Context, schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error) {
-	return nil, nil, gofiler.ErrNotImplemented
+func (self *FileBackend) ReadObject(ctx context.Context, req schema.GetObjectRequest) (io.ReadCloser, *schema.Object, error) {
+	// Get the object
+	object, err := self.GetObject(ctx, req)
+	if err != nil {
+		return nil, nil, err
+	} else if object.IsDir {
+		return nil, nil, gofiler.ErrBadParameter.Withf("cannot read content of a directory: %q", req.Path)
+	}
+
+	// Open the file - caller is responsible for closing the reader
+	f, err := self.fs.Open(strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(req.Path)), "/"))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Return the reader and object metadata
+	return f, object, nil
 }
 
 // List objects in the backend

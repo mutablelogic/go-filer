@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	// Packages
-	"github.com/mutablelogic/go-filer/filer/httphandler"
+	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
 	manager "github.com/mutablelogic/go-filer/filer/manager"
 	pg "github.com/mutablelogic/go-pg"
 	pgcmd "github.com/mutablelogic/go-pg/pkg/cmd"
@@ -13,15 +13,6 @@ import (
 	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	errgroup "golang.org/x/sync/errgroup"
-
-	// Metadata Extractors
-	_ "github.com/mutablelogic/go-filer/extractor/audio"
-	_ "github.com/mutablelogic/go-filer/extractor/image"
-	_ "github.com/mutablelogic/go-filer/extractor/markdown"
-	_ "github.com/mutablelogic/go-filer/extractor/pdf"
-	_ "github.com/mutablelogic/go-filer/extractor/srt"
-	_ "github.com/mutablelogic/go-filer/extractor/text"
-	_ "github.com/mutablelogic/go-filer/extractor/video"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

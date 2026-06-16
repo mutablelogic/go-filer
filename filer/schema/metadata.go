@@ -3,16 +3,12 @@ package schema
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	mime "github.com/mutablelogic/go-filer/extractor/mime"
 	pg "github.com/mutablelogic/go-pg"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -90,6 +86,7 @@ func AppendMetadataKV(metadata []MetadataKV, key string, value any) []MetadataKV
 	})
 }
 
+/*
 func MetadataFromPath(path string, info os.FileInfo) (*MetadataCreate, error) {
 	if info == nil {
 		var err error
@@ -136,6 +133,7 @@ func MetadataFromPath(path string, info os.FileInfo) (*MetadataCreate, error) {
 		},
 	}), nil
 }
+*/
 
 ////////////////////////////////////////////////////////////////////////////////
 // STRINGIFY
