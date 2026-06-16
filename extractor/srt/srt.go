@@ -9,8 +9,8 @@ import (
 
 	// Packages
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
 	text "github.com/mutablelogic/go-filer/extractor/text"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

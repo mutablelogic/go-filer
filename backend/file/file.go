@@ -8,7 +8,7 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////

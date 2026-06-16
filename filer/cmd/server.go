@@ -1,194 +1,93 @@
-//go:build !client
-
 package cmd
 
 import (
-	"context"
+	"errors"
 	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
 
 	// Packages
-	aws "github.com/aws/aws-sdk-go-v2/aws"
-	config "github.com/aws/aws-sdk-go-v2/config"
-	credentials "github.com/aws/aws-sdk-go-v2/credentials"
-	blob "github.com/mutablelogic/go-filer/backend/blob"
-	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
+	"github.com/mutablelogic/go-filer/filer/httphandler"
 	manager "github.com/mutablelogic/go-filer/filer/manager"
-	queue "github.com/mutablelogic/go-filer/queue/cmd"
-	queuemanager "github.com/mutablelogic/go-filer/queue/manager"
+	pg "github.com/mutablelogic/go-pg"
+	pgcmd "github.com/mutablelogic/go-pg/pkg/cmd"
 	server "github.com/mutablelogic/go-server"
-	cmd "github.com/mutablelogic/go-server/pkg/cmd"
+	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
-	types "github.com/mutablelogic/go-server/pkg/types"
 	errgroup "golang.org/x/sync/errgroup"
+
+	// Metadata Extractors
+	_ "github.com/mutablelogic/go-filer/extractor/audio"
+	_ "github.com/mutablelogic/go-filer/extractor/image"
+	_ "github.com/mutablelogic/go-filer/extractor/markdown"
+	_ "github.com/mutablelogic/go-filer/extractor/pdf"
+	_ "github.com/mutablelogic/go-filer/extractor/srt"
+	_ "github.com/mutablelogic/go-filer/extractor/text"
+	_ "github.com/mutablelogic/go-filer/extractor/video"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
 type ServerCommands struct {
-	Run RunServerCommand `cmd:"" name:"run" help:"Run HTTP server." group:"SERVER"`
+	RunServer RunServer `cmd:"" name:"run" help:"Run the filer server." group:"SERVER"`
+	servercmd.OpenAPICommands
 }
 
-type AWSConfig struct {
-	AccessKey    string `name:"access-key" env:"AWS_ACCESS_KEY_ID" help:"AWS access key ID (s3://)."  optional:""`
-	SecretKey    string `name:"secret-key" env:"AWS_SECRET_ACCESS_KEY" help:"AWS secret access key (s3://)." optional:""`
-	SessionToken string `name:"session-token" env:"AWS_SESSION_TOKEN"     help:"AWS session token for temporary credentials (s3://)." optional:""`
-	Region       string `name:"region"   env:"AWS_REGION,AWS_DEFAULT_REGION" help:"AWS region." optional:""`
-	Profile      string `name:"profile"  env:"AWS_PROFILE" help:"AWS credentials profile (s3://)."  optional:""`
-	Endpoint     string `name:"endpoint" help:"S3-compatible endpoint URL, e.g. http://localhost:9000 (s3://)."   optional:""`
-}
-
-type RunServerCommand struct {
-	Backend             []string  `arg:"" name:"backend" help:"Backend URL (e.g. mem://name, file://name/path, s3://bucket)." optional:""`
-	AWS                 AWSConfig `embed:"" prefix:"aws."`
-	queue.PostgresFlags `embed:"" prefix:"pg."`
-	queue.Queue         `embed:"" prefix:"queue."`
-	cmd.RunServer
+type RunServer struct {
+	pgcmd.PostgresFlags
+	servercmd.RunServer
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// COMMANDS
+// PUBLIC METHODS
 
-func (cmd *RunServerCommand) Run(globals server.Cmd) error {
-	conn, err := cmd.PostgresFlags.Connect(globals)
+func (runner *RunServer) Run(ctx server.Cmd) error {
+	// Connect to the database, if configured
+	conn, err := runner.PostgresFlags.Connect(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+		return err
 	} else if conn == nil {
-		return fmt.Errorf("PostgreSQL connection URL is required")
-	} else {
-		defer conn.Close()
+		return fmt.Errorf("database connection is required")
 	}
 
-	// Wrap in a queue manager
-	return cmd.Queue.WithQueueManager(globals, conn, func(queue *queuemanager.Manager) error {
-		// Gather backend options
-		opts := []manager.Opt{
-			manager.WithTracer(globals.Tracer()),
-		}
+	// Create the manager, run the server, and return any error
+	return runner.WithManager(ctx, conn, func(manager *manager.Manager) error {
+		// Create an error context - which will cancel any other goroutine on exit
+		errgroup, errctx := errgroup.WithContext(ctx.Context())
 
-		// If there are no backends, then register one with a default file:// URL rooted in the user cache dir.
-		if len(cmd.Backend) == 0 {
-			backend, err := defaultBackendURL(globals)
-			if err != nil {
-				return err
-			} else {
-				cmd.Backend = append(cmd.Backend, backend)
-			}
-		}
-
-		// Create the backends
-		for _, backend := range cmd.Backend {
-			backend_opts, err := cmd.OptsForBackend(globals.Context(), backend)
-			if err != nil {
-				return fmt.Errorf("failed to create backend for %q: %w", backend, err)
-			} else {
-				opts = append(opts, manager.WithBackend(globals.Context(), backend, backend_opts...))
-			}
-		}
-
-		return cmd.withManager(globals, queue, opts, func(ctx context.Context, manager *manager.Manager) error {
-			// Register the handlers for the manager
-			cmd.RunServer.Register(func(router *httprouter.Router) error {
-				return httphandler.RegisterHandlers(router, manager)
-			})
-
-			// Log the backends
-			globals.Logger().InfoContext(globals.Context(), "filer manager started", "name", globals.Name(), "version", globals.Version())
-			for _, name := range manager.Backends() {
-				globals.Logger().InfoContext(globals.Context(), "registered backend", "name", name, "url", manager.Backend(name).URL().String())
-			}
-
-			// Create an error group for the different components
-			errgroup, errctx := errgroup.WithContext(globals.Context())
-
-			// Run the filer manager
-			errgroup.Go(func() error {
-				return manager.Run(errctx)
-			})
-
-			// Run the queue manager
-			errgroup.Go(func() error {
-				return queue.Run(errctx, globals.Logger())
-			})
-
-			// Run the server
-			errgroup.Go(func() error {
-				return cmd.RunServer.Run(globals)
-			})
-			return errgroup.Wait()
+		// Register http handlers for the manager
+		runner.Register(func(router *httprouter.Router) error {
+			ctx.Logger().DebugContext(ctx.Context(), "registering http handlers")
+			return errors.Join(
+				httphandler.RegisterVolumeHandlers(manager, router),
+			)
 		})
+
+		// Run the manager
+		errgroup.Go(func() error {
+			return manager.Run(errctx, ctx.Logger())
+		})
+
+		// Run the server - if any co-routine in the error group returns an error, the server will be shutdown
+		errgroup.Go(func() error {
+			return runner.RunServer.Run(ctx.WithContext(errctx))
+		})
+
+		// Wait for the server and manager to exit, and return any error
+		return errgroup.Wait()
 	})
 }
 
-func (cmd *RunServerCommand) OptsForBackend(ctx context.Context, backend string) ([]blob.Opt, error) {
-	opts := []blob.Opt{}
-	cfg := aws.Config{}
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
 
-	switch {
-	// Profile takes priority: load via the SDK's config chain so SSO profiles work.
-	case cmd.AWS.Profile != "":
-		cfgOpts := []func(*config.LoadOptions) error{
-			config.WithSharedConfigProfile(cmd.AWS.Profile),
-		}
-		if cmd.AWS.Region != "" {
-			cfgOpts = append(cfgOpts, config.WithRegion(cmd.AWS.Region))
-		}
-		if awsCfg, err := config.LoadDefaultConfig(ctx, cfgOpts...); err != nil {
-			return nil, fmt.Errorf("failed to load AWS config for profile %q: %w", cmd.AWS.Profile, err)
-		} else {
-			cfg = awsCfg
-		}
-	case cmd.AWS.AccessKey != "":
-		// Static credentials (no profile set).
-		if cmd.AWS.SecretKey == "" {
-			return nil, fmt.Errorf("--aws.secret-key is required when --aws.access-key is set")
-		} else {
-			cfg.Credentials = credentials.NewStaticCredentialsProvider(cmd.AWS.AccessKey, cmd.AWS.SecretKey, cmd.AWS.SessionToken)
-		}
-	default:
-		// No explicit credentials — use anonymous access.
-		cfg.Credentials = aws.AnonymousCredentials{}
+func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*manager.Manager) error) error {
+	opts := []manager.Opt{
+		manager.WithMeter(ctx.Meter()),
+		manager.WithTracer(ctx.Tracer()),
 	}
-
-	// Set region
-	if cmd.AWS.Region != "" {
-		cfg.Region = cmd.AWS.Region
-	}
-
-	// Set endpoint for S3-compatible services, if given.
-	opts = append(opts, blob.WithAWSConfig(cfg), blob.WithEndpoint(cmd.AWS.Endpoint))
-
-	// Return the blob options
-	return opts, nil
-}
-
-func (cmd *RunServerCommand) withManager(globals server.Cmd, queue *queuemanager.Manager, opts []manager.Opt, fn func(context.Context, *manager.Manager) error) (err error) {
-	// Create manager
-	manager, err := manager.New(globals.Context(), queue.PoolConn, queue, opts...)
-	if err != nil {
+	if manager, err := manager.New(ctx.Context(), conn, opts...); err != nil {
 		return err
-	}
-
-	// Run the function
-	return fn(globals.Context(), manager)
-}
-
-// defaultBackendURL returns a file:// backend URL rooted at
-// os.UserCacheDir()/<execName>, creating the directory if needed.
-func defaultBackendURL(globals server.Cmd) (string, error) {
-	name := globals.Name()
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine user cache dir: %w", err)
-	}
-
-	dir := filepath.Join(cacheDir, name, "volume")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("cannot create cache dir %s: %w", dir, err)
 	} else {
-		return types.Ptr(url.URL{Scheme: "file", Host: name, Path: filepath.ToSlash(dir)}).String(), nil
+		return fn(manager)
 	}
 }

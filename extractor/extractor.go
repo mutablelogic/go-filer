@@ -5,7 +5,7 @@ import (
 	"regexp"
 
 	// Packages
-	"github.com/mutablelogic/go-filer/extractor/schema"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 const (

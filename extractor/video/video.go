@@ -7,9 +7,9 @@ import (
 	"time"
 
 	// Packages
-	"github.com/mutablelogic/go-filer/extractor"
+	extractor "github.com/mutablelogic/go-filer/extractor"
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	ffmpeg "github.com/mutablelogic/go-media/pkg/ffmpeg"
 )
 

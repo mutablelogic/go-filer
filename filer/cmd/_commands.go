@@ -10,20 +10,20 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	manager "github.com/mutablelogic/go-filer/extractor/manager"
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
+	manager "github.com/mutablelogic/go-filer/filer/manager"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	pgcmd "github.com/mutablelogic/go-pg/pkg/cmd"
 	server "github.com/mutablelogic/go-server"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
 
 	// Extractors
-	_ "github.com/mutablelogic/go-filer/extractor/audio"
-	_ "github.com/mutablelogic/go-filer/extractor/image"
-	_ "github.com/mutablelogic/go-filer/extractor/markdown"
-	_ "github.com/mutablelogic/go-filer/extractor/pdf"
-	_ "github.com/mutablelogic/go-filer/extractor/srt"
-	_ "github.com/mutablelogic/go-filer/extractor/text"
-	_ "github.com/mutablelogic/go-filer/extractor/video"
+	_ "github.com/mutablelogic/go-filer/filer/extractor/audio"
+	_ "github.com/mutablelogic/go-filer/filer/extractor/image"
+	_ "github.com/mutablelogic/go-filer/filer/extractor/markdown"
+	_ "github.com/mutablelogic/go-filer/filer/extractor/pdf"
+	_ "github.com/mutablelogic/go-filer/filer/extractor/srt"
+	_ "github.com/mutablelogic/go-filer/filer/extractor/text"
+	_ "github.com/mutablelogic/go-filer/filer/extractor/video"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -1,55 +1,170 @@
--- filer.object_get
+-- extractor.volume_get
 SELECT
-	"name",	"path",	"size",	"modified_at",	"type",	"etag",	"meta"
+	"name", "enabled", "index_delta", "created_at", "indexed_at"
 FROM
-	${"schema"}."object"
+	${"schema"}."volume"
 WHERE
 	"name" = @name
-AND
-	"path" = @path
 ;
 
--- filer.object_delete
-DELETE FROM ${"schema"}."object"
-WHERE
-	"name" = @name
-AND
-	"path" = @path
-RETURNING
-	"name",	"path",	"size",	"modified_at",	"type",	"etag",	"meta"
-;
-
--- filer.object_insert
-INSERT INTO ${"schema"}."object" (
-	"name",	"path",	"size",	"modified_at",	"type",	"etag",	"meta") 
-VALUES (
-	@name,	@path,	@size,	CAST(@modified_at AS TIMESTAMPTZ),	@type,	@etag,	CAST(@meta AS JSONB)
+-- extractor.volume_insert
+INSERT INTO ${"schema"}."volume" (
+	"name", "url", "enabled", "index_delta"
 )
-ON CONFLICT ("name", "path") DO UPDATE
+VALUES (
+	@name, @url, CAST(@enabled AS BOOLEAN), CAST(@index_delta AS INTERVAL)
+)
+RETURNING
+	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+;
+
+-- extractor.volume_patch
+UPDATE ${"schema"}."volume"
 SET
+	${patch}
+WHERE
+	"name" = @name
+RETURNING
+	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+;
+
+-- extractor.metadata_get
+SELECT
+	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags", "indexed_at"
+FROM
+	${"schema"}."metadata"
+WHERE
+	"key" = @key
+;
+
+-- extractor.metadata_delete
+DELETE FROM ${"schema"}."metadata"
+WHERE
+	"key" = @key
+RETURNING
+	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags", "indexed_at"
+;
+
+
+-- extractor.metadata_list
+SELECT
+	m."key",
+	m."etag",
+	m."filename",
+	m."size",
+	m."modified_at",
+	m."title",
+	m."media_type",
+	m."summary",
+	m."tags",
+	m."indexed_at",
+	COALESCE(
+		jsonb_agg(
+			jsonb_build_object(
+				'key', kv."key",
+				'value', kv."value"
+			)
+			ORDER BY kv."key"
+		) FILTER (WHERE kv."key" IS NOT NULL),
+		'[]'::jsonb
+	) AS "metadata"
+FROM
+	${"schema"}."metadata" m
+LEFT JOIN
+	${"schema"}."metadata_kv" kv ON kv."metadata" = m."key"
+${where}
+GROUP BY
+	m."key",
+	m."etag",
+	m."filename",
+	m."size",
+	m."modified_at",
+	m."title",
+	m."media_type",
+	m."summary",
+	m."tags",
+	m."indexed_at"
+ORDER BY
+	m."indexed_at" DESC,
+	m."key"
+
+
+-- extractor.metadata_query
+SELECT
+	m."key",
+	m."etag",
+	m."filename",
+	m."size",
+	m."modified_at",
+	m."title",
+	m."media_type",
+	m."summary",
+	m."tags",
+	m."indexed_at",
+	COALESCE(
+		jsonb_agg(
+			jsonb_build_object(
+				'key', kv."key",
+				'value', kv."value"
+			)
+			ORDER BY kv."key"
+		) FILTER (WHERE kv."key" IS NOT NULL),
+		'[]'::jsonb
+	) AS "metadata"
+FROM
+	${"schema"}."metadata" m
+LEFT JOIN
+	${"schema"}."metadata_kv" kv ON kv."metadata" = m."key"
+${where}
+GROUP BY
+	m."key",
+	m."etag",
+	m."filename",
+	m."size",
+	m."modified_at",
+	m."title",
+	m."media_type",
+	m."summary",
+	m."tags",
+	m."indexed_at"
+ORDER BY
+	ts_rank_cd(m."tsv", websearch_to_tsquery('simple', @query)) DESC,
+	m."indexed_at" DESC,
+	m."key"
+
+    
+-- extractor.metadata_insert
+INSERT INTO ${"schema"}."metadata" (
+	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags"
+)
+VALUES (
+	@key, @etag, @filename, @size, CAST(@modified_at AS TIMESTAMPTZ), @title, @media_type, @summary, CAST(@tags AS TEXT[])
+)
+ON CONFLICT ("key") DO UPDATE
+SET
+	"etag" = EXCLUDED."etag",
+	"filename" = EXCLUDED."filename",
 	"size" = EXCLUDED."size",
 	"modified_at" = EXCLUDED."modified_at",
-	"type" = EXCLUDED."type",
-	"etag" = EXCLUDED."etag",
-	"meta" = EXCLUDED."meta",
+	"title" = EXCLUDED."title",
+	"media_type" = EXCLUDED."media_type",
+	"summary" = EXCLUDED."summary",
+	"tags" = EXCLUDED."tags",
 	"indexed_at" = now()
 RETURNING
-	"name",	"path",	"size",	"modified_at",	"type",	"etag",	"meta"
+	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags", "indexed_at"
 ;
 
--- filer.metadata_insert
-INSERT INTO ${"schema"}."metadata" (
-	"name", "path", "title", "summary", "text", "tags"
+-- extractor.metadata_kv_insert
+INSERT INTO ${"schema"}."metadata_kv" (
+	"metadata", "key", "value"
 )
 VALUES (
-	@name, @path, @title, @summary, @text, CAST(@tags AS TEXT[])
+	@metadata, @key, CAST(@value AS JSONB)
 )
-ON CONFLICT ("name", "path") DO UPDATE
+ON CONFLICT ("metadata", "key") DO UPDATE
 SET
-	"title" = EXCLUDED."title",
-	"summary" = EXCLUDED."summary",
-	"text" = EXCLUDED."text",
-	"tags" = EXCLUDED."tags"
+	"value" = EXCLUDED."value"
 RETURNING
-	"name", "path", "title", "summary", "text", "tags", "created_at"
+	"metadata", "key", "value"
 ;

@@ -13,8 +13,8 @@ import (
 	reader "github.com/carlos7ags/folio/reader"
 	extractor "github.com/mutablelogic/go-filer/extractor"
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
 	text "github.com/mutablelogic/go-filer/extractor/text"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	llm "github.com/mutablelogic/go-llm"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
 )

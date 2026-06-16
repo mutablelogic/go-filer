@@ -1,27 +1,39 @@
--- filer.object
-CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
+-- filer.volume
+CREATE TABLE IF NOT EXISTS ${"schema"}."volume" (
     "name"        TEXT NOT NULL,
-    "path"        TEXT NOT NULL,        -- relative or absolute path
-    "size"        BIGINT,
-    "modified_at" TIMESTAMPTZ,
-    "type"        TEXT,
-    "etag"        TEXT,
-    "meta"        JSONB NOT NULL DEFAULT '{}'::JSONB,
+    "url"         TEXT NOT NULL,
+    "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
+    "index_delta" INTERVAL,
+    "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
     "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY ("name", "path")
+    PRIMARY KEY ("name"),
+    CHECK ("name" ~ '^[a-z_][a-z0-9_]*$'),
+    UNIQUE ("url")
 );
 
 -- filer.metadata
 CREATE TABLE IF NOT EXISTS ${"schema"}."metadata" (
-    "name"       TEXT NOT NULL,
-    "path"       TEXT NOT NULL,
-    "title"      TEXT,
-    "summary"    TEXT,
-    "text"       TEXT,
-    "tags"       TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-    "created_at" TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY ("name", "path"),
-    FOREIGN KEY ("name", "path") REFERENCES ${"schema"}."object"("name", "path") ON DELETE CASCADE
+    "key"         TEXT NOT NULL,
+    "etag"        TEXT NOT NULL,
+    "filename"    TEXT NOT NULL,
+    "size"        BIGINT NOT NULL,
+    "modified_at" TIMESTAMPTZ,
+    "title"       TEXT,
+    "media_type"  TEXT,
+    "summary"     TEXT,
+    "tags"        TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY ("key")
+);
+
+-- filer.metadata_kv
+CREATE TABLE IF NOT EXISTS ${"schema"}."metadata_kv" (
+    "metadata"    TEXT NOT NULL,
+    "key"         TEXT NOT NULL,
+    "value"       JSONB,
+    PRIMARY KEY ("metadata", "key"),
+    CHECK ("key" ~ '^[A-Za-z_][A-Za-z0-9_-]*$'),
+    FOREIGN KEY ("metadata") REFERENCES ${"schema"}."metadata"("key") ON DELETE CASCADE
 );
 
 -- filer.metadata.tsv
@@ -30,10 +42,40 @@ ALTER TABLE ${"schema"}."metadata"
     GENERATED ALWAYS AS (
         setweight(to_tsvector('simple', coalesce("title", '')), 'A') ||
         setweight(array_to_tsvector("tags"), 'A') ||
-        setweight(to_tsvector('simple', coalesce("summary", '')), 'B') ||
-        setweight(to_tsvector('simple', coalesce("text", '')), 'C')
+        setweight(to_tsvector('simple', coalesce("summary", '')), 'B')
     ) STORED
 ;
 
 -- filer.metadata.index
-CREATE INDEX IF NOT EXISTS idx_file_metadata_tsv ON ${"schema"}."metadata" USING GIN("tsv");
+CREATE INDEX IF NOT EXISTS idx_filer_metadata_tsv ON ${"schema"}."metadata" USING GIN("tsv");
+
+-- filer.notify.function
+CREATE OR REPLACE FUNCTION ${"schema"}.notify_table()
+RETURNS trigger AS $$
+DECLARE
+  lock_id BIGINT;
+BEGIN
+  lock_id := hashtextextended(TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME, 0);
+  IF pg_try_advisory_xact_lock(lock_id) THEN
+    PERFORM pg_notify(
+      ${'notify_channel'},
+      json_build_object(
+        'schema', TG_TABLE_SCHEMA,
+        'table', TG_TABLE_NAME,
+        'action', TG_OP
+      )::text
+    );
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- filer.notify.volume.trigger
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS volume_table_changes_notify ON ${"schema"}.volume;
+  CREATE TRIGGER volume_table_changes_notify
+  AFTER INSERT OR UPDATE OR DELETE ON ${"schema"}.volume
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION ${"schema"}.notify_table();
+END $$;
+

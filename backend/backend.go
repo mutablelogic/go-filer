@@ -6,7 +6,7 @@ import (
 	"net/url"
 
 	// Packages
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////

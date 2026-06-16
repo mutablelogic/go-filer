@@ -12,7 +12,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	extractor "github.com/mutablelogic/go-filer/extractor"
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )

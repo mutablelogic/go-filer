@@ -16,7 +16,7 @@ import (
 	client "github.com/mutablelogic/go-client"
 	extractor "github.com/mutablelogic/go-filer/extractor"
 	registry "github.com/mutablelogic/go-filer/extractor/registry"
-	schema "github.com/mutablelogic/go-filer/extractor/schema"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
 	llmopt "github.com/mutablelogic/go-llm/pkg/opt"
 	ollama "github.com/mutablelogic/go-llm/provider/ollama"

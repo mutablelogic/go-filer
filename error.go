@@ -93,30 +93,35 @@ func HTTPErr(err error) error {
 	if err == nil {
 		return nil
 	}
+	// Check for http error
 	var httpErr httpresponse.Err
 	if errors.As(err, &httpErr) {
 		return err
 	}
 
+	// Check for database error
+	if pg.IsDatabaseError(err) {
+		return pg.HTTPError(err)
+	}
+
+	// Check for filter error
 	var schemaErr Err
 	if errors.As(err, &schemaErr) {
 		return schemaErr.HTTP().With(err)
 	}
 
 	switch {
-	case errors.Is(err, pg.ErrNotFound):
+	case errors.Is(err, ErrNotFound):
 		return httpresponse.ErrNotFound.With(err)
-	case errors.Is(err, pg.ErrBadParameter):
+	case errors.Is(err, ErrBadParameter):
 		return httpresponse.ErrBadRequest.With(err)
-	case errors.Is(err, pg.ErrConflict):
+	case errors.Is(err, ErrConflict):
 		return httpresponse.ErrConflict.With(err)
-	case errors.Is(err, pg.ErrNotImplemented):
+	case errors.Is(err, ErrNotImplemented):
 		return httpresponse.ErrNotImplemented.With(err)
-	case errors.Is(err, pg.ErrNotAvailable):
+	case errors.Is(err, ErrServiceUnavailable):
 		return httpresponse.ErrServiceUnavailable.With(err)
-	case errors.Is(err, pg.ErrDatabase):
+	default:
 		return httpresponse.ErrInternalError.With(err)
 	}
-
-	return httpresponse.ErrInternalError.With(err)
 }
