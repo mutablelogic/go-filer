@@ -35,6 +35,16 @@ RETURNING
 	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
 ;
 
+-- filer.volume_touch
+UPDATE ${"schema"}."volume"
+SET
+	"indexed_at" = NOW()
+WHERE
+	"name" = @name
+RETURNING
+	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+;
+
 -- filer.metadata_get
 SELECT
 	"key", "etag", "filename", "size", "modified_at", "title", "media_type", "summary", "tags", "indexed_at"

@@ -54,6 +54,17 @@ func (r *Registry) Names() []string {
 	return names
 }
 
+// Get returns the backend with the specified name, or an error if it does not exist.
+func (r *Registry) Get(name string) backend.Backend {
+	r.RLock()
+	defer r.RUnlock()
+	if backend, ok := r.backends[name]; ok {
+		return backend
+	} else {
+		return nil
+	}
+}
+
 // New creates a new backend based on the provided URL, and adds it to the registry.
 //
 //	The URL must be valid for the backend type, and the backend name must be unique within the registry.
@@ -97,10 +108,13 @@ func (r *Registry) Delete(name string) error {
 	r.Lock()
 	defer r.Unlock()
 
-	if _, ok := r.backends[name]; !ok {
+	defer delete(r.backends, name)
+	if backend, ok := r.backends[name]; !ok {
 		return gofiler.ErrNotFound.Withf("backend with name %q does not exist", name)
+	} else if err := backend.Close(); err != nil {
+		return err
 	}
 
-	delete(r.backends, name)
+	// Return success
 	return nil
 }

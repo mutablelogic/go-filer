@@ -15,6 +15,7 @@ import (
 // TYPES
 
 type VolumeName string
+type VolumeTouch string
 
 type VolumeMeta struct {
 	Enabled    *bool          `json:"enabled,omitempty"`
@@ -34,7 +35,8 @@ type Volume struct {
 }
 
 type VolumeListRequest struct {
-	Enabled *bool `json:"enabled,omitempty"`
+	Enabled *bool `json:"enabled,omitempty" help:"returns only enabled or disabled volumes"`
+	Stale   bool  `json:"stale,omitzero" help:"returns volumes that need to be re-indexed"`
 	pg.OffsetLimit
 }
 
@@ -111,6 +113,21 @@ func (v VolumeName) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	}
 }
 
+func (v VolumeTouch) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	name := strings.ToLower(strings.TrimSpace(string(v)))
+	if !types.IsIdentifier(name) {
+		return "", gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
+	}
+	bind.Set("name", name)
+
+	switch op {
+	case pg.Update:
+		return bind.Query("filer.volume_touch"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported VolumeTouch operation %q", op)
+	}
+}
+
 func (v *VolumeListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Set("orderby", "ORDER BY created_at DESC")
 
@@ -118,6 +135,11 @@ func (v *VolumeListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Del("where")
 	if v.Enabled != nil {
 		bind.Append("where", `"enabled" = `+bind.Set("enabled", v.Enabled))
+	}
+	if v.Stale {
+		bind.Append("where", `"enabled" = TRUE`)
+		bind.Append("where", `"index_delta" IS NOT NULL`)
+		bind.Append("where", `("indexed_at" IS NULL OR "indexed_at" < (NOW() - "index_delta"))`)
 	}
 	if where := bind.Join("where", " AND "); where != "" {
 		bind.Set("where", `WHERE `+where)
