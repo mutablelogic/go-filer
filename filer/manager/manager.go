@@ -8,10 +8,10 @@ import (
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
-	backend "github.com/mutablelogic/go-filer/backend"
 	backendregistry "github.com/mutablelogic/go-filer/backend/registry"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	pg "github.com/mutablelogic/go-pg"
+	pgqueue "github.com/mutablelogic/go-pg/pgqueue/manager"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
 
@@ -19,13 +19,10 @@ import (
 // TYPES
 
 type Manager struct {
+	opt
 	pg.PoolConn
 	volumes *backendregistry.Registry
-	opt
-}
-
-type volumes struct {
-	byname map[string]backend.Backend
+	queue   *pgqueue.Manager
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -38,8 +35,11 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 	// Apply options
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
+	} else if queue, err := pgqueue.New(ctx, pool, pgqueue.WithSchema(self.schema), pgqueue.WithMeter(self.metrics), pgqueue.WithTracer(self.tracer)); err != nil {
+		return nil, err
 	} else {
 		self.volumes = backendregistry.New()
+		self.queue = queue
 	}
 
 	// Parse and register named queries so bind.Query(...) can resolve them.

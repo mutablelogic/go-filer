@@ -2,12 +2,15 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"time"
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	pg "github.com/mutablelogic/go-pg"
+	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	broadcaster "github.com/mutablelogic/go-pg/pkg/broadcaster"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -37,10 +40,37 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
-	// Syncronize the volume registry
+	// Syncronize the volume registry on startup, so that any existing volumes are loaded
 	if err := manager.syncVolumes(ctx, logger); err != nil {
 		return err
 	}
+
+	// Register a ticker to syncronize the volume registry every 5 minutes
+	syncVolumesTicker := make(chan json.RawMessage, 100)
+	defer close(syncVolumesTicker)
+	_, err = manager.queue.RegisterTicker(ctx, "sync-volumes-ticker", pgqueueschema.TickerMeta{
+		Interval: types.Ptr(time.Minute * 5),
+	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
+		syncVolumesTicker <- payload
+		return nil, nil
+	})
+
+	// Register a ticker to reindex volumes every 5 minutes
+	reindexVolumesTicker := make(chan json.RawMessage, 100)
+	defer close(reindexVolumesTicker)
+	_, err = manager.queue.RegisterTicker(ctx, "reindex-volumes-ticker", pgqueueschema.TickerMeta{
+		Interval: types.Ptr(time.Minute * 5),
+	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
+		reindexVolumesTicker <- payload
+		return nil, nil
+	})
+
+	// Run the queue in the background
+	go func() {
+		if err := manager.queue.Run(ctx, logger); err != nil {
+			logger.ErrorContext(ctx, "queue error", "error", err)
+		}
+	}()
 
 	// Now start the runloop
 	for {
@@ -48,13 +78,23 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		case <-ctx.Done():
 			return nil
 		case event := <-volumeChange:
-			// Handle an insert, update or delete for a volume
 			logger.DebugContext(ctx, "Event", "event", types.Stringify(event))
 
 			// Syncronize the volume registry
 			if err := manager.syncVolumes(ctx, logger); err != nil {
 				return err
 			}
+		case <-syncVolumesTicker:
+			logger.DebugContext(ctx, "Event", "event", "sync-volumes-ticker")
+
+			// Syncronize the volume registry
+			if err := manager.syncVolumes(ctx, logger); err != nil {
+				return err
+			}
+		case <-reindexVolumesTicker:
+			logger.DebugContext(ctx, "Event", "event", "reindex-volumes-ticker")
+
+			// Look for a volume that need to be reindexed, and reindex it
 		}
 	}
 }
