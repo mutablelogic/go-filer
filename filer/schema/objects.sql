@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."volume" (
     "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
     "index_delta" INTERVAL,
     "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    "indexed_at"  TIMESTAMPTZ,
     PRIMARY KEY ("name"),
     CHECK ("name" ~ '^[a-z_][a-z0-9_]*$'),
     UNIQUE ("url")

@@ -20,8 +20,8 @@ import (
 
 type Manager struct {
 	pg.PoolConn
+	volumes *backendregistry.Registry
 	opt
-	backendregistry.Registry
 }
 
 type volumes struct {
@@ -38,6 +38,8 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 	// Apply options
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
+	} else {
+		self.volumes = backendregistry.New()
 	}
 
 	// Parse and register named queries so bind.Query(...) can resolve them.
