@@ -130,7 +130,21 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 // PRIVATE METHODS
 
 func (manager *Manager) indexObject(ctx context.Context, object *schema.Object) error {
-	// TODO: Implement indexing logic
+	// Obtain the backend of the object - backend might be disabled, so don't error
+	backend := manager.volumes.Get(object.Name)
+	if backend == nil {
+		return nil
+	}
+
+	// TODO: The reindex
+
+	// Touch indexed_at for the volume
+	var touched schema.Volume
+	if err := manager.PoolConn.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
+		return err
+	}
+
+	// Return success
 	return nil
 }
 
