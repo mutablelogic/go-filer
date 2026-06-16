@@ -137,7 +137,9 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object) 
 	}
 
 	// Read the object from the backend and extract metadata
-	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{})
+	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{
+		Path: object.Path,
+	})
 	if err != nil {
 		return err
 	}

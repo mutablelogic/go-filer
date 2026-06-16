@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
+	"io"
 	"regexp"
 	"strings"
 
@@ -47,14 +47,14 @@ func (e *pdfextractor) MediaType() *regexp.Regexp {
 }
 
 // Extract metadata from the file at the given path
-func (e *pdfextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
+func (e *pdfextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.MetadataKV, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}

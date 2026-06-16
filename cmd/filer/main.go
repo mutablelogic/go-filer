@@ -13,11 +13,11 @@ import (
 	version "github.com/mutablelogic/go-server/pkg/version"
 
 	// Metadata Extractors
+	_ "github.com/mutablelogic/go-filer/metadata/audio"
+	_ "github.com/mutablelogic/go-filer/metadata/pdf"
 	_ "github.com/mutablelogic/go-filer/metadata/text"
-	//_ "github.com/mutablelogic/go-filer/metadata/audio"
 	//_ "github.com/mutablelogic/go-filer/metadata/image"
 	//_ "github.com/mutablelogic/go-filer/metadata/markdown"
-	//_ "github.com/mutablelogic/go-filer/metadata/pdf"
 	//_ "github.com/mutablelogic/go-filer/metadata/srt"
 	//_ "github.com/mutablelogic/go-filer/metadata/video"
 )

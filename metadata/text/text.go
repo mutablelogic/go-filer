@@ -44,7 +44,7 @@ type textsummarizer struct {
 // GLOBALS
 
 const (
-	OllamaUrl            = "http://nestor.local:11434"
+	OllamaUrl            = "http://nestor.tailnet-db1f.ts.net:11434"
 	OllamaModel          = "phi4"
 	OllamaMaxInputTokens = 16384
 	OllamaTokensPerWord  = 3.5

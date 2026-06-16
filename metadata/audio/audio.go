@@ -2,6 +2,7 @@ package audio
 
 import (
 	"context"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -34,8 +35,8 @@ func (e *audioextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`audio/.*`)
 }
 
-func (e *audioextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
-	reader, err := ffmpeg.Open(path)
+func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.MetadataKV, error) {
+	reader, err := ffmpeg.NewReader(r)
 	if err != nil {
 		return nil, err
 	}
