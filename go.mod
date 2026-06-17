@@ -7,7 +7,7 @@ require (
 	github.com/mutablelogic/go-client v1.4.9
 	github.com/mutablelogic/go-llm v0.4.4
 	github.com/mutablelogic/go-media v1.8.3
-	github.com/mutablelogic/go-pg v1.3.1
+	github.com/mutablelogic/go-pg v1.3.2
 	github.com/mutablelogic/go-server v1.6.36
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/metric v1.44.0

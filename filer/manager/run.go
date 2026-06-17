@@ -97,6 +97,13 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
+	// Allow graceful queue drain to cover task TTL plus pgqueue's force-release
+	// grace period, with a small buffer for cleanup/logging.
+	drainTimeout := types.Value(indexQueue.TTL) + time.Minute + 30*time.Second
+	if drainTimeout <= 0 {
+		drainTimeout = 90 * time.Second
+	}
+
 	// Run the queue in the background; close warnChan once all tasks have finished.
 	queueDone := make(chan struct{})
 	go func() {
@@ -129,7 +136,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 			syncVolumesTickerC = nil
 			reindexVolumesTickerC = nil
 			ctx = context.WithoutCancel(ctx)
-			shutdownTimer = time.NewTimer(15 * time.Second)
+			shutdownTimer = time.NewTimer(drainTimeout)
 			shutdownTimeout = shutdownTimer.C
 		case <-queueDone:
 			queueDone = nil
