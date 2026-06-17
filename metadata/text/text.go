@@ -48,6 +48,7 @@ const (
 	OllamaModel          = "phi4"
 	OllamaMaxInputTokens = 16384
 	OllamaTokensPerWord  = 3.5
+	TextScannerMaxToken  = 1024 * 1024 // 1 MiB max line length
 	SystemPrompt         = `
 		Summarize the contents of the following text into a short paragraph in English, 
 		with author, title, summary paragraph and ISO two-letter written language.
@@ -72,7 +73,11 @@ func init() {
 }
 
 func NewTextReader(r io.Reader) *textreader {
-	return &textreader{scanner: bufio.NewScanner(r)}
+	scanner := bufio.NewScanner(r)
+	// Increase the maximum token size to tolerate long single-line inputs.
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, TextScannerMaxToken)
+	return &textreader{scanner: scanner}
 }
 
 func NewTextSummarizer(ctx context.Context) (*textsummarizer, error) {

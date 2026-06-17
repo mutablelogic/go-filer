@@ -5,7 +5,6 @@ DOCKER ?= $(shell which docker 2>/dev/null)
 # Locations
 BUILD_DIR ?= build
 CMD_DIR := $(wildcard cmd/*)
-PLUGIN_DIR := $(wildcard plugin/*)
 
 # Set OS and Architecture
 ARCH ?= $(shell arch | tr A-Z a-z | sed 's/x86_64/amd64/' | sed 's/i386/amd64/' | sed 's/armv7l/arm/' | sed 's/aarch64/arm64/')
@@ -13,51 +12,45 @@ OS ?= $(shell uname | tr A-Z a-z)
 VERSION ?= $(shell git describe --tags --always | sed 's/^v//')
 
 # Set build flags
-BUILD_MODULE = $(shell cat go.mod | head -1 | cut -d ' ' -f 2)
-BUILD_VERSION_PACKAGE = github.com/mutablelogic/go-server/pkg/version
-BUILD_LD_FLAGS += -X $(BUILD_VERSION_PACKAGE).GitTag=${VERSION}
-BUILD_LD_FLAGS += -X $(BUILD_VERSION_PACKAGE).GitBranch=$(shell git name-rev HEAD --name-only --always)
-BUILD_LD_FLAGS += -X $(BUILD_VERSION_PACKAGE).BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_PKG = "github.com/mutablelogic/go-server/pkg/version"
+BUILD_LD_FLAGS += -X $(VERSION_PKG)/GitTag=$(shell git describe --tags --always)
+BUILD_LD_FLAGS += -X $(VERSION_PKG)/GitBranch=$(shell git name-rev HEAD --name-only --always)
 BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}" 
 
 # Docker
 DOCKER_REPO ?= ghcr.io/mutablelogic/filer
-DOCKER_SOURCE ?= ${BUILD_MODULE}
-DOCKER_TAG = ${DOCKER_REPO}-${OS}-${ARCH}:${VERSION}
+DOCKER_SOURCE ?= $(shell cat go.mod | head -1 | cut -d ' ' -f 2)
+DOCKER_TAG = ${DOCKER_REPO}:${VERSION}-${OS}-${ARCH}
 
 ###############################################################################
 # ALL
 
 .PHONY: all
-all: clean build
+all: build
 
 ###############################################################################
 # BUILD
 
-# Compile NPM and build the commands in the cmd directory
-.PHONY: build
-build: build-docker
-
 # Build the commands in the cmd directory
-.PHONY: build-docker
-build-docker: tidy $(PLUGIN_DIR) $(CMD_DIR)
+.PHONY: build
+build: tidy $(CMD_DIR)
 
-# Build the commands
 $(CMD_DIR): go-dep mkdir
 	@echo Build command $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
 	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
 
 # Build the docker image
 .PHONY: docker
-docker: docker-dep
+docker: docker-dep ${NPM_DIR}
 	@echo build docker image ${DOCKER_TAG} OS=${OS} ARCH=${ARCH} SOURCE=${DOCKER_SOURCE} VERSION=${VERSION}
 	@${DOCKER} build \
 		--tag ${DOCKER_TAG} \
+		--provenance=false \
 		--build-arg ARCH=${ARCH} \
 		--build-arg OS=${OS} \
 		--build-arg SOURCE=${DOCKER_SOURCE} \
 		--build-arg VERSION=${VERSION} \
-		-f etc/docker/Dockerfile .
+		-f etc/Dockerfile .
 
 # Push docker container
 .PHONY: docker-push
@@ -69,7 +62,6 @@ docker-push: docker-dep
 .PHONY: docker-version
 docker-version: docker-dep 
 	@echo "tag=${VERSION}"
-
 
 ###############################################################################
 # CLI
@@ -90,37 +82,38 @@ filer-client: go-dep mkdir
 .PHONY: test
 test: unit-test coverage-test
 
-.PHONY: testv
-testv: VERBOSE_FLAG = -v
-testv: unit-test coverage-test
-
 .PHONY: unit-test
 unit-test: go-dep
 	@echo Unit Tests
-	@${GO} test ${VERBOSE_FLAG} ./...
+	@${GO} test .
+	@${GO} test ./filer/...
+	@${GO} test ./metadata/...
+	@${GO} test ./backend/...
 
 .PHONY: coverage-test
 coverage-test: go-dep mkdir
 	@echo Test Coverage
-	@${GO} test ${VERBOSE_FLAG} -coverprofile ${BUILD_DIR}/coverprofile.out ./...
+	@${GO} test -v -coverprofile ${BUILD_DIR}/coverprofile.out ./filer/... ./metadata/... ./backend/...
+	@${GO} tool cover -func ${BUILD_DIR}/coverprofile.out > ${BUILD_DIR}/coverage.txt
 
 ###############################################################################
 # CLEAN
 
-.PHONY: tidy
-tidy:
-	@echo Running go mod tidy
-	@${GO} mod tidy
-
+# Other rules
 .PHONY: mkdir
 mkdir:
-	@install -d ${BUILD_DIR}
+	@install -d $(BUILD_DIR)
+
+.PHONY: go-dep tidy
+tidy:
+	@echo 'go tidy'
+	@$(GO) mod tidy
 
 .PHONY: clean
-clean:
-	@echo Clean
+clean: tidy
+	@echo 'clean'
 	@rm -fr $(BUILD_DIR)
-	@${GO} clean
+	@$(GO) clean
 
 ###############################################################################
 # DEPENDENCIES
@@ -132,3 +125,7 @@ go-dep:
 .PHONY: docker-dep
 docker-dep:
 	@test -f "${DOCKER}" && test -x "${DOCKER}"  || (echo "Missing docker binary" && exit 1)
+
+.PHONY: wasmbuild-dep
+wasmbuild-dep:
+	@test -f "${WASMBUILD}" && test -x "${WASMBUILD}"  || (echo "Missing wasmbuild binary" && exit 1)

@@ -8,19 +8,34 @@ ARG ARCH
 WORKDIR /usr/src/app
 COPY . .
 
-RUN apt-get update -y && apt-get install -y --no-install-recommends make git && \
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    build-essential \
+    make \
+    git \
+    pkg-config \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavfilter-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
+    libswscale-dev && \
     rm -rf /var/lib/apt/lists/* && \
     OS=${OS} ARCH=${ARCH} make build
 
-# Runtime stage: minimal debian image
-FROM --platform=${OS}/${ARCH} debian:trixie-slim
+# Runtime stage: Ubuntu 24.04 LTS with FFmpeg 8.0
+FROM --platform=${OS}/${ARCH} ubuntu:24.04
 ARG OS
 ARG ARCH
 ARG SOURCE
 ARG VERSION
 COPY --from=builder /usr/src/app/build/* /usr/local/bin/
-COPY etc/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN apt-get update -y && apt-get install -y --no-install-recommends ca-certificates gosu passwd && \
+COPY etc/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    gosu \
+    ffmpeg && \
     rm -rf /var/lib/apt/lists/* && \
     chmod +x /usr/local/bin/entrypoint.sh && \
     groupadd -g 1000 filer && \

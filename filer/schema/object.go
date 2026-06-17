@@ -1,11 +1,13 @@
 package schema
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -105,10 +107,20 @@ type ObjectList struct {
 	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
 }
 
+var (
+	metaKeyLeadInvalid = regexp.MustCompile(`^[^A-Za-z_]+`)
+	metaKeyBodyInvalid = regexp.MustCompile(`[^A-Za-z0-9_-]`)
+)
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
 func AppendMeta(kv []Meta, key string, value any) []Meta {
+	key = sanitizeMetaKey(key)
+	if key == "" {
+		return kv
+	}
+
 	// Ignore zero-valued values
 	if value == nil {
 		return kv
@@ -121,11 +133,34 @@ func AppendMeta(kv []Meta, key string, value any) []Meta {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return kv
+	} else {
+		// PostgreSQL jsonb rejects Unicode NUL (\u0000) in text values.
+		data = bytes.ReplaceAll(data, []byte(`\u0000`), []byte(""))
 	}
+
 	return append(kv, Meta{
 		Key:   key,
 		Value: data,
 	})
+}
+
+func sanitizeMetaKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+
+	// Enforce CHECK key ~ '^[A-Za-z_][A-Za-z0-9_-]*$' by replacing invalid
+	// characters with '_' and forcing the first character to be valid.
+	key = metaKeyBodyInvalid.ReplaceAllString(key, "_")
+	if key == "" {
+		return ""
+	}
+	key = metaKeyLeadInvalid.ReplaceAllString(key, "_")
+	if key == "" {
+		return "_"
+	}
+	return key
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -280,7 +315,7 @@ func (m Meta) Insert(bind *pg.Bind) (string, error) {
 	if path, ok := bind.Get("path").(string); !ok || strings.TrimSpace(path) == "" {
 		return "", gofiler.ErrBadParameter.With("missing object path")
 	}
-	if key := strings.TrimSpace(m.Key); key == "" {
+	if key := sanitizeMetaKey(m.Key); key == "" {
 		return "", gofiler.ErrBadParameter.With("missing metadata key")
 	} else {
 		bind.Set("key", key)
