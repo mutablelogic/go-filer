@@ -18,12 +18,12 @@ type VolumeName string
 type VolumeTouch string
 
 type VolumeMeta struct {
-	Enabled    *bool          `json:"enabled,omitempty"`
+	Enabled    *bool          `json:"enabled,omitempty" negatable:""`
 	IndexDelta *time.Duration `json:"delta,omitempty"` // if non-zero, forces a full re-index if the last index is older than this duration
 }
 
 type VolumeCreate struct {
-	URL string `json:"url,omitempty"`
+	URL string `json:"url,omitempty" arg:"" help:"URL of the volume to create"`
 	VolumeMeta
 }
 

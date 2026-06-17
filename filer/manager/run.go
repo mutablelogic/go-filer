@@ -22,6 +22,12 @@ import (
 // PUBLIC METHODS
 
 func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
+	// If this isn't an indexer, don't start the runloop and just wait for the context to be cancelled.
+	if !manager.indexer {
+		<-ctx.Done()
+		return nil
+	}
+
 	// Create a broadcaster for listening for events
 	events, err := broadcaster.NewBroadcaster(manager.PoolConn, schema.NotifyChannel)
 	if err != nil {

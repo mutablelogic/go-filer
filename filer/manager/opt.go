@@ -1,7 +1,6 @@
 package manager
 
 import (
-
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metric "go.opentelemetry.io/otel/metric"
@@ -18,6 +17,7 @@ type opt struct {
 	tracer  trace.Tracer
 	metrics metric.Meter
 	schema  string
+	indexer bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -39,10 +39,19 @@ func (o *opt) apply(opt []Opt) error {
 
 func (o *opt) defaults() {
 	o.schema = schema.DefaultSchema
+	o.indexer = false
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // OPTIONS
+
+// WithIndexer uses this instance as an indexer of content
+func WithIndexer(indexer bool) Opt {
+	return func(o *opt) error {
+		o.indexer = indexer
+		return nil
+	}
+}
 
 // WithTracer sets the tracer used for tracing operations.
 func WithTracer(tracer trace.Tracer) Opt {

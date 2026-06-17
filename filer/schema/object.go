@@ -2,7 +2,9 @@ package schema
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/url"
 	"reflect"
 	"strings"
 	"time"
@@ -163,6 +165,78 @@ func (r DeleteObjectsRequest) String() string {
 
 func (r DeleteObjectsResponse) String() string {
 	return types.Stringify(r)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// QUERY BUILDER
+
+func (r ObjectListRequest) Query() url.Values {
+	query := url.Values{}
+	if r.Volume != nil {
+		query.Set("volume", *r.Volume)
+	}
+	if r.Path != nil {
+		query.Set("path", *r.Path)
+	}
+	if r.Recursive {
+		query.Set("recursive", "true")
+	}
+	if r.Offset > 0 {
+		query.Set("offset", types.Stringify(r.Offset))
+	}
+	if r.Limit != nil {
+		query.Set("limit", types.Stringify(types.Value(r.Limit)))
+	}
+	return query
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// TABLE OUTPUT
+
+func (r Object) Header() []string {
+	return []string{"Volume", "Path", "Size", "Content Type", "ETag", "Modified", "Meta"}
+}
+
+func (r Object) Width(col int) int {
+	return 0
+}
+
+func (r Object) Cell(col int) string {
+	switch col {
+	case 0:
+		return r.Volume
+	case 1:
+		return r.Path
+	case 2:
+		return fmt.Sprint(r.Size)
+	case 3:
+		return r.ContentType
+	case 4:
+		if r.ETag == nil {
+			return ""
+		}
+		return *r.ETag
+	case 5:
+		if r.ModTime.IsZero() {
+			return ""
+		}
+		return r.ModTime.Format(time.RFC3339)
+	case 6:
+		if len(r.Meta) == 0 {
+			return ""
+		}
+		metamap := make(map[string]json.RawMessage, len(r.Meta))
+		for _, kv := range r.Meta {
+			metamap[kv.Key] = kv.Value
+		}
+		data, err := json.MarshalIndent(metamap, "", "  ")
+		if err != nil {
+			return err.Error()
+		}
+		return string(data)
+	default:
+		return ""
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////

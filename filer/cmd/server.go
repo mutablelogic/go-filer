@@ -26,6 +26,7 @@ type ServerCommands struct {
 type RunServer struct {
 	pgcmd.PostgresFlags
 	servercmd.RunServer
+	Indexer bool `long:"indexer" help:"Run this instance as an indexer of content" default:"false" negatable:""`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -76,6 +77,7 @@ func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*
 	opts := []manager.Opt{
 		manager.WithMeter(ctx.Meter()),
 		manager.WithTracer(ctx.Tracer()),
+		manager.WithIndexer(runner.Indexer),
 	}
 	if manager, err := manager.New(ctx.Context(), conn, opts...); err != nil {
 		return err
