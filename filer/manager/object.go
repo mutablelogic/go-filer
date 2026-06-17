@@ -33,6 +33,24 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 	return types.Ptr(result), nil
 }
 
+func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRequest) (_ *schema.ObjectList, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListObjects",
+		attribute.String("req", types.Stringify(req)),
+	)
+	defer func() { endSpan(err) }()
+
+	var result schema.ObjectList
+	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
+		return nil, err
+	} else {
+		result.ObjectListRequest = req
+		result.OffsetLimit.Clamp(uint64(result.Count))
+	}
+
+	// Return success
+	return types.Ptr(result), nil
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 

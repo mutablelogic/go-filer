@@ -34,7 +34,7 @@ type Backend interface {
 	ReadObject(context.Context, schema.GetObjectRequest) (io.ReadCloser, *schema.Object, error)
 
 	// List objects in the backend
-	ListObjects(context.Context, schema.ListObjectsRequest) (*schema.ObjectList, error)
+	ListObjects(context.Context, schema.ObjectListRequest) (*schema.ObjectList, error)
 
 	// Delete objects in the backend (single object or prefix)
 	DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error)

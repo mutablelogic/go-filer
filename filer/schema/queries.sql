@@ -132,6 +132,22 @@ FROM
 	touched AS t
 ;
 
+-- filer.object_list
+SELECT
+	o."volume", o."path", o."size", o."type", o."etag", o."modified_at",
+	COALESCE((
+		SELECT jsonb_agg(jsonb_build_object('key', m."key", 'value', m."value") ORDER BY m."key")
+		FROM ${"schema"}."meta" AS m
+		WHERE m."volume" = o."volume"
+		AND m."path" = o."path"
+	), '[]'::jsonb) AS "meta"
+FROM
+	${"schema"}."object" AS o
+${where}
+ORDER BY
+	o."volume", o."path"
+
+
 -- filer.object_upsert
 WITH upserted AS (
 	INSERT INTO ${"schema"}."object" (

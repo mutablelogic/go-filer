@@ -151,9 +151,12 @@ func (self *FileBackend) ReadObject(ctx context.Context, req schema.GetObjectReq
 }
 
 // List objects in the backend
-func (self FileBackend) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ObjectList, error) {
+func (self FileBackend) ListObjects(ctx context.Context, req schema.ObjectListRequest) (*schema.ObjectList, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if req.Volume != nil && types.Value(req.Volume) != self.name {
+		return nil, gofiler.ErrNotFound.Withf("volume not found: %q", types.Value(req.Volume))
 	}
 
 	rawPath := "/"
@@ -194,6 +197,15 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ListObjectsR
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+
+		// Skip hidden files and directories anywhere in the tree.
+		entry := path.Base(filename)
+		if entry != "." && strings.HasPrefix(entry, ".") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 
 		// Skip the root directory itself when listing under a directory.
@@ -260,9 +272,9 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ListObjectsR
 	}
 
 	return &schema.ObjectList{
-		ListObjectsRequest: req,
-		Count:              count,
-		Body:               body,
+		ObjectListRequest: req,
+		Count:             count,
+		Body:              body,
 	}, nil
 }
 

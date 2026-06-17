@@ -14,6 +14,7 @@ const (
 
 const (
 	VolumeListLimit   = 100
+	ObjectListLimit   = 100
 	MetadataListLimit = 100
 
 	// MaxUploadFiles is the maximum number of files accepted in a single multipart upload request.

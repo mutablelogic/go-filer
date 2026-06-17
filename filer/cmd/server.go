@@ -50,6 +50,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 			ctx.Logger().DebugContext(ctx.Context(), "registering http handlers")
 			return errors.Join(
 				httphandler.RegisterVolumeHandlers(manager, router),
+				httphandler.RegisterObjectHandlers(manager, router),
 			)
 		})
 

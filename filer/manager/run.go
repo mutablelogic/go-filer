@@ -250,7 +250,7 @@ func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.
 	// List all objects in the backend
 	var offset uint64
 	for {
-		if objects, err := backend.ListObjects(ctx, schema.ListObjectsRequest{
+		if objects, err := backend.ListObjects(ctx, schema.ObjectListRequest{
 			Recursive: true,
 			OffsetLimit: pg.OffsetLimit{
 				Offset: offset,

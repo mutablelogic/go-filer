@@ -90,14 +90,15 @@ type DeleteObjectsResponse struct {
 	Body   []Object `json:"body,omitempty"` // list of deleted objects
 }
 
-type ListObjectsRequest struct {
+type ObjectListRequest struct {
 	pg.OffsetLimit
+	Volume    *string `json:"volume,omitempty"`    // optional volume name to filter by
 	Path      *string `json:"path,omitempty"`      // optional path prefix within the backend
 	Recursive bool    `json:"recursive,omitempty"` // if true, list all objects recursively; if false, list only immediate children
 }
 
 type ObjectList struct {
-	ListObjectsRequest
+	ObjectListRequest
 	Count int       `json:"count"`          // total number of matching objects, before offset/limit
 	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
 }
@@ -140,11 +141,11 @@ func (r CreateObjectRequest) String() string {
 	return types.Stringify(r)
 }
 
-func (r ListObjectsRequest) String() string {
+func (r GetObjectRequest) String() string {
 	return types.Stringify(r)
 }
 
-func (r GetObjectRequest) String() string {
+func (r ObjectListRequest) String() string {
 	return types.Stringify(r)
 }
 
@@ -345,5 +346,55 @@ func (k ObjectTouch) Select(bind *pg.Bind, op pg.Op) (string, error) {
 		return bind.Query("filer.object_touch"), nil
 	default:
 		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectTouch operation %q", op)
+	}
+}
+
+func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	bind.Del("where")
+
+	if volume := strings.TrimSpace(types.Value(r.Volume)); volume != "" {
+		if !types.IsIdentifier(volume) {
+			return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
+		}
+		bind.Append("where", `o."volume" = `+bind.Set("volume", volume))
+	}
+
+	if path := strings.TrimSpace(types.Value(r.Path)); path != "" {
+		pathPrefix := path
+		if !strings.HasSuffix(pathPrefix, "/") {
+			pathPrefix += "/"
+		}
+
+		if r.Recursive {
+			bind.Append("where", `(
+	o."path" = `+bind.Set("path", path)+`
+	OR
+	o."path" LIKE `+bind.Set("path_like", pathPrefix+"%")+`
+)`)
+		} else {
+			bind.Append("where", `(
+	o."path" = `+bind.Set("path", path)+`
+	OR (
+		o."path" LIKE `+bind.Set("path_like", pathPrefix+"%")+`
+	AND
+		split_part(substring(o."path" from `+bind.Set("path_prefix_offset", len(pathPrefix)+1)+`), '/', 2) = ''
+	)
+)`)
+		}
+	}
+
+	if where := bind.Join("where", " AND "); where != "" {
+		bind.Set("where", "WHERE "+where)
+	} else {
+		bind.Set("where", "")
+	}
+
+	r.OffsetLimit.Bind(bind, ObjectListLimit)
+
+	switch op {
+	case pg.List:
+		return bind.Query("filer.object_list"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectListRequest operation %q", op)
 	}
 }
