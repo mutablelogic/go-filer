@@ -27,6 +27,7 @@ func (b *backend) DeleteObject(ctx context.Context, req schema.DeleteObjectReque
 		attribute.String("blob.storage_key", sk),
 		attribute.String("blob.storage_candidates", strings.Join(candidates, ",")),
 	)
+	deleteKey := sk
 
 	// Fetch attributes to return in the response.
 	// Only NotFound is tolerated (the object may have already been deleted);
