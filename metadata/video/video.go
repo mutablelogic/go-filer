@@ -2,6 +2,7 @@ package video
 
 import (
 	"context"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -34,27 +35,25 @@ func (e *videoextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`video/.*`)
 }
 
-func (e *videoextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
-	reader, err := ffmpeg.Open(path)
+func (e *videoextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+	reader, err := ffmpeg.NewReader(r)
 	if err != nil {
 		return nil, err
 	}
 	defer reader.Close()
 
 	// Add duration
-	kv := make([]schema.MetadataKV, 0, 2)
-	if duration := reader.Duration(); duration > 0 {
-		kv = schema.AppendMetadataKV(kv, metadata.VideoDurationSecs, duration.Seconds())
-		kv = schema.AppendMetadataKV(kv, metadata.VideoDuration, duration.Truncate(time.Second).String())
-	}
+	kv := schema.AppendMeta([]schema.Meta{}, metadata.VideoDurationSecs, reader.Duration().Seconds())
+	kv = schema.AppendMeta(kv, metadata.VideoDuration, reader.Duration().Truncate(time.Second).String())
 
 	// Add other metadata
 	for _, meta := range reader.Metadata() {
 		if key := sanitizeKey(meta.Key()); key != "" {
-			kv = schema.AppendMetadataKV(kv, "video-"+key, meta.Value())
+			kv = schema.AppendMeta(kv, key, meta.Value())
 		}
 	}
 
+	// Return metadata
 	return kv, nil
 }
 
@@ -73,8 +72,16 @@ func sanitizeKey(key string) string {
 		return ""
 	case "itunes-cddb-1", "itunmovi", "gapless-playback", "itunextc":
 		return ""
-	case "date":
-		return "year"
+	case "title":
+		return metadata.VideoTitle
+	case "director":
+		return metadata.VideoDirector
+	case "description":
+		return metadata.VideoDescription
+	case "synopsis":
+		return metadata.VideoSynopsis
+	case "date", "year":
+		return metadata.VideoYear
 	}
 
 	// Return lowercase and trim any leading/trailing underscores

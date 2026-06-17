@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"mime"
 	"net/url"
 	"os"
 	"path"
@@ -15,6 +14,8 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	mime "github.com/mutablelogic/go-filer/metadata/mime"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -103,9 +104,14 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 		resultPath += name
 	}
 
-	contentType := ""
+	contentType := types.ContentTypeBinary
 	if !info.IsDir() {
-		contentType = mime.TypeByExtension(path.Ext(name))
+		f, err := self.fs.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		contentType = mime.Type(f)
 	}
 
 	return &schema.Object{
@@ -227,7 +233,7 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ListObjectsR
 			objectPath += filename
 		}
 
-		contentType := ""
+		contentType := types.ContentTypeBinary
 		if !info.IsDir() {
 			contentType = mime.TypeByExtension(path.Ext(filename))
 		}

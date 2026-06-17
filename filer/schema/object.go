@@ -3,6 +3,7 @@ package schema
 import (
 	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"time"
 
@@ -19,7 +20,10 @@ import (
 // Meta is a string key-value map for user-defined object metadata.
 // Keys should be lowercase for S3 compatibility, as S3 normalizes all
 // metadata keys to lowercase.
-type Meta map[string]json.RawMessage
+type Meta struct {
+	Key   string          `json:"key,omitempty"`
+	Value json.RawMessage `json:"value,omitempty"`
+}
 
 // Object represents a single stored item returned by the API.
 type Object struct {
@@ -34,10 +38,12 @@ type ObjectKey struct {
 	Path   string `json:"path,omitempty"`
 }
 
+type ObjectTouch ObjectKey
+
 // ObjectMeta represents the metadata of an object, which can be updated.
 type ObjectMeta struct {
 	ContentType string `json:"type,omitempty"`
-	Meta        Meta   `json:"meta,omitempty"`
+	Meta        []Meta `json:"meta,omitempty"`
 }
 
 // ObjectAttr represents the attributes of an object, which are immutable and cannot be updated.
@@ -94,6 +100,29 @@ type ObjectList struct {
 	ListObjectsRequest
 	Count int       `json:"count"`          // total number of matching objects, before offset/limit
 	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+func AppendMeta(kv []Meta, key string, value any) []Meta {
+	// Ignore zero-valued values
+	if value == nil {
+		return kv
+	}
+	if reflect.ValueOf(value).IsZero() {
+		return kv
+	}
+
+	// Marshal the value to JSON
+	data, err := json.Marshal(value)
+	if err != nil {
+		return kv
+	}
+	return append(kv, Meta{
+		Key:   key,
+		Value: data,
+	})
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -165,7 +194,30 @@ func (o ObjectCreate) Insert(bind *pg.Bind) (string, error) {
 		bind.Set("type", contentType)
 	}
 
+	// Return the query
 	return bind.Query("filer.object_upsert"), nil
+}
+
+func (m Meta) Insert(bind *pg.Bind) (string, error) {
+	if volume, ok := bind.Get("volume").(string); !ok || strings.TrimSpace(volume) == "" {
+		return "", gofiler.ErrBadParameter.With("missing object volume")
+	}
+	if path, ok := bind.Get("path").(string); !ok || strings.TrimSpace(path) == "" {
+		return "", gofiler.ErrBadParameter.With("missing object path")
+	}
+	if key := strings.TrimSpace(m.Key); key == "" {
+		return "", gofiler.ErrBadParameter.With("missing metadata key")
+	} else {
+		bind.Set("key", key)
+	}
+	bind.Set("value", m.Value)
+
+	// Return the query
+	return bind.Query("filer.meta_upsert"), nil
+}
+
+func (m Meta) Update(bind *pg.Bind) error {
+	return gofiler.ErrBadParameter.With("meta update is not supported; use insert")
 }
 
 func (m ObjectMeta) Update(bind *pg.Bind) error {
@@ -188,6 +240,7 @@ func (m ObjectMeta) Update(bind *pg.Bind) error {
 		bind.Set("patch", patch)
 	}
 
+	// Return success
 	return nil
 }
 
@@ -195,13 +248,42 @@ func (m ObjectMeta) Update(bind *pg.Bind) error {
 // READER
 
 func (o *Object) Scan(row pg.Row) error {
-	return row.Scan(
+	var meta []byte
+
+	if err := row.Scan(
 		&o.Volume,
 		&o.Path,
 		&o.Size,
 		&o.ContentType,
 		&o.ETag,
 		&o.ModTime,
+		&meta,
+	); err != nil {
+		return err
+	}
+
+	if len(meta) == 0 {
+		o.Meta = nil
+		return nil
+	}
+
+	if err := json.Unmarshal(meta, &o.Meta); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *Meta) Scan(row pg.Row) error {
+	var (
+		volume string
+		path   string
+	)
+	return row.Scan(
+		&volume,
+		&path,
+		&m.Key,
+		&m.Value,
 	)
 }
 
@@ -224,13 +306,14 @@ func (l *ObjectList) ScanCount(row pg.Row) error {
 func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	if k.Volume == "" {
 		return "", httpresponse.ErrBadRequest.With("missing object volume")
+	} else {
+		bind.Set("volume", k.Volume)
 	}
 	if k.Path == "" {
 		return "", httpresponse.ErrBadRequest.With("missing object path")
+	} else {
+		bind.Set("path", k.Path)
 	}
-
-	bind.Set("volume", k.Volume)
-	bind.Set("path", k.Path)
 
 	switch op {
 	case pg.Get:
@@ -241,5 +324,26 @@ func (k ObjectKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 		return bind.Query("filer.object_patch"), nil
 	default:
 		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectKey operation %q", op)
+	}
+}
+
+func (k ObjectTouch) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	object := ObjectKey(k)
+	if object.Volume == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object volume")
+	} else {
+		bind.Set("volume", object.Volume)
+	}
+	if object.Path == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object path")
+	} else {
+		bind.Set("path", object.Path)
+	}
+
+	switch op {
+	case pg.Update:
+		return bind.Query("filer.object_touch"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectTouch operation %q", op)
 	}
 }

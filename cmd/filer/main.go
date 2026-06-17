@@ -14,12 +14,12 @@ import (
 
 	// Metadata Extractors
 	_ "github.com/mutablelogic/go-filer/metadata/audio"
+	_ "github.com/mutablelogic/go-filer/metadata/image"
+	_ "github.com/mutablelogic/go-filer/metadata/markdown"
 	_ "github.com/mutablelogic/go-filer/metadata/pdf"
+	_ "github.com/mutablelogic/go-filer/metadata/srt"
 	_ "github.com/mutablelogic/go-filer/metadata/text"
-	//_ "github.com/mutablelogic/go-filer/metadata/image"
-	//_ "github.com/mutablelogic/go-filer/metadata/markdown"
-	//_ "github.com/mutablelogic/go-filer/metadata/srt"
-	//_ "github.com/mutablelogic/go-filer/metadata/video"
+	_ "github.com/mutablelogic/go-filer/metadata/video"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -2,9 +2,7 @@ package markdown
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
+	"io"
 	"regexp"
 	"strings"
 
@@ -33,22 +31,16 @@ func (e *mdextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`text/markdown`)
 }
 
-func (e *mdextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
+func (e *mdextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
 	title := ""
 	lines := []string{}
-	kv, err := text.NewTextReader(f).Read(ctx, func(_ int, line string) error {
+	kv, err := text.NewTextReader(r).Read(ctx, func(_ int, line string) error {
 		lines = append(lines, line)
 		if title == "" {
 			trimmed := strings.TrimSpace(line)
@@ -63,7 +55,7 @@ func (e *mdextractor) ExtractMetadata(ctx context.Context, path string) ([]schem
 	}
 
 	// Now summarize the text
-	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), fmt.Sprintf("This is a markdown formatted file with filename %q.", filepath.Base(path))); err != nil {
+	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), "This is markdown content."); err != nil {
 		return kv, err
 	} else if len(kv_) > 0 {
 		kv = append(kv, kv_...)
@@ -71,7 +63,7 @@ func (e *mdextractor) ExtractMetadata(ctx context.Context, path string) ([]schem
 
 	// Append the actual title
 	if title != "" {
-		kv = schema.AppendMetadataKV(kv, metadata.TextTitle, title)
+		kv = schema.AppendMeta(kv, metadata.TextTitle, title)
 	}
 
 	// Return the metadata

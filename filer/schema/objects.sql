@@ -48,44 +48,6 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."search" (
 -- filer.search.index
 CREATE INDEX IF NOT EXISTS idx_search_tsv ON ${"schema"}."search" USING GIN("tsv");
 
--- filer.metadata
--- CREATE TABLE IF NOT EXISTS ${"schema"}."metadata" (
---     "key"         TEXT NOT NULL,
---     "etag"        TEXT NOT NULL,
---     "filename"    TEXT NOT NULL,
---     "size"        BIGINT NOT NULL,
---     "modified_at" TIMESTAMPTZ,
---     "title"       TEXT,
---     "media_type"  TEXT,
---     "summary"     TEXT,
---     "tags"        TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
---     "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
---     PRIMARY KEY ("key")
--- );
-
--- -- filer.metadata_kv
--- CREATE TABLE IF NOT EXISTS ${"schema"}."metadata_kv" (
---     "metadata"    TEXT NOT NULL,
---     "key"         TEXT NOT NULL,
---     "value"       JSONB,
---     PRIMARY KEY ("metadata", "key"),
---     CHECK ("key" ~ '^[A-Za-z_][A-Za-z0-9_-]*$'),
---     FOREIGN KEY ("metadata") REFERENCES ${"schema"}."metadata"("key") ON DELETE CASCADE
--- );
-
--- filer.metadata.tsv
-ALTER TABLE ${"schema"}."metadata"
-    ADD COLUMN IF NOT EXISTS "tsv" TSVECTOR
-    GENERATED ALWAYS AS (
-        setweight(to_tsvector('simple', coalesce("title", '')), 'A') ||
-        setweight(array_to_tsvector("tags"), 'A') ||
-        setweight(to_tsvector('simple', coalesce("summary", '')), 'B')
-    ) STORED
-;
-
--- filer.metadata.index
-CREATE INDEX IF NOT EXISTS idx_filer_metadata_tsv ON ${"schema"}."metadata" USING GIN("tsv");
-
 -- filer.notify.function
 CREATE OR REPLACE FUNCTION ${"schema"}.notify_table()
 RETURNS trigger AS $$

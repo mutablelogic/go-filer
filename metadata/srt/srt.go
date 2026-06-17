@@ -2,8 +2,7 @@ package markdown
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"io"
 	"regexp"
 	"strings"
 
@@ -32,35 +31,29 @@ func (e *srtextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^(application/x-subrip|text/srt)$`)
 }
 
-func (e *srtextractor) ExtractMetadata(ctx context.Context, path string) ([]schema.MetadataKV, error) {
+func (e *srtextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
 	var lines []string
-	metadata, err := text.NewTextReader(f).Read(ctx, func(_ int, line string) error {
+	kv, err := text.NewTextReader(r).Read(ctx, func(_ int, line string) error {
 		lines = append(lines, line)
 		return nil
 	})
 	if err != nil {
-		return metadata, err
+		return kv, err
 	}
 
 	// Now summarize the text
-	if metadata_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), fmt.Sprintf("This file contains subtitles in a file with path %q. Summarize the contents of the subtitles.", path)); err != nil {
-		return metadata, err
-	} else if len(metadata_) > 0 {
-		metadata = append(metadata, metadata_...)
+	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), "This content contains subtitles in SRT format. Summarize the subtitle content in English."); err != nil {
+		return kv, err
+	} else if len(kv_) > 0 {
+		kv = append(kv, kv_...)
 	}
 
 	// Return the metadata
-	return metadata, nil
+	return kv, nil
 }

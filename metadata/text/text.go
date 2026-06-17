@@ -107,23 +107,16 @@ func (e *textextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`text/plain`)
 }
 
-func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.MetadataKV, error) {
+func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := NewTextSummarizer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Open the file
-	f, ok := r.(io.ReadCloser)
-	if !ok {
-		f = io.NopCloser(r)
-	}
-	defer f.Close()
-
 	// Read the lines, capped by the model's token limit
 	var lines []string
-	metadata, err := NewTextReader(f).Read(ctx, func(num int, line string) error {
+	metadata, err := NewTextReader(r).Read(ctx, func(num int, line string) error {
 		lines = append(lines, line)
 		return nil
 	})
@@ -145,7 +138,7 @@ func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sch
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - READER
 
-func (r *textreader) Read(ctx context.Context, fn func(int, string) error) ([]schema.MetadataKV, error) {
+func (r *textreader) Read(ctx context.Context, fn func(int, string) error) ([]schema.Meta, error) {
 	var tokens float64
 	for r.scanner.Scan() {
 		if err := ctx.Err(); err != nil {
@@ -174,10 +167,7 @@ func (r *textreader) Read(ctx context.Context, fn func(int, string) error) ([]sc
 	}
 
 	// Append the line count metadata
-	metadata := schema.AppendMetadataKV([]schema.MetadataKV{}, metadata.TextLines, r.linecount)
-
-	// Return the metadata
-	return metadata, nil
+	return schema.AppendMeta([]schema.Meta{}, metadata.TextLines, r.linecount), nil
 }
 
 func (r *textreader) LineCount() int {
@@ -187,7 +177,7 @@ func (r *textreader) LineCount() int {
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - SUMMARIZER
 
-func (r *textsummarizer) Summarize(ctx context.Context, text string, prompts ...string) ([]schema.MetadataKV, error) {
+func (r *textsummarizer) Summarize(ctx context.Context, text string, prompts ...string) ([]schema.Meta, error) {
 	prompts = append([]string{SystemPrompt}, prompts...)
 	opts := []llmopt.Opt{
 		llmopt.AddString(llmopt.SystemPromptKey, strings.Join(prompts, "\n\n")),
@@ -207,12 +197,11 @@ func (r *textsummarizer) Summarize(ctx context.Context, text string, prompts ...
 	}
 
 	// Append the summarization metadata
-	kv := []schema.MetadataKV{}
-	kv = schema.AppendMetadataKV(kv, metadata.TextAuthor, r.Author)
-	kv = schema.AppendMetadataKV(kv, metadata.TextTitle, r.Title)
-	kv = schema.AppendMetadataKV(kv, metadata.TextSummary, r.Summary)
-	kv = schema.AppendMetadataKV(kv, metadata.TextTags, r.Keywords)
-	kv = schema.AppendMetadataKV(kv, metadata.TextLanguage, r.Language)
+	kv := schema.AppendMeta([]schema.Meta{}, metadata.TextAuthor, r.Author)
+	kv = schema.AppendMeta(kv, metadata.TextTitle, r.Title)
+	kv = schema.AppendMeta(kv, metadata.TextSummary, r.Summary)
+	kv = schema.AppendMeta(kv, metadata.TextTags, r.Keywords)
+	kv = schema.AppendMeta(kv, metadata.TextLanguage, r.Language)
 
 	// Return success
 	return kv, nil

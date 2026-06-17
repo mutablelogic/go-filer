@@ -1,4 +1,4 @@
-package manager
+package mime
 
 import (
 	"io"
@@ -53,6 +53,17 @@ func Type(r io.Reader) string {
 		}
 	} else if ct, err := byReader("", r); err == nil {
 		return ct
+	}
+	return types.ContentTypeBinary
+}
+
+func TypeByExtension(ext string) string {
+	ext = strings.ToLower(ext)
+	if ct, ok := wellKnownMIME[ext]; ok {
+		return ct
+	}
+	if t := mime.TypeByExtension(ext); t != "" {
+		return t
 	}
 	return types.ContentTypeBinary
 }

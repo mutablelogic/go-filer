@@ -35,7 +35,7 @@ func (e *audioextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`audio/.*`)
 }
 
-func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.MetadataKV, error) {
+func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
 	reader, err := ffmpeg.NewReader(r)
 	if err != nil {
 		return nil, err
@@ -43,21 +43,22 @@ func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sc
 	defer reader.Close()
 
 	// Add duration
-	kv := make([]schema.MetadataKV, 0, 2)
-	if duration := reader.Duration(); duration > 0 {
-		kv = schema.AppendMetadataKV(kv, metadata.AudioDurationSecs, duration.Seconds())
-		kv = schema.AppendMetadataKV(kv, metadata.AudioDuration, duration.Truncate(time.Second).String())
-	}
+	kv := schema.AppendMeta([]schema.Meta{}, metadata.AudioDurationSecs, reader.Duration().Seconds())
+	kv = schema.AppendMeta(kv, metadata.AudioDuration, reader.Duration().Truncate(time.Second).String())
 
 	// Add other metadata
 	for _, meta := range reader.Metadata() {
 		if key := sanitizeKey(meta.Key()); key != "" {
-			kv = schema.AppendMetadataKV(kv, key, meta.Value())
+			kv = schema.AppendMeta(kv, key, meta.Value())
 		}
 	}
 
+	// Return metadata
 	return kv, nil
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
 
 func sanitizeKey(key string) string {
 	key = strings.ToLower(key)

@@ -35,10 +35,11 @@ func New(ctx context.Context, opts ...Opt) (_ *Manager, err error) {
 ////////////////////////////////////////////////////////////////////////////////
 // GET METADATA
 
-func (m *Manager) Get(ctx context.Context, mimeType string, r io.Reader) ([]schema.MetadataKV, error) {
+func (m *Manager) Get(ctx context.Context, mimeType string, r io.Reader) ([]schema.Meta, error) {
 	extractor, err := metadata.Get(mimeType)
 	if err != nil {
-		return nil, err
+		// It's only a warning if we couldn't find an extractor
+		return []schema.Meta{}, err
 	}
 	// Extract metadata does not produce errors, only warnings
 	return extractor.ExtractMetadata(ctx, r)

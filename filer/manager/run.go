@@ -69,21 +69,27 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	})
 
 	// Register a worker to process volume indexing jobs
+	warnChan := make(chan error, 100)
+	defer close(warnChan)
 	indexQueue, err := manager.queue.RegisterQueue(ctx, "index-object", pgqueueschema.QueueMeta{
 		TTL:         types.Ptr(time.Duration(15 * time.Minute)),
 		Retries:     types.Ptr(uint64(3)),
 		RetryDelay:  types.Ptr(time.Minute),
 		Concurrency: types.Ptr(uint64(3)),
 	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
+		// Get the payload
 		var object schema.Object
 		if err := json.Unmarshal(payload, &object); err != nil {
-			return nil, fmt.Errorf("invalid payload: %w", err)
+			return nil, gofiler.ErrInternalServerError.Withf("invalid payload: %v", err.Error())
 		}
+
+		// Index the object
 		logger.DebugContext(ctx, "Index object", "object", types.Stringify(object))
-		if err := manager.indexObject(ctx, types.Ptr(object)); err != nil {
-			return nil, fmt.Errorf("failed to index object: %w", err)
+		if object, err := manager.indexObject(ctx, types.Ptr(object), warnChan); err != nil {
+			return nil, gofiler.ErrInternalServerError.Withf("failed to index object: %v", err.Error())
+		} else {
+			return object, nil
 		}
-		return nil, nil
 	})
 	if err != nil {
 		return err
@@ -122,6 +128,8 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 			if err := manager.reindexVolumes(ctx, indexQueue, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to reindex volumes", "error", err.Error())
 			}
+		case warn := <-warnChan:
+			logger.WarnContext(ctx, "warning", "error", warn.Error())
 		}
 	}
 }
@@ -129,11 +137,11 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) indexObject(ctx context.Context, object *schema.Object) (err error) {
+func (manager *Manager) indexObject(ctx context.Context, object *schema.Object, warnChan chan<- error) (_ *schema.Object, err error) {
 	// Obtain the backend of the object - backend might be disabled, so don't error
 	backend := manager.volumes.Get(object.Volume)
 	if backend == nil {
-		return nil
+		return nil, nil
 	}
 
 	// Read the object from the backend and extract metadata
@@ -141,32 +149,47 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object) 
 		Path: object.Path,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		err = errors.Join(err, reader.Close())
 	}()
 
-	// TODO: Determine if we need to reindex this object
-
-	// Get the metadata for the object
-	metadata, err := manager.metadata.Get(ctx, object.ContentType, reader)
-	if metadata == nil && err != nil {
-		return err
+	// Get object from database, and determine if we need to update metadata
+	existing, err := manager.GetObject(ctx, object.ObjectKey)
+	if errors.Is(err, pg.ErrNotFound) {
+		// Continue
 	} else if err != nil {
-		fmt.Println("Failed to get metadata for object", "object", types.Stringify(object), "error", err.Error())
+		return nil, err
+	} else {
+		matched := false
+		if existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag) {
+			matched = true
+		} else if existing.ModTime.IsZero() == false && object.ModTime.IsZero() == false && existing.ModTime.Truncate(time.Second).Equal(object.ModTime.Truncate(time.Second)) {
+			matched = true
+		}
+		if matched {
+			// Touch the object to update indexed_at, but skip re-extracting metadata since it hasn't changed.
+			if err := manager.touchObject(ctx, object.ObjectKey); err != nil {
+				return nil, err
+			}
+			return existing, nil
+		}
 	}
 
-	// Make a map of the metadata for easier access when creating the object in the database
-	metamap := make(map[string]json.RawMessage, len(metadata))
-	for _, meta := range metadata {
-		metamap[meta.Key] = meta.Value
+	// Get the metadata for the object - if error is returned, it's a warning only if
+	// no metadata could be extracted, otherwise it's an error
+	metadata, err := manager.metadata.Get(ctx, object.ContentType, reader)
+	if err != nil {
+		if metadata == nil {
+			return nil, err
+		} else {
+			warnChan <- fmt.Errorf("failed to extract metadata for object %q: %w", object.Path, err)
+		}
 	}
 
-	fmt.Println("createObject", types.Stringify(object))
-
-	// Create the object in a transaction
-	_, err = manager.createObject(ctx, schema.ObjectCreate{
+	// Create the object in a transaction, and touch the volume's indexed_at
+	return manager.createObject(ctx, schema.ObjectCreate{
 		ObjectKey: schema.ObjectKey{
 			Volume: object.Volume,
 			Path:   object.Path,
@@ -179,21 +202,9 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object) 
 		},
 		ObjectMeta: schema.ObjectMeta{
 			ContentType: object.ContentType,
-			Meta:        metamap,
+			Meta:        metadata,
 		},
 	})
-	if err != nil {
-		return err
-	}
-
-	// Touch indexed_at for the volume
-	var touched schema.Volume
-	if err := manager.PoolConn.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
-		return err
-	}
-
-	// Return success
-	return nil
 }
 
 func (manager *Manager) reindexVolumes(ctx context.Context, queue *pgqueueschema.Queue, logger *slog.Logger) error {

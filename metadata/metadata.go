@@ -18,7 +18,7 @@ type Extractor interface {
 	MediaType() *regexp.Regexp
 
 	// Extract metadata from the file at the given path
-	ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.MetadataKV, error)
+	ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
