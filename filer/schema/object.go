@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -105,10 +106,20 @@ type ObjectList struct {
 	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
 }
 
+var (
+	metaKeyLeadInvalid = regexp.MustCompile(`^[^A-Za-z_]+`)
+	metaKeyBodyInvalid = regexp.MustCompile(`[^A-Za-z0-9_-]`)
+)
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
 func AppendMeta(kv []Meta, key string, value any) []Meta {
+	key = sanitizeMetaKey(key)
+	if key == "" {
+		return kv
+	}
+
 	// Ignore zero-valued values
 	if value == nil {
 		return kv
@@ -122,10 +133,64 @@ func AppendMeta(kv []Meta, key string, value any) []Meta {
 	if err != nil {
 		return kv
 	}
+
+	// PostgreSQL jsonb rejects Unicode NUL (\u0000) in text values. Sanitize
+	// string values by removing actual NUL runes, then re-encode JSON.
+	var jsonValue any
+	if err := json.Unmarshal(data, &jsonValue); err == nil {
+		jsonValue = stripNULRunes(jsonValue)
+		if data_, err := json.Marshal(jsonValue); err == nil {
+			data = data_
+		}
+	}
+
 	return append(kv, Meta{
 		Key:   key,
 		Value: data,
 	})
+}
+
+func sanitizeMetaKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+
+	// Enforce CHECK key ~ '^[A-Za-z_][A-Za-z0-9_-]*$' by replacing invalid
+	// characters with '_' and forcing the first character to be valid.
+	key = metaKeyBodyInvalid.ReplaceAllString(key, "_")
+	if key == "" {
+		return ""
+	}
+	key = metaKeyLeadInvalid.ReplaceAllString(key, "_")
+	if key == "" {
+		return "_"
+	}
+	return key
+}
+
+func stripNULRunes(v any) any {
+	switch value := v.(type) {
+	case string:
+		return strings.Map(func(r rune) rune {
+			if r == 0 {
+				return -1
+			}
+			return r
+		}, value)
+	case []any:
+		for i := range value {
+			value[i] = stripNULRunes(value[i])
+		}
+		return value
+	case map[string]any:
+		for k := range value {
+			value[k] = stripNULRunes(value[k])
+		}
+		return value
+	default:
+		return value
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -280,7 +345,7 @@ func (m Meta) Insert(bind *pg.Bind) (string, error) {
 	if path, ok := bind.Get("path").(string); !ok || strings.TrimSpace(path) == "" {
 		return "", gofiler.ErrBadParameter.With("missing object path")
 	}
-	if key := strings.TrimSpace(m.Key); key == "" {
+	if key := sanitizeMetaKey(m.Key); key == "" {
 		return "", gofiler.ErrBadParameter.With("missing metadata key")
 	} else {
 		bind.Set("key", key)

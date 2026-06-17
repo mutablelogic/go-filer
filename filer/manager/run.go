@@ -37,7 +37,6 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// Subscribe to events and forward them to the volumeChange channel
 	volumeChange := make(chan broadcaster.ChangeNotification, 100)
-	defer close(volumeChange)
 	if err := events.Subscribe(ctx, func(event broadcaster.ChangeNotification) {
 		switch event.Table {
 		case "volume":
@@ -56,7 +55,6 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// Register a ticker to syncronize the volume registry every 5 minutes
 	syncVolumesTicker := make(chan json.RawMessage, 100)
-	defer close(syncVolumesTicker)
 	_, err = manager.queue.RegisterTicker(ctx, "sync-volumes-ticker", pgqueueschema.TickerMeta{
 		Interval: types.Ptr(time.Minute * 5),
 	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -66,7 +64,6 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// Register a ticker to reindex volumes every 5 minutes
 	reindexVolumesTicker := make(chan json.RawMessage, 100)
-	defer close(reindexVolumesTicker)
 	_, err = manager.queue.RegisterTicker(ctx, "reindex-volumes-ticker", pgqueueschema.TickerMeta{
 		Interval: types.Ptr(time.Minute * 5),
 	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -77,7 +74,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	// Register a worker to process volume indexing jobs
 	warnChan := make(chan error, 100)
 	indexQueue, err := manager.queue.RegisterQueue(ctx, "index-object", pgqueueschema.QueueMeta{
-		TTL:         types.Ptr(time.Duration(15 * time.Minute)),
+		TTL:         types.Ptr(time.Duration(5 * time.Minute)),
 		Retries:     types.Ptr(uint64(3)),
 		RetryDelay:  types.Ptr(time.Minute),
 		Concurrency: types.Ptr(uint64(3)),
@@ -100,41 +97,73 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
+	// Allow graceful queue drain to cover task TTL plus pgqueue's force-release
+	// grace period, with a small buffer for cleanup/logging.
+	drainTimeout := types.Value(indexQueue.TTL) + time.Minute + 30*time.Second
+	if drainTimeout <= 0 {
+		drainTimeout = 90 * time.Second
+	}
+
 	// Run the queue in the background; close warnChan once all tasks have finished.
+	queueDone := make(chan struct{})
 	go func() {
+		defer close(queueDone)
 		defer close(warnChan)
 		if err := manager.queue.Run(ctx, logger); err != nil {
 			logger.ErrorContext(ctx, "queue error", "error", err.Error())
 		}
 	}()
 
+	ctxDone := ctx.Done()
+	var shutdownTimer *time.Timer
+	var shutdownTimeout <-chan time.Time
+	volumeChangeC := volumeChange
+	syncVolumesTickerC := syncVolumesTicker
+	reindexVolumesTickerC := reindexVolumesTicker
+	defer func() {
+		if shutdownTimer != nil {
+			shutdownTimer.Stop()
+		}
+	}()
+
 	// Now start the runloop, which processes all the events
 	for {
 		select {
-		case <-ctx.Done():
-			// Stop scheduling new work; keep looping to drain warnings until the queue finishes.
+		case <-ctxDone:
+			// Stop scheduling new work; keep looping only to drain warnings until queue shutdown.
+			ctxDone = nil
+			volumeChangeC = nil
+			syncVolumesTickerC = nil
+			reindexVolumesTickerC = nil
 			ctx = context.WithoutCancel(ctx)
+			shutdownTimer = time.NewTimer(drainTimeout)
+			shutdownTimeout = shutdownTimer.C
+		case <-queueDone:
+			queueDone = nil
 		case warn, ok := <-warnChan:
 			if !ok {
 				// Queue has shut down and all tasks are done.
 				return nil
 			}
 			logger.WarnContext(ctx, "warning", "error", warn.Error())
-		case event := <-volumeChange:
+		case <-shutdownTimeout:
+			logger.WarnContext(ctx, "forcing shutdown after timeout while draining queue")
+			return nil
+		case event := <-volumeChangeC:
 			logger.DebugContext(ctx, "Event", "event", types.Stringify(event))
 
 			// Syncronize the volume registry
 			if err := manager.syncVolumes(ctx, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
 			}
-		case <-syncVolumesTicker:
+		case <-syncVolumesTickerC:
 			logger.DebugContext(ctx, "Event", "event", "sync-volumes-ticker")
 
 			// Syncronize the volume registry
 			if err := manager.syncVolumes(ctx, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
 			}
-		case <-reindexVolumesTicker:
+		case <-reindexVolumesTickerC:
 			logger.DebugContext(ctx, "Event", "event", "reindex-volumes-ticker")
 
 			// Look for a volume that needs to be reindexed, and reindex it

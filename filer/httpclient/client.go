@@ -2,7 +2,6 @@ package httpclient
 
 import (
 	// Packages
-
 	client "github.com/mutablelogic/go-client"
 )
 
