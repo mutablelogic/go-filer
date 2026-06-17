@@ -1,7 +1,6 @@
 package schema
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -133,9 +132,16 @@ func AppendMeta(kv []Meta, key string, value any) []Meta {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return kv
-	} else {
-		// PostgreSQL jsonb rejects Unicode NUL (\u0000) in text values.
-		data = bytes.ReplaceAll(data, []byte(`\u0000`), []byte(""))
+	}
+
+	// PostgreSQL jsonb rejects Unicode NUL (\u0000) in text values. Sanitize
+	// string values by removing actual NUL runes, then re-encode JSON.
+	var jsonValue any
+	if err := json.Unmarshal(data, &jsonValue); err == nil {
+		jsonValue = stripNULRunes(jsonValue)
+		if data_, err := json.Marshal(jsonValue); err == nil {
+			data = data_
+		}
 	}
 
 	return append(kv, Meta{
@@ -161,6 +167,30 @@ func sanitizeMetaKey(key string) string {
 		return "_"
 	}
 	return key
+}
+
+func stripNULRunes(v any) any {
+	switch value := v.(type) {
+	case string:
+		return strings.Map(func(r rune) rune {
+			if r == 0 {
+				return -1
+			}
+			return r
+		}, value)
+	case []any:
+		for i := range value {
+			value[i] = stripNULRunes(value[i])
+		}
+		return value
+	case map[string]any:
+		for k := range value {
+			value[k] = stripNULRunes(value[k])
+		}
+		return value
+	default:
+		return value
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////

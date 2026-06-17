@@ -12,9 +12,9 @@ OS ?= $(shell uname | tr A-Z a-z)
 VERSION ?= $(shell git describe --tags --always | sed 's/^v//')
 
 # Set build flags
-VERSION_PKG = "github.com/mutablelogic/go-server/pkg/version"
-BUILD_LD_FLAGS += -X $(VERSION_PKG)/GitTag=$(shell git describe --tags --always)
-BUILD_LD_FLAGS += -X $(VERSION_PKG)/GitBranch=$(shell git name-rev HEAD --name-only --always)
+VERSION_PKG = github.com/mutablelogic/go-server/pkg/version
+BUILD_LD_FLAGS += -X $(VERSION_PKG).GitTag=$(shell git describe --tags --always)
+BUILD_LD_FLAGS += -X $(VERSION_PKG).GitBranch=$(shell git name-rev HEAD --name-only --always)
 BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}" 
 
 # Docker
@@ -41,7 +41,7 @@ $(CMD_DIR): go-dep mkdir
 
 # Build the docker image
 .PHONY: docker
-docker: docker-dep ${NPM_DIR}
+docker: docker-dep
 	@echo build docker image ${DOCKER_TAG} OS=${OS} ARCH=${ARCH} SOURCE=${DOCKER_SOURCE} VERSION=${VERSION}
 	@${DOCKER} build \
 		--tag ${DOCKER_TAG} \
