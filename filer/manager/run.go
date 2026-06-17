@@ -76,7 +76,6 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// Register a worker to process volume indexing jobs
 	warnChan := make(chan error, 100)
-	defer close(warnChan)
 	indexQueue, err := manager.queue.RegisterQueue(ctx, "index-object", pgqueueschema.QueueMeta{
 		TTL:         types.Ptr(time.Duration(15 * time.Minute)),
 		Retries:     types.Ptr(uint64(3)),
@@ -101,8 +100,9 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
-	// Run the queue in the background
+	// Run the queue in the background; close warnChan once all tasks have finished.
 	go func() {
+		defer close(warnChan)
 		if err := manager.queue.Run(ctx, logger); err != nil {
 			logger.ErrorContext(ctx, "queue error", "error", err.Error())
 		}
@@ -112,7 +112,14 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			// Stop scheduling new work; keep looping to drain warnings until the queue finishes.
+			ctx = context.WithoutCancel(ctx)
+		case warn, ok := <-warnChan:
+			if !ok {
+				// Queue has shut down and all tasks are done.
+				return nil
+			}
+			logger.WarnContext(ctx, "warning", "error", warn.Error())
 		case event := <-volumeChange:
 			logger.DebugContext(ctx, "Event", "event", types.Stringify(event))
 
@@ -134,8 +141,6 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 			if err := manager.reindexVolumes(ctx, indexQueue, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to reindex volumes", "error", err.Error())
 			}
-		case warn := <-warnChan:
-			logger.WarnContext(ctx, "warning", "error", warn.Error())
 		}
 	}
 }

@@ -46,12 +46,12 @@ type imagesummarizer struct {
 // GLOBALS
 
 const (
-	OllamaUrl   = "http://nestor.local:11434"
+	OllamaUrl   = "http://nestor.tailnet-db1f.ts.net:11434"
 	OllamaModel = "qwen3.5"
 )
 
 var (
-	ollamaOnce   sync.Once
+	ollamaMu     sync.Mutex
 	ollamaClient *ollama.Client
 	ollamaModel  *llmschema.Model
 )
@@ -64,21 +64,20 @@ func init() {
 }
 
 func NewImageSummarizer(ctx context.Context) (*imagesummarizer, error) {
-	var err error
-	ollamaOnce.Do(func() {
-		if client, err_ := ollama.New(OllamaUrl, client.OptTimeout(5*time.Minute)); err_ != nil {
-			err = err_
-			return
-		} else if model, err_ := client.GetModel(ctx, OllamaModel); err_ != nil {
-			err = err_
-			return
-		} else {
-			ollamaClient = client
-			ollamaModel = model
+	ollamaMu.Lock()
+	defer ollamaMu.Unlock()
+
+	if ollamaClient == nil {
+		c, err := ollama.New(OllamaUrl, client.OptTimeout(5*time.Minute))
+		if err != nil {
+			return nil, err
 		}
-	})
-	if err != nil {
-		return nil, err
+		model, err := c.GetModel(ctx, OllamaModel)
+		if err != nil {
+			return nil, err
+		}
+		ollamaClient = c
+		ollamaModel = model
 	}
 	return new(imagesummarizer), nil
 }
@@ -133,6 +132,9 @@ func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sc
 // PUBLIC METHODS - SUMMARIZER
 
 func (r *imagesummarizer) Summarize(ctx context.Context, data []byte) error {
+	if ollamaClient == nil {
+		return nil
+	}
 	opts := []llmopt.Opt{
 		llmopt.SetBool(llmopt.ThinkingKey, false),
 		ollama.WithJSONOutput(jsonschema.MustFor[imagesummarizer]()),
