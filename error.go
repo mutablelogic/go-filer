@@ -3,6 +3,7 @@ package gofiler
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	// Packages
 	"github.com/mutablelogic/go-pg"
@@ -21,6 +22,7 @@ const (
 	ErrInternalServerError
 	ErrServiceUnavailable
 	ErrForbidden
+	ErrNotIndexed
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -50,6 +52,8 @@ func (e Err) Error() string {
 		return "service unavailable"
 	case ErrForbidden:
 		return "forbidden"
+	case ErrNotIndexed:
+		return "not indexed"
 	}
 	return fmt.Sprintf("error code %d", int(e))
 }
@@ -78,6 +82,8 @@ func (e Err) HTTP() httpresponse.Err {
 		return httpresponse.ErrServiceUnavailable
 	case ErrForbidden:
 		return httpresponse.ErrForbidden
+	case ErrNotIndexed:
+		return httpresponse.Err(http.StatusNotModified)
 	default:
 		return httpresponse.ErrInternalError
 	}
@@ -87,31 +93,35 @@ func HTTPErr(err error) error {
 	if err == nil {
 		return nil
 	}
-
+	// Check for http error
 	var httpErr httpresponse.Err
 	if errors.As(err, &httpErr) {
 		return err
 	}
 
+	// Check for database error
+	if pg.IsDatabaseError(err) {
+		return pg.HTTPError(err)
+	}
+
+	// Check for filter error
 	var schemaErr Err
 	if errors.As(err, &schemaErr) {
 		return schemaErr.HTTP().With(err)
 	}
 
 	switch {
-	case errors.Is(err, pg.ErrNotFound):
+	case errors.Is(err, ErrNotFound):
 		return httpresponse.ErrNotFound.With(err)
-	case errors.Is(err, pg.ErrBadParameter):
+	case errors.Is(err, ErrBadParameter):
 		return httpresponse.ErrBadRequest.With(err)
-	case errors.Is(err, pg.ErrConflict):
+	case errors.Is(err, ErrConflict):
 		return httpresponse.ErrConflict.With(err)
-	case errors.Is(err, pg.ErrNotImplemented):
+	case errors.Is(err, ErrNotImplemented):
 		return httpresponse.ErrNotImplemented.With(err)
-	case errors.Is(err, pg.ErrNotAvailable):
+	case errors.Is(err, ErrServiceUnavailable):
 		return httpresponse.ErrServiceUnavailable.With(err)
-	case errors.Is(err, pg.ErrDatabase):
+	default:
 		return httpresponse.ErrInternalError.With(err)
 	}
-
-	return httpresponse.ErrInternalError.With(err)
 }

@@ -1,0 +1,124 @@
+package blob
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+
+	// Packages
+	schema "github.com/mutablelogic/go-filer/filer/schema"
+	attribute "go.opentelemetry.io/otel/attribute"
+	blob "gocloud.dev/blob"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+// ListObjects lists objects in the backend.
+// If a single object exists at the path, it returns just that object.
+// Otherwise, it treats the path as a prefix and lists all matching objects.
+// Use Recursive=true to list nested objects, or Recursive=false for immediate children only.
+// Response.Count reflects the total number of matches before Offset/Limit are applied.
+// Limit=0 returns only the count (Body is nil); Limit>0 returns up to Limit objects starting at Offset.
+func (b *backend) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (*schema.ListObjectsResponse, error) {
+	sk := b.key(req.Path)
+	candidates := b.storageKeyCandidates(sk)
+	addSpanAttrs(ctx,
+		attribute.String("blob.path", cleanPath(req.Path)),
+		attribute.String("blob.storage_key", sk),
+		attribute.String("blob.storage_candidates", strings.Join(candidates, ",")),
+	)
+
+	// Collect all matching objects first so Count can reflect the full result set
+	// before Offset/Limit pagination is applied.
+	var all []schema.Object
+
+	// Check if this path refers to a single real object (not a phantom directory)
+	attrs, err := b.isRealObject(ctx, sk)
+	if err != nil {
+		return nil, err
+	}
+	if attrs != nil {
+		obj := b.attrsToObject(cleanPath(req.Path), attrs)
+		obj.Volume = b.Name()
+		all = []schema.Object{*obj}
+	} else {
+		// Object doesn't exist (or key is empty for root), treat as prefix.
+		// For non-directory paths, probe the raw key prefix first so we can still
+		// discover the exact object when backends fail HeadObject but list it.
+		prefix := strings.TrimSuffix(sk, "/")
+		exactPrefixProbe := sk != "" && !strings.HasSuffix(req.Path, "/")
+		if exactPrefixProbe {
+			prefix = sk
+		} else if prefix != "" {
+			prefix = prefix + "/"
+		}
+		addSpanAttrs(ctx, attribute.String("blob.list_prefix", prefix))
+
+		// List objects with prefix
+		var delim string
+		if !req.Recursive {
+			delim = "/"
+		}
+		iter := b.bucket.List(&blob.ListOptions{
+			Prefix:    prefix,
+			Delimiter: delim,
+		})
+
+		for {
+			obj, err := iter.Next(ctx)
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				return nil, blobErr(err, b.Name()+":"+req.Path)
+			}
+
+			// Skip synthetic prefix placeholders, but keep exact-key matches when
+			// probing a concrete object path.
+			if obj.Key == prefix && !exactPrefixProbe {
+				continue
+			}
+
+			if exactPrefixProbe && obj.Key != sk && !strings.HasPrefix(obj.Key, sk+"/") {
+				continue
+			}
+
+			o := schema.Object{
+				Volume:  b.Name(),
+				Path:    b.pathFromStorageKey(obj.Key),
+				IsDir:   obj.IsDir,
+				Size:    obj.Size,
+				ModTime: obj.ModTime,
+			}
+			if len(obj.MD5) > 0 {
+				o.ETag = normaliseETag(fmt.Sprintf("%x", obj.MD5))
+			}
+			all = append(all, o)
+		}
+	}
+
+	// Apply Offset and Limit.
+	start := req.Offset
+	if start < 0 {
+		start = 0
+	}
+	if start > len(all) {
+		start = len(all)
+	}
+	page := all[start:]
+	if req.Limit > 0 && req.Limit < len(page) {
+		page = page[:req.Limit]
+	}
+
+	// Limit==0 is count-only: return the total with no body.
+	if req.Limit == 0 {
+		page = nil
+	}
+
+	return &schema.ListObjectsResponse{
+		Name:  b.Name(),
+		Count: len(all),
+		Body:  page,
+	}, nil
+}

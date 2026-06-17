@@ -31,14 +31,11 @@ type Backend interface {
 	GetObject(context.Context, schema.GetObjectRequest) (*schema.Object, error)
 
 	// Read object content from the backend. Caller must close the returned reader.
-	ReadObject(context.Context, schema.ReadObjectRequest) (io.ReadCloser, *schema.Object, error)
+	ReadObject(context.Context, schema.GetObjectRequest) (io.ReadCloser, *schema.Object, error)
 
 	// List objects in the backend
-	ListObjects(context.Context, schema.ListObjectsRequest) (*schema.ListObjectsResponse, error)
+	ListObjects(context.Context, schema.ListObjectsRequest) (*schema.ObjectList, error)
 
 	// Delete objects in the backend (single object or prefix)
 	DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error)
-
-	// Delete a single object from the backend
-	DeleteObject(context.Context, schema.DeleteObjectRequest) (*schema.Object, error)
 }

@@ -2,31 +2,22 @@ package schema
 
 import (
 	_ "embed"
-	"time"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
-// TYPES
+// CONSTANTS
 
 const (
 	DefaultSchema = "filer"
+	NotifyChannel = "filer_changes"
+)
 
-	// HTTP headers
-	ObjectMetaHeader = "X-Object-Meta"
+const (
+	VolumeListLimit   = 100
+	MetadataListLimit = 100
 
-	// prefix for user-defined metadata headers on PUT
-	ObjectMetaKeyPrefix = "X-Meta-"
-
-	// AttrLastModified is the metadata key used to store the object modification time.
-	// S3 normalizes metadata keys to lowercase, so we use lowercase for consistency.
-	AttrLastModified = "last-modified"
-
-	// IndexingQueueName is the name of the queue used by the manager to schedule
-	// background tasks for indexing objects.
-	IndexingQueueName = "filer-index"
-
-	// Maximum of 15 minutes for each indexing task
-	IndexingTTL = time.Minute * 15
+	// MaxUploadFiles is the maximum number of files accepted in a single multipart upload request.
+	MaxUploadFiles = 1000
 )
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -1,39 +1,80 @@
--- filer.object
-CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
+-- filer.volume
+CREATE TABLE IF NOT EXISTS ${"schema"}."volume" (
     "name"        TEXT NOT NULL,
-    "path"        TEXT NOT NULL,        -- relative or absolute path
-    "size"        BIGINT,
-    "modified_at" TIMESTAMPTZ,
-    "type"        TEXT,
+    "url"         TEXT NOT NULL,
+    "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
+    "index_delta" INTERVAL,
+    "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    "indexed_at"  TIMESTAMPTZ,
+    PRIMARY KEY ("name"),
+    CHECK ("name" ~ '^[a-z_][a-z0-9_]*$'),
+    UNIQUE ("url")
+);
+
+-- filter.object
+CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
+    "volume"      TEXT NOT NULL,
+    "path"        TEXT NOT NULL,        -- absolute path or S3 key
+    "size"        BIGINT NOT NULL,
+    "type"        TEXT NOT NULL,
     "etag"        TEXT,
-    "meta"        JSONB NOT NULL DEFAULT '{}'::JSONB,
-    "indexed_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY ("name", "path")
+    "modified_at" TIMESTAMPTZ NOT NULL,
+    "indexed_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY ("volume", "path"),
+    FOREIGN KEY ("volume") REFERENCES ${"schema"}."volume"("name") ON DELETE CASCADE
 );
 
--- filer.metadata
-CREATE TABLE IF NOT EXISTS ${"schema"}."metadata" (
-    "name"       TEXT NOT NULL,
+-- filter.meta
+CREATE TABLE IF NOT EXISTS ${"schema"}."meta" (
+    "volume"      TEXT NOT NULL,
+    "path"        TEXT NOT NULL,
+    "key"         TEXT NOT NULL,
+    "value"       JSONB,
+    PRIMARY KEY ("volume", "path", "key"),
+    CHECK ("key" ~ '^[A-Za-z_][A-Za-z0-9_-]*$'),
+    FOREIGN KEY ("volume", "path") REFERENCES ${"schema"}."object"("volume", "path") ON DELETE CASCADE
+);
+
+-- filer.search
+CREATE TABLE IF NOT EXISTS ${"schema"}."search" (
+    "volume"     TEXT NOT NULL,
     "path"       TEXT NOT NULL,
-    "title"      TEXT,
-    "summary"    TEXT,
-    "text"       TEXT,
-    "tags"       TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-    "created_at" TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY ("name", "path"),
-    FOREIGN KEY ("name", "path") REFERENCES ${"schema"}."object"("name", "path") ON DELETE CASCADE
+    "tsv"        TSVECTOR NOT NULL,
+    "indexed_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY ("volume", "path"),
+    FOREIGN KEY ("volume", "path") REFERENCES ${"schema"}."object"("volume", "path") ON DELETE CASCADE
 );
 
--- filer.metadata.tsv
-ALTER TABLE ${"schema"}."metadata"
-    ADD COLUMN IF NOT EXISTS "tsv" TSVECTOR
-    GENERATED ALWAYS AS (
-        setweight(to_tsvector('simple', coalesce("title", '')), 'A') ||
-        setweight(array_to_tsvector("tags"), 'A') ||
-        setweight(to_tsvector('simple', coalesce("summary", '')), 'B') ||
-        setweight(to_tsvector('simple', coalesce("text", '')), 'C')
-    ) STORED
-;
+-- filer.search.index
+CREATE INDEX IF NOT EXISTS idx_search_tsv ON ${"schema"}."search" USING GIN("tsv");
 
--- filer.metadata.index
-CREATE INDEX IF NOT EXISTS idx_file_metadata_tsv ON ${"schema"}."metadata" USING GIN("tsv");
+-- filer.notify.function
+CREATE OR REPLACE FUNCTION ${"schema"}.notify_table()
+RETURNS trigger AS $$
+DECLARE
+  lock_id BIGINT;
+BEGIN
+  lock_id := hashtextextended(TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME, 0);
+  IF pg_try_advisory_xact_lock(lock_id) THEN
+    PERFORM pg_notify(
+      ${'notify_channel'},
+      json_build_object(
+        'schema', TG_TABLE_SCHEMA,
+        'table', TG_TABLE_NAME,
+        'action', TG_OP
+      )::text
+    );
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- filer.notify.volume.trigger
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS volume_table_changes_notify ON ${"schema"}.volume;
+  CREATE TRIGGER volume_table_changes_notify
+  AFTER INSERT OR UPDATE OR DELETE ON ${"schema"}.volume
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION ${"schema"}.notify_table();
+END $$;
+
