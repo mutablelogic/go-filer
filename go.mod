@@ -7,7 +7,7 @@ require (
 	github.com/mutablelogic/go-client v1.4.9
 	github.com/mutablelogic/go-llm v0.4.4
 	github.com/mutablelogic/go-media v1.8.3
-	github.com/mutablelogic/go-pg v1.3.2
+	github.com/mutablelogic/go-pg v1.3.3
 	github.com/mutablelogic/go-server v1.6.36
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/metric v1.44.0
@@ -29,7 +29,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/coreos/go-oidc/v3 v3.18.0 // indirect
+	github.com/coreos/go-oidc/v3 v3.19.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/djthorpe/go-errors v1.0.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
