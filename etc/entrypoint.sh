@@ -11,9 +11,9 @@ if [ -n "${FILER_UID}" ] && [ "${FILER_UID}" != "$(id -u filer)" ]; then
 fi
 
 # Drop privileges and exec the server.
-# Default to "run file://data/data" if no arguments are given.
+# Default to "run --indexer" if no arguments are given.
 if [ $# -eq 0 ]; then
-    set -- run file://data/data
+    set -- run --indexer
 fi
 
 # Ensure /data (and the TMPDIR subdirectory) is writable by the filer user.
