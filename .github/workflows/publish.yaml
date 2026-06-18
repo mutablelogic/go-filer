@@ -44,7 +44,7 @@ jobs:
       - name: Build and Push
         id: build
         run: |
-          make docker && make docker-push && make docker-version >> "$GITHUB_OUTPUT"
+          BUILDKIT_PROGRESS=plain make docker && make docker-push && make docker-version >> "$GITHUB_OUTPUT"
   manifest:
     name: Manifest
     needs: build
