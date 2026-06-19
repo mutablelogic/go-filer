@@ -98,6 +98,7 @@ type ObjectListRequest struct {
 	Volume    *string `json:"volume,omitempty"`    // optional volume name to filter by
 	Path      *string `json:"path,omitempty"`      // optional path prefix within the backend
 	Recursive bool    `json:"recursive,omitempty"` // if true, list all objects recursively; if false, list only immediate children
+	Type      *string `json:"type,omitempty"`      // optional content type to filter by
 }
 
 type ObjectList struct {
@@ -245,6 +246,9 @@ func (r ObjectListRequest) Query() url.Values {
 	}
 	if r.Recursive {
 		query.Set("recursive", "true")
+	}
+	if contentType := types.Value(r.Type); contentType != "" {
+		query.Set("type", contentType)
 	}
 	if r.Offset > 0 {
 		query.Set("offset", types.Stringify(r.Offset))
@@ -491,6 +495,7 @@ func (k ObjectTouch) Select(bind *pg.Bind, op pg.Op) (string, error) {
 func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Del("where")
 
+	// Volume
 	if volume := strings.TrimSpace(types.Value(r.Volume)); volume != "" {
 		if !types.IsIdentifier(volume) {
 			return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
@@ -498,30 +503,26 @@ func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 		bind.Append("where", `o."volume" = `+bind.Set("volume", volume))
 	}
 
+	// Path
 	if path := strings.TrimSpace(types.Value(r.Path)); path != "" {
-		pathPrefix := path
-		if !strings.HasSuffix(pathPrefix, "/") {
-			pathPrefix += "/"
-		}
+		path := types.NormalisePath(path)
+		bind.Append("where", `o."path" = `+bind.Set("path", path))
+	}
 
-		if r.Recursive {
-			bind.Append("where", `(
-	o."path" = `+bind.Set("path", path)+`
-	OR
-	o."path" LIKE `+bind.Set("path_like", pathPrefix+"%")+`
-)`)
+	// Type
+	if contentType := strings.TrimSpace(types.Value(r.Type)); contentType != "" {
+		contentType = strings.ToLower(contentType)
+		// If type has a '/' then treat as full content type, otherwise match top-level or subtype.
+		if strings.Contains(contentType, "/") {
+			bind.Append("where", `lower(o."type") = `+bind.Set("type", contentType))
 		} else {
-			bind.Append("where", `(
-	o."path" = `+bind.Set("path", path)+`
-	OR (
-		o."path" LIKE `+bind.Set("path_like", pathPrefix+"%")+`
-	AND
-		split_part(substring(o."path" from `+bind.Set("path_prefix_offset", len(pathPrefix)+1)+`), '/', 2) = ''
-	)
-)`)
+			bind.Append("where", `(lower(o."type") LIKE `+bind.Set("type_prefix", contentType+"/%")+
+				` OR lower(o."type") LIKE `+bind.Set("type_suffix", "%/"+contentType+"%")+
+				`)`)
 		}
 	}
 
+	// Create the where
 	if where := bind.Join("where", " AND "); where != "" {
 		bind.Set("where", "WHERE "+where)
 	} else {
