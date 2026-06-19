@@ -21,6 +21,11 @@ type Extractor interface {
 	ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error)
 }
 
+type FileReader interface {
+	io.Reader
+	Name() string
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
