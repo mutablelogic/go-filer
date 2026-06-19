@@ -514,10 +514,10 @@ func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 		contentType = strings.ToLower(contentType)
 		// If type has a '/' then treat as full content type, otherwise match top-level or subtype.
 		if strings.Contains(contentType, "/") {
-			bind.Append("where", `lower(o."type") = `+bind.Set("type", contentType))
+			bind.Append("where", `o."type" = `+bind.Set("type", contentType))
 		} else {
-			bind.Append("where", `(lower(o."type") LIKE `+bind.Set("type_prefix", contentType+"/%")+
-				` OR lower(o."type") LIKE `+bind.Set("type_suffix", "%/"+contentType+"%")+
+			bind.Append("where", `(split_part(o."type", '/', 1) = `+bind.Set("type_major", contentType)+
+				` OR split_part(o."type", '/', 2) = `+bind.Set("type_minor", contentType)+
 				`)`)
 		}
 	}
