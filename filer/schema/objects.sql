@@ -48,6 +48,107 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."search" (
 -- filer.search.index
 CREATE INDEX IF NOT EXISTS idx_search_tsv ON ${"schema"}."search" USING GIN("tsv");
 
+-- filer.search.update.function
+CREATE OR REPLACE FUNCTION ${"schema"}.search_update(search_volume TEXT, search_path TEXT)
+RETURNS void AS $$
+DECLARE
+  search_tsv TSVECTOR;
+BEGIN
+  SELECT
+    setweight(to_tsvector('simple', COALESCE(o."path", '')), 'A') ||
+      setweight(to_tsvector('simple', COALESCE(o."type", '')), 'B') ||
+      setweight(to_tsvector('simple', COALESCE((
+        SELECT string_agg(m."value"::TEXT, ' ')
+        FROM ${"schema"}."meta" AS m
+        WHERE m."volume" = o."volume"
+        AND m."path" = o."path"
+        AND lower(m."key") = 'title'
+      ), '')), 'A') ||
+      setweight(to_tsvector('simple', COALESCE((
+        SELECT string_agg(m."value"::TEXT, ' ')
+        FROM ${"schema"}."meta" AS m
+        WHERE m."volume" = o."volume"
+        AND m."path" = o."path"
+        AND lower(m."key") = 'tags'
+      ), '')), 'A') ||
+      setweight(to_tsvector('simple', COALESCE((
+        SELECT string_agg(m."value"::TEXT, ' ')
+        FROM ${"schema"}."meta" AS m
+        WHERE m."volume" = o."volume"
+        AND m."path" = o."path"
+        AND lower(m."key") NOT IN ('title', 'tags')
+      ), '')), 'C')
+  INTO search_tsv
+  FROM ${"schema"}."object" AS o
+  WHERE o."volume" = search_volume
+  AND o."path" = search_path;
+
+  IF NOT FOUND THEN
+    DELETE FROM ${"schema"}."search"
+    WHERE "volume" = search_volume
+    AND "path" = search_path;
+    RETURN;
+  END IF;
+
+  INSERT INTO ${"schema"}."search" (
+    "volume", "path", "tsv", "indexed_at"
+  )
+  VALUES (
+    search_volume,
+    search_path,
+    search_tsv,
+    now()
+  )
+  ON CONFLICT ("volume", "path") DO UPDATE
+  SET
+    "tsv" = EXCLUDED."tsv",
+    "indexed_at" = EXCLUDED."indexed_at";
+
+  RETURN;
+END;
+$$ LANGUAGE plpgsql;
+
+-- filer.object.search.function
+CREATE OR REPLACE FUNCTION ${"schema"}.object_search_update()
+RETURNS trigger AS $$
+BEGIN
+  PERFORM ${"schema"}.search_update(NEW."volume", NEW."path");
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- filer.meta.search.function
+CREATE OR REPLACE FUNCTION ${"schema"}.meta_search_update()
+RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM ${"schema"}.search_update(OLD."volume", OLD."path");
+    RETURN OLD;
+  END IF;
+
+  PERFORM ${"schema"}.search_update(NEW."volume", NEW."path");
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- filer.object.search.trigger
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS object_search_update ON ${"schema"}."object";
+  CREATE TRIGGER object_search_update
+  AFTER INSERT OR UPDATE OF "path", "type" ON ${"schema"}."object"
+  FOR EACH ROW
+  EXECUTE FUNCTION ${"schema"}.object_search_update();
+END $$;
+
+-- filer.meta.search.trigger
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS meta_search_update ON ${"schema"}."meta";
+  CREATE TRIGGER meta_search_update
+  AFTER INSERT OR UPDATE OR DELETE ON ${"schema"}."meta"
+  FOR EACH ROW
+  EXECUTE FUNCTION ${"schema"}.meta_search_update();
+END $$;
+
 -- filer.notify.function
 CREATE OR REPLACE FUNCTION ${"schema"}.notify_table()
 RETURNS trigger AS $$

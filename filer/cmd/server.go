@@ -42,7 +42,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	}
 
 	// Log the server configuration
-	ctx.Logger().InfoContext(ctx.Context(), "starting filer server", "name",ctx,.Name(), "version", ctx.Version(), "indexer", runner.Indexer)
+	ctx.Logger().InfoContext(ctx.Context(), "starting filer server", "name", ctx.Name(), "version", ctx.Version(), "indexer", runner.Indexer)
 
 	// Create the manager, run the server, and return any error
 	return runner.WithManager(ctx, conn, func(manager *manager.Manager) error {
