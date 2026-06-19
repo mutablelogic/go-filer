@@ -38,6 +38,7 @@ var wellKnownMIME = map[string]string{
 	".m4a":   "audio/mp4",
 	".flac":  "audio/flac",
 	".xmp":   "application/xmp+xml",
+	".mov":   "video/quicktime",
 }
 
 type namedReader interface {
