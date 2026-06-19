@@ -55,7 +55,11 @@ DECLARE
   search_tsv TSVECTOR;
 BEGIN
   SELECT
-    setweight(to_tsvector('simple', COALESCE(o."path", '')), 'A') ||
+    setweight(to_tsvector('simple', COALESCE((
+      SELECT string_agg(part, ' ')
+      FROM regexp_split_to_table(o."path", '[/.]+') AS part
+      WHERE length(part) >= 3
+    ), '')), 'C') ||
       setweight(to_tsvector('simple', COALESCE(o."type", '')), 'B') ||
       setweight(to_tsvector('simple', COALESCE((
         SELECT string_agg(m."value"::TEXT, ' ')
@@ -77,7 +81,7 @@ BEGIN
         WHERE m."volume" = o."volume"
         AND m."path" = o."path"
         AND lower(m."key") NOT IN ('title', 'tags')
-      ), '')), 'C')
+      ), '')), 'D')
   INTO search_tsv
   FROM ${"schema"}."object" AS o
   WHERE o."volume" = search_volume
