@@ -74,6 +74,8 @@ const (
 	AudioGenre        = "genre"
 	AudioYear         = "year"
 	AudioTrack        = "track"
+	DateCreated       = "created"
+	DateModified      = "modified"
 )
 
 ////////////////////////////////////////////////////////////////////////////////

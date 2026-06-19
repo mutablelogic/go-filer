@@ -18,6 +18,7 @@ import (
 	_ "github.com/mutablelogic/go-filer/metadata/srt"
 	_ "github.com/mutablelogic/go-filer/metadata/text"
 	_ "github.com/mutablelogic/go-filer/metadata/video"
+	_ "github.com/mutablelogic/go-filer/metadata/xmp"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
