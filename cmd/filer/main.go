@@ -7,37 +7,16 @@ import (
 	"strings"
 
 	// Packages
-	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
 	cmd "github.com/mutablelogic/go-server/pkg/cmd"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	version "github.com/mutablelogic/go-server/pkg/version"
-
-	// Metadata Extractors
-	_ "github.com/mutablelogic/go-filer/metadata/audio"
-	_ "github.com/mutablelogic/go-filer/metadata/html"
-	_ "github.com/mutablelogic/go-filer/metadata/image"
-	_ "github.com/mutablelogic/go-filer/metadata/json"
-	_ "github.com/mutablelogic/go-filer/metadata/markdown"
-	_ "github.com/mutablelogic/go-filer/metadata/pdf"
-	_ "github.com/mutablelogic/go-filer/metadata/sourcecode"
-	_ "github.com/mutablelogic/go-filer/metadata/srt"
-	_ "github.com/mutablelogic/go-filer/metadata/text"
-	_ "github.com/mutablelogic/go-filer/metadata/video"
 )
-
-///////////////////////////////////////////////////////////////////////////////
-// TYPES
-
-type CLI struct {
-	filercmd.ServerCommands
-	filercmd.ClientCommands
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 func main() {
-	if err := cmd.Main(CLI{}, "Filer Server", version.Version()); err != nil {
+	if err := cmd.Main(CLI{}, "Filer is a client server application for file management", version.Version()); err != nil {
 		str, code := formatError(err)
 		fmt.Fprintln(os.Stderr, "Error:", str)
 		os.Exit(code)

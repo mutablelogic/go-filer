@@ -4,7 +4,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -37,17 +36,31 @@ var wellKnownMIME = map[string]string{
 	".toml":  "application/toml",
 	".proto": "application/protobuf",
 	".m4a":   "audio/mp4",
+	".flac":  "audio/flac",
+	".xmp":   "application/xmp+xml",
+}
+
+type namedReader interface {
+	io.Reader
+	Name() string
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
 // Type returns the MIME type of the content read from the provided reader. It first
-// checks if the reader is an *os.File and attempts to determine the MIME type based
-// on the file name and content, falling back to content sniffing if necessary.
+// checks if the reader provides Name() and uses both file extension and content sniffing,
+// falling back to content sniffing only when no name is available.
+//
+// This function consumes up to 512 bytes from r while sniffing content type. If
+// callers need to read the full stream afterward, they should buffer and replay
+// those bytes (or use a seekable reader and rewind).
 // Returns application/octet-stream if the MIME type cannot be determined.
 func Type(r io.Reader) string {
-	if r, ok := r.(*os.File); ok {
+	if r == nil {
+		return types.ContentTypeBinary
+	}
+	if r, ok := r.(namedReader); ok {
 		if ct, err := byReader(r.Name(), r); err == nil {
 			return ct
 		}
@@ -84,6 +97,10 @@ func byExt(ext string) string {
 }
 
 func byReader(name string, r io.Reader) (string, error) {
+	if r == nil {
+		return "", io.ErrUnexpectedEOF
+	}
+
 	// Get by extension first to see if we can get a more specific type than what http.DetectContentType will return
 	t := byExt(filepath.Ext(name))
 

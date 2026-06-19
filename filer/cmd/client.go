@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -18,6 +19,7 @@ import (
 type ClientCommands struct {
 	ObjectClientCommands
 	VolumeClientCommands
+	MetadataClientCommands
 }
 
 type ObjectClientCommands struct {
@@ -28,12 +30,20 @@ type VolumeClientCommands struct {
 	VolumeCreate VolumeCreateCmd `cmd:"" name:"volume-create" help:"Create a new volume." group:"VOLUME"`
 }
 
+type MetadataClientCommands struct {
+	Metadata MetadataCmd `cmd:"" name:"metadata" help:"Extract metadata for a file using the server endpoint." group:"METADATA"`
+}
+
 type ObjectListCmd struct {
 	schema.ObjectListRequest
 }
 
 type VolumeCreateCmd struct {
 	schema.VolumeCreate
+}
+
+type MetadataCmd struct {
+	Path string `arg:"" name:"path" type:"file" help:"Path to the local file."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -97,5 +107,28 @@ func (cmd *VolumeCreateCmd) Run(ctx server.Cmd) error {
 
 		fmt.Println(volume)
 		return nil
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// METADATA COMMANDS
+
+func (cmd *MetadataCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "metadata", func(ctx context.Context, client *httpclient.Client) error {
+		f, err := os.Open(cmd.Path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		meta, err := client.GetMetadata(ctx, f)
+		if err != nil {
+			return err
+		}
+
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(meta)
 	})
 }
