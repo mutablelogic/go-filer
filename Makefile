@@ -36,7 +36,7 @@ all: build
 build: tidy $(CMD_DIR)
 
 $(CMD_DIR): go-dep mkdir
-	@echo Build command $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
+	@echo Build $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
 	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
 
 # Build the docker image
@@ -71,10 +71,10 @@ FILER_EXT = $(if $(filter windows,$(GOOS)),.exe,)
 
 # Build just the filer binary (client-only, no server).
 # Respects GOOS and GOARCH env vars for cross-compilation.
-.PHONY: filer-client
-filer-client: go-dep mkdir
-	@echo Build command filer GOOS=${GOOS} GOARCH=${GOARCH}
-	@${GO} build ${BUILD_FLAGS} -tags client -o ${BUILD_DIR}/filer${FILER_EXT} ./cmd/filer
+.PHONY: client
+client: go-dep mkdir
+	@echo Build client GOOS=${OS} GOARCH=${ARCH}
+	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -tags client -o ${BUILD_DIR}/filer${FILER_EXT} ./cmd/filer
 
 ###############################################################################
 # TEST
