@@ -7,6 +7,7 @@ import (
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metadata "github.com/mutablelogic/go-filer/metadata"
 	mime "github.com/mutablelogic/go-filer/metadata/mime"
@@ -56,6 +57,9 @@ func New(ctx context.Context, opts ...Opt) (_ *Manager, err error) {
 func (m *Manager) GetMeta(ctx context.Context, r io.Reader) (_ *schema.ObjectMeta, err error) {
 	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "GetMeta")
 	defer func() { endSpan(err) }()
+	if r == nil {
+		return nil, gofiler.ErrBadParameter.With("reader is required")
+	}
 
 	// Extract the name from r if it implements FileReader, otherwise use a default name for MIME sniffing.
 	var name string

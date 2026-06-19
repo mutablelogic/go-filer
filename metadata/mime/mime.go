@@ -51,6 +51,10 @@ type namedReader interface {
 // Type returns the MIME type of the content read from the provided reader. It first
 // checks if the reader provides Name() and uses both file extension and content sniffing,
 // falling back to content sniffing only when no name is available.
+//
+// This function consumes up to 512 bytes from r while sniffing content type. If
+// callers need to read the full stream afterward, they should buffer and replay
+// those bytes (or use a seekable reader and rewind).
 // Returns application/octet-stream if the MIME type cannot be determined.
 func Type(r io.Reader) string {
 	if r == nil {

@@ -6,6 +6,7 @@ import (
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -24,6 +25,10 @@ type namedReader interface {
 // GetMetadata extracts metadata for a single file by POSTing it to the
 // metadata endpoint as multipart/form-data.
 func (c *Client) GetMetadata(ctx context.Context, r io.Reader) (*schema.ObjectMeta, error) {
+	if r == nil {
+		return nil, gofiler.ErrBadParameter.With("reader is required")
+	}
+
 	body := io.NopCloser(r)
 	if rc, ok := r.(io.ReadCloser); ok {
 		body = rc

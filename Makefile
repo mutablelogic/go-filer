@@ -67,7 +67,7 @@ docker-version: docker-dep
 # CLI
 
 # Append .exe when cross-compiling for Windows
-FILER_EXT = $(if $(filter windows,$(GOOS)),.exe,)
+FILER_EXT = $(if $(filter windows,$(OS)),.exe,)
 
 # Build just the filer binary (client-only, no server).
 # Respects GOOS and GOARCH env vars for cross-compilation.
