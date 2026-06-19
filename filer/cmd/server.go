@@ -41,6 +41,9 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 		return fmt.Errorf("database connection is required")
 	}
 
+	// Log the server configuration
+	ctx.Logger().InfoContext(ctx.Context(), "starting filer server", "name",ctx,.Name(), "version", ctx.Version(), "indexer", runner.Indexer)
+
 	// Create the manager, run the server, and return any error
 	return runner.WithManager(ctx, conn, func(manager *manager.Manager) error {
 		// Create an error context - which will cancel any other goroutine on exit
