@@ -3,7 +3,6 @@
 package main
 
 import (
-
 	// Packages
 	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
 
