@@ -37,8 +37,8 @@ type Volume struct {
 }
 
 type VolumeListRequest struct {
-	Enabled *bool `json:"enabled,omitempty" help:"returns only enabled or disabled volumes"`
-	Stale   bool  `json:"stale,omitzero" help:"returns volumes that need to be re-indexed"`
+	Enabled *bool `json:"enabled,omitempty" help:"returns only enabled or disabled volumes" negatable:""`
+	Stale   bool  `json:"stale,omitzero" help:"returns volumes that need to be re-indexed" negatable:""`
 	pg.OffsetLimit
 }
 
@@ -91,7 +91,7 @@ func (r VolumeListRequest) Query() url.Values {
 // TABLE OUTPUT
 
 func (r Volume) Header() []string {
-	return []string{"Volume", "URL", "Enabled", "Objects", "Index Delta", "Created At", "Indexed At"}
+	return []string{"Volume", "URL", "Enabled", "Created At", "Indexed Objects", "Index Delta", "Indexed At"}
 }
 
 func (r Volume) Width(col int) int {
@@ -110,14 +110,17 @@ func (r Volume) Cell(col int) string {
 		}
 		return fmt.Sprint(*r.Enabled)
 	case 3:
-		return fmt.Sprint(r.Objects)
+		return r.CreatedAt.Format(time.RFC3339)
 	case 4:
-		if r.IndexDelta == nil {
+		if r.Objects == 0 {
 			return ""
 		}
-		return r.IndexDelta.String()
+		return fmt.Sprint(r.Objects)
 	case 5:
-		return r.CreatedAt.Format(time.RFC3339)
+		if r.IndexDelta == nil {
+			return "disabled"
+		}
+		return r.IndexDelta.String()
 	case 6:
 		if r.IndexedAt == nil {
 			return ""

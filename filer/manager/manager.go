@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -69,6 +70,16 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 		return nil, err
 	} else {
 		self.PoolConn = pool
+	}
+
+	// Register metrics
+	if self.metrics != nil {
+		err := errors.Join(
+			self.RegisterVolumeMetrics("filer_volume"),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("register metrics: %w", err)
+		}
 	}
 
 	// Return success
