@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ type Volume struct {
 	Name      string     `json:"name,omitempty"`
 	CreatedAt time.Time  `json:"created_at,omitempty"`
 	IndexedAt *time.Time `json:"indexed_at,omitempty"`
+	Objects   uint64     `json:"objects,omitempty"`
 }
 
 type VolumeListRequest struct {
@@ -66,6 +68,67 @@ func (v VolumeList) String() string {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// QUERY
+
+func (r VolumeListRequest) Query() url.Values {
+	q := url.Values{}
+	if r.Enabled != nil {
+		q.Set("enabled", types.Stringify(*r.Enabled))
+	}
+	if r.Stale {
+		q.Set("stale", "true")
+	}
+	if r.Offset != 0 {
+		q.Set("offset", types.Stringify(r.Offset))
+	}
+	if r.Limit != nil {
+		q.Set("limit", types.Stringify(*r.Limit))
+	}
+	return q
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// TABLE OUTPUT
+
+func (r Volume) Header() []string {
+	return []string{"Volume", "URL", "Enabled", "Objects", "Index Delta", "Created At", "Indexed At"}
+}
+
+func (r Volume) Width(col int) int {
+	return 0
+}
+
+func (r Volume) Cell(col int) string {
+	switch col {
+	case 0:
+		return r.Name
+	case 1:
+		return r.URL
+	case 2:
+		if r.Enabled == nil {
+			return ""
+		}
+		return fmt.Sprint(*r.Enabled)
+	case 3:
+		return fmt.Sprint(r.Objects)
+	case 4:
+		if r.IndexDelta == nil {
+			return ""
+		}
+		return r.IndexDelta.String()
+	case 5:
+		return r.CreatedAt.Format(time.RFC3339)
+	case 6:
+		if r.IndexedAt == nil {
+			return ""
+		}
+		return r.IndexedAt.Format(time.RFC3339)
+	default:
+		return ""
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // READER
 
 func (v *Volume) Scan(row pg.Row) error {
@@ -76,6 +139,7 @@ func (v *Volume) Scan(row pg.Row) error {
 		&v.IndexDelta,
 		&v.CreatedAt,
 		&v.IndexedAt,
+		&v.Objects,
 	)
 }
 

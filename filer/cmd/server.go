@@ -26,7 +26,10 @@ type ServerCommands struct {
 type RunServer struct {
 	pgcmd.PostgresFlags
 	servercmd.RunServer
-	Indexer bool `long:"indexer" help:"Run this instance as an indexer of content" default:"false" negatable:""`
+
+	// Other flags
+	Indexer     bool     `long:"indexer" help:"Run this instance as an indexer of content" default:"false" negatable:""`
+	Passphrases []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASES" help:"One or more passphrases used to encrypt credentials."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -78,11 +81,19 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 // PRIVATE METHODS
 
 func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*manager.Manager) error) error {
+	// Set basic mamager options
 	opts := []manager.Opt{
 		manager.WithMeter(ctx.Meter()),
 		manager.WithTracer(ctx.Tracer()),
 		manager.WithIndexer(runner.Indexer),
 	}
+
+	// Set passphrases for credential encryption
+	for i, passphrase := range runner.Passphrases {
+		opts = append(opts, manager.WithPassphrase(uint64(i+1), passphrase))
+	}
+
+	// Create a manager and then call the function with the manager, returning any error
 	if manager, err := manager.New(ctx.Context(), conn, opts...); err != nil {
 		return err
 	} else {

@@ -2,6 +2,7 @@ package manager
 
 import (
 	// Packages
+	crypto "github.com/mutablelogic/go-auth/crypto"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
@@ -14,10 +15,11 @@ import (
 type Opt func(*opt) error
 
 type opt struct {
-	tracer  trace.Tracer
-	metrics metric.Meter
-	schema  string
-	indexer bool
+	tracer      trace.Tracer
+	metrics     metric.Meter
+	schema      string
+	indexer     bool
+	passphrases *crypto.Passphrases
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -40,6 +42,7 @@ func (o *opt) apply(opt []Opt) error {
 func (o *opt) defaults() {
 	o.schema = schema.DefaultSchema
 	o.indexer = false
+	o.passphrases = crypto.NewPassphrases()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -66,5 +69,13 @@ func WithMeter(meter metric.Meter) Opt {
 	return func(o *opt) error {
 		o.metrics = meter
 		return nil
+	}
+}
+
+// WithPassphrase registers an in-memory storage passphrase for a certificate
+// passphrase version. Versions are uint64 and passphrases must be non-empty.
+func WithPassphrase(version uint64, passphrase string) Opt {
+	return func(o *opt) error {
+		return o.passphrases.Set(version, passphrase)
 	}
 }

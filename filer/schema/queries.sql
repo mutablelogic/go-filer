@@ -1,48 +1,91 @@
 -- filer.volume_get
 SELECT
-	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+	v."name", v."url", v."enabled", v."index_delta", v."created_at", v."indexed_at",
+	COALESCE((
+		SELECT COUNT(*)
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = v."name"
+	), 0)::BIGINT AS "objects"
 FROM
-	${"schema"}."volume"
+	${"schema"}."volume" AS v
 WHERE
-	"name" = @name
+	v."name" = @name
 ;
 
 -- filer.volume_list
 SELECT
-	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+	v."name", v."url", v."enabled", v."index_delta", v."created_at", v."indexed_at",
+	COALESCE((
+		SELECT COUNT(*)
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = v."name"
+	), 0)::BIGINT AS "objects"
 FROM
-	${"schema"}."volume"
+	${"schema"}."volume" AS v
 ${where}
 
 -- filer.volume_insert
-INSERT INTO ${"schema"}."volume" (
-	"name", "url", "enabled", "index_delta"
+WITH inserted AS (
+	INSERT INTO ${"schema"}."volume" (
+		"name", "url", "enabled", "index_delta"
+	)
+	VALUES (
+		@name, @url, CAST(@enabled AS BOOLEAN), CAST(@index_delta AS INTERVAL)
+	)
+	RETURNING
+		"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
 )
-VALUES (
-	@name, @url, CAST(@enabled AS BOOLEAN), CAST(@index_delta AS INTERVAL)
-)
-RETURNING
-	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+SELECT
+	i."name", i."url", i."enabled", i."index_delta", i."created_at", i."indexed_at",
+	COALESCE((
+		SELECT COUNT(*)
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = i."name"
+	), 0)::BIGINT AS "objects"
+FROM
+	inserted AS i
 ;
 
 -- filer.volume_patch
-UPDATE ${"schema"}."volume"
-SET
-	${patch}
-WHERE
-	"name" = @name
-RETURNING
-	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+WITH patched AS (
+	UPDATE ${"schema"}."volume"
+	SET
+		${patch}
+	WHERE
+		"name" = @name
+	RETURNING
+		"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+)
+SELECT
+	p."name", p."url", p."enabled", p."index_delta", p."created_at", p."indexed_at",
+	COALESCE((
+		SELECT COUNT(*)
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = p."name"
+	), 0)::BIGINT AS "objects"
+FROM
+	patched AS p
 ;
 
 -- filer.volume_touch
-UPDATE ${"schema"}."volume"
-SET
-	"indexed_at" = NOW()
-WHERE
-	"name" = @name
-RETURNING
-	"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+WITH touched AS (
+	UPDATE ${"schema"}."volume"
+	SET
+		"indexed_at" = NOW()
+	WHERE
+		"name" = @name
+	RETURNING
+		"name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+)
+SELECT
+	t."name", t."url", t."enabled", t."index_delta", t."created_at", t."indexed_at",
+	COALESCE((
+		SELECT COUNT(*)
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = t."name"
+	), 0)::BIGINT AS "objects"
+FROM
+	touched AS t
 ;
 
 -- filer.object_get

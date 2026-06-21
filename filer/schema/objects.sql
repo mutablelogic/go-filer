@@ -153,6 +153,14 @@ DO $$ BEGIN
   EXECUTE FUNCTION ${"schema"}.meta_search_update();
 END $$;
 
+-- filer.credential
+CREATE TABLE IF NOT EXISTS ${"schema"}.credential (
+  "key"                TEXT NOT NULL,
+  "pv"                 INT NOT NULL DEFAULT 0,
+  "credential"         BYTEA NOT NULL,
+  "updated_at"         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- filer.notify.function
 CREATE OR REPLACE FUNCTION ${"schema"}.notify_table()
 RETURNS trigger AS $$
