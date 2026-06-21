@@ -27,6 +27,7 @@ type ObjectClientCommands struct {
 }
 
 type VolumeClientCommands struct {
+	VolumeList   VolumeListCmd   `cmd:"" name:"volumes" help:"List server volumes." group:"VOLUME"`
 	VolumeCreate VolumeCreateCmd `cmd:"" name:"volume-create" help:"Create a new volume." group:"VOLUME"`
 }
 
@@ -40,6 +41,10 @@ type ObjectListCmd struct {
 
 type VolumeCreateCmd struct {
 	schema.VolumeCreate
+}
+
+type VolumeListCmd struct {
+	schema.VolumeListRequest
 }
 
 type MetadataCmd struct {
@@ -70,12 +75,19 @@ func withClient(ctx server.Cmd, span string, fn func(context.Context, *httpclien
 func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 	// Set the width of the terminal
 	width := ctx.IsTerm()
+	debug := ctx.IsDebug()
 
 	// Perform the request
 	return withClient(ctx, "objects", func(ctx context.Context, client *httpclient.Client) error {
 		objects, err := client.ListObjects(ctx, cmd.ObjectListRequest)
 		if err != nil {
 			return err
+		}
+
+		// With debugging
+		if debug {
+			fmt.Println(objects)
+			return nil
 		}
 
 		// Objects list table
@@ -96,6 +108,40 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 
 ///////////////////////////////////////////////////////////////////////////////
 // VOLUME COMMANDS
+
+func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
+	// Set the width of the terminal
+	width := ctx.IsTerm()
+	debug := ctx.IsDebug()
+
+	// Perform the request
+	return withClient(ctx, "volumes", func(ctx context.Context, client *httpclient.Client) error {
+		volumes, err := client.ListVolumes(ctx, cmd.VolumeListRequest)
+		if err != nil {
+			return err
+		}
+
+		// With debugging
+		if debug {
+			fmt.Println(volumes)
+			return nil
+		}
+
+		// Volumes list table
+		table := tui.TableFor[*schema.Volume](tui.SetWidth(width))
+		if _, err := table.Write(os.Stdout, volumes.Body...); err != nil {
+			return err
+		}
+
+		// Volumes list summary
+		summary := tui.TableSummary("volumes", uint(volumes.Count), volumes.Offset, volumes.Limit)
+		if _, err := summary.Write(os.Stdout); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
 
 func (cmd *VolumeCreateCmd) Run(ctx server.Cmd) error {
 	// Perform the request

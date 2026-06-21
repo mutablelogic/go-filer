@@ -15,6 +15,22 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
+// ListVolumes returns all volumes as a list.
+func (manager *Manager) ListVolumes(ctx context.Context, req schema.VolumeListRequest) (_ *schema.VolumeList, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListVolumes",
+		attribute.String("req", types.Stringify(req)),
+	)
+	defer func() { endSpan(err) }()
+
+	resp := schema.VolumeList{VolumeListRequest: req}
+	if err := manager.List(ctx, &resp, &req); err != nil {
+		return nil, err
+	} else {
+		resp.OffsetLimit.Clamp(resp.Count)
+	}
+	return types.Ptr(resp), nil
+}
+
 func (manager *Manager) CreateVolume(ctx context.Context, url *url.URL, meta schema.VolumeMeta) (_ *schema.Volume, err error) {
 	if url == nil {
 		return nil, gofiler.ErrBadParameter.With("url is required")
@@ -42,20 +58,4 @@ func (manager *Manager) CreateVolume(ctx context.Context, url *url.URL, meta sch
 
 	// Return the created volume record
 	return &result, nil
-}
-
-// ListVolumes returns all volumes as a list.
-func (manager *Manager) ListVolumes(ctx context.Context, req schema.VolumeListRequest) (_ *schema.VolumeList, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListVolumes",
-		attribute.String("req", types.Stringify(req)),
-	)
-	defer func() { endSpan(err) }()
-
-	resp := schema.VolumeList{VolumeListRequest: req}
-	if err := manager.List(ctx, &resp, &req); err != nil {
-		return nil, err
-	} else {
-		resp.OffsetLimit.Clamp(resp.Count)
-	}
-	return types.Ptr(resp), nil
 }
