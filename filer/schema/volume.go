@@ -112,7 +112,7 @@ func (r Volume) Cell(col int) string {
 	case 3:
 		return r.CreatedAt.Format(time.RFC3339)
 	case 4:
-		if r.Objects == 0 {
+		if r.IndexedAt == nil {
 			return ""
 		}
 		return fmt.Sprint(r.Objects)

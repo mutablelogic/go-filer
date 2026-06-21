@@ -16,12 +16,14 @@ import (
 // PUBLIC METHODS
 
 func (manager *Manager) RegisterVolumeMetrics(name string) (err error) {
-	// Register a gauge for database size
+	// Register a gauge for indexed object count per volume.
 	if guage, err := manager.metrics.Int64ObservableGauge(
-		name, metric.WithDescription("Size of database in bytes"),
+		name,
+		metric.WithDescription("Number of indexed objects in a volume"),
+		metric.WithUnit("{object}"),
 	); err != nil {
 		return pg.ErrInternalServerError.Withf("RegisterVolumeMetrics: %v", err)
-	} else if _, err := manager.metrics.RegisterCallback(func(parent context.Context, observer metric.Observer) error {
+	} else if _, err := manager.metrics.RegisterCallback(func(parent context.Context, observer metric.Observer) (err error) {
 		// Otel span
 		ctx, endSpan := otel.StartSpan(manager.tracer, parent, "ObserveVolumeMetrics",
 			attribute.String("name", name),
