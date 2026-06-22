@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."credential" (
 CREATE TABLE IF NOT EXISTS ${"schema"}."llmprovider" (
   "name"               TEXT NOT NULL, -- unique name for the provider (for model selection)
   "provider"           TEXT NOT NULL, -- ollama, anthropic, openai, gemini, etc.
-  "url"                TEXT NOT NULL, -- used by local providers
+  "url"                TEXT,          -- used by local providers
   "credential"         TEXT,          -- used by providers that require an API Key
   "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY ("name"),
@@ -204,4 +204,24 @@ DO $$ BEGIN
   FOR EACH STATEMENT
   EXECUTE FUNCTION ${"schema"}.notify_table();
 END $$;
+
+-- filer.notify.llmprovider.trigger
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS llmprovider_table_changes_notify ON ${"schema"}.llmprovider;
+  CREATE TRIGGER llmprovider_table_changes_notify
+  AFTER INSERT OR UPDATE OR DELETE ON ${"schema"}.llmprovider
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION ${"schema"}.notify_table();
+END $$;
+
+-- filer.notify.credential.trigger
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS credential_table_changes_notify ON ${"schema"}.credential;
+  CREATE TRIGGER credential_table_changes_notify
+  AFTER INSERT OR UPDATE OR DELETE ON ${"schema"}.credential
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION ${"schema"}.notify_table();
+END $$;
+
+
 

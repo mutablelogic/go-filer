@@ -60,6 +60,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 				httphandler.RegisterObjectHandlers(manager, router),
 				httphandler.RegisterMetadataHandlers(manager, router),
 				httphandler.RegisterCredentialHandlers(manager, router),
+				httphandler.RegisterLLMProviderHandlers(manager, router),
 			)
 		})
 
@@ -82,11 +83,17 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 // PRIVATE METHODS
 
 func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*manager.Manager) error) error {
+	_, clientopts, err := ctx.ClientEndpoint()
+	if err != nil {
+		return err
+	}
+
 	// Set basic mamager options
 	opts := []manager.Opt{
 		manager.WithMeter(ctx.Meter()),
 		manager.WithTracer(ctx.Tracer()),
 		manager.WithIndexer(runner.Indexer),
+		manager.WithLLMClientOpts(clientopts...),
 	}
 
 	// Set passphrases for credential encryption

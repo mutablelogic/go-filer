@@ -25,6 +25,7 @@ type ClientCommands struct {
 	VolumeClientCommands
 	MetadataClientCommands
 	CredentialClientCommands
+	LLMProviderClientCommands
 }
 
 type ObjectClientCommands struct {
@@ -45,6 +46,10 @@ type CredentialClientCommands struct {
 	CredentialGet    CredentialGetCmd    `cmd:"" name:"credential-get" help:"Get a credential by key." group:"CREDENTIAL"`
 	CredentialCreate CredentialCreateCmd `cmd:"" name:"credential-set" help:"Create or update a credential from stdin." group:"CREDENTIAL"`
 	CredentialDelete CredentialDeleteCmd `cmd:"" name:"credential-delete" help:"Delete a credential by key." group:"CREDENTIAL"`
+}
+
+type LLMProviderClientCommands struct {
+	LLMProviderCreate LLMProviderCreateCmd `cmd:"" name:"llm-create" help:"Create or update an LLM provider." group:"LLM PROVIDER"`
 }
 
 type ObjectListCmd struct {
@@ -79,6 +84,10 @@ type CredentialListCmd struct {
 
 type CredentialDeleteCmd struct {
 	Key string `arg:"" name:"key" help:"Credential key (identifier)."`
+}
+
+type LLMProviderCreateCmd struct {
+	schema.LLMProviderCreate
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -334,4 +343,20 @@ func writeCredential(w io.Writer, credential any, jsonString bool) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(credential)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// LLM PROVIDER COMMANDS
+
+func (cmd *LLMProviderCreateCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "llmprovider-create", func(ctx context.Context, client *httpclient.Client) error {
+		provider, err := client.CreateLLMProvider(ctx, cmd.LLMProviderCreate)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(provider)
+		return nil
+	})
 }

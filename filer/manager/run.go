@@ -12,6 +12,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
 	pg "github.com/mutablelogic/go-pg"
 	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	broadcaster "github.com/mutablelogic/go-pg/pkg/broadcaster"
@@ -22,12 +23,6 @@ import (
 // PUBLIC METHODS
 
 func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
-	// If this isn't an indexer, don't start the runloop and just wait for the context to be cancelled.
-	if !manager.indexer {
-		<-ctx.Done()
-		return nil
-	}
-
 	// Create a broadcaster for listening for events
 	events, err := broadcaster.NewBroadcaster(manager.PoolConn, schema.NotifyChannel)
 	if err != nil {
@@ -37,10 +32,15 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// Subscribe to events and forward them to the volumeChange channel
 	volumeChange := make(chan broadcaster.ChangeNotification, 100)
+	providerChange := make(chan broadcaster.ChangeNotification, 100)
 	if err := events.Subscribe(ctx, func(event broadcaster.ChangeNotification) {
 		switch event.Table {
 		case "volume":
-			volumeChange <- event
+			if manager.indexer {
+				volumeChange <- event
+			}
+		case "llmprovider", "credential":
+			providerChange <- event
 		default:
 			logger.WarnContext(ctx, "ignoring event", "event", types.Stringify(event))
 		}
@@ -49,7 +49,15 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	// Syncronize the volume registry on startup, so that any existing volumes are loaded
-	if err := manager.syncVolumes(ctx, logger); err != nil {
+	if manager.indexer {
+		if err := manager.syncVolumes(ctx, logger); err != nil {
+			return err
+		}
+	}
+
+	// Syncronize the LLM provider registry whenever a provider or credential change event is received
+	logger.DebugContext(ctx, "syncing LLM providers on startup")
+	if err := manager.syncLLMProviders(ctx, logger); err != nil {
 		return err
 	}
 
@@ -117,7 +125,6 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	ctxDone := ctx.Done()
 	var shutdownTimer *time.Timer
 	var shutdownTimeout <-chan time.Time
-	volumeChangeC := volumeChange
 	syncVolumesTickerC := syncVolumesTicker
 	reindexVolumesTickerC := reindexVolumesTicker
 	defer func() {
@@ -132,7 +139,8 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		case <-ctxDone:
 			// Stop scheduling new work; keep looping only to drain warnings until queue shutdown.
 			ctxDone = nil
-			volumeChangeC = nil
+			volumeChange = nil
+			providerChange = nil
 			syncVolumesTickerC = nil
 			reindexVolumesTickerC = nil
 			ctx = context.WithoutCancel(ctx)
@@ -149,22 +157,31 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		case <-shutdownTimeout:
 			logger.WarnContext(ctx, "forcing shutdown after timeout while draining queue")
 			return nil
-		case event := <-volumeChangeC:
-			logger.DebugContext(ctx, "Event", "event", types.Stringify(event))
+		case event := <-providerChange:
+			logger.DebugContext(ctx, "LLM provider or credential change", "event", types.Stringify(event))
+
+			// Syncronize the LLM providers
+			if err := manager.syncLLMProviders(ctx, logger); err != nil {
+				logger.ErrorContext(ctx, "failed to sync LLM providers", "error", err.Error())
+			}
+		case event := <-volumeChange:
+			logger.DebugContext(ctx, "Volume change", "event", types.Stringify(event))
 
 			// Syncronize the volume registry
 			if err := manager.syncVolumes(ctx, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
 			}
 		case <-syncVolumesTickerC:
-			logger.DebugContext(ctx, "Event", "event", "sync-volumes-ticker")
+			if manager.indexer {
+				logger.DebugContext(ctx, "Sync volumes ticker", "event", "sync-volumes-ticker")
 
-			// Syncronize the volume registry
-			if err := manager.syncVolumes(ctx, logger); err != nil {
-				logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
+				// Syncronize the volume registry
+				if err := manager.syncVolumes(ctx, logger); err != nil {
+					logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
+				}
 			}
 		case <-reindexVolumesTickerC:
-			logger.DebugContext(ctx, "Event", "event", "reindex-volumes-ticker")
+			logger.DebugContext(ctx, "Reindex volumes ticker", "event", "reindex-volumes-ticker")
 
 			// Look for a volume that needs to be reindexed, and reindex it
 			if err := manager.reindexVolumes(ctx, indexQueue, logger); err != nil {
@@ -396,4 +413,19 @@ func (manager *Manager) syncVolumesInner(ctx context.Context) (inserted []*schem
 	}
 
 	return inserted, deleted, nil
+}
+
+func (manager *Manager) syncLLMProviders(ctx context.Context, logger *slog.Logger) error {
+	var providers []*llmschema.Provider
+	updates, deleted, err := manager.llm.Sync(providers, func(i int) (llmschema.ProviderCredentials, error) {
+		return llmschema.ProviderCredentials{}, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	logger.DebugContext(ctx, "Sync LLM providers", "updates", updates, "deletes", deleted)
+
+	// Return any errors
+	return err
 }

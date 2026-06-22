@@ -17,14 +17,14 @@ import (
 type LLMProviderName string
 
 type LLMProviderMeta struct {
-	Name       *string `json:"name,omitempty" arg:"" help:"Provider name"`
+	Name       *string `json:"name,omitempty" help:"Provider name"`
 	URL        *string `json:"url,omitempty" help:"Provider URL"`
 	Credential *string `json:"credential,omitempty" help:"Credential key for authentication"`
 }
 
 type LLMProviderCreate struct {
 	LLMProviderMeta
-	Provider string `json:"provider,omitempty" help:"Provider type (e.g. ollama, anthropic, openai)"`
+	Provider string `json:"provider,omitempty" arg:"" help:"Provider type (e.g. ollama, anthropic, openai)"`
 }
 
 type LLMProvider struct {
@@ -147,12 +147,9 @@ func (l *LLMProviderListRequest) Select(bind *pg.Bind, op pg.Op) (string, error)
 // READER
 
 func (l *LLMProvider) Scan(row pg.Row) error {
-	var name, rawURL string
-	if err := row.Scan(&name, &l.Provider, &rawURL, &l.Credential, &l.CreatedAt); err != nil {
+	if err := row.Scan(&l.Name, &l.Provider, &l.URL, &l.Credential, &l.CreatedAt); err != nil {
 		return err
 	}
-	l.Name = &name
-	l.URL = &rawURL
 	return nil
 }
 
@@ -174,26 +171,37 @@ func (l *LLMProviderList) ScanCount(row pg.Row) error {
 
 func (l LLMProviderCreate) Insert(bind *pg.Bind) (string, error) {
 	name := strings.TrimSpace(types.Value(l.Name))
+	provider := strings.TrimSpace(l.Provider)
+
+	// Name is optional; if not provided, use provider as name
+	if name == "" {
+		name = provider
+	}
+
+	// Check name and provider
 	if !types.IsIdentifier(name) {
 		return "", gofiler.ErrBadParameter.Withf("invalid provider name: %q", name)
+	} else {
+		bind.Set("name", name)
 	}
-	bind.Set("name", name)
-
-	provider := strings.TrimSpace(l.Provider)
-	if provider == "" {
+	if !types.IsIdentifier(provider) {
 		return "", gofiler.ErrBadParameter.With("provider is required")
+	} else {
+		bind.Set("provider", provider)
 	}
-	bind.Set("provider", provider)
 
-	rawURL := strings.TrimSpace(types.Value(l.URL))
-	if rawURL == "" {
-		return "", gofiler.ErrBadParameter.With("url is required")
+	// URL scheme should be http or https if provided
+	if l.URL != nil {
+		if url, err := url.Parse(types.Value(l.URL)); err != nil {
+			return "", gofiler.ErrBadParameter.Withf("invalid url: %q", types.Value(l.URL))
+		} else if url.Scheme != "http" && url.Scheme != "https" {
+			return "", gofiler.ErrBadParameter.Withf("unsupported url scheme: %q", url.Scheme)
+		} else {
+			bind.Set("url", types.Value(l.URL))
+		}
 	}
-	if _, err := url.Parse(rawURL); err != nil {
-		return "", gofiler.ErrBadParameter.Withf("invalid url: %q", rawURL)
-	}
-	bind.Set("url", rawURL)
 
+	// Credential can be empty or should be a valid credential already stored in the system
 	bind.Set("credential", l.Credential)
 
 	return bind.Query("llmprovider.insert"), nil
@@ -213,11 +221,15 @@ func (l LLMProviderMeta) Update(bind *pg.Bind) error {
 		bind.Append("patch", `"name" = `+bind.Set("new_name", name))
 	}
 
-	if rawURL := strings.TrimSpace(types.Value(l.URL)); rawURL != "" {
-		if _, err := url.Parse(rawURL); err != nil {
-			return gofiler.ErrBadParameter.Withf("invalid url: %q", rawURL)
+	// URL scheme should be http or https if provided
+	if l.URL != nil {
+		if url, err := url.Parse(types.Value(l.URL)); err != nil {
+			return gofiler.ErrBadParameter.Withf("invalid url: %q", types.Value(l.URL))
+		} else if url.Scheme != "http" && url.Scheme != "https" {
+			return gofiler.ErrBadParameter.Withf("unsupported url scheme: %q", url.Scheme)
+		} else {
+			bind.Append("patch", `"url" = `+bind.Set("url", url.String()))
 		}
-		bind.Append("patch", `"url" = `+bind.Set("url", rawURL))
 	}
 
 	if l.Credential != nil {
