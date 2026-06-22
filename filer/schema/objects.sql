@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."credential" (
   "credential"         BYTEA NOT NULL,
   "updated_at"         TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY ("key"),
-  CHECK ("key" ~ '^[a-z_][a-z0-9_]*$')
+  CHECK ("key" ~ '^[A-Za-z_][A-Za-z0-9_]*$')
 );
 
 -- filer.notify.function

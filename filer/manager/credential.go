@@ -16,9 +16,28 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
+// ListCredentials returns a paginated list of credentials, excluding the encrypted credential payload.
+func (manager *Manager) ListCredentials(ctx context.Context, req schema.CredentialListRequest) (_ *schema.CredentialList, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListCredentials",
+		attribute.String("req", req.String()),
+	)
+	defer func() { endSpan(err) }()
+
+	var result schema.CredentialList
+	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
+		return nil, pg.NormalizeError(err)
+	} else {
+		result.CredentialListRequest = req
+		result.OffsetLimit.Clamp(uint64(result.Count))
+	}
+
+	// Return success
+	return types.Ptr(result), nil
+}
+
 // CreateCredential persists an encrypted credential row and returns the public
 // credential shape, excluding passphrase version and encrypted payload.
-func (m *Manager) CreateCredential(ctx context.Context, req schema.CredentialInsert) (_ *schema.Credential, err error) {
+func (m *Manager) CreateCredential(ctx context.Context, req schema.CredentialCreate) (_ *schema.Credential, err error) {
 	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "CreateCredential",
 		attribute.String("req", req.RedactedString()),
 	)
@@ -42,6 +61,60 @@ func (m *Manager) CreateCredential(ctx context.Context, req schema.CredentialIns
 
 	// Return success
 	return types.Ptr(result), nil
+}
+
+// DeleteCredential deletes a credential row by key.
+func (m *Manager) DeleteCredential(ctx context.Context, key schema.CredentialKey) (_ *schema.Credential, err error) {
+	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "DeleteCredential",
+		attribute.String("key", key.Key),
+	)
+	defer func() { endSpan(err) }()
+
+	var result schema.Credential
+	if err := m.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+		return conn.Delete(ctx, &result, key)
+	}); err != nil {
+		return nil, pg.NormalizeError(err)
+	}
+
+	// Return success
+	return types.Ptr(result), nil
+}
+
+// GetCredential retrieves a credential by key and decrypts the credential payload with
+// the given passphrase
+func (m *Manager) GetCredential(ctx context.Context, key schema.CredentialKey, passphrase string) (_ json.RawMessage, err error) {
+	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "GetCredential",
+		attribute.String("key", key.Key),
+	)
+	defer func() { endSpan(err) }()
+
+	// Determine the passphrase version for the provided passphrase.
+	var pv uint64
+	keys := m.passphrases.Keys()
+	for i := len(keys) - 1; i >= 0; i-- {
+		resolved, version := m.passphrases.Get(keys[i])
+		if resolved == passphrase {
+			pv = version
+			break
+		}
+	}
+	if pv == 0 {
+		return nil, gofiler.ErrBadParameter.Withf("invalid passphrase")
+	}
+
+	var result schema.CredentialCreate
+	var credentials json.RawMessage
+	if err := m.PoolConn.With("pv", pv).Get(ctx, &result, key); err != nil {
+		return nil, pg.NormalizeError(err)
+	} else if encrypted, ok := result.Credentials.([]byte); !ok {
+		return nil, gofiler.ErrInternalServerError.With("credential payload is invalid")
+	} else if err := m.decryptCredentials(encrypted, pv, &credentials); err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return credentials, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////

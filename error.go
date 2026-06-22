@@ -100,7 +100,7 @@ func HTTPErr(err error) error {
 	}
 
 	// Check for database error
-	if pg.IsDatabaseError(err) {
+	if pg.IsDatabaseError(err) || errors.Is(err, pg.ErrNotFound) || errors.Is(err, pg.ErrBadParameter) || errors.Is(err, pg.ErrConflict) {
 		return pg.HTTPError(err)
 	}
 

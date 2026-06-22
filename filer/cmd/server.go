@@ -59,6 +59,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 				httphandler.RegisterVolumeHandlers(manager, router),
 				httphandler.RegisterObjectHandlers(manager, router),
 				httphandler.RegisterMetadataHandlers(manager, router),
+				httphandler.RegisterCredentialHandlers(manager, router),
 			)
 		})
 
