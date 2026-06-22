@@ -247,7 +247,7 @@ func (cmd *CredentialListCmd) Run(ctx server.Cmd) error {
 }
 
 func (cmd *CredentialCreateCmd) Run(ctx server.Cmd) error {
-	credentials, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())))
+	credentials, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())), "Credential: ")
 	if err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func (cmd *CredentialCreateCmd) Run(ctx server.Cmd) error {
 }
 
 func (cmd *CredentialGetCmd) Run(ctx server.Cmd) error {
-	passphrase, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())))
+	passphrase, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())), "Passphrase: ")
 	if err != nil {
 		return err
 	}
@@ -314,9 +314,9 @@ func (cmd *CredentialDeleteCmd) Run(ctx server.Cmd) error {
 	})
 }
 
-func readCredential(isTerm bool) ([]byte, error) {
+func readCredential(isTerm bool, prompt string) ([]byte, error) {
 	if isTerm {
-		fmt.Fprint(os.Stderr, "Credential: ")
+		fmt.Fprint(os.Stderr, prompt)
 		value, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
 		return value, err

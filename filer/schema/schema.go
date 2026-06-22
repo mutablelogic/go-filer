@@ -15,8 +15,9 @@ const (
 const (
 	VolumeListLimit     = 100
 	ObjectListLimit     = 100
-	CredentialListLimit = 100
-	MetadataListLimit   = 100
+	CredentialListLimit  = 100
+	MetadataListLimit    = 100
+	LLMProviderListLimit = 100
 
 	// MaxUploadFiles is the maximum number of files accepted in a single multipart upload request.
 	MaxUploadFiles = 1000

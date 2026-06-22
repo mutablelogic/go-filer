@@ -276,3 +276,55 @@ SET
 RETURNING
 	"key", "updated_at"
 ;
+
+-- llmprovider.get
+SELECT
+	"name", "provider", "url", "credential", "created_at"
+FROM
+	${"schema"}."llmprovider"
+WHERE
+	"name" = @name
+;
+
+-- llmprovider.list
+SELECT
+	"name", "provider", "url", "credential", "created_at"
+FROM
+	${"schema"}."llmprovider"
+ORDER BY
+	"name"
+
+-- llmprovider.insert
+INSERT INTO ${"schema"}."llmprovider" (
+	"name", "provider", "url", "credential"
+)
+VALUES (
+	@name, @provider, @url, @credential
+)
+RETURNING
+	"name", "provider", "url", "credential", "created_at"
+;
+
+-- llmprovider.patch
+WITH patched AS (
+	UPDATE ${"schema"}."llmprovider"
+	SET
+		${patch}
+	WHERE
+		"name" = @name
+	RETURNING
+		"name", "provider", "url", "credential", "created_at"
+)
+SELECT
+	p."name", p."provider", p."url", p."credential", p."created_at"
+FROM
+	patched AS p
+;
+
+-- llmprovider.delete
+DELETE FROM ${"schema"}."llmprovider"
+WHERE
+	"name" = @name
+RETURNING
+	"name", "provider", "url", "credential", "created_at"
+;

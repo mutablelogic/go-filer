@@ -163,6 +163,18 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."credential" (
   CHECK ("key" ~ '^[A-Za-z_][A-Za-z0-9_]*$')
 );
 
+-- filer.llmprovider
+CREATE TABLE IF NOT EXISTS ${"schema"}."llmprovider" (
+  "name"               TEXT NOT NULL, -- unique name for the provider (for model selection)
+  "provider"           TEXT NOT NULL, -- ollama, anthropic, openai, gemini, etc.
+  "url"                TEXT NOT NULL, -- used by local providers
+  "credential"         TEXT,          -- used by providers that require an API Key
+  "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY ("name"),
+  CHECK ("name" ~ '^[A-Za-z_][A-Za-z0-9_]*$'),
+  FOREIGN KEY ("credential") REFERENCES ${"schema"}."credential"("key") ON DELETE RESTRICT
+);
+
 -- filer.notify.function
 CREATE OR REPLACE FUNCTION ${"schema"}.notify_table()
 RETURNS trigger AS $$
