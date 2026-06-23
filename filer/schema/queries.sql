@@ -229,7 +229,7 @@ SELECT
 		WHERE m."volume" = o."volume"
 		AND m."path" = o."path"
 	), '[]'::jsonb) AS "meta",
-	ts_rank(s."tsv", websearch_to_tsquery('simple', @query), 32) AS "rank"
+	ts_rank(s."tsv", websearch_to_tsquery('english', @query), 32) AS "rank"
 FROM
 	${"schema"}."object" AS o
 JOIN
