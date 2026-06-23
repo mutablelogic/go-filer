@@ -7,11 +7,13 @@ import (
 	"strings"
 
 	// Packages
+
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	backendregistry "github.com/mutablelogic/go-filer/backend/registry"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metadatamanager "github.com/mutablelogic/go-filer/metadata/manager"
+	llm "github.com/mutablelogic/go-llm/provider/registry"
 	pg "github.com/mutablelogic/go-pg"
 	pgqueue "github.com/mutablelogic/go-pg/pgqueue/manager"
 	attribute "go.opentelemetry.io/otel/attribute"
@@ -26,6 +28,7 @@ type Manager struct {
 	volumes  *backendregistry.Registry
 	queue    *pgqueue.Manager
 	metadata *metadatamanager.Manager
+	llm      *llm.Registry
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -42,10 +45,13 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 		return nil, err
 	} else if metadata, err := metadatamanager.New(ctx, metadatamanager.WithMeter(self.metrics), metadatamanager.WithTracer(self.tracer)); err != nil {
 		return nil, err
+	} else if registry := llm.New(self.opt.clientopts...); registry == nil {
+		return nil, fmt.Errorf("failed to create llm registry")
 	} else {
 		self.volumes = backendregistry.New()
 		self.queue = queue
 		self.metadata = metadata
+		self.llm = registry
 	}
 
 	// Parse and register named queries so bind.Query(...) can resolve them.

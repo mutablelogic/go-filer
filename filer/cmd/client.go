@@ -22,13 +22,19 @@ import (
 
 type ClientCommands struct {
 	ObjectClientCommands
+	SearchClientCommands
 	VolumeClientCommands
 	MetadataClientCommands
 	CredentialClientCommands
+	LLMProviderClientCommands
 }
 
 type ObjectClientCommands struct {
 	ObjectList ObjectListCmd `cmd:"" name:"objects" help:"List server objects." group:"OBJECT"`
+}
+
+type SearchClientCommands struct {
+	Search SearchCmd `cmd:"" name:"search" help:"Search server objects." group:"SEARCH"`
 }
 
 type VolumeClientCommands struct {
@@ -47,8 +53,16 @@ type CredentialClientCommands struct {
 	CredentialDelete CredentialDeleteCmd `cmd:"" name:"credential-delete" help:"Delete a credential by key." group:"CREDENTIAL"`
 }
 
+type LLMProviderClientCommands struct {
+	LLMProviderCreate LLMProviderCreateCmd `cmd:"" name:"llm-create" help:"Create or update an LLM provider." group:"LLM PROVIDER"`
+}
+
 type ObjectListCmd struct {
 	schema.ObjectListRequest
+}
+
+type SearchCmd struct {
+	schema.SearchListRequest
 }
 
 type VolumeCreateCmd struct {
@@ -79,6 +93,10 @@ type CredentialListCmd struct {
 
 type CredentialDeleteCmd struct {
 	Key string `arg:"" name:"key" help:"Credential key (identifier)."`
+}
+
+type LLMProviderCreateCmd struct {
+	schema.LLMProviderCreate
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -128,6 +146,43 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 
 		// Objects list summary
 		summary := tui.TableSummary("objects", uint(objects.Count), objects.Offset, objects.Limit)
+		if _, err := summary.Write(os.Stdout); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// SEARCH COMMANDS
+
+func (cmd *SearchCmd) Run(ctx server.Cmd) error {
+	// Set the width of the terminal
+	width := ctx.IsTerm()
+	debug := ctx.IsDebug()
+
+	// Perform the request
+	return withClient(ctx, "search", func(ctx context.Context, client *httpclient.Client) error {
+		results, err := client.Search(ctx, cmd.SearchListRequest)
+		if err != nil {
+			return err
+		}
+
+		// With debugging
+		if debug {
+			fmt.Println(results)
+			return nil
+		}
+
+		// Search results list table
+		table := tui.TableFor[*schema.SearchResult](tui.SetWidth(width))
+		if _, err := table.Write(os.Stdout, results.Body...); err != nil {
+			return err
+		}
+
+		// Search results list summary
+		summary := tui.TableSummary("search results", uint(results.Count), results.Offset, results.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
@@ -247,7 +302,7 @@ func (cmd *CredentialListCmd) Run(ctx server.Cmd) error {
 }
 
 func (cmd *CredentialCreateCmd) Run(ctx server.Cmd) error {
-	credentials, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())))
+	credentials, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())), "Credential: ")
 	if err != nil {
 		return err
 	}
@@ -281,7 +336,7 @@ func (cmd *CredentialCreateCmd) Run(ctx server.Cmd) error {
 }
 
 func (cmd *CredentialGetCmd) Run(ctx server.Cmd) error {
-	passphrase, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())))
+	passphrase, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())), "Passphrase: ")
 	if err != nil {
 		return err
 	}
@@ -314,9 +369,9 @@ func (cmd *CredentialDeleteCmd) Run(ctx server.Cmd) error {
 	})
 }
 
-func readCredential(isTerm bool) ([]byte, error) {
+func readCredential(isTerm bool, prompt string) ([]byte, error) {
 	if isTerm {
-		fmt.Fprint(os.Stderr, "Credential: ")
+		fmt.Fprint(os.Stderr, prompt)
 		value, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
 		return value, err
@@ -334,4 +389,20 @@ func writeCredential(w io.Writer, credential any, jsonString bool) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(credential)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// LLM PROVIDER COMMANDS
+
+func (cmd *LLMProviderCreateCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "llmprovider-create", func(ctx context.Context, client *httpclient.Client) error {
+		provider, err := client.CreateLLMProvider(ctx, cmd.LLMProviderCreate)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(provider)
+		return nil
+	})
 }

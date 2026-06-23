@@ -3,6 +3,7 @@ package manager
 import (
 	// Packages
 	crypto "github.com/mutablelogic/go-auth/crypto"
+	client "github.com/mutablelogic/go-client"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
@@ -20,6 +21,7 @@ type opt struct {
 	schema      string
 	indexer     bool
 	passphrases *crypto.Passphrases
+	clientopts  []client.ClientOpt
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -43,10 +45,19 @@ func (o *opt) defaults() {
 	o.schema = schema.DefaultSchema
 	o.indexer = false
 	o.passphrases = crypto.NewPassphrases()
+	o.clientopts = []client.ClientOpt{}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // OPTIONS
+
+// WithLLMClientOpts sets options for the LLM provider registry's HTTP clients.
+func WithLLMClientOpts(opts ...client.ClientOpt) Opt {
+	return func(o *opt) error {
+		o.clientopts = opts
+		return nil
+	}
+}
 
 // WithIndexer uses this instance as an indexer of content
 func WithIndexer(indexer bool) Opt {
