@@ -92,17 +92,17 @@ func (r SearchResult) Cell(col int) string {
 		}
 		return r.Title + "\n" + r.Path
 	case 2:
-		summary := r.Summary
+		summary := r.Summary + "\n"
 		for _, kv := range r.Meta {
 			if kv.Key != "tags" {
 				continue
 			}
 			var tags []string
 			if err := json.Unmarshal(kv.Value, &tags); err != nil {
-				return summary + "\n"
+				return summary
 			}
 			if summary != "" {
-				summary += "\n\n"
+				summary += "\n"
 			}
 			summary += strings.Join(tags, ", ") + "\n"
 			break
@@ -123,7 +123,7 @@ func (r SearchResult) Cell(col int) string {
 		}
 		metamap := make(map[string]json.RawMessage, len(r.Meta))
 		for _, kv := range r.Meta {
-			if kv.Key == "title" || kv.Key == "summary" || kv.Key == "tags" {
+			if kv.Key == "title" || kv.Key == "summary" || kv.Key == "tags" || kv.Key == "lyrics" || kv.Key == "lyrics-eng" {
 				continue
 			}
 			metamap[kv.Key] = kv.Value
@@ -149,7 +149,7 @@ func (r *SearchListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	if query == "" {
 		return "", httpresponse.ErrBadRequest.With("missing search query")
 	} else {
-		bind.Append("where", `s."tsv" @@ websearch_to_tsquery('simple', `+bind.Set("query", query)+`)`)
+		bind.Append("where", `s."tsv" @@ websearch_to_tsquery('english', `+bind.Set("query", query)+`)`)
 	}
 
 	// Volumes filter
