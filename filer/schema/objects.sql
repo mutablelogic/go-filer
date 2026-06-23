@@ -55,27 +55,27 @@ DECLARE
   search_tsv TSVECTOR;
 BEGIN
   SELECT
-    setweight(to_tsvector('simple', COALESCE((
+    setweight(to_tsvector('english', COALESCE((
       SELECT string_agg(part, ' ')
       FROM regexp_split_to_table(o."path", '[/.]+') AS part
       WHERE length(part) >= 3
     ), '')), 'C') ||
-      setweight(to_tsvector('simple', COALESCE(o."type", '')), 'B') ||
-      setweight(to_tsvector('simple', COALESCE((
+      setweight(to_tsvector('english', COALESCE(o."type", '')), 'B') ||
+      setweight(to_tsvector('english', COALESCE((
         SELECT string_agg(m."value"::TEXT, ' ')
         FROM ${"schema"}."meta" AS m
         WHERE m."volume" = o."volume"
         AND m."path" = o."path"
         AND lower(m."key") = 'title'
       ), '')), 'A') ||
-      setweight(to_tsvector('simple', COALESCE((
+      setweight(to_tsvector('english', COALESCE((
         SELECT string_agg(m."value"::TEXT, ' ')
         FROM ${"schema"}."meta" AS m
         WHERE m."volume" = o."volume"
         AND m."path" = o."path"
         AND lower(m."key") = 'tags'
       ), '')), 'A') ||
-      setweight(to_tsvector('simple', COALESCE((
+      setweight(to_tsvector('english', COALESCE((
         SELECT string_agg(m."value"::TEXT, ' ')
         FROM ${"schema"}."meta" AS m
         WHERE m."volume" = o."volume"
@@ -221,6 +221,16 @@ DO $$ BEGIN
   AFTER INSERT OR UPDATE OR DELETE ON ${"schema"}.credential
   FOR EACH STATEMENT
   EXECUTE FUNCTION ${"schema"}.notify_table();
+END $$;
+
+-- filer.search.reindex
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN SELECT "volume", "path" FROM ${"schema"}."object" LOOP
+    PERFORM ${"schema"}.search_update(r."volume", r."path");
+  END LOOP;
 END $$;
 
 

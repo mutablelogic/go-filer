@@ -99,7 +99,7 @@ func (r SearchResult) Cell(col int) string {
 			}
 			var tags []string
 			if err := json.Unmarshal(kv.Value, &tags); err != nil {
-				return summary
+				return summary + "\n"
 			}
 			if summary != "" {
 				summary += "\n\n"
@@ -221,6 +221,14 @@ func (s *SearchResult) Scan(row pg.Row) error {
 			_ = json.Unmarshal(kv.Value, &s.Title)
 		case "summary":
 			_ = json.Unmarshal(kv.Value, &s.Summary)
+		case "lyrics":
+			if s.Summary == "" {
+				_ = json.Unmarshal(kv.Value, &s.Summary)
+			}
+		case "lyrics-eng":
+			if s.Summary == "" {
+				_ = json.Unmarshal(kv.Value, &s.Summary)
+			}
 		}
 	}
 
