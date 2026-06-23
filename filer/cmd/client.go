@@ -22,6 +22,7 @@ import (
 
 type ClientCommands struct {
 	ObjectClientCommands
+	SearchClientCommands
 	VolumeClientCommands
 	MetadataClientCommands
 	CredentialClientCommands
@@ -30,6 +31,10 @@ type ClientCommands struct {
 
 type ObjectClientCommands struct {
 	ObjectList ObjectListCmd `cmd:"" name:"objects" help:"List server objects." group:"OBJECT"`
+}
+
+type SearchClientCommands struct {
+	Search SearchCmd `cmd:"" name:"search" help:"Search server objects." group:"SEARCH"`
 }
 
 type VolumeClientCommands struct {
@@ -54,6 +59,10 @@ type LLMProviderClientCommands struct {
 
 type ObjectListCmd struct {
 	schema.ObjectListRequest
+}
+
+type SearchCmd struct {
+	schema.SearchListRequest
 }
 
 type VolumeCreateCmd struct {
@@ -137,6 +146,43 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 
 		// Objects list summary
 		summary := tui.TableSummary("objects", uint(objects.Count), objects.Offset, objects.Limit)
+		if _, err := summary.Write(os.Stdout); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// SEARCH COMMANDS
+
+func (cmd *SearchCmd) Run(ctx server.Cmd) error {
+	// Set the width of the terminal
+	width := ctx.IsTerm()
+	debug := ctx.IsDebug()
+
+	// Perform the request
+	return withClient(ctx, "search", func(ctx context.Context, client *httpclient.Client) error {
+		results, err := client.Search(ctx, cmd.SearchListRequest)
+		if err != nil {
+			return err
+		}
+
+		// With debugging
+		if debug {
+			fmt.Println(results)
+			return nil
+		}
+
+		// Search results list table
+		table := tui.TableFor[*schema.SearchResult](tui.SetWidth(width))
+		if _, err := table.Write(os.Stdout, results.Body...); err != nil {
+			return err
+		}
+
+		// Search results list summary
+		summary := tui.TableSummary("search results", uint(results.Count), results.Offset, results.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}

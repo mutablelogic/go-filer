@@ -220,6 +220,24 @@ FROM
 	upserted AS u
 ;
 
+-- filer.search_list
+SELECT
+	o."volume", o."path", o."size", o."type", o."etag", o."modified_at",
+	COALESCE((
+		SELECT jsonb_agg(jsonb_build_object('key', m."key", 'value', m."value") ORDER BY m."key")
+		FROM ${"schema"}."meta" AS m
+		WHERE m."volume" = o."volume"
+		AND m."path" = o."path"
+	), '[]'::jsonb) AS "meta",
+	ts_rank(s."tsv", websearch_to_tsquery('simple', @query), 32) AS "rank"
+FROM
+	${"schema"}."object" AS o
+JOIN
+	${"schema"}."search" AS s ON s."volume" = o."volume" AND s."path" = o."path"
+${where}
+ORDER BY
+	"rank" DESC
+	
 -- filer.meta_upsert
 INSERT INTO ${"schema"}."meta" (
 	"volume", "path", "key", "value"
@@ -328,3 +346,4 @@ WHERE
 RETURNING
 	"name", "provider", "url", "credential", "created_at"
 ;
+

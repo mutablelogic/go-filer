@@ -13,13 +13,20 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) Search(ctx context.Context, req schema.SearchRequest) (_ *schema.SearchResult, err error) {
+func (manager *Manager) Search(ctx context.Context, req schema.SearchListRequest) (_ *schema.SearchList, err error) {
 	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "Search",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
+	var result schema.SearchList
+	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
+		return nil, err
+	} else {
+		result.SearchListRequest = req
+		result.OffsetLimit.Clamp(uint64(result.Count))
+	}
+
 	// Return success
-	var result schema.SearchResult
 	return types.Ptr(result), nil
 }
