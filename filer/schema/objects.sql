@@ -223,15 +223,4 @@ DO $$ BEGIN
   EXECUTE FUNCTION ${"schema"}.notify_table();
 END $$;
 
--- filer.search.reindex
-DO $$
-DECLARE
-  r RECORD;
-BEGIN
-  FOR r IN SELECT "volume", "path" FROM ${"schema"}."object" LOOP
-    PERFORM ${"schema"}.search_update(r."volume", r."path");
-  END LOOP;
-END $$;
-
-
 
