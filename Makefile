@@ -1,6 +1,7 @@
 # Executables
 GO ?= $(shell which go 2>/dev/null)
 DOCKER ?= $(shell which docker 2>/dev/null)
+NPM ?= $(shell which npm 2>/dev/null)
 
 # Locations
 BUILD_DIR ?= build
@@ -15,7 +16,7 @@ VERSION ?= $(shell git describe --tags --always | sed 's/^v//')
 VERSION_PKG = github.com/mutablelogic/go-server/pkg/version
 BUILD_LD_FLAGS += -X $(VERSION_PKG).GitTag=$(shell git describe --tags --always)
 BUILD_LD_FLAGS += -X $(VERSION_PKG).GitBranch=$(shell git name-rev HEAD --name-only --always)
-BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}" 
+BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}"
 
 # Docker
 DOCKER_REPO ?= ghcr.io/mutablelogic/filer
@@ -26,7 +27,7 @@ DOCKER_TAG = ${DOCKER_REPO}:${VERSION}-${OS}-${ARCH}
 # ALL
 
 .PHONY: all
-all: build
+all: ts build
 
 ###############################################################################
 # BUILD
@@ -62,6 +63,16 @@ docker-push: docker-dep
 .PHONY: docker-version
 docker-version: docker-dep 
 	@echo "tag=${VERSION}"
+
+###############################################################################
+# TYPESCRIPT
+
+TS_DIR := filer/ts
+
+.PHONY: ts
+ts: npm-dep mkdir
+	@echo Build TypeScript
+	@cd $(TS_DIR) && ${NPM} install --silent && node build.js
 
 ###############################################################################
 # CLI
@@ -125,6 +136,10 @@ go-dep:
 .PHONY: docker-dep
 docker-dep:
 	@test -f "${DOCKER}" && test -x "${DOCKER}"  || (echo "Missing docker binary" && exit 1)
+
+.PHONY: npm-dep
+npm-dep:
+	@test -f "${NPM}" && test -x "${NPM}"  || (echo "Missing npm binary" && exit 1)
 
 .PHONY: wasmbuild-dep
 wasmbuild-dep:

@@ -3,8 +3,17 @@ ARG ARCH
 ARG DEBIAN_CODENAME=trixie
 ARG GO_MEDIA_VERSION=v1.8.3
 
-# Build stage: compile all commands
-FROM --platform=${OS}/${ARCH} golang:1.25-${DEBIAN_CODENAME} AS builder
+# TypeScript build stage
+FROM node:22-slim AS ts-builder
+WORKDIR /usr/src/app/filer/ts
+COPY filer/ts/package*.json ./
+RUN npm install --silent
+COPY filer/ts/ ./
+COPY filer/ts/assets/dist/ assets/dist/
+RUN node build.js
+
+# Go build stage: compile all commands
+FROM --platform=${OS}/${ARCH} golang:1.25-${DEBIAN_CODENAME} AS go-builder
 ARG OS
 ARG ARCH
 ARG DEBIAN_CODENAME
@@ -12,6 +21,7 @@ ARG GO_MEDIA_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /usr/src/app
 COPY . .
+COPY --from=ts-builder /usr/src/app/build/ts ./build/ts
 
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -47,7 +57,7 @@ ARG DEBIAN_CODENAME
 ENV DEBIAN_FRONTEND=noninteractive
 ARG SOURCE
 ARG VERSION
-COPY --from=builder /usr/src/app/build/* /usr/local/bin/
+COPY --from=go-builder /usr/src/app/build/filer /usr/local/bin/filer
 COPY etc/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
