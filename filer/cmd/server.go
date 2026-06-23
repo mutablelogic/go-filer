@@ -26,6 +26,7 @@ type ServerCommands struct {
 type RunServer struct {
 	pgcmd.PostgresFlags
 	servercmd.RunServer
+	UIFlags
 
 	// Other flags
 	Indexer     bool     `long:"indexer" help:"Run this instance as an indexer of content" default:"false" negatable:""`
@@ -63,6 +64,11 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 				httphandler.RegisterCredentialHandlers(manager, router),
 				httphandler.RegisterLLMProviderHandlers(manager, router),
 			)
+		})
+
+		// Register the UI handlers
+		runner.Register(func(router *httprouter.Router) error {
+			return runner.MaybeRegisterUI(ctx.Context(), ctx.Logger(), router)
 		})
 
 		// Run the manager
