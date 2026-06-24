@@ -59,7 +59,7 @@ const (
 )
 
 var (
-	ollamaOnce           sync.Once
+	ollamaMu             sync.Mutex
 	ollamaClient         *ollama.Client
 	ollamaModel          *llmschema.Model
 	ollamaMaxInputTokens float64
@@ -81,14 +81,13 @@ func NewTextReader(r io.Reader) *textreader {
 }
 
 func NewTextSummarizer(ctx context.Context) (*textsummarizer, error) {
-	var err error
-	ollamaOnce.Do(func() {
-		if client, err_ := ollama.New(OllamaUrl, client.OptTimeout(5*time.Minute)); err_ != nil {
-			err = err_
-			return
-		} else if model, err_ := client.GetModel(ctx, OllamaModel); err_ != nil {
-			err = err_
-			return
+	ollamaMu.Lock()
+	defer ollamaMu.Unlock()
+	if ollamaClient == nil {
+		if client, err := ollama.New(OllamaUrl, client.OptTimeout(5*time.Minute)); err != nil {
+			return nil, err
+		} else if model, err := client.GetModel(ctx, OllamaModel); err != nil {
+			return nil, err
 		} else {
 			ollamaClient = client
 			ollamaModel = model
@@ -98,9 +97,6 @@ func NewTextSummarizer(ctx context.Context) (*textsummarizer, error) {
 				ollamaMaxInputTokens = OllamaMaxInputTokens
 			}
 		}
-	})
-	if err != nil {
-		return nil, err
 	}
 	return new(textsummarizer), nil
 }

@@ -155,8 +155,8 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ObjectListRe
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if req.Volume != nil && types.Value(req.Volume) != self.name {
-		return nil, gofiler.ErrNotFound.Withf("volume not found: %q", types.Value(req.Volume))
+	if req.Volume != self.name {
+		return nil, gofiler.ErrNotFound.Withf("volume not found: %q", req.Volume)
 	}
 
 	rawPath := "/"

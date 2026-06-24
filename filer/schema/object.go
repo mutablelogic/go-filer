@@ -95,7 +95,7 @@ type DeleteObjectsResponse struct {
 
 type ObjectListRequest struct {
 	pg.OffsetLimit
-	Volume    *string `json:"volume,omitempty"`    // optional volume name to filter by
+	Volume    string  `json:"volume" required:""`  // required volume name to filter by
 	Path      *string `json:"path,omitempty"`      // optional path prefix within the backend
 	Recursive bool    `json:"recursive,omitempty"` // if true, list all objects recursively; if false, list only immediate children
 	Type      *string `json:"type,omitempty"`      // optional content type to filter by
@@ -194,6 +194,28 @@ func stripNULRunes(v any) any {
 	}
 }
 
+func (o Object) Matches(other *Object) bool {
+	var matched bool
+	if other == nil {
+		return matched
+	}
+	if o.Volume != other.Volume {
+		return matched
+	}
+	if o.Path != other.Path {
+		return matched
+	}
+	if o.Size != other.Size {
+		return matched
+	}
+	if o.ETag != nil && other.ETag != nil && types.Value(o.ETag) == types.Value(other.ETag) {
+		matched = true
+	} else if o.ModTime.IsZero() == false && other.ModTime.IsZero() == false && o.ModTime.Truncate(time.Second).Equal(other.ModTime.Truncate(time.Second)) {
+		matched = true
+	}
+	return matched
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // STRINGIFY
 
@@ -238,8 +260,8 @@ func (r DeleteObjectsResponse) String() string {
 
 func (r ObjectListRequest) Query() url.Values {
 	query := url.Values{}
-	if r.Volume != nil {
-		query.Set("volume", *r.Volume)
+	if r.Volume != "" {
+		query.Set("volume", r.Volume)
 	}
 	if r.Path != nil {
 		query.Set("path", *r.Path)
@@ -496,10 +518,9 @@ func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Del("where")
 
 	// Volume
-	if volume := strings.TrimSpace(types.Value(r.Volume)); volume != "" {
-		if !types.IsIdentifier(volume) {
-			return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
-		}
+	if volume := strings.TrimSpace(r.Volume); !types.IsIdentifier(volume) {
+		return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
+	} else {
 		bind.Append("where", `o."volume" = `+bind.Set("volume", volume))
 	}
 

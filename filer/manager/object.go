@@ -24,13 +24,48 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 	)
 	defer func() { endSpan(err) }()
 
-	var result schema.Object
-	if err := manager.PoolConn.Get(ctx, &result, req); err != nil {
+	// Check the volume first
+	volume, err := manager.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := manager.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the object from the backend first
+	object, err := backend.GetObject(ctx, schema.GetObjectRequest{
+		Path: req.Path,
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	// Return success
-	return types.Ptr(result), nil
+	// If the volume index delta is nil (indexing disabled) return now
+	if types.Value(volume.IndexDelta) == 0 {
+		return object, nil
+	}
+
+	// Get the metadata from the database (on error, return the object we have)
+	var result schema.Object
+	if err := manager.PoolConn.Get(ctx, &result, req); err != nil {
+		return object, err
+	}
+
+	// If the objects match, return the result from the database
+	if result.Matches(object) {
+		return types.Ptr(result), nil
+	}
+
+	// TODO: Kick off an indexing job for the object, and return the object we have
+
+	// Return the backend object in preference to the database object, since the database object is stale
+	return object, nil
 }
 
 func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRequest) (_ *schema.ObjectList, err error) {
@@ -39,6 +74,26 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 	)
 	defer func() { endSpan(err) }()
 
+	// Check the volume first
+	volume, err := manager.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := manager.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// If indexing is not enabled, or there has been no indexing, list the objects from the backend directly
+	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
+		return backend.ListObjects(ctx, req)
+	}
+
+	// Else use our database to return the objects
 	var result schema.ObjectList
 	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
 		return nil, err

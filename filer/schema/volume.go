@@ -112,10 +112,11 @@ func (r Volume) Cell(col int) string {
 	case 3:
 		return r.CreatedAt.Format(time.RFC3339)
 	case 4:
-		if r.IndexedAt == nil {
+		if r.Objects > 0 {
+			return fmt.Sprint(r.Objects)
+		} else {
 			return ""
 		}
-		return fmt.Sprint(r.Objects)
 	case 5:
 		if r.IndexDelta == nil {
 			return "disabled"
@@ -175,6 +176,8 @@ func (v VolumeName) Select(bind *pg.Bind, op pg.Op) (string, error) {
 		return bind.Query("filer.volume_get"), nil
 	case pg.Update:
 		return bind.Query("filer.volume_patch"), nil
+	case pg.Delete:
+		return bind.Query("filer.volume_delete"), nil
 	default:
 		return "", gofiler.ErrInternalServerError.Withf("unsupported VolumeName operation %q", op)
 	}

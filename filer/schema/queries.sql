@@ -88,6 +88,19 @@ FROM
 	touched AS t
 ;
 
+-- filer.volume_delete
+WITH deleted AS (
+	DELETE FROM ${"schema"}."volume"
+	WHERE "name" = @name
+	RETURNING "name", "url", "enabled", "index_delta", "created_at", "indexed_at"
+)
+SELECT
+	d."name", d."url", d."enabled", d."index_delta", d."created_at", d."indexed_at",
+	0::BIGINT AS "objects"
+FROM
+	deleted AS d
+;
+
 -- filer.object_get
 SELECT
 	o."volume", o."path", o."size", o."type", o."etag", o."modified_at",
