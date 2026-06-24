@@ -95,10 +95,10 @@ type DeleteObjectsResponse struct {
 
 type ObjectListRequest struct {
 	pg.OffsetLimit
-	Volume    string  `json:"volume" required:""`  // required volume name to filter by
-	Path      *string `json:"path,omitempty"`      // optional path prefix within the backend
-	Recursive bool    `json:"recursive,omitempty"` // if true, list all objects recursively; if false, list only immediate children
-	Type      *string `json:"type,omitempty"`      // optional content type to filter by
+	Volume    string  `json:"volume" arg:"" required:""`                  // Volume name to filter by
+	Path      *string `json:"path,omitempty"`                             //  Path prefix within the backend
+	Recursive bool    `json:"recursive,omitempty" short:"r" negatable:""` // List all objects or directories recursively, otherwise list only immediate children
+	Type      *string `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
 }
 
 type ObjectList struct {
