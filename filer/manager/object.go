@@ -66,12 +66,6 @@ func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (
 		if err := conn.Update(ctx, &touchedObject, schema.ObjectTouch(req), nil); err != nil {
 			return err
 		}
-
-		var touchedVolume schema.Volume
-		if err := conn.Update(ctx, &touchedVolume, schema.VolumeTouch(req.Volume), nil); err != nil {
-			return err
-		}
-
 		return nil
 	}); err != nil {
 		return err
@@ -129,12 +123,6 @@ func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreat
 			} else {
 				result.Meta = append(result.Meta, metaresult)
 			}
-		}
-
-		// Touch indexed_at for the volume
-		var touched schema.Volume
-		if err := manager.PoolConn.Update(ctx, &touched, schema.VolumeTouch(req.Volume), nil); err != nil {
-			return err
 		}
 
 		// Return success
