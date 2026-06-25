@@ -110,7 +110,7 @@ type ObjectListIterator struct {
 
 type ObjectList struct {
 	ObjectListRequest
-	Count int       `json:"count"`          // total number of matching objects, before offset/limit
+	Count int       `json:"count,omitempty"` // total number of matching objects, before offset/limit
 	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
 }
 

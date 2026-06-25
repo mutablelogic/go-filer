@@ -126,7 +126,11 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 		return nil, err
 	}
 	defer f.Close()
-	contentType := mime.Type(f)
+
+	contentType, meta, err := mime.Type(f)
+	if err != nil {
+		return nil, err
+	}
 
 	return &schema.Object{
 		ObjectKey: schema.ObjectKey{
@@ -135,6 +139,7 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 		},
 		ObjectMeta: schema.ObjectMeta{
 			ContentType: contentType,
+			Meta:        meta,
 		},
 		ObjectAttr: schema.ObjectAttr{
 			Size:    info.Size(),
@@ -175,17 +180,25 @@ func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.Object
 	}
 	iterator.Body = make([]*schema.Object, 0, schema.ObjectListLimit)
 
-	// If the path is empty, use the root directory
-	path := types.Value(iterator.Path)
-	if path == "" {
-		path = "."
+	// Normalise the walk root the same way statObject does, so leading/trailing
+	// slashes and dot segments are stripped before passing to fs.WalkDir.
+	walkRoot := strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(types.Value(iterator.Path))), "/")
+	if walkRoot == "" {
+		walkRoot = "."
+	}
+
+	// Reflect the normalised path back so callers see the canonical form.
+	if walkRoot == "." {
+		iterator.Path = nil
+	} else {
+		iterator.Path = types.Ptr(walkRoot)
 	}
 
 	// Ensure the path exists and is a directory
-	if _, info, err := self.statObject(schema.ObjectKey{Path: path}); err != nil {
+	if _, info, err := self.statObject(schema.ObjectKey{Path: walkRoot}); err != nil {
 		return err
 	} else if !info.IsDir() {
-		return gofiler.ErrBadParameter.Withf("not a directory: %q", path)
+		return gofiler.ErrBadParameter.Withf("not a directory: %q", walkRoot)
 	}
 
 	errPageFull := errors.New("page full")
@@ -218,7 +231,7 @@ func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.Object
 	}
 
 	// Walk the directory tree and emit objects to the iterator
-	err := fs.WalkDir(self.fs, path, func(entryPath string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(self.fs, walkRoot, func(entryPath string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -227,7 +240,7 @@ func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.Object
 		}
 
 		// Skip the walk root entry and hidden files/directories anywhere in the tree.
-		if entryPath == path {
+		if entryPath == walkRoot {
 			return nil
 		}
 		if strings.HasPrefix(d.Name(), ".") {

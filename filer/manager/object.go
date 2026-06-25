@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"io"
 	"mime"
 	"strings"
 
@@ -82,17 +83,55 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
 	}
 
-	// If indexing is not enabled, or there has been no indexing, list the objects from the backend directly
-	//if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
-	// Get the backend
-	//backend := manager.volumes.Get(volume.Name)
-	//if backend == nil {
-	//	return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
-	//}
-	//	return backend.ListObjects(ctx, req)
-	//}
+	// If indexing is not enabled, or no indexing has happened yet, iterate the backend directly.
+	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
+		b := manager.volumes.Get(volume.Name)
+		if b == nil {
+			return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+		}
 
-	// Else use our database to return the objects
+		offset := req.Offset
+		limit := uint64(schema.ObjectListLimit)
+		if req.Limit != nil {
+			limit = *req.Limit
+		}
+
+		iterator := &schema.ObjectListIterator{
+			Path:      req.Path,
+			Type:      req.Type,
+			Recursive: req.Recursive,
+		}
+
+		var result schema.ObjectList
+		n := uint64(0)
+	outer:
+		for {
+			err := b.ListObjects(ctx, iterator)
+			done := errors.Is(err, io.EOF)
+			if err != nil && !done {
+				return nil, err
+			}
+			for _, obj := range iterator.Body {
+				if n >= offset {
+					if uint64(len(result.Body)) >= limit {
+						break outer
+					}
+					result.Body = append(result.Body, obj)
+				}
+				n++
+			}
+			if done {
+				break
+			}
+		}
+
+		req.Path = iterator.Path // reflect normalised path back into the response
+		result.ObjectListRequest = req
+		result.OffsetLimit.Limit = types.Ptr(limit)
+		return types.Ptr(result), nil
+	}
+
+	// Use the database index to return the objects
 	var result schema.ObjectList
 	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
 		return nil, err

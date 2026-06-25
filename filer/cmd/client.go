@@ -143,7 +143,7 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Objects list summary
-		summary := tui.TableSummary("objects", uint(objects.Count), objects.Offset, objects.Limit)
+		summary := tui.TableSummary("objects", uint(objects.Count), uint(len(objects.Body)), objects.Offset, objects.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
@@ -180,7 +180,7 @@ func (cmd *SearchCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Search results list summary
-		summary := tui.TableSummary("search results", uint(results.Count), results.Offset, results.Limit)
+		summary := tui.TableSummary("search results", uint(results.Count), uint(len(results.Body)), results.Offset, results.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
@@ -247,7 +247,7 @@ func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Volumes list summary
-		summary := tui.TableSummary("volumes", uint(volumes.Count), volumes.Offset, volumes.Limit)
+		summary := tui.TableSummary("volumes", uint(volumes.Count), uint(len(volumes.Body)), volumes.Offset, volumes.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
@@ -388,7 +388,7 @@ func (cmd *CredentialListCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Credentials list summary
-		summary := tui.TableSummary("credentials", uint(credentials.Count), credentials.Offset, credentials.Limit)
+		summary := tui.TableSummary("credentials", uint(credentials.Count), uint(len(credentials.Body)), credentials.Offset, credentials.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
