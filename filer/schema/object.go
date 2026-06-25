@@ -66,31 +66,30 @@ type ObjectCreate struct {
 
 // Operations
 type CreateObjectRequest struct {
+	ObjectKey
 	Body        io.Reader `json:"-"`
 	IfNotExists bool      // if true, fail with ErrConflict when the object already exists
 	ObjectMeta
 }
 
 type GetObjectRequest struct {
-	Path string
+	ObjectKey
 }
 
 type ReadObjectRequest struct {
-	GetObjectRequest
+	ObjectKey
 }
 
 type DeleteObjectRequest struct {
-	GetObjectRequest
+	ObjectKey
 }
 
 type DeleteObjectsRequest struct {
-	Path      string `json:"path,omitempty"`
-	Recursive bool   `json:"recursive,omitempty"` // if true, delete all objects recursively; if false, delete only immediate children
+	ObjectKey
 }
 
 type DeleteObjectsResponse struct {
-	Volume string   `json:"volume,omitempty"`
-	Body   []Object `json:"body,omitempty"` // list of deleted objects
+	Body []Object `json:"body,omitempty"` // list of deleted objects
 }
 
 type ObjectListRequest struct {
@@ -99,6 +98,14 @@ type ObjectListRequest struct {
 	Path      *string `json:"path,omitempty"`                             //  Path prefix within the backend
 	Recursive bool    `json:"recursive,omitempty" short:"r" negatable:""` // List all objects or directories recursively, otherwise list only immediate children
 	Type      *string `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
+}
+
+type ObjectListIterator struct {
+	Path      *string   `json:"path,omitempty"`                             // Path prefix within the backend
+	Type      *string   `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
+	Recursive bool      `json:"recursive,omitempty" short:"r" negatable:""` // List all objects or directories recursively, otherwise list only immediate children
+	Token     any       `json:"-"`                                          // optional token to continue listing from a previous request
+	Body      []*Object `json:"body,omitempty"`                             // page of objects or folders returned by the backend
 }
 
 type ObjectList struct {

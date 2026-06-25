@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/fs"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 
@@ -23,8 +22,12 @@ import (
 
 type FileBackend struct {
 	name string
-	path string
-	fs   fs.FS
+	fs   WritableFS
+}
+
+type token struct {
+	Offset uint64  // Offset of the next object to return
+	Limit  *uint64 // Maximum number of objects to return for each iteration
 }
 
 var _ backend.Backend = (*FileBackend)(nil)
@@ -38,12 +41,11 @@ func New(url *url.URL) (*FileBackend, error) {
 	name, err := Validate(url)
 	if err != nil {
 		return nil, err
-	} else if fs, err := fs.Sub(os.DirFS(url.Path), "."); err != nil {
+	} else if wfs, err := newWritableFS(url.Path); err != nil {
 		return nil, err
 	} else {
 		self.name = name
-		self.path = url.Path
-		self.fs = fs
+		self.fs = wfs
 	}
 
 	return self, nil
@@ -68,13 +70,42 @@ func (self *FileBackend) URL() *url.URL {
 	url := new(url.URL)
 	url.Scheme = "file"
 	url.Host = self.name
-	url.Path = self.path
+	url.Path = self.fs.Root()
 	return url
 }
 
 // Create object in the backend
-func (FileBackend) CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error) {
-	return nil, gofiler.ErrNotImplemented
+func (self *FileBackend) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// IfNotExists is true, we should fail if the object already exists
+	_, info, err := self.statObject(req.ObjectKey)
+	if req.IfNotExists && err == nil {
+		return nil, gofiler.ErrConflict.Withf("object already exists: %q", req.Path)
+	} else if err != nil && !errors.Is(err, gofiler.ErrNotFound) {
+		return nil, err
+	} else if info != nil && info.IsDir() {
+		return nil, gofiler.ErrBadParameter.Withf("cannot create object at directory path: %q", req.Path)
+	}
+
+	// Create the object in the file system
+	r, err := self.fs.Create(req.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	// Copy the body to the file
+	if req.Body != nil {
+		if _, err := io.Copy(r, req.Body); err != nil {
+			return nil, err
+		}
+	}
+
+	// Return the object metadata
+	return self.GetObject(ctx, schema.GetObjectRequest{ObjectKey: req.ObjectKey})
 }
 
 // Get object metadata from the backend
@@ -83,41 +114,24 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 		return nil, err
 	}
 
-	name := strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(req.Path)), "/")
-	if name == "" {
-		name = "."
-	}
-	if name != "." && !fs.ValidPath(name) {
-		return nil, gofiler.ErrBadParameter.Withf("invalid object path %q", req.Path)
+	prefix, info, err := self.statObject(req.ObjectKey)
+	if err != nil {
+		return nil, err
+	} else if info.IsDir() {
+		return nil, gofiler.ErrBadParameter.Withf("path is a directory: %q", req.Path)
 	}
 
-	info, err := fs.Stat(self.fs, name)
+	f, err := self.fs.Open(path.Join(prefix, info.Name()))
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, gofiler.ErrNotFound.Withf("object not found: %q", req.Path)
-		}
 		return nil, err
 	}
-
-	resultPath := "/"
-	if name != "." {
-		resultPath += name
-	}
-
-	contentType := types.ContentTypeBinary
-	if !info.IsDir() {
-		f, err := self.fs.Open(name)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		contentType = mime.Type(f)
-	}
+	defer f.Close()
+	contentType := mime.Type(f)
 
 	return &schema.Object{
 		ObjectKey: schema.ObjectKey{
 			Volume: self.name,
-			Path:   resultPath,
+			Path:   path.Join(prefix, info.Name()),
 		},
 		ObjectMeta: schema.ObjectMeta{
 			ContentType: contentType,
@@ -125,7 +139,6 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 		ObjectAttr: schema.ObjectAttr{
 			Size:    info.Size(),
 			ModTime: info.ModTime(),
-			IsDir:   info.IsDir(),
 		},
 	}, nil
 }
@@ -150,48 +163,62 @@ func (self *FileBackend) ReadObject(ctx context.Context, req schema.GetObjectReq
 	return f, object, nil
 }
 
-// List objects in the backend
-func (self FileBackend) ListObjects(ctx context.Context, req schema.ObjectListRequest) (*schema.ObjectList, error) {
+// List objects or directories in the backend
+func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.ObjectListIterator) error {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
-	if req.Volume != self.name {
-		return nil, gofiler.ErrNotFound.Withf("volume not found: %q", req.Volume)
+	tok, ok := iterator.Token.(*token)
+	if tok == nil || !ok {
+		tok = types.Ptr(token{Offset: 0, Limit: types.Ptr(uint64(schema.ObjectListLimit))})
+		iterator.Token = tok
+	}
+	iterator.Body = make([]*schema.Object, 0, schema.ObjectListLimit)
+
+	// If the path is empty, use the root directory
+	path := types.Value(iterator.Path)
+	if path == "" {
+		path = "."
 	}
 
-	rawPath := "/"
-	if req.Path != nil {
-		rawPath = strings.TrimSpace(*req.Path)
+	// Ensure the path exists and is a directory
+	if _, info, err := self.statObject(schema.ObjectKey{Path: path}); err != nil {
+		return err
+	} else if !info.IsDir() {
+		return gofiler.ErrBadParameter.Withf("not a directory: %q", path)
 	}
 
-	name := strings.TrimPrefix(path.Clean("/"+rawPath), "/")
-	if name == "" {
-		name = "."
-	}
-	if name != "." && !fs.ValidPath(name) {
-		return nil, gofiler.ErrBadParameter.Withf("invalid object path %q", rawPath)
-	}
+	errPageFull := errors.New("page full")
 
-	baseInfo, err := fs.Stat(self.fs, name)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, gofiler.ErrNotFound.Withf("object path not found: %q", rawPath)
+	n := uint64(0)
+	appendEntry := func(entryPath string, isDir bool) error {
+		defer func() { n++ }()
+		if n < tok.Offset {
+			return nil
 		}
-		return nil, err
+		if tok.Limit != nil && uint64(len(iterator.Body)) >= *tok.Limit {
+			return errPageFull
+		}
+		if isDir {
+			iterator.Body = append(iterator.Body, &schema.Object{
+				ObjectKey:  schema.ObjectKey{Volume: self.name, Path: entryPath},
+				ObjectMeta: schema.ObjectMeta{ContentType: schema.ContentTypeDirectory},
+				ObjectAttr: schema.ObjectAttr{IsDir: true},
+			})
+		} else {
+			obj, err := self.GetObject(ctx, schema.GetObjectRequest{
+				ObjectKey: schema.ObjectKey{Volume: self.name, Path: entryPath},
+			})
+			if err != nil {
+				return err
+			}
+			iterator.Body = append(iterator.Body, obj)
+		}
+		return nil
 	}
 
-	// Depth of the starting path used to enforce non-recursive listing.
-	baseDepth := 0
-	if name != "." {
-		baseDepth = strings.Count(name, "/") + 1
-	}
-
-	var count int
-	var body []*schema.Object
-	limit := req.Limit
-	collect := limit == nil || *limit > 0
-
-	err = fs.WalkDir(self.fs, name, func(filename string, d fs.DirEntry, walkErr error) error {
+	// Walk the directory tree and emit objects to the iterator
+	err := fs.WalkDir(self.fs, path, func(entryPath string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -199,86 +226,92 @@ func (self FileBackend) ListObjects(ctx context.Context, req schema.ObjectListRe
 			return err
 		}
 
-		// Skip hidden files and directories anywhere in the tree.
-		entry := path.Base(filename)
-		if entry != "." && strings.HasPrefix(entry, ".") {
+		// Skip the walk root entry and hidden files/directories anywhere in the tree.
+		if entryPath == path {
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
 		}
 
-		// Skip the root directory itself when listing under a directory.
-		if filename == name && d.IsDir() {
-			return nil
-		}
-
-		if !req.Recursive && baseInfo.IsDir() {
-			depth := strings.Count(filename, "/") + 1
-			if depth > baseDepth+1 {
-				if d.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
+		// Emit directories when the caller is listing directories, or else emit files
+		if d.IsDir() && types.Value(iterator.Type) == schema.ContentTypeDirectory {
+			if err := appendEntry(entryPath, true); err != nil {
+				return err
+			}
+		} else if !d.IsDir() && types.Value(iterator.Type) != schema.ContentTypeDirectory {
+			if err := appendEntry(entryPath, false); err != nil {
+				return err
 			}
 		}
 
-		info, err := d.Info()
-		if err != nil {
-			return err
+		// Descend into directories only when recursive; skip otherwise
+		if d.IsDir() {
+			if iterator.Recursive {
+				return nil
+			}
+			return fs.SkipDir
 		}
-		if !info.Mode().IsRegular() {
-			// Skip non-regular files (e.g. symlinks, devices)
-			return nil
-		}
-
-		count++
-		if count <= int(req.Offset) || !collect {
-			return nil
-		}
-		if limit != nil && uint64(len(body)) >= *limit {
-			return nil
-		}
-
-		objectPath := "/"
-		if filename != "." {
-			objectPath += filename
-		}
-
-		contentType := types.ContentTypeBinary
-		if !info.IsDir() {
-			contentType = mime.TypeByExtension(path.Ext(filename))
-		}
-
-		body = append(body, &schema.Object{
-			ObjectKey: schema.ObjectKey{
-				Volume: self.name,
-				Path:   objectPath,
-			},
-			ObjectMeta: schema.ObjectMeta{
-				ContentType: contentType,
-			},
-			ObjectAttr: schema.ObjectAttr{
-				Size:    info.Size(),
-				ModTime: info.ModTime(),
-				IsDir:   info.IsDir(),
-			},
-		})
 
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
 
-	return &schema.ObjectList{
-		ObjectListRequest: req,
-		Count:             count,
-		Body:              body,
-	}, nil
+	if errors.Is(err, errPageFull) {
+		tok.Offset += uint64(len(iterator.Body))
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	iterator.Token = nil
+	return io.EOF
 }
 
 // Delete objects in the backend (single object or prefix)
-func (FileBackend) DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	return nil, gofiler.ErrNotImplemented
+func (self FileBackend) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	entryPath, info, err := self.statObject(req.ObjectKey)
+	if err != nil {
+		return err
+	}
+	name := path.Join(entryPath, info.Name())
+	if info.IsDir() {
+		return self.fs.RemoveAll(name)
+	}
+	return self.fs.Remove(name)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+func (self *FileBackend) statObject(req schema.ObjectKey) (string, fs.FileInfo, error) {
+	// Check the volume matches
+	if req.Volume != "" && req.Volume != self.name {
+		return "", nil, gofiler.ErrBadParameter.Withf("volume mismatch: %q != %q", req.Volume, self.name)
+	}
+
+	// Check the path is valid
+	name := strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(req.Path)), "/")
+	if name == "" {
+		name = "."
+	}
+	if name != "." && !fs.ValidPath(name) {
+		return "", nil, gofiler.ErrBadParameter.Withf("invalid object path %q", req.Path)
+	}
+
+	// Stat the object
+	info, err := fs.Stat(self.fs, name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil, gofiler.ErrNotFound.Withf("object not found: %q", req.Path)
+	} else if err != nil {
+		return "", nil, err
+	}
+
+	// Return the file info
+	return path.Dir(name), info, nil
 }

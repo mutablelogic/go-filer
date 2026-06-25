@@ -10,6 +10,8 @@ import (
 const (
 	DefaultSchema = "filer"
 	NotifyChannel = "filer_changes"
+
+	ContentTypeDirectory = "text/directory"
 )
 
 const (
