@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -203,7 +204,7 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object, 
 
 	// Read the object from the backend and extract metadata
 	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{
-		Path: object.Path,
+		ObjectKey: object.ObjectKey,
 	})
 	if err != nil {
 		return nil, err
@@ -283,64 +284,51 @@ func (manager *Manager) reindexVolumes(ctx context.Context, queue *pgqueueschema
 	} else if backend := manager.volumes.Get(result.Body[0].Name); backend == nil {
 		logger.WarnContext(ctx, "volume not found in registry", "name", result.Body[0].Name)
 	} else {
-		// Run this in a transaction
-		return manager.Tx(ctx, func(conn pg.Conn) error {
-			// Touch indexed_at before reindexing so concurrent workers will not pick
-			// this volume as stale in the same scheduling window.
-			var touched schema.Volume
-			if err := conn.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
-				return err
-			}
+		// Touch indexed_at before reindexing so concurrent workers will not pick
+		// this volume as stale in the same scheduling window.
+		var touched schema.Volume
+		if err := manager.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
+			return err
+		}
 
-			// Create reindexing tasks for all objects in the volume
-			return manager.reindexVolumeInner(ctx, backend, queue, logger)
-		})
+		// Create reindexing tasks for all objects in the volume
+		return manager.reindexVolumeInner(ctx, backend, queue, logger)
 	}
 
 	return nil
 }
 
 func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.Backend, queue *pgqueueschema.Queue, logger *slog.Logger) error {
-	// TODO: Do this in a goroutine
-	// List all objects in the backend
-	var offset uint64
+	logger.DebugContext(ctx, "reindexing", "name", backend.Name())
+
+	iterator := &schema.ObjectListIterator{
+		Recursive: true,
+	}
 	for {
-		logger.DebugContext(ctx, "reindexing page", "name", backend.Name(), "offset", offset)
-		if objects, err := backend.ListObjects(ctx, schema.ObjectListRequest{
-			Volume:    backend.Name(),
-			Recursive: true,
-			OffsetLimit: pg.OffsetLimit{
-				Offset: offset,
-			},
-		}); err != nil {
-			logger.DebugContext(ctx, "reindexing error", "name", backend.Name(), "error", err.Error())
-			return gofiler.ErrInternalServerError.Withf("backend %q failure: %v", backend.Name(), err.Error())
-		} else if len(objects.Body) == 0 {
-			logger.DebugContext(ctx, "reindexing done", "name", backend.Name())
+		err := backend.ListObjects(ctx, iterator)
+		if errors.Is(err, io.EOF) {
 			break
-		} else {
-			for _, object := range objects.Body {
-				if object.IsDir {
-					continue
-				}
-				payload, err := json.Marshal(object)
-				if err != nil {
-					logger.DebugContext(ctx, "failed to marshal object", "name", backend.Name(), "error", err.Error())
-					return fmt.Errorf("failed to marshal object: %w", err)
-				}
-				// TODO: Ideally do this in a transaction
-				if _, err := manager.queue.CreateTask(ctx, queue.Queue, pgqueueschema.TaskMeta{
-					Payload: payload,
-				}); err != nil {
-					logger.DebugContext(ctx, "failed to create index task", "name", backend.Name(), "error", err.Error())
-					return fmt.Errorf("failed to create index task: %w", err)
-				}
+		} else if err != nil {
+			return gofiler.ErrInternalServerError.Withf("backend %q failure: %v", backend.Name(), err.Error())
+		}
+		for _, object := range iterator.Body {
+			if object.IsDir {
+				continue
 			}
-			offset += uint64(len(objects.Body))
+			payload, err := json.Marshal(object)
+			if err != nil {
+				return fmt.Errorf("failed to marshal object: %w", err)
+			}
+			// TODO: Ideally do this in a transaction
+			if _, err := manager.queue.CreateTask(ctx, queue.Queue, pgqueueschema.TaskMeta{
+				Payload: payload,
+			}); err != nil {
+				return fmt.Errorf("failed to create index task: %w", err)
+			}
 		}
 	}
 
-	// Return success
+	logger.DebugContext(ctx, "reindexing done", "name", backend.Name())
 	return nil
 }
 

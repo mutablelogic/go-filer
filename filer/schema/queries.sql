@@ -5,7 +5,12 @@ SELECT
 		SELECT COUNT(*)
 		FROM ${"schema"}."object" AS o
 		WHERE o."volume" = v."name"
-	), 0)::BIGINT AS "objects"
+	), 0)::BIGINT AS "objects",
+	(
+		SELECT MAX(o."indexed_at")
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = v."name"
+	) AS "last_indexed_object_at"
 FROM
 	${"schema"}."volume" AS v
 WHERE
@@ -19,7 +24,12 @@ SELECT
 		SELECT COUNT(*)
 		FROM ${"schema"}."object" AS o
 		WHERE o."volume" = v."name"
-	), 0)::BIGINT AS "objects"
+	), 0)::BIGINT AS "objects",
+	(
+		SELECT MAX(o."indexed_at")
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = v."name"
+	) AS "last_indexed_object_at"
 FROM
 	${"schema"}."volume" AS v
 ${where}
@@ -41,7 +51,12 @@ SELECT
 		SELECT COUNT(*)
 		FROM ${"schema"}."object" AS o
 		WHERE o."volume" = i."name"
-	), 0)::BIGINT AS "objects"
+	), 0)::BIGINT AS "objects",
+	(
+		SELECT MAX(o."indexed_at")
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = i."name"
+	) AS "last_indexed_object_at"
 FROM
 	inserted AS i
 ;
@@ -62,7 +77,12 @@ SELECT
 		SELECT COUNT(*)
 		FROM ${"schema"}."object" AS o
 		WHERE o."volume" = p."name"
-	), 0)::BIGINT AS "objects"
+	), 0)::BIGINT AS "objects",
+	(
+		SELECT MAX(o."indexed_at")
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = p."name"
+	) AS "last_indexed_object_at"
 FROM
 	patched AS p
 ;
@@ -83,7 +103,12 @@ SELECT
 		SELECT COUNT(*)
 		FROM ${"schema"}."object" AS o
 		WHERE o."volume" = t."name"
-	), 0)::BIGINT AS "objects"
+	), 0)::BIGINT AS "objects",
+	(
+		SELECT MAX(o."indexed_at")
+		FROM ${"schema"}."object" AS o
+		WHERE o."volume" = t."name"
+	) AS "last_indexed_object_at"
 FROM
 	touched AS t
 ;
@@ -96,7 +121,8 @@ WITH deleted AS (
 )
 SELECT
 	d."name", d."url", d."enabled", d."index_delta", d."created_at", d."indexed_at",
-	0::BIGINT AS "objects"
+	0::BIGINT AS "objects",
+	NULL::TIMESTAMPTZ AS "last_indexed_object_at"
 FROM
 	deleted AS d
 ;

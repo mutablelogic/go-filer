@@ -242,7 +242,7 @@ func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.Object
 			if err := appendEntry(entryPath, true); err != nil {
 				return err
 			}
-		} else if !d.IsDir() && types.Value(iterator.Type) != schema.ContentTypeDirectory {
+		} else if d.Type().IsRegular() && types.Value(iterator.Type) != schema.ContentTypeDirectory {
 			if err := appendEntry(entryPath, false); err != nil {
 				return err
 			}

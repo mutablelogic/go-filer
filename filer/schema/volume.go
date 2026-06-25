@@ -30,10 +30,11 @@ type VolumeCreate struct {
 
 type Volume struct {
 	VolumeCreate
-	Name      string     `json:"name,omitempty"`
-	CreatedAt time.Time  `json:"created_at,omitempty"`
-	IndexedAt *time.Time `json:"indexed_at,omitempty"`
-	Objects   uint64     `json:"objects,omitempty"`
+	Name                string     `json:"name,omitempty"`
+	CreatedAt           time.Time  `json:"created_at,omitempty"`
+	IndexedAt           *time.Time `json:"indexed_at,omitempty"`
+	Objects             uint64     `json:"objects,omitempty"`
+	LastIndexedObjectAt *time.Time `json:"last_indexed_object_at,omitempty"`
 }
 
 type VolumeListRequest struct {
@@ -91,7 +92,7 @@ func (r VolumeListRequest) Query() url.Values {
 // TABLE OUTPUT
 
 func (r Volume) Header() []string {
-	return []string{"Volume", "URL", "Enabled", "Created At", "Indexed Objects", "Index Delta", "Indexed At"}
+	return []string{"Volume", "URL", "Enabled", "Created At", "Indexed Objects", "Index Delta", "Indexed At", "Last Indexed Object At"}
 }
 
 func (r Volume) Width(col int) int {
@@ -127,6 +128,11 @@ func (r Volume) Cell(col int) string {
 			return ""
 		}
 		return r.IndexedAt.Format(time.RFC3339)
+	case 7:
+		if r.LastIndexedObjectAt == nil {
+			return ""
+		}
+		return r.LastIndexedObjectAt.Format(time.RFC3339)
 	default:
 		return ""
 	}
@@ -144,6 +150,7 @@ func (v *Volume) Scan(row pg.Row) error {
 		&v.CreatedAt,
 		&v.IndexedAt,
 		&v.Objects,
+		&v.LastIndexedObjectAt,
 	)
 }
 

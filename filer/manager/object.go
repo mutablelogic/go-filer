@@ -40,7 +40,7 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 
 	// Get the object from the backend first
 	object, err := backend.GetObject(ctx, schema.GetObjectRequest{
-		Path: req.Path,
+		ObjectKey: req,
 	})
 	if err != nil {
 		return nil, err
@@ -82,16 +82,15 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
 	}
 
-	// Get the backend
-	backend := manager.volumes.Get(volume.Name)
-	if backend == nil {
-		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
-	}
-
 	// If indexing is not enabled, or there has been no indexing, list the objects from the backend directly
-	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
-		return backend.ListObjects(ctx, req)
-	}
+	//if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
+	// Get the backend
+	//backend := manager.volumes.Get(volume.Name)
+	//if backend == nil {
+	//	return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	//}
+	//	return backend.ListObjects(ctx, req)
+	//}
 
 	// Else use our database to return the objects
 	var result schema.ObjectList
