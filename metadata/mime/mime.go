@@ -44,6 +44,7 @@ var wellKnownMIME = map[string]string{
 	".mov":     "video/quicktime",
 	".geojson": "application/geo+json",
 	".tf":      "application/x-terraform",
+	".heic":    "image/heic",
 }
 
 type namedReader interface {
