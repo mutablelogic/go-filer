@@ -14,6 +14,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
+	types "github.com/mutablelogic/go-server/pkg/types"
 	term "golang.org/x/term"
 )
 
@@ -38,8 +39,13 @@ type SearchClientCommands struct {
 }
 
 type VolumeClientCommands struct {
-	VolumeList   VolumeListCmd   `cmd:"" name:"volumes" help:"List server volumes." group:"VOLUME"`
-	VolumeCreate VolumeCreateCmd `cmd:"" name:"volume-create" help:"Create a new volume." group:"VOLUME"`
+	VolumeGet     VolumeGetCmd        `cmd:"" name:"volume" help:"Get a volume by name." group:"VOLUME"`
+	VolumeList    VolumeListCmd       `cmd:"" name:"volumes" help:"List server volumes." group:"VOLUME"`
+	VolumeCreate  VolumeCreateFileCmd `cmd:"" name:"volume-create-file" help:"Create a new file-backed volume." group:"VOLUME"`
+	VolumeMount   VolumeMountCmd      `cmd:"" name:"volume-mount" help:"Mount a volume by name." group:"VOLUME"`
+	VolumeUnmount VolumeUnmountCmd    `cmd:"" name:"volume-unmount" help:"Unmount a volume by name." group:"VOLUME"`
+	VolumeUpdate  VolumeUpdateCmd     `cmd:"" name:"volume-update" help:"Update a volume by name." group:"VOLUME"`
+	VolumeDelete  VolumeDeleteCmd     `cmd:"" name:"volume-delete" help:"Delete a volume by name." group:"VOLUME"`
 }
 
 type MetadataClientCommands struct {
@@ -63,14 +69,6 @@ type ObjectListCmd struct {
 
 type SearchCmd struct {
 	schema.SearchListRequest
-}
-
-type VolumeCreateCmd struct {
-	schema.VolumeCreate
-}
-
-type VolumeListCmd struct {
-	schema.VolumeListRequest
 }
 
 type MetadataCmd struct {
@@ -145,7 +143,7 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Objects list summary
-		summary := tui.TableSummary("objects", uint(objects.Count), objects.Offset, objects.Limit)
+		summary := tui.TableSummary("objects", uint(objects.Count), uint(len(objects.Body)), objects.Offset, objects.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
@@ -182,7 +180,7 @@ func (cmd *SearchCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Search results list summary
-		summary := tui.TableSummary("search results", uint(results.Count), results.Offset, results.Limit)
+		summary := tui.TableSummary("search results", uint(results.Count), uint(len(results.Body)), results.Offset, results.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
@@ -193,6 +191,36 @@ func (cmd *SearchCmd) Run(ctx server.Cmd) error {
 
 ///////////////////////////////////////////////////////////////////////////////
 // VOLUME COMMANDS
+
+type VolumeGetCmd struct {
+	Name string `arg:"" name:"name" help:"Volume name."`
+}
+
+type VolumeListCmd struct {
+	schema.VolumeListRequest
+}
+
+type VolumeCreateFileCmd struct {
+	Name string `arg:"" name:"name" help:"Volume name."`
+	Path string `arg:"" name:"path" type:"file" help:"Path to filesystem."`
+}
+
+type VolumeMountCmd struct {
+	VolumeGetCmd
+}
+
+type VolumeUnmountCmd struct {
+	VolumeGetCmd
+}
+
+type VolumeUpdateCmd struct {
+	VolumeGetCmd
+	schema.VolumeMeta
+}
+
+type VolumeDeleteCmd struct {
+	VolumeGetCmd
+}
 
 func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 	// Set the width of the terminal
@@ -219,7 +247,7 @@ func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Volumes list summary
-		summary := tui.TableSummary("volumes", uint(volumes.Count), volumes.Offset, volumes.Limit)
+		summary := tui.TableSummary("volumes", uint(volumes.Count), uint(len(volumes.Body)), volumes.Offset, volumes.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}
@@ -228,10 +256,15 @@ func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 	})
 }
 
-func (cmd *VolumeCreateCmd) Run(ctx server.Cmd) error {
+func (cmd *VolumeCreateFileCmd) Run(ctx server.Cmd) error {
 	// Perform the request
-	return withClient(ctx, "volume-create", func(ctx context.Context, client *httpclient.Client) error {
-		volume, err := client.CreateVolume(ctx, cmd.VolumeCreate)
+	return withClient(ctx, "volume-create-file", func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := client.CreateVolume(ctx, schema.VolumeCreate{
+			URL: "file://" + cmd.Name + types.NormalisePath(cmd.Path),
+			VolumeMeta: schema.VolumeMeta{
+				Enabled: types.Ptr(true),
+			},
+		})
 		if err != nil {
 			return err
 		}
@@ -239,6 +272,69 @@ func (cmd *VolumeCreateCmd) Run(ctx server.Cmd) error {
 		fmt.Println(volume)
 		return nil
 	})
+}
+
+func (cmd *VolumeGetCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "volume", func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := client.GetVolume(ctx, cmd.Name)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(volume)
+		return nil
+	})
+}
+
+func (cmd *VolumeUpdateCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "volume-update", func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := client.UpdateVolume(ctx, cmd.Name, cmd.VolumeMeta)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(volume)
+		return nil
+	})
+}
+
+func (cmd *VolumeDeleteCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "volume-delete", func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := client.DeleteVolume(ctx, cmd.Name)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(volume)
+		return nil
+	})
+}
+
+func (cmd *VolumeMountCmd) Run(ctx server.Cmd) error {
+	cmd2 := VolumeUpdateCmd{
+		VolumeGetCmd: VolumeGetCmd{
+			Name: cmd.Name,
+		},
+		VolumeMeta: schema.VolumeMeta{
+			Enabled: types.Ptr(true),
+		},
+	}
+	return cmd2.Run(ctx)
+}
+
+func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
+	cmd2 := VolumeUpdateCmd{
+		VolumeGetCmd: VolumeGetCmd{
+			Name: cmd.Name,
+		},
+		VolumeMeta: schema.VolumeMeta{
+			Enabled: types.Ptr(false),
+		},
+	}
+	return cmd2.Run(ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -292,7 +388,7 @@ func (cmd *CredentialListCmd) Run(ctx server.Cmd) error {
 		}
 
 		// Credentials list summary
-		summary := tui.TableSummary("credentials", uint(credentials.Count), credentials.Offset, credentials.Limit)
+		summary := tui.TableSummary("credentials", uint(credentials.Count), uint(len(credentials.Body)), credentials.Offset, credentials.Limit)
 		if _, err := summary.Write(os.Stdout); err != nil {
 			return err
 		}

@@ -74,7 +74,10 @@ func (m *Manager) GetMeta(ctx context.Context, r io.Reader) (_ *schema.ObjectMet
 
 	// Get the mimetype from the reader
 	var result schema.ObjectMeta
-	result.ContentType = mime.Type(fileReader{reader: sniffReader, name: name})
+	result.ContentType, _, err = mime.Type(fileReader{reader: sniffReader, name: name})
+	if err != nil {
+		return nil, err
+	}
 
 	// Rewind by replaying sniffed bytes first, then the unread remainder.
 	if meta, err := m.Get(ctx, result.ContentType, fileReader{

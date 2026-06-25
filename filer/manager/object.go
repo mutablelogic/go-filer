@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"io"
 	"mime"
 	"strings"
 
@@ -24,13 +25,48 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 	)
 	defer func() { endSpan(err) }()
 
-	var result schema.Object
-	if err := manager.PoolConn.Get(ctx, &result, req); err != nil {
+	// Check the volume first
+	volume, err := manager.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := manager.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the object from the backend first
+	object, err := backend.GetObject(ctx, schema.GetObjectRequest{
+		ObjectKey: req,
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	// Return success
-	return types.Ptr(result), nil
+	// If the volume index delta is nil (indexing disabled) return now
+	if types.Value(volume.IndexDelta) == 0 {
+		return object, nil
+	}
+
+	// Get the metadata from the database (on error, return the object we have)
+	var result schema.Object
+	if err := manager.PoolConn.Get(ctx, &result, req); err != nil {
+		return object, err
+	}
+
+	// If the objects match, return the result from the database
+	if result.Matches(object) {
+		return types.Ptr(result), nil
+	}
+
+	// TODO: Kick off an indexing job for the object, and return the object we have
+
+	// Return the backend object in preference to the database object, since the database object is stale
+	return object, nil
 }
 
 func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRequest) (_ *schema.ObjectList, err error) {
@@ -39,6 +75,63 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 	)
 	defer func() { endSpan(err) }()
 
+	// Check the volume first
+	volume, err := manager.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// If indexing is not enabled, or no indexing has happened yet, iterate the backend directly.
+	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
+		b := manager.volumes.Get(volume.Name)
+		if b == nil {
+			return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+		}
+
+		offset := req.Offset
+		limit := uint64(schema.ObjectListLimit)
+		if req.Limit != nil {
+			limit = *req.Limit
+		}
+
+		iterator := &schema.ObjectListIterator{
+			Path:      req.Path,
+			Type:      req.Type,
+			Recursive: req.Recursive,
+		}
+
+		var result schema.ObjectList
+		n := uint64(0)
+	outer:
+		for {
+			err := b.ListObjects(ctx, iterator)
+			done := errors.Is(err, io.EOF)
+			if err != nil && !done {
+				return nil, err
+			}
+			for _, obj := range iterator.Body {
+				if n >= offset {
+					if uint64(len(result.Body)) >= limit {
+						break outer
+					}
+					result.Body = append(result.Body, obj)
+				}
+				n++
+			}
+			if done {
+				break
+			}
+		}
+
+		req.Path = iterator.Path // reflect normalised path back into the response
+		result.ObjectListRequest = req
+		result.OffsetLimit.Limit = types.Ptr(limit)
+		return types.Ptr(result), nil
+	}
+
+	// Use the database index to return the objects
 	var result schema.ObjectList
 	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
 		return nil, err
@@ -66,12 +159,6 @@ func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (
 		if err := conn.Update(ctx, &touchedObject, schema.ObjectTouch(req), nil); err != nil {
 			return err
 		}
-
-		var touchedVolume schema.Volume
-		if err := conn.Update(ctx, &touchedVolume, schema.VolumeTouch(req.Volume), nil); err != nil {
-			return err
-		}
-
 		return nil
 	}); err != nil {
 		return err
@@ -129,12 +216,6 @@ func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreat
 			} else {
 				result.Meta = append(result.Meta, metaresult)
 			}
-		}
-
-		// Touch indexed_at for the volume
-		var touched schema.Volume
-		if err := manager.PoolConn.Update(ctx, &touched, schema.VolumeTouch(req.Volume), nil); err != nil {
-			return err
 		}
 
 		// Return success

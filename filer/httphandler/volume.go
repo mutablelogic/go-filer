@@ -21,7 +21,7 @@ import (
 // TYPES
 
 type VolumePathParams struct {
-	Volume string `json:"volume"`
+	Name string `json:"name" help:"Volume name" required:""`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -51,11 +51,57 @@ func RegisterVolumeHandlers(manager *manager.Manager, router *httprouter.Router)
 				openapi.WithJSONResponse(http.StatusCreated, jsonschema.MustFor[schema.Volume]()),
 			),
 		),
+		router.RegisterPath("volume/{name}", nil, httprequest.NewPathItem("Volumes", "Manage a volume").
+			Get(
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = GetVolume(w, r, manager, r.PathValue("name"))
+				},
+				"Get volume",
+				openapi.WithTags("Volumes"),
+				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume]()),
+			).
+			Delete(
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = DeleteVolume(w, r, manager, r.PathValue("name"))
+				},
+				"Delete volume",
+				openapi.WithTags("Volumes"),
+				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume]()),
+			).
+			Patch(
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = UpdateVolume(w, r, manager, r.PathValue("name"))
+				},
+				"Mount or unmount a volume, change parameters",
+				openapi.WithTags("Volumes"),
+				openapi.WithJSONRequest(jsonschema.MustFor[schema.VolumeMeta]()),
+				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume]()),
+			),
+		),
 	)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+func GetVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, name string) error {
+	if volume, err := manager.GetVolume(r.Context(), name); err != nil {
+		return httpresponse.Error(w, gofiler.HTTPErr(err), name)
+	} else {
+		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
+	}
+}
+
+func UpdateVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, name string) error {
+	var meta schema.VolumeMeta
+	if err := httprequest.Read(r, &meta); err != nil {
+		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+	} else if volume, err := manager.UpdateVolume(r.Context(), name, meta); err != nil {
+		return httpresponse.Error(w, gofiler.HTTPErr(err), name)
+	} else {
+		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
+	}
+}
 
 func ListVolumes(w http.ResponseWriter, r *http.Request, manager *manager.Manager) error {
 	var req schema.VolumeListRequest
@@ -65,6 +111,14 @@ func ListVolumes(w http.ResponseWriter, r *http.Request, manager *manager.Manage
 		return httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
 	} else {
 		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
+	}
+}
+
+func DeleteVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, name string) error {
+	if volume, err := manager.DeleteVolume(r.Context(), name); err != nil {
+		return httpresponse.Error(w, gofiler.HTTPErr(err), name)
+	} else {
+		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
 	}
 }
 

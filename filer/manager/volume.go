@@ -8,12 +8,54 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+// GetVolume returns a volume status
+func (manager *Manager) GetVolume(ctx context.Context, name string) (_ *schema.Volume, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "GetVolume",
+		attribute.String("name", name),
+	)
+	defer func() { endSpan(err) }()
+
+	// Get the volume record from the database
+	var result schema.Volume
+	if err := manager.Get(ctx, &result, schema.VolumeName(name)); err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return types.Ptr(result), nil
+}
+
+// UpdateVolume updates a volume record in the database, and returns the updated record.
+func (manager *Manager) UpdateVolume(ctx context.Context, name string, meta schema.VolumeMeta) (_ *schema.Volume, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "UpdateVolume",
+		attribute.String("name", name),
+		attribute.String("meta", types.Stringify(meta)),
+	)
+	defer func() { endSpan(err) }()
+
+	var volume schema.Volume
+	if err := manager.Tx(ctx, func(conn pg.Conn) error {
+		if err := conn.Update(ctx, &volume, schema.VolumeName(name), meta); err != nil {
+			return err
+		}
+
+		// Return success
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return types.Ptr(volume), nil
+}
 
 // ListVolumes returns all volumes as a list.
 func (manager *Manager) ListVolumes(ctx context.Context, req schema.VolumeListRequest) (_ *schema.VolumeList, err error) {
@@ -23,7 +65,7 @@ func (manager *Manager) ListVolumes(ctx context.Context, req schema.VolumeListRe
 	defer func() { endSpan(err) }()
 
 	resp := schema.VolumeList{VolumeListRequest: req}
-	if err := manager.List(ctx, &resp, &req); err != nil {
+	if err := manager.PoolConn.List(ctx, &resp, &req); err != nil {
 		return nil, err
 	} else {
 		resp.OffsetLimit.Clamp(resp.Count)
@@ -31,6 +73,41 @@ func (manager *Manager) ListVolumes(ctx context.Context, req schema.VolumeListRe
 	return types.Ptr(resp), nil
 }
 
+// DeleteVolume deletes a volume record from the database, and returns the deleted record.
+func (manager *Manager) DeleteVolume(ctx context.Context, name string) (_ *schema.Volume, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "DeleteVolume",
+		attribute.String("name", name),
+	)
+	defer func() { endSpan(err) }()
+
+	var volume schema.Volume
+	if err := manager.Tx(ctx, func(conn pg.Conn) error {
+		// Get the volume record from the database
+		if err := conn.Get(ctx, &volume, schema.VolumeName(name)); err != nil {
+			return err
+		}
+
+		// The volume must be unmounted before it can be deleted
+		if types.Value(volume.Enabled) {
+			return gofiler.ErrConflict.With("volume must be unmounted before it can be deleted")
+		}
+
+		// Delete the volume record from the database
+		if err := conn.Delete(ctx, &volume, schema.VolumeName(name)); err != nil {
+			return err
+		}
+
+		// Return success
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Return success
+	return types.Ptr(volume), nil
+}
+
+// CreateVolume creates a new volume record in the database, and returns the created record.
 func (manager *Manager) CreateVolume(ctx context.Context, url *url.URL, meta schema.VolumeMeta) (_ *schema.Volume, err error) {
 	if url == nil {
 		return nil, gofiler.ErrBadParameter.With("url is required")
@@ -49,13 +126,15 @@ func (manager *Manager) CreateVolume(ctx context.Context, url *url.URL, meta sch
 
 	// Insert the volume record in the database - which then syncs the volume with the volume registry
 	var result schema.Volume
-	if err := manager.With("name", name).Insert(ctx, &result, schema.VolumeCreate{
-		URL:        url.String(),
-		VolumeMeta: meta,
+	if err := manager.Tx(ctx, func(conn pg.Conn) error {
+		return conn.With("name", name).Insert(ctx, &result, schema.VolumeCreate{
+			URL:        url.String(),
+			VolumeMeta: meta,
+		})
 	}); err != nil {
 		return nil, err
 	}
 
 	// Return the created volume record
-	return &result, nil
+	return types.Ptr(result), nil
 }

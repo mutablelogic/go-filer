@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	// Packages
-
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	backendregistry "github.com/mutablelogic/go-filer/backend/registry"

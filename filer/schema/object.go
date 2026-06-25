@@ -66,44 +66,51 @@ type ObjectCreate struct {
 
 // Operations
 type CreateObjectRequest struct {
+	ObjectKey
 	Body        io.Reader `json:"-"`
 	IfNotExists bool      // if true, fail with ErrConflict when the object already exists
 	ObjectMeta
 }
 
 type GetObjectRequest struct {
-	Path string
+	ObjectKey
 }
 
 type ReadObjectRequest struct {
-	GetObjectRequest
+	ObjectKey
 }
 
 type DeleteObjectRequest struct {
-	GetObjectRequest
+	ObjectKey
 }
 
 type DeleteObjectsRequest struct {
-	Path      string `json:"path,omitempty"`
-	Recursive bool   `json:"recursive,omitempty"` // if true, delete all objects recursively; if false, delete only immediate children
+	ObjectKey
 }
 
 type DeleteObjectsResponse struct {
-	Volume string   `json:"volume,omitempty"`
-	Body   []Object `json:"body,omitempty"` // list of deleted objects
+	Body []Object `json:"body,omitempty"` // list of deleted objects
 }
 
 type ObjectListRequest struct {
 	pg.OffsetLimit
-	Volume    *string `json:"volume,omitempty"`    // optional volume name to filter by
-	Path      *string `json:"path,omitempty"`      // optional path prefix within the backend
-	Recursive bool    `json:"recursive,omitempty"` // if true, list all objects recursively; if false, list only immediate children
-	Type      *string `json:"type,omitempty"`      // optional content type to filter by
+	Volume    string  `json:"volume" arg:"" required:""`                  // Volume name to filter by
+	Path      *string `json:"path,omitempty"`                             //  Path prefix within the backend
+	Recursive bool    `json:"recursive,omitempty" short:"r" negatable:""` // List all objects or directories recursively, otherwise list only immediate children
+	Type      *string `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
+}
+
+type ObjectListIterator struct {
+	Path      *string   `json:"path,omitempty"`                             // Path prefix within the backend
+	Type      *string   `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
+	Recursive bool      `json:"recursive,omitempty" short:"r" negatable:""` // List all objects or directories recursively, otherwise list only immediate children
+	Token     any       `json:"-"`                                          // optional token to continue listing from a previous request
+	Body      []*Object `json:"body,omitempty"`                             // page of objects or folders returned by the backend
 }
 
 type ObjectList struct {
 	ObjectListRequest
-	Count int       `json:"count"`          // total number of matching objects, before offset/limit
+	Count int       `json:"count,omitempty"` // total number of matching objects, before offset/limit
 	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
 }
 
@@ -194,6 +201,28 @@ func stripNULRunes(v any) any {
 	}
 }
 
+func (o Object) Matches(other *Object) bool {
+	var matched bool
+	if other == nil {
+		return matched
+	}
+	if o.Volume != other.Volume {
+		return matched
+	}
+	if o.Path != other.Path {
+		return matched
+	}
+	if o.Size != other.Size {
+		return matched
+	}
+	if o.ETag != nil && other.ETag != nil && types.Value(o.ETag) == types.Value(other.ETag) {
+		matched = true
+	} else if o.ModTime.IsZero() == false && other.ModTime.IsZero() == false && o.ModTime.Truncate(time.Second).Equal(other.ModTime.Truncate(time.Second)) {
+		matched = true
+	}
+	return matched
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // STRINGIFY
 
@@ -238,8 +267,8 @@ func (r DeleteObjectsResponse) String() string {
 
 func (r ObjectListRequest) Query() url.Values {
 	query := url.Values{}
-	if r.Volume != nil {
-		query.Set("volume", *r.Volume)
+	if r.Volume != "" {
+		query.Set("volume", r.Volume)
 	}
 	if r.Path != nil {
 		query.Set("path", *r.Path)
@@ -496,10 +525,9 @@ func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Del("where")
 
 	// Volume
-	if volume := strings.TrimSpace(types.Value(r.Volume)); volume != "" {
-		if !types.IsIdentifier(volume) {
-			return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
-		}
+	if volume := strings.TrimSpace(r.Volume); !types.IsIdentifier(volume) {
+		return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
+	} else {
 		bind.Append("where", `o."volume" = `+bind.Set("volume", volume))
 	}
 

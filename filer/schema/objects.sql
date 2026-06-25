@@ -35,6 +35,30 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."meta" (
     FOREIGN KEY ("volume", "path") REFERENCES ${"schema"}."object"("volume", "path") ON DELETE CASCADE
 );
 
+-- filer.artwork
+CREATE TABLE IF NOT EXISTS ${"schema"}."artwork" (
+    "etag"        TEXT NOT NULL,
+    "data"        BYTEA NOT NULL,
+    "type"        TEXT NOT NULL,
+    "width"       INT NOT NULL,
+    "height"      INT NOT NULL,
+    "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY ("etag")
+);
+
+-- filer.object_artwork
+CREATE TABLE IF NOT EXISTS ${"schema"}."object_artwork" (
+    "volume"      TEXT NOT NULL,
+    "path"        TEXT NOT NULL,
+    "etag"        TEXT NOT NULL,
+    PRIMARY KEY ("volume", "path", "etag"),
+    FOREIGN KEY ("volume", "path") REFERENCES ${"schema"}."object"("volume", "path") ON DELETE CASCADE,
+    FOREIGN KEY ("etag") REFERENCES ${"schema"}."artwork"("etag") ON DELETE CASCADE
+);
+
+-- filer.object_artwork.index
+CREATE INDEX IF NOT EXISTS idx_object_artwork_etag ON ${"schema"}."object_artwork"("etag");
+
 -- filer.search
 CREATE TABLE IF NOT EXISTS ${"schema"}."search" (
     "volume"     TEXT NOT NULL,
