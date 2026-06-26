@@ -192,7 +192,7 @@ func (l *SearchList) ScanCount(row pg.Row) error {
 }
 
 func (s *SearchResult) Scan(row pg.Row) error {
-	var meta []byte
+	var meta, artwork []byte
 
 	// Step 1: scan object columns and rank
 	if err := row.Scan(
@@ -203,6 +203,7 @@ func (s *SearchResult) Scan(row pg.Row) error {
 		&s.ETag,
 		&s.ModTime,
 		&meta,
+		&artwork,
 		&s.Rank,
 	); err != nil {
 		return err
@@ -210,6 +211,12 @@ func (s *SearchResult) Scan(row pg.Row) error {
 
 	if len(meta) > 0 {
 		if err := json.Unmarshal(meta, &s.Meta); err != nil {
+			return err
+		}
+	}
+
+	if len(artwork) > 0 {
+		if err := json.Unmarshal(artwork, &s.Artwork); err != nil {
 			return err
 		}
 	}

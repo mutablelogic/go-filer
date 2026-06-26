@@ -59,6 +59,12 @@ type GetArtworkRequest struct {
 	IfNoneMatch     *string    `json:"if_none_match,omitempty"`
 }
 
+// ObjectArtwork represents a link between an object and artwork
+type ObjectArtwork struct {
+	ObjectKey
+	ArtworkKey ArtworkKey `json:"artwork_key"`
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // STRINGIFY
 
@@ -68,6 +74,10 @@ func (o Artwork) String() string {
 
 func (k ArtworkMeta) String() string {
 	return types.Stringify(k)
+}
+
+func (o ObjectArtwork) String() string {
+	return types.Stringify(o)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -161,4 +171,65 @@ func (o *ArtworkInfo) Scan(row pg.Row) error {
 		&o.Height,
 		&o.CreatedAt,
 	)
+}
+
+func (o *ObjectArtwork) Scan(row pg.Row) error {
+	return row.Scan(
+		&o.Volume,
+		&o.Path,
+		&o.ArtworkKey,
+	)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// WRITER
+
+func (o ObjectArtwork) Update(bind *pg.Bind) error {
+	return gofiler.ErrNotImplemented.With("ObjectArtwork update is not supported")
+}
+
+func (o ObjectArtwork) Insert(bind *pg.Bind) (string, error) {
+	if o.Volume == "" {
+		return "", gofiler.ErrBadParameter.With("missing object volume")
+	} else {
+		bind.Set("volume", o.Volume)
+	}
+	if o.Path == "" {
+		return "", gofiler.ErrBadParameter.With("missing object path")
+	} else {
+		bind.Set("path", o.Path)
+	}
+	if o.ArtworkKey == "" {
+		return "", gofiler.ErrBadParameter.With("missing artwork key")
+	} else {
+		bind.Set("etag", o.ArtworkKey)
+	}
+	return bind.Query("filer.object_artwork_upsert"), nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SELECTOR
+
+func (o ObjectArtwork) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	if o.Volume == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object volume")
+	} else {
+		bind.Set("volume", o.Volume)
+	}
+	if o.Path == "" {
+		return "", httpresponse.ErrBadRequest.With("missing object path")
+	} else {
+		bind.Set("path", o.Path)
+	}
+	if o.ArtworkKey == "" {
+		return "", httpresponse.ErrBadRequest.With("missing artwork key")
+	} else {
+		bind.Set("etag", o.ArtworkKey)
+	}
+	switch op {
+	case pg.Delete:
+		return bind.Query("filer.object_artwork_delete"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectArtwork operation %q", op)
+	}
 }

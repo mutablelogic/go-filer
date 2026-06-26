@@ -33,6 +33,7 @@ type Object struct {
 	ObjectKey
 	ObjectMeta
 	ObjectAttr
+	Artwork []ArtworkKey `json:"artwork,omitempty"`
 }
 
 // ObjectKey represents the unique identifier of an object, which consists of a volume and a path.
@@ -92,12 +93,16 @@ type DeleteObjectsResponse struct {
 	Body []Object `json:"body,omitempty"` // list of deleted objects
 }
 
-type ObjectListRequest struct {
-	pg.OffsetLimit
-	Volume    string  `json:"volume" arg:"" required:""`                  // Volume name to filter by
+type ObjectListFilters struct {
 	Path      *string `json:"path,omitempty"`                             //  Path prefix within the backend
 	Recursive bool    `json:"recursive,omitempty" short:"r" negatable:""` // List all objects or directories recursively, otherwise list only immediate children
 	Type      *string `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
+}
+
+type ObjectListRequest struct {
+	Volume string `json:"volume" arg:"" required:""` // Volume name to filter by
+	pg.OffsetLimit
+	ObjectListFilters
 }
 
 type ObjectListIterator struct {
@@ -111,7 +116,7 @@ type ObjectListIterator struct {
 type ObjectList struct {
 	ObjectListRequest
 	Count int       `json:"count,omitempty"` // total number of matching objects, before offset/limit
-	Body  []*Object `json:"body,omitempty"` // page of objects; nil when Limit==0 (count-only)
+	Body  []*Object `json:"body,omitempty"`  // page of objects; nil when Limit==0 (count-only)
 }
 
 var (
@@ -239,6 +244,10 @@ func (r CreateObjectRequest) String() string {
 }
 
 func (r GetObjectRequest) String() string {
+	return types.Stringify(r)
+}
+
+func (r ObjectListFilters) String() string {
 	return types.Stringify(r)
 }
 
@@ -421,7 +430,7 @@ func (m ObjectMeta) Update(bind *pg.Bind) error {
 // READER
 
 func (o *Object) Scan(row pg.Row) error {
-	var meta []byte
+	var meta, artwork []byte
 
 	if err := row.Scan(
 		&o.Volume,
@@ -431,17 +440,21 @@ func (o *Object) Scan(row pg.Row) error {
 		&o.ETag,
 		&o.ModTime,
 		&meta,
+		&artwork,
 	); err != nil {
 		return err
 	}
 
-	if len(meta) == 0 {
-		o.Meta = nil
-		return nil
+	if len(meta) > 0 {
+		if err := json.Unmarshal(meta, &o.Meta); err != nil {
+			return err
+		}
 	}
 
-	if err := json.Unmarshal(meta, &o.Meta); err != nil {
-		return err
+	if len(artwork) > 0 {
+		if err := json.Unmarshal(artwork, &o.Artwork); err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -47,6 +47,7 @@ type VolumeClientCommands struct {
 	VolumeUnmount VolumeUnmountCmd    `cmd:"" name:"volume-unmount" help:"Unmount a volume by name." group:"VOLUME"`
 	VolumeUpdate  VolumeUpdateCmd     `cmd:"" name:"volume-update" help:"Update a volume by name." group:"VOLUME"`
 	VolumeDelete  VolumeDeleteCmd     `cmd:"" name:"volume-delete" help:"Delete a volume by name." group:"VOLUME"`
+	VolumeReindex VolumeReindexCmd    `cmd:"" name:"volume-reindex" help:"Reindex a volume by name." group:"VOLUME"`
 }
 
 type MetadataClientCommands struct {
@@ -227,6 +228,11 @@ type VolumeDeleteCmd struct {
 	VolumeGetCmd
 }
 
+type VolumeReindexCmd struct {
+	VolumeGetCmd
+	schema.ObjectListFilters
+}
+
 func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 	// Set the width of the terminal
 	width := ctx.IsTerm()
@@ -340,6 +346,16 @@ func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
 		},
 	}
 	return cmd2.Run(ctx)
+}
+
+func (cmd *VolumeReindexCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "volume-reindex", func(ctx context.Context, client *httpclient.Client) error {
+		if err := client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 ///////////////////////////////////////////////////////////////////////////////

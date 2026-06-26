@@ -135,7 +135,13 @@ SELECT
 		FROM ${"schema"}."meta" AS m
 		WHERE m."volume" = o."volume"
 		AND m."path" = o."path"
-	), '[]'::jsonb) AS "meta"
+	), '[]'::jsonb) AS "meta",
+	COALESCE((
+		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		FROM ${"schema"}."object_artwork" AS oa
+		WHERE oa."volume" = o."volume"
+		AND oa."path" = o."path"
+	), '[]'::jsonb) AS "artwork"
 FROM
 	${"schema"}."object" AS o
 WHERE
@@ -161,7 +167,8 @@ SELECT
 		FROM ${"schema"}."meta" AS m
 		WHERE m."volume" = d."volume"
 		AND m."path" = d."path"
-	), '[]'::jsonb) AS "meta"
+	), '[]'::jsonb) AS "meta",
+	'[]'::jsonb AS "artwork"
 FROM
 	deleted AS d
 ;
@@ -185,7 +192,13 @@ SELECT
 		FROM ${"schema"}."meta" AS m
 		WHERE m."volume" = p."volume"
 		AND m."path" = p."path"
-	), '[]'::jsonb) AS "meta"
+	), '[]'::jsonb) AS "meta",
+	COALESCE((
+		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		FROM ${"schema"}."object_artwork" AS oa
+		WHERE oa."volume" = p."volume"
+		AND oa."path" = p."path"
+	), '[]'::jsonb) AS "artwork"
 FROM
 	patched AS p
 ;
@@ -209,7 +222,13 @@ SELECT
 		FROM ${"schema"}."meta" AS m
 		WHERE m."volume" = t."volume"
 		AND m."path" = t."path"
-	), '[]'::jsonb) AS "meta"
+	), '[]'::jsonb) AS "meta",
+	COALESCE((
+		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		FROM ${"schema"}."object_artwork" AS oa
+		WHERE oa."volume" = t."volume"
+		AND oa."path" = t."path"
+	), '[]'::jsonb) AS "artwork"
 FROM
 	touched AS t
 ;
@@ -222,7 +241,13 @@ SELECT
 		FROM ${"schema"}."meta" AS m
 		WHERE m."volume" = o."volume"
 		AND m."path" = o."path"
-	), '[]'::jsonb) AS "meta"
+	), '[]'::jsonb) AS "meta",
+	COALESCE((
+		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		FROM ${"schema"}."object_artwork" AS oa
+		WHERE oa."volume" = o."volume"
+		AND oa."path" = o."path"
+	), '[]'::jsonb) AS "artwork"
 FROM
 	${"schema"}."object" AS o
 ${where}
@@ -254,7 +279,13 @@ SELECT
 		FROM ${"schema"}."meta" AS m
 		WHERE m."volume" = u."volume"
 		AND m."path" = u."path"
-	), '[]'::jsonb) AS "meta"
+	), '[]'::jsonb) AS "meta",
+	COALESCE((
+		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		FROM ${"schema"}."object_artwork" AS oa
+		WHERE oa."volume" = u."volume"
+		AND oa."path" = u."path"
+	), '[]'::jsonb) AS "artwork"
 FROM
 	upserted AS u
 ;
@@ -268,6 +299,12 @@ SELECT
 		WHERE m."volume" = o."volume"
 		AND m."path" = o."path"
 	), '[]'::jsonb) AS "meta",
+	COALESCE((
+		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		FROM ${"schema"}."object_artwork" AS oa
+		WHERE oa."volume" = o."volume"
+		AND oa."path" = o."path"
+	), '[]'::jsonb) AS "artwork",
 	ts_rank(s."tsv", websearch_to_tsquery('english', @query), 32) AS "rank"
 FROM
 	${"schema"}."object" AS o
@@ -313,6 +350,30 @@ VALUES (
 ON CONFLICT ("etag") DO UPDATE SET "etag" = EXCLUDED."etag"
 RETURNING
 	"etag", "data", "type", "width", "height", "created_at"
+;
+
+-- filer.object_artwork_upsert
+INSERT INTO ${"schema"}."object_artwork" (
+	"volume", "path", "etag"
+)
+VALUES (
+	@volume, @path, @etag
+)
+ON CONFLICT ("volume", "path", "etag") DO NOTHING
+RETURNING
+	"volume", "path", "etag"
+;
+
+-- filer.object_artwork_delete
+DELETE FROM ${"schema"}."object_artwork"
+WHERE
+	"volume" = @volume
+AND
+	"path" = @path
+AND
+	"etag" = @etag
+RETURNING
+	"volume", "path", "etag"
 ;
 
 -- filer.meta_upsert

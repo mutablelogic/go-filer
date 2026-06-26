@@ -83,6 +83,12 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
 	}
 
+	// Check prefix/path argument
+	if path := types.Value(req.Path); path != "" {
+		// TODO: Path should be a valid prefix or valid object
+		// or else return NotFound
+	}
+
 	// If indexing is not enabled, or no indexing has happened yet, iterate the backend directly.
 	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
 		b := manager.volumes.Get(volume.Name)
@@ -132,6 +138,8 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 	}
 
 	// Use the database index to return the objects
+	// TODO: We're not respecting the recursive flag here, and maybe not the
+	// directory flag either?
 	var result schema.ObjectList
 	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
 		return nil, err

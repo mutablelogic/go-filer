@@ -30,13 +30,54 @@ func (manager *Manager) CreateArtwork(ctx context.Context, req schema.ArtworkMet
 		if object == nil {
 			return nil
 		}
-		// TODO: Connect the artwork to the object
-		return nil
+		var link schema.ObjectArtwork
+		return conn.Insert(ctx, &link, schema.ObjectArtwork{
+			ObjectKey:  *object,
+			ArtworkKey: result.ETag,
+		})
 	}); err != nil {
 		return nil, pg.NormalizeError(err)
 	}
 
 	// Return the inserted artwork
+	return types.Ptr(result), nil
+}
+
+func (manager *Manager) LinkArtwork(ctx context.Context, object schema.ObjectKey, artwork schema.ArtworkKey) (_ *schema.ObjectArtwork, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "LinkArtwork",
+		attribute.String("object", types.Stringify(object)),
+		attribute.String("artwork", string(artwork)),
+	)
+	defer func() { endSpan(err) }()
+
+	var result schema.ObjectArtwork
+	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+		return conn.Insert(ctx, &result, schema.ObjectArtwork{
+			ObjectKey:  object,
+			ArtworkKey: artwork,
+		})
+	}); err != nil {
+		return nil, pg.NormalizeError(err)
+	}
+	return types.Ptr(result), nil
+}
+
+func (manager *Manager) UnlinkArtwork(ctx context.Context, object schema.ObjectKey, artwork schema.ArtworkKey) (_ *schema.ObjectArtwork, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "UnlinkArtwork",
+		attribute.String("object", types.Stringify(object)),
+		attribute.String("artwork", string(artwork)),
+	)
+	defer func() { endSpan(err) }()
+
+	var result schema.ObjectArtwork
+	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+		return conn.Delete(ctx, &result, schema.ObjectArtwork{
+			ObjectKey:  object,
+			ArtworkKey: artwork,
+		})
+	}); err != nil {
+		return nil, pg.NormalizeError(err)
+	}
 	return types.Ptr(result), nil
 }
 
