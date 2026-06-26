@@ -155,25 +155,19 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (err error) {
+func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
 	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "touchObject",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
-	// Update indexed_at for the object and its volume
+	var result schema.Object
 	if err := manager.Tx(ctx, func(conn pg.Conn) error {
-		var touchedObject schema.Object
-		if err := conn.Update(ctx, &touchedObject, schema.ObjectTouch(req), nil); err != nil {
-			return err
-		}
-		return nil
+		return conn.Update(ctx, &result, schema.ObjectTouch(req), nil)
 	}); err != nil {
-		return err
+		return nil, err
 	}
-
-	// Return success
-	return nil
+	return types.Ptr(result), nil
 }
 
 func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreate, artwork []*schema.ArtworkMeta) (_ *schema.Object, err error) {

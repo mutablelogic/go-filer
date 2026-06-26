@@ -10,6 +10,7 @@ import (
 	"time"
 
 	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
@@ -18,7 +19,16 @@ import (
 	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	broadcaster "github.com/mutablelogic/go-pg/pkg/broadcaster"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+type indexObjectTask struct {
+	schema.ObjectKey
+	Force bool `json:"force"`
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -89,22 +99,25 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 		Concurrency: types.Ptr(uint64(3)),
 	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
 		// Get the payload
-		var object schema.Object
-		if err := json.Unmarshal(payload, &object); err != nil {
+		var task indexObjectTask
+		if err := json.Unmarshal(payload, &task); err != nil {
 			return nil, gofiler.ErrInternalServerError.Withf("invalid payload: %v", err.Error())
 		}
 
 		// Index the object
-		logger.DebugContext(ctx, "Index object", "object", types.Stringify(object))
-		if object, err := manager.indexObject(ctx, types.Ptr(object), warnChan); err != nil {
+		logger.DebugContext(ctx, "Index object", "object", types.Stringify(task.ObjectKey), "force", task.Force)
+		indexed, err := manager.indexObject(ctx, task.ObjectKey, task.Force)
+		if err != nil && indexed == nil {
 			return nil, gofiler.ErrInternalServerError.Withf("failed to index object: %v", err.Error())
-		} else {
-			return object, nil
+		} else if err != nil {
+			warnChan <- fmt.Errorf("index %q: %w", task.Path, err)
 		}
+		return indexed, nil
 	})
 	if err != nil {
 		return err
 	}
+	manager.indexQueue = indexQueue
 
 	// Allow graceful queue drain to cover task TTL plus pgqueue's force-release
 	// grace period, with a small buffer for cleanup/logging.
@@ -185,7 +198,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 			logger.DebugContext(ctx, "Reindex volumes ticker", "event", "reindex-volumes-ticker")
 
 			// Look for a volume that needs to be reindexed, and reindex it
-			if err := manager.reindexVolumes(ctx, indexQueue, logger); err != nil {
+			if err := manager.reindexVolumes(ctx, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to reindex volumes", "error", err.Error())
 			}
 		}
@@ -195,22 +208,28 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) indexObject(ctx context.Context, object *schema.Object, warnChan chan<- error) (_ *schema.Object, err error) {
+func (manager *Manager) indexObject(ctx context.Context, key schema.ObjectKey, force bool) (_ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "indexObject",
+		attribute.String("object", types.Stringify(key)),
+		attribute.Bool("force", force),
+	)
+	defer func() { endSpan(err) }()
+
 	// Obtain the backend of the object - backend might be disabled, so don't error
-	backend := manager.volumes.Get(object.Volume)
+	backend := manager.volumes.Get(key.Volume)
 	if backend == nil {
 		return nil, nil
 	}
 
 	// Read the object from the backend and extract metadata
 	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{
-		ObjectKey: object.ObjectKey,
+		ObjectKey: key,
 	})
 	if errors.Is(err, gofiler.ErrNotFound) {
 		// Object no longer exists in the backend — remove it from the index
 		var deleted schema.Object
 		if delErr := manager.Tx(ctx, func(conn pg.Conn) error {
-			return conn.Delete(ctx, &deleted, object.ObjectKey)
+			return conn.Delete(ctx, &deleted, key)
 		}); delErr != nil && !errors.Is(delErr, pg.ErrNotFound) {
 			return nil, delErr
 		}
@@ -222,58 +241,42 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object, 
 		err = errors.Join(err, reader.Close())
 	}()
 
-	// Get object from database, and determine if we need to update metadata
-	existing, err := manager.GetObject(ctx, object.ObjectKey)
-	if errors.Is(err, pg.ErrNotFound) {
-		// Continue
-	} else if err != nil {
-		return nil, err
-	} else {
-		matched := false
-		if existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag) {
-			matched = true
-		} else if existing.ModTime.IsZero() == false && object.ModTime.IsZero() == false && existing.ModTime.Truncate(time.Second).Equal(object.ModTime.Truncate(time.Second)) {
-			matched = true
-		}
-		if matched {
-			// Touch the object to update indexed_at, but skip re-extracting metadata since it hasn't changed.
-			if err := manager.touchObject(ctx, object.ObjectKey); err != nil {
-				return nil, err
-			}
-			return existing, nil
+	// Unless forced, check if the object has changed and skip re-indexing if not
+	if !force {
+		existing, err := manager.GetObject(ctx, object.ObjectKey)
+		if errors.Is(err, pg.ErrNotFound) {
+			// Continue
+		} else if err != nil {
+			return nil, err
+		} else if (existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag)) ||
+			(!existing.ModTime.IsZero() && !object.ModTime.IsZero() && existing.ModTime.Truncate(time.Second).Equal(object.ModTime.Truncate(time.Second))) {
+			// Object unchanged — touch indexed_at and return the refreshed object
+			return manager.touchObject(ctx, object.ObjectKey)
 		}
 	}
 
-	// Get the metadata for the object - if error is returned, it's a warning only if
-	// no metadata could be extracted, otherwise it's an error
-	metadata, artwork, err := manager.metadata.Get(ctx, object.ContentType, reader)
-	if err != nil {
-		if metadata == nil {
-			return nil, err
-		} else {
-			warnChan <- fmt.Errorf("failed to extract metadata for object %q: %w", object.Path, err)
-		}
+	// Get the metadata for the object - hard error if nothing was extracted, warning otherwise
+	metadata, artwork, metaErr := manager.metadata.Get(ctx, object.ContentType, reader)
+	if metaErr != nil && metadata == nil {
+		return nil, metaErr
 	}
 
 	// Create the object in a transaction, and touch the volume's indexed_at
-	return manager.createObject(ctx, schema.ObjectCreate{
-		ObjectKey: schema.ObjectKey{
-			Volume: object.Volume,
-			Path:   object.Path,
-		},
-		ObjectAttr: schema.ObjectAttr{
-			Size:    object.Size,
-			ETag:    object.ETag,
-			ModTime: object.ModTime,
-		},
+	result, err := manager.createObject(ctx, schema.ObjectCreate{
+		ObjectKey:  object.ObjectKey,
+		ObjectAttr: object.ObjectAttr,
 		ObjectMeta: schema.ObjectMeta{
 			ContentType: object.ContentType,
 			Meta:        metadata,
 		},
 	}, artwork)
+	if err != nil {
+		return nil, err
+	}
+	return result, metaErr
 }
 
-func (manager *Manager) reindexVolumes(ctx context.Context, queue *pgqueueschema.Queue, logger *slog.Logger) error {
+func (manager *Manager) reindexVolumes(ctx context.Context, logger *slog.Logger) error {
 	var result schema.VolumeList
 	if err := manager.List(ctx, &result, &schema.VolumeListRequest{
 		Enabled: types.Ptr(true),
@@ -300,13 +303,27 @@ func (manager *Manager) reindexVolumes(ctx context.Context, queue *pgqueueschema
 		}
 
 		// Create reindexing tasks for all objects in the volume
-		return manager.reindexVolumeInner(ctx, backend, queue, logger)
+		return manager.reindexVolumeInner(ctx, backend, logger)
 	}
 
 	return nil
 }
 
-func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.Backend, queue *pgqueueschema.Queue, logger *slog.Logger) error {
+func (manager *Manager) enqueueIndexObject(ctx context.Context, key schema.ObjectKey, force bool) error {
+	if manager.indexQueue == nil {
+		return gofiler.ErrServiceUnavailable.With("index queue not available")
+	}
+	payload, err := json.Marshal(indexObjectTask{ObjectKey: key, Force: force})
+	if err != nil {
+		return fmt.Errorf("failed to marshal index task: %w", err)
+	}
+	_, err = manager.queue.CreateTask(ctx, manager.indexQueue.Queue, pgqueueschema.TaskMeta{
+		Payload: payload,
+	})
+	return err
+}
+
+func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.Backend, logger *slog.Logger) error {
 	logger.DebugContext(ctx, "reindexing", "name", backend.Name())
 
 	iterator := &schema.ObjectListIterator{
@@ -323,15 +340,8 @@ func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.
 			if object.ContentType == schema.ContentTypeDirectory {
 				continue
 			}
-			payload, err := json.Marshal(object)
-			if err != nil {
-				return fmt.Errorf("failed to marshal object: %w", err)
-			}
-			// TODO: Ideally do this in a transaction
-			if _, err := manager.queue.CreateTask(ctx, queue.Queue, pgqueueschema.TaskMeta{
-				Payload: payload,
-			}); err != nil {
-				return fmt.Errorf("failed to create index task: %w", err)
+			if err := manager.enqueueIndexObject(ctx, object.ObjectKey, false); err != nil {
+				return err
 			}
 		}
 	}

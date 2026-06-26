@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 
 	// Packages
@@ -175,7 +174,9 @@ func (manager *Manager) ReindexVolume(ctx context.Context, name string, req sche
 
 		for _, object := range objects.Body {
 			if object.ContentType != schema.ContentTypeDirectory {
-				fmt.Println("Reindexing object:", object.Path)
+				if err := manager.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
+					return err
+				}
 			}
 		}
 

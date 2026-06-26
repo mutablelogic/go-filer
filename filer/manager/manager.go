@@ -15,6 +15,7 @@ import (
 	llm "github.com/mutablelogic/go-llm/provider/registry"
 	pg "github.com/mutablelogic/go-pg"
 	pgqueue "github.com/mutablelogic/go-pg/pgqueue/manager"
+	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
 
@@ -24,10 +25,11 @@ import (
 type Manager struct {
 	opt
 	pg.PoolConn
-	volumes  *backendregistry.Registry
-	queue    *pgqueue.Manager
-	metadata *metadatamanager.Manager
-	llm      *llm.Registry
+	volumes    *backendregistry.Registry
+	queue      *pgqueue.Manager
+	indexQueue *pgqueueschema.Queue
+	metadata   *metadatamanager.Manager
+	llm        *llm.Registry
 }
 
 ////////////////////////////////////////////////////////////////////////////////
