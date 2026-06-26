@@ -78,6 +78,17 @@ func RegisterVolumeHandlers(manager *manager.Manager, router *httprouter.Router)
 				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume]()),
 			),
 		),
+		router.RegisterPath("volume/{name}/reindex", nil, httprequest.NewPathItem("Volumes", "Reindex objects in a volume").
+			Post(
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = ReindexVolume(w, r, manager, r.PathValue("name"))
+				},
+				"Reindex a volume",
+				openapi.WithTags("Volumes"),
+				openapi.WithJSONRequest(jsonschema.MustFor[schema.ObjectListFilters]()),
+				openapi.WithNoContentResponse(http.StatusNoContent, "Reindexing started"),
+			),
+		),
 	)
 }
 
@@ -132,5 +143,16 @@ func CreateVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manag
 		return httpresponse.Error(w, gofiler.HTTPErr(err), meta.URL)
 	} else {
 		return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), volume)
+	}
+}
+
+func ReindexVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, volume string) error {
+	var req schema.ObjectListFilters
+	if err := httprequest.Read(r, &req); err != nil {
+		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+	} else if err := manager.ReindexVolume(r.Context(), volume, req); err != nil {
+		return httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
+	} else {
+		return httpresponse.Empty(w, http.StatusNoContent)
 	}
 }

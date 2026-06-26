@@ -26,6 +26,7 @@ type ClientCommands struct {
 	SearchClientCommands
 	VolumeClientCommands
 	MetadataClientCommands
+	ArtworkClientCommands
 	CredentialClientCommands
 	LLMProviderClientCommands
 }
@@ -46,10 +47,15 @@ type VolumeClientCommands struct {
 	VolumeUnmount VolumeUnmountCmd    `cmd:"" name:"volume-unmount" help:"Unmount a volume by name." group:"VOLUME"`
 	VolumeUpdate  VolumeUpdateCmd     `cmd:"" name:"volume-update" help:"Update a volume by name." group:"VOLUME"`
 	VolumeDelete  VolumeDeleteCmd     `cmd:"" name:"volume-delete" help:"Delete a volume by name." group:"VOLUME"`
+	VolumeReindex VolumeReindexCmd    `cmd:"" name:"volume-reindex" help:"Reindex a volume by name." group:"VOLUME"`
 }
 
 type MetadataClientCommands struct {
 	Metadata MetadataCmd `cmd:"" name:"metadata" help:"Extract metadata for a file using the server endpoint." group:"METADATA"`
+}
+
+type ArtworkClientCommands struct {
+	ArtworkCreate ArtworkCreateCmd `cmd:"" name:"artwork-upload" help:"Upload a new artwork." group:"ARTWORK"`
 }
 
 type CredentialClientCommands struct {
@@ -222,6 +228,11 @@ type VolumeDeleteCmd struct {
 	VolumeGetCmd
 }
 
+type VolumeReindexCmd struct {
+	VolumeGetCmd
+	schema.ObjectListFilters
+}
+
 func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 	// Set the width of the terminal
 	width := ctx.IsTerm()
@@ -337,6 +348,16 @@ func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
 	return cmd2.Run(ctx)
 }
 
+func (cmd *VolumeReindexCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "volume-reindex", func(ctx context.Context, client *httpclient.Client) error {
+		if err := client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // METADATA COMMANDS
 
@@ -357,6 +378,32 @@ func (cmd *MetadataCmd) Run(ctx server.Cmd) error {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(meta)
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// ARTWORK COMMANDS
+
+type ArtworkCreateCmd struct {
+	Path string `cmd:"" name:"path" help:"Path to the artwork file." arg:"" required:""`
+}
+
+func (cmd *ArtworkCreateCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "artwork-upload", func(ctx context.Context, client *httpclient.Client) error {
+		f, err := os.Open(cmd.Path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		artwork, err := client.CreateArtwork(ctx, f)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(artwork)
+		return nil
 	})
 }
 

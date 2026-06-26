@@ -34,24 +34,24 @@ func (e *htmlextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`text/(x)?html`)
 }
 
-func (e *htmlextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *htmlextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	doc, err := xhtml.Parse(bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	kv := []schema.Meta{}
@@ -82,14 +82,14 @@ func (e *htmlextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sch
 	if body := findElement(doc, "body"); body != nil {
 		if text := strings.TrimSpace(visibleText(body)); text != "" {
 			if summary, err := summarizer.Summarize(ctx, text, "This is an HTML page. Summarize the visible text content in English, with title, summary paragraph, and keywords when relevant. If any field is unknown, leave it blank."); err != nil {
-				return kv, err
+				return kv, nil, err
 			} else if len(summary) > 0 {
 				kv = append(kv, summary...)
 			}
 		}
 	}
 
-	return kv, nil
+	return kv, nil, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////

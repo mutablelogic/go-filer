@@ -51,14 +51,14 @@ func (e *xmpextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`application/xmp\+xml`)
 }
 
-func (e *xmpextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *xmpextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	dec := xml.NewDecoder(bytes.NewReader(data))
@@ -76,7 +76,7 @@ func (e *xmpextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sche
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		switch token := tok.(type) {
@@ -135,7 +135,7 @@ func (e *xmpextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sche
 	kv = schema.AppendMeta(kv, metadata.TextTags, meta.keywords)
 	kv = schema.AppendMeta(kv, metadata.DateCreated, meta.created)
 	kv = schema.AppendMeta(kv, metadata.DateModified, meta.modified)
-	return kv, nil
+	return kv, nil, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

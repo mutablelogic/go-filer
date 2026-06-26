@@ -74,3 +74,19 @@ func (c *Client) DeleteVolume(ctx context.Context, name string) (*schema.Volume,
 	// Return the response
 	return types.Ptr(response), nil
 }
+
+func (c *Client) ReindexVolume(ctx context.Context, name string, meta schema.ObjectListFilters) error {
+	// Make the request payload
+	req, err := client.NewJSONRequest(meta)
+	if err != nil {
+		return err
+	}
+
+	// Perform request
+	if err := c.DoWithContext(ctx, req, nil, client.OptPath("volume", name, "reindex")); err != nil {
+		return err
+	}
+
+	// Return success
+	return nil
+}

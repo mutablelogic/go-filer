@@ -31,11 +31,11 @@ func (e *mdextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`text/markdown`)
 }
 
-func (e *mdextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *mdextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	title := ""
@@ -51,12 +51,12 @@ func (e *mdextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schem
 		return nil
 	})
 	if err != nil {
-		return kv, err
+		return kv, nil, err
 	}
 
 	// Now summarize the text
 	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), "This is markdown content."); err != nil {
-		return kv, err
+		return kv, nil, err
 	} else if len(kv_) > 0 {
 		kv = append(kv, kv_...)
 	}
@@ -67,5 +67,5 @@ func (e *mdextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schem
 	}
 
 	// Return the metadata
-	return kv, nil
+	return kv, nil, nil
 }

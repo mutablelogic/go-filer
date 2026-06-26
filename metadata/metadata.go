@@ -17,8 +17,8 @@ type Extractor interface {
 	// Return the media type
 	MediaType() *regexp.Regexp
 
-	// Extract metadata from the file at the given path
-	ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error)
+	// Extract metadata and artwork (thumbnails) from the file at the given path
+	ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error)
 }
 
 type FileReader interface {

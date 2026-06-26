@@ -138,3 +138,52 @@ func (manager *Manager) CreateVolume(ctx context.Context, url *url.URL, meta sch
 	// Return the created volume record
 	return types.Ptr(result), nil
 }
+
+// ReindexVolume reindexes objects in a volume according to the provided object filters.
+func (manager *Manager) ReindexVolume(ctx context.Context, name string, req schema.ObjectListFilters) (err error) {
+	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ReindexVolume",
+		attribute.String("volume", name),
+		attribute.String("req", types.Stringify(req)),
+	)
+	defer func() { endSpan(err) }()
+
+	// Check the volume first
+	volume, err := manager.GetVolume(ctx, name)
+	if err != nil {
+		return err
+	} else if types.Value(volume.Enabled) == false {
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", volume.Name)
+	}
+
+	// If indexing is not enabled, or no indexing has happened yet, return an error
+	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil || volume.Objects == 0 {
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is not indexed", volume.Name)
+	}
+
+	// Iterate through the objects in the volume, and reindex them according to the provided filters
+	var list schema.ObjectListRequest
+	list.Volume = volume.Name
+	list.ObjectListFilters = req
+	for {
+		objects, err := manager.ListObjects(ctx, list)
+		if err != nil {
+			return err
+		} else if len(objects.Body) == 0 {
+			break
+		}
+
+		for _, object := range objects.Body {
+			if object.ContentType != schema.ContentTypeDirectory {
+				if err := manager.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
+					return err
+				}
+			}
+		}
+
+		// Iterate the list offset for the next iteration
+		list.Offset += uint64(len(objects.Body))
+	}
+
+	// Return success
+	return nil
+}

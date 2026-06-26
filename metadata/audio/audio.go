@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metadata "github.com/mutablelogic/go-filer/metadata"
+	imageutil "github.com/mutablelogic/go-filer/metadata/image"
 	ffmpeg "github.com/mutablelogic/go-media/pkg/ffmpeg"
 )
 
@@ -35,10 +37,10 @@ func (e *audioextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`audio/.*`)
 }
 
-func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	reader, err := ffmpeg.NewReader(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer reader.Close()
 
@@ -53,8 +55,17 @@ func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sc
 		}
 	}
 
-	// Return metadata
-	return kv, nil
+	// Extract embedded artwork, thumbnailing each via CreateArtwork
+	var artwork []*schema.ArtworkMeta
+	for _, meta := range reader.Metadata(ffmpeg.MetaArtwork) {
+		art, _, err := imageutil.CreateArtwork(bytes.NewReader(meta.Bytes()))
+		if err != nil {
+			continue
+		}
+		artwork = append(artwork, art)
+	}
+
+	return kv, artwork, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////

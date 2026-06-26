@@ -83,6 +83,12 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
 	}
 
+	// Check prefix/path argument
+	if path := types.Value(req.Path); path != "" {
+		// TODO: Path should be a valid prefix or valid object
+		// or else return NotFound
+	}
+
 	// If indexing is not enabled, or no indexing has happened yet, iterate the backend directly.
 	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
 		b := manager.volumes.Get(volume.Name)
@@ -132,6 +138,8 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 	}
 
 	// Use the database index to return the objects
+	// TODO: We're not respecting the recursive flag here, and maybe not the
+	// directory flag either?
 	var result schema.ObjectList
 	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
 		return nil, err
@@ -147,42 +155,33 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (err error) {
+func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
 	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "touchObject",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
-	// Update indexed_at for the object and its volume
+	var result schema.Object
 	if err := manager.Tx(ctx, func(conn pg.Conn) error {
-		var touchedObject schema.Object
-		if err := conn.Update(ctx, &touchedObject, schema.ObjectTouch(req), nil); err != nil {
-			return err
-		}
-		return nil
+		return conn.Update(ctx, &result, schema.ObjectTouch(req), nil)
 	}); err != nil {
-		return err
+		return nil, err
 	}
-
-	// Return success
-	return nil
+	return types.Ptr(result), nil
 }
 
-func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreate) (_ *schema.Object, err error) {
+func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreate, artwork []*schema.ArtworkMeta) (_ *schema.Object, err error) {
 	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "createObject",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
-	// Cannot create directories
-	if req.IsDir {
-		return nil, gofiler.ErrConflict.With("cannot create directory object")
-	}
-
 	// If the content type is not provided, default to application/octet-stream
 	if typ := strings.TrimSpace(req.ContentType); typ == "" {
 		req.ContentType = types.ContentTypeBinary
 	} else if t, params, err := mime.ParseMediaType(typ); err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("invalid content type: %q", typ)
+	} else if t == schema.ContentTypeDirectory {
 		return nil, gofiler.ErrBadParameter.Withf("invalid content type: %q", typ)
 	} else {
 		req.ContentType = t
@@ -218,13 +217,32 @@ func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreat
 			}
 		}
 
+		// Insert the artwork
+		for _, meta := range artwork {
+			var artwork schema.Artwork
+			if err := conn.Insert(ctx, &artwork, meta); err != nil {
+				return err
+			}
+			var link schema.ObjectArtwork
+			if err := conn.Insert(ctx, &link, schema.ObjectArtwork{
+				ObjectKey:  result.ObjectKey,
+				ArtworkKey: artwork.ETag,
+			}); err != nil {
+				return err
+			}
+		}
+
 		// Return success
 		return nil
-
 	}); err != nil {
-		return nil, err
+		return nil, pg.NormalizeError(err)
 	}
 
-	// Return success
+	// Re-fetch the object to get the metadata and artwork
+	if err := manager.PoolConn.Get(ctx, &result, req.ObjectKey); err != nil {
+		return nil, pg.NormalizeError(err)
+	}
+
+	// Return the inserted object
 	return types.Ptr(result), nil
 }

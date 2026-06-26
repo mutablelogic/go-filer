@@ -11,12 +11,15 @@ const (
 	DefaultSchema = "filer"
 	NotifyChannel = "filer_changes"
 
-	ContentTypeDirectory = "text/directory"
+	// Content types which should move to the types package
+	ContentTypeDirectory         = "text/directory"
+	ContentIfModifiedSinceHeader = "If-Modified-Since"
+	ContentIfNoneMatchHeader     = "If-None-Match"
 )
 
 const (
-	VolumeListLimit     = 100
-	ObjectListLimit     = 100
+	VolumeListLimit      = 100
+	ObjectListLimit      = 100
 	CredentialListLimit  = 100
 	MetadataListLimit    = 100
 	LLMProviderListLimit = 100

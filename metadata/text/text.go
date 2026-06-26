@@ -108,11 +108,11 @@ func (e *textextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`text/plain`)
 }
 
-func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := NewTextSummarizer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Read the lines, capped by the model's token limit
@@ -122,18 +122,18 @@ func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sch
 		return nil
 	})
 	if !errors.Is(err, io.EOF) && err != nil {
-		return metadata, err
+		return metadata, nil, err
 	}
 
 	// Summarize the text
 	if metadata_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n")); err != nil {
-		return metadata, err
+		return metadata, nil, err
 	} else if len(metadata_) > 0 {
 		metadata = append(metadata, metadata_...)
 	}
 
 	// Return the metadata
-	return metadata, nil
+	return metadata, nil, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////
