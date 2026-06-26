@@ -57,6 +57,13 @@ func (r fileReader) Name() string {
 	return r.name
 }
 
+func (r fileReader) Seek(offset int64, whence int) (int64, error) {
+	if s, ok := r.reader.(io.Seeker); ok {
+		return s.Seek(offset, whence)
+	}
+	return 0, errors.New("not seekable")
+}
+
 type metadataRequest struct {
 	File types.File `json:"file" help:"The file to extract metadata from" validate:"required"`
 }
