@@ -23,6 +23,7 @@ const (
 	ErrServiceUnavailable
 	ErrForbidden
 	ErrNotIndexed
+	ErrNotModified
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,6 +55,8 @@ func (e Err) Error() string {
 		return "forbidden"
 	case ErrNotIndexed:
 		return "not indexed"
+	case ErrNotModified:
+		return "not modified"
 	}
 	return fmt.Sprintf("error code %d", int(e))
 }
@@ -83,6 +86,8 @@ func (e Err) HTTP() httpresponse.Err {
 	case ErrForbidden:
 		return httpresponse.ErrForbidden
 	case ErrNotIndexed:
+		return httpresponse.Err(http.StatusPreconditionFailed)
+	case ErrNotModified:
 		return httpresponse.Err(http.StatusNotModified)
 	default:
 		return httpresponse.ErrInternalError

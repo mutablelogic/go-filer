@@ -277,6 +277,44 @@ ${where}
 ORDER BY
 	"rank" DESC
 	
+-- filer.artwork_get
+SELECT
+	"etag", "data", "type", "width", "height", "created_at"
+FROM
+	${"schema"}."artwork"
+WHERE
+	"etag" = @etag
+;
+
+-- filer.artwork_get_meta
+SELECT
+	"etag", "type", "width", "height", "created_at"
+FROM
+	${"schema"}."artwork"
+WHERE
+	"etag" = @etag
+;
+
+-- filer.artwork_delete
+DELETE FROM ${"schema"}."artwork"
+WHERE
+	"etag" = @etag
+RETURNING
+	"etag", "data", "type", "width", "height", "created_at"
+;
+
+-- filer.artwork_upsert
+INSERT INTO ${"schema"}."artwork" (
+	"etag", "data", "type", "width", "height"
+)
+VALUES (
+	@etag, @data, @type, CAST(@width AS INT), CAST(@height AS INT)
+)
+ON CONFLICT ("etag") DO UPDATE SET "etag" = EXCLUDED."etag"
+RETURNING
+	"etag", "data", "type", "width", "height", "created_at"
+;
+
 -- filer.meta_upsert
 INSERT INTO ${"schema"}."meta" (
 	"volume", "path", "key", "value"

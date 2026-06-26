@@ -61,6 +61,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 				httphandler.RegisterObjectHandlers(manager, router),
 				httphandler.RegisterSearchHandlers(manager, router),
 				httphandler.RegisterMetadataHandlers(manager, router),
+				httphandler.RegisterArtworkHandlers(manager, router),
 				httphandler.RegisterCredentialHandlers(manager, router),
 				httphandler.RegisterLLMProviderHandlers(manager, router),
 			)

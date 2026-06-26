@@ -26,6 +26,7 @@ type ClientCommands struct {
 	SearchClientCommands
 	VolumeClientCommands
 	MetadataClientCommands
+	ArtworkClientCommands
 	CredentialClientCommands
 	LLMProviderClientCommands
 }
@@ -50,6 +51,10 @@ type VolumeClientCommands struct {
 
 type MetadataClientCommands struct {
 	Metadata MetadataCmd `cmd:"" name:"metadata" help:"Extract metadata for a file using the server endpoint." group:"METADATA"`
+}
+
+type ArtworkClientCommands struct {
+	ArtworkCreate ArtworkCreateCmd `cmd:"" name:"artwork-upload" help:"Upload a new artwork." group:"ARTWORK"`
 }
 
 type CredentialClientCommands struct {
@@ -357,6 +362,32 @@ func (cmd *MetadataCmd) Run(ctx server.Cmd) error {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(meta)
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// ARTWORK COMMANDS
+
+type ArtworkCreateCmd struct {
+	Path string `cmd:"" name:"path" help:"Path to the artwork file." arg:"" required:""`
+}
+
+func (cmd *ArtworkCreateCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "artwork-upload", func(ctx context.Context, client *httpclient.Client) error {
+		f, err := os.Open(cmd.Path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		artwork, err := client.CreateArtwork(ctx, f)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(artwork)
+		return nil
 	})
 }
 
