@@ -163,10 +163,7 @@ func (b *backend) pathFromStorageKey(sk string) string {
 	if b.bucketPrefix != "" {
 		sk = strings.TrimPrefix(sk, b.bucketPrefix+"/")
 	}
-	if !strings.HasPrefix(sk, "/") {
-		sk = "/" + sk
-	}
-	return path.Clean(sk)
+	return strings.TrimPrefix(path.Clean("/"+sk), "/")
 }
 
 // cleanPath normalises a request path.
