@@ -28,7 +28,7 @@ func init() {
 // PUBLIC METHODS
 
 func (e *mdextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`text/markdown`)
+	return regexp.MustCompile(`^text/markdown$`)
 }
 
 func (e *mdextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {

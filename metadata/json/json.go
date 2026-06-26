@@ -35,7 +35,7 @@ func init() {
 // PUBLIC METHODS
 
 func (e *jsonextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`application/json`)
+	return regexp.MustCompile(`^application/json$`)
 }
 
 func (e *jsonextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {

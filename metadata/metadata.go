@@ -74,8 +74,20 @@ const (
 	AudioGenre        = "genre"
 	AudioYear         = "year"
 	AudioTrack        = "track"
-	DateCreated       = "created"
-	DateModified      = "modified"
+	DateCreated          = "created"
+	DateModified         = "modified"
+	CalendarTitle        = "title"
+	CalendarEventCount   = "event-count"
+	CalendarStart        = "start"
+	CalendarEnd          = "end"
+	CalendarDurationSecs = "duration-secs"
+	CalendarDuration     = "duration"
+	CalendarOrganizer    = "organizer"
+	CalendarLocation     = "location"
+	CalendarCategories   = "tags"
+	CalendarDescription  = "description"
+	CalendarURL          = "url"
+	CalendarRecurrence   = "recurrence"
 )
 
 ////////////////////////////////////////////////////////////////////////////////

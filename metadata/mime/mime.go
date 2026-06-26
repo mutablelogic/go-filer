@@ -45,6 +45,8 @@ var wellKnownMIME = map[string]string{
 	".geojson": "application/geo+json",
 	".tf":      "application/x-terraform",
 	".heic":    "image/heic",
+	".ics":     "text/calendar",
+	".ical":    "text/calendar",
 }
 
 type namedReader interface {

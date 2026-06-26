@@ -34,7 +34,7 @@ func init() {
 // PUBLIC METHODS
 
 func (e *audioextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`audio/.*`)
+	return regexp.MustCompile(`^audio/.*`)
 }
 
 func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
