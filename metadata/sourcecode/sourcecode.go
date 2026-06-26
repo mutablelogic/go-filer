@@ -38,7 +38,7 @@ func init() {
 // PUBLIC METHODS
 
 func (e *codeextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`text/(x-)?(go|python|javascript|typescript|java|c|cpp|objective-c|csharp|ruby|php|rust|swift)`)
+	return regexp.MustCompile(`^text/(x-)?(go|python|javascript|typescript|java|c|cpp|objective-c|csharp|ruby|php|rust|swift)$`)
 }
 
 func (e *codeextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {

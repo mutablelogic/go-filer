@@ -31,7 +31,7 @@ func init() {
 // PUBLIC METHODS
 
 func (e *htmlextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`text/(x)?html`)
+	return regexp.MustCompile(`^text/(x)?html$`)
 }
 
 func (e *htmlextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {

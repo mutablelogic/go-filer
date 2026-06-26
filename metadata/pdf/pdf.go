@@ -41,7 +41,7 @@ func init() {
 // PUBLIC METHODS
 
 func (e *pdfextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`application/pdf`)
+	return regexp.MustCompile(`^application/pdf$`)
 }
 
 // Extract metadata from the file at the given path

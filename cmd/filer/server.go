@@ -9,6 +9,7 @@ import (
 	// Metadata Extractors
 	_ "github.com/mutablelogic/go-filer/metadata/audio"
 	_ "github.com/mutablelogic/go-filer/metadata/html"
+	_ "github.com/mutablelogic/go-filer/metadata/ics"
 	_ "github.com/mutablelogic/go-filer/metadata/image"
 	_ "github.com/mutablelogic/go-filer/metadata/json"
 	_ "github.com/mutablelogic/go-filer/metadata/markdown"

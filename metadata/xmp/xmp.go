@@ -48,7 +48,7 @@ func init() {
 // PUBLIC METHODS - EXTRACTOR
 
 func (e *xmpextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`application/xmp\+xml`)
+	return regexp.MustCompile(`^application/xmp\+xml$`)
 }
 
 func (e *xmpextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {

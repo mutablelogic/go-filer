@@ -105,7 +105,7 @@ func NewTextSummarizer(ctx context.Context) (*textsummarizer, error) {
 // PUBLIC METHODS - EXTRACTOR
 
 func (e *textextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`text/plain`)
+	return regexp.MustCompile(`^text/plain$`)
 }
 
 func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {

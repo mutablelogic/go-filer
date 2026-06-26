@@ -84,7 +84,7 @@ func NewImageSummarizer(ctx context.Context) (*imagesummarizer, error) {
 // PUBLIC METHODS - EXTRACTOR
 
 func (e *imageextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`image/.*`)
+	return regexp.MustCompile(`^image/.*`)
 }
 
 func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
