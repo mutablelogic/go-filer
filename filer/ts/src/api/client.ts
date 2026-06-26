@@ -18,6 +18,14 @@ export interface VolumeList {
   body: Volume[];
 }
 
+export interface ArtworkInfo {
+  key: string;
+  type: string;
+  width: number;
+  height: number;
+  created_at: string;
+}
+
 export interface FilerObject {
   volume: string;
   path: string;
@@ -26,6 +34,7 @@ export interface FilerObject {
   etag: string | null;
   modified_at: string;
   meta: Meta[];
+  artwork: ArtworkInfo[];
 }
 
 export interface SearchResult extends FilerObject {

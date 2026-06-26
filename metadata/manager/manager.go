@@ -80,7 +80,7 @@ func (m *Manager) GetMeta(ctx context.Context, r io.Reader) (_ *schema.ObjectMet
 	}
 
 	// Rewind by replaying sniffed bytes first, then the unread remainder.
-	if meta, err := m.Get(ctx, result.ContentType, fileReader{
+	if meta, _, err := m.Get(ctx, result.ContentType, fileReader{
 		reader: io.MultiReader(bytes.NewReader(sniffed.Bytes()), r),
 		name:   name,
 	}); err != nil {
@@ -93,11 +93,11 @@ func (m *Manager) GetMeta(ctx context.Context, r io.Reader) (_ *schema.ObjectMet
 	return &result, nil
 }
 
-func (m *Manager) Get(ctx context.Context, mimeType string, r io.Reader) ([]schema.Meta, error) {
+func (m *Manager) Get(ctx context.Context, mimeType string, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	extractor, err := metadata.Get(mimeType)
 	if err != nil {
 		// It's only a warning if we couldn't find an extractor
-		return []schema.Meta{}, err
+		return []schema.Meta{}, nil, err
 	}
 	// Extract metadata does not produce errors, only warnings
 	return extractor.ExtractMetadata(ctx, r)

@@ -35,10 +35,10 @@ func (e *videoextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`video/.*`)
 }
 
-func (e *videoextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *videoextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	reader, err := ffmpeg.NewReader(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer reader.Close()
 
@@ -54,7 +54,7 @@ func (e *videoextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sc
 	}
 
 	// Return metadata
-	return kv, nil
+	return kv, nil, nil
 }
 
 func sanitizeKey(key string) string {

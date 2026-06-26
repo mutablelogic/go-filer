@@ -62,7 +62,7 @@ func CreateArtwork(w http.ResponseWriter, r *http.Request, manager *manager.Mana
 	}
 
 	// Create the artwork from the image
-	image, err := image.CreateArtwork(req.Data.Body)
+	image, _, err := image.CreateArtwork(req.Data.Body)
 	if err != nil {
 		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
 	}

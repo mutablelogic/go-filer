@@ -176,21 +176,18 @@ func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (
 	return nil
 }
 
-func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreate) (_ *schema.Object, err error) {
+func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreate, artwork []*schema.ArtworkMeta) (_ *schema.Object, err error) {
 	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "createObject",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
-	// Cannot create directories
-	if req.IsDir {
-		return nil, gofiler.ErrConflict.With("cannot create directory object")
-	}
-
 	// If the content type is not provided, default to application/octet-stream
 	if typ := strings.TrimSpace(req.ContentType); typ == "" {
 		req.ContentType = types.ContentTypeBinary
 	} else if t, params, err := mime.ParseMediaType(typ); err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("invalid content type: %q", typ)
+	} else if t == schema.ContentTypeDirectory {
 		return nil, gofiler.ErrBadParameter.Withf("invalid content type: %q", typ)
 	} else {
 		req.ContentType = t
@@ -226,13 +223,32 @@ func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreat
 			}
 		}
 
+		// Insert the artwork
+		for _, meta := range artwork {
+			var artwork schema.Artwork
+			if err := conn.Insert(ctx, &artwork, meta); err != nil {
+				return err
+			}
+			var link schema.ObjectArtwork
+			if err := conn.Insert(ctx, &link, schema.ObjectArtwork{
+				ObjectKey:  result.ObjectKey,
+				ArtworkKey: artwork.ETag,
+			}); err != nil {
+				return err
+			}
+		}
+
 		// Return success
 		return nil
-
 	}); err != nil {
-		return nil, err
+		return nil, pg.NormalizeError(err)
 	}
 
-	// Return success
+	// Re-fetch the object to get the metadata and artwork
+	if err := manager.PoolConn.Get(ctx, &result, req.ObjectKey); err != nil {
+		return nil, pg.NormalizeError(err)
+	}
+
+	// Return the inserted object
 	return types.Ptr(result), nil
 }

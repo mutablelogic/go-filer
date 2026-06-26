@@ -31,11 +31,11 @@ func (e *srtextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^(application/x-subrip|text/srt)$`)
 }
 
-func (e *srtextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *srtextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var lines []string
@@ -44,16 +44,16 @@ func (e *srtextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sche
 		return nil
 	})
 	if err != nil {
-		return kv, err
+		return kv, nil, err
 	}
 
 	// Now summarize the text
 	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), "This content contains subtitles in SRT format. Summarize the subtitle content in English."); err != nil {
-		return kv, err
+		return kv, nil, err
 	} else if len(kv_) > 0 {
 		kv = append(kv, kv_...)
 	}
 
 	// Return the metadata
-	return kv, nil
+	return kv, nil, nil
 }

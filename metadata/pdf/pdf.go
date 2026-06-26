@@ -45,20 +45,20 @@ func (e *pdfextractor) MediaType() *regexp.Regexp {
 }
 
 // Extract metadata from the file at the given path
-func (e *pdfextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *pdfextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pdf, err := reader.Parse(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	title, author, subject, creator, producer := pdf.Info()
 
@@ -73,7 +73,7 @@ func (e *pdfextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sche
 	var builder strings.Builder
 	for i := 0; i < pdf.PageCount() && builder.Len() < maxTextSize; i++ {
 		if err := ctx.Err(); err != nil {
-			return kv, err
+			return kv, nil, err
 		}
 
 		page, err := pdf.Page(i)
@@ -98,19 +98,10 @@ func (e *pdfextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sche
 
 	// Now summarize the text
 	if kv_, err := summarizer.Summarize(ctx, builder.String()); err != nil {
-		return kv, err
+		return kv, nil, err
 	} else if len(kv_) > 0 {
 		kv = append(kv, kv_...)
 	}
 
-	return kv, nil
+	return kv, nil, nil
 }
-
-/*
-func sanitizeUnicode(s string) string {
-	// Ensure valid UTF-8 and remove NUL bytes, which PostgreSQL JSONB rejects.
-	b := bytes.ToValidUTF8([]byte(s), []byte(""))
-	b = bytes.ReplaceAll(b, []byte{0}, nil)
-	return string(b)
-}
-*/

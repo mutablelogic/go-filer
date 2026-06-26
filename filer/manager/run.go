@@ -206,7 +206,16 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object, 
 	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{
 		ObjectKey: object.ObjectKey,
 	})
-	if err != nil {
+	if errors.Is(err, gofiler.ErrNotFound) {
+		// Object no longer exists in the backend — remove it from the index
+		var deleted schema.Object
+		if delErr := manager.Tx(ctx, func(conn pg.Conn) error {
+			return conn.Delete(ctx, &deleted, object.ObjectKey)
+		}); delErr != nil && !errors.Is(delErr, pg.ErrNotFound) {
+			return nil, delErr
+		}
+		return nil, nil
+	} else if err != nil {
 		return nil, err
 	}
 	defer func() {
@@ -237,7 +246,7 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object, 
 
 	// Get the metadata for the object - if error is returned, it's a warning only if
 	// no metadata could be extracted, otherwise it's an error
-	metadata, err := manager.metadata.Get(ctx, object.ContentType, reader)
+	metadata, artwork, err := manager.metadata.Get(ctx, object.ContentType, reader)
 	if err != nil {
 		if metadata == nil {
 			return nil, err
@@ -256,13 +265,12 @@ func (manager *Manager) indexObject(ctx context.Context, object *schema.Object, 
 			Size:    object.Size,
 			ETag:    object.ETag,
 			ModTime: object.ModTime,
-			IsDir:   object.IsDir,
 		},
 		ObjectMeta: schema.ObjectMeta{
 			ContentType: object.ContentType,
 			Meta:        metadata,
 		},
-	})
+	}, artwork)
 }
 
 func (manager *Manager) reindexVolumes(ctx context.Context, queue *pgqueueschema.Queue, logger *slog.Logger) error {
@@ -312,7 +320,7 @@ func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.
 			return gofiler.ErrInternalServerError.Withf("backend %q failure: %v", backend.Name(), err.Error())
 		}
 		for _, object := range iterator.Body {
-			if object.IsDir {
+			if object.ContentType == schema.ContentTypeDirectory {
 				continue
 			}
 			payload, err := json.Marshal(object)

@@ -174,7 +174,7 @@ func (manager *Manager) ReindexVolume(ctx context.Context, name string, req sche
 		}
 
 		for _, object := range objects.Body {
-			if !object.IsDir {
+			if object.ContentType != schema.ContentTypeDirectory {
 				fmt.Println("Reindexing object:", object.Path)
 			}
 		}

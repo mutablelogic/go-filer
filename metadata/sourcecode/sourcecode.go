@@ -41,11 +41,11 @@ func (e *codeextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`text/(x-)?(go|python|javascript|typescript|java|c|cpp|objective-c|csharp|ruby|php|rust|swift)`)
 }
 
-func (e *codeextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *codeextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	title := ""
@@ -61,12 +61,12 @@ func (e *codeextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sch
 		return nil
 	})
 	if err != nil {
-		return kv, err
+		return kv, nil, err
 	}
 
 	// Now summarize the text
 	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), prompt); err != nil {
-		return kv, err
+		return kv, nil, err
 	} else if len(kv_) > 0 {
 		kv = append(kv, kv_...)
 	}
@@ -77,5 +77,5 @@ func (e *codeextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sch
 	}
 
 	// Return the metadata
-	return kv, nil
+	return kv, nil, nil
 }

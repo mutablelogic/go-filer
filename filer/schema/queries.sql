@@ -137,8 +137,9 @@ SELECT
 		AND m."path" = o."path"
 	), '[]'::jsonb) AS "meta",
 	COALESCE((
-		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		SELECT jsonb_agg(jsonb_build_object('key', oa."etag", 'type', a."type", 'width', a."width", 'height', a."height", 'created_at', a."created_at") ORDER BY oa."etag")
 		FROM ${"schema"}."object_artwork" AS oa
+		JOIN ${"schema"}."artwork" AS a ON a."etag" = oa."etag"
 		WHERE oa."volume" = o."volume"
 		AND oa."path" = o."path"
 	), '[]'::jsonb) AS "artwork"
@@ -194,8 +195,9 @@ SELECT
 		AND m."path" = p."path"
 	), '[]'::jsonb) AS "meta",
 	COALESCE((
-		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		SELECT jsonb_agg(jsonb_build_object('key', oa."etag", 'type', a."type", 'width', a."width", 'height', a."height", 'created_at', a."created_at") ORDER BY oa."etag")
 		FROM ${"schema"}."object_artwork" AS oa
+		JOIN ${"schema"}."artwork" AS a ON a."etag" = oa."etag"
 		WHERE oa."volume" = p."volume"
 		AND oa."path" = p."path"
 	), '[]'::jsonb) AS "artwork"
@@ -224,8 +226,9 @@ SELECT
 		AND m."path" = t."path"
 	), '[]'::jsonb) AS "meta",
 	COALESCE((
-		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		SELECT jsonb_agg(jsonb_build_object('key', oa."etag", 'type', a."type", 'width', a."width", 'height', a."height", 'created_at', a."created_at") ORDER BY oa."etag")
 		FROM ${"schema"}."object_artwork" AS oa
+		JOIN ${"schema"}."artwork" AS a ON a."etag" = oa."etag"
 		WHERE oa."volume" = t."volume"
 		AND oa."path" = t."path"
 	), '[]'::jsonb) AS "artwork"
@@ -243,8 +246,9 @@ SELECT
 		AND m."path" = o."path"
 	), '[]'::jsonb) AS "meta",
 	COALESCE((
-		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		SELECT jsonb_agg(jsonb_build_object('key', oa."etag", 'type', a."type", 'width', a."width", 'height', a."height", 'created_at', a."created_at") ORDER BY oa."etag")
 		FROM ${"schema"}."object_artwork" AS oa
+		JOIN ${"schema"}."artwork" AS a ON a."etag" = oa."etag"
 		WHERE oa."volume" = o."volume"
 		AND oa."path" = o."path"
 	), '[]'::jsonb) AS "artwork"
@@ -281,8 +285,9 @@ SELECT
 		AND m."path" = u."path"
 	), '[]'::jsonb) AS "meta",
 	COALESCE((
-		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		SELECT jsonb_agg(jsonb_build_object('key', oa."etag", 'type', a."type", 'width', a."width", 'height', a."height", 'created_at', a."created_at") ORDER BY oa."etag")
 		FROM ${"schema"}."object_artwork" AS oa
+		JOIN ${"schema"}."artwork" AS a ON a."etag" = oa."etag"
 		WHERE oa."volume" = u."volume"
 		AND oa."path" = u."path"
 	), '[]'::jsonb) AS "artwork"
@@ -300,12 +305,13 @@ SELECT
 		AND m."path" = o."path"
 	), '[]'::jsonb) AS "meta",
 	COALESCE((
-		SELECT jsonb_agg(oa."etag" ORDER BY oa."etag")
+		SELECT jsonb_agg(jsonb_build_object('key', oa."etag", 'type', a."type", 'width', a."width", 'height', a."height", 'created_at', a."created_at") ORDER BY oa."etag")
 		FROM ${"schema"}."object_artwork" AS oa
+		JOIN ${"schema"}."artwork" AS a ON a."etag" = oa."etag"
 		WHERE oa."volume" = o."volume"
 		AND oa."path" = o."path"
 	), '[]'::jsonb) AS "artwork",
-	ts_rank(s."tsv", websearch_to_tsquery('english', @query), 32) AS "rank"
+	LEAST(ts_rank(s."tsv", websearch_to_tsquery('english', @query), 32) * 2, 1.0) AS "rank"
 FROM
 	${"schema"}."object" AS o
 JOIN

@@ -12,6 +12,7 @@ import (
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	metadata "github.com/mutablelogic/go-filer/metadata"
 	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/tiff"
@@ -33,18 +34,24 @@ const (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// CreateArtwork converts an image into a schema.ArtworkMeta object.
-func CreateArtwork(r io.Reader) (*schema.ArtworkMeta, error) {
+// CreateArtwork converts an image into a schema.ArtworkMeta object
+// and return the metadata for the original image
+func CreateArtwork(r io.Reader) (*schema.ArtworkMeta, []schema.Meta, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Decode the image
 	img, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
+	// Generate metdata for the original image
+	kv := schema.AppendMeta([]schema.Meta{}, metadata.ImageFormat, format)
+	kv = schema.AppendMeta(kv, metadata.ImageWidth, img.Bounds().Dx())
+	kv = schema.AppendMeta(kv, metadata.ImageHeight, img.Bounds().Dy())
 
 	// Fast-path: if the image is already a jpeg or png and approximately the max width, return it as is
 	if (format == "png" || format == "jpeg") && img.Bounds().Dx() <= int(float64(MaxWidth)*1.1) {
@@ -53,7 +60,7 @@ func CreateArtwork(r io.Reader) (*schema.ArtworkMeta, error) {
 			Type:   "image/" + format,
 			Width:  uint64(img.Bounds().Dx()),
 			Height: uint64(img.Bounds().Dy()),
-		}, nil
+		}, kv, nil
 	}
 
 	// Preserve the aspect ratio and resize the image to the max width
@@ -67,12 +74,12 @@ func CreateArtwork(r io.Reader) (*schema.ArtworkMeta, error) {
 	var contentType string
 	if slices.Contains(strings.Split(PNGFormats, ","), format) {
 		if err = png.Encode(&buf, dst); err != nil {
-			return nil, err
+			return nil, kv, err
 		}
 		contentType = "image/png"
 	} else {
 		if err = jpeg.Encode(&buf, dst, nil); err != nil {
-			return nil, err
+			return nil, kv, err
 		}
 		contentType = "image/jpeg"
 	}
@@ -83,5 +90,5 @@ func CreateArtwork(r io.Reader) (*schema.ArtworkMeta, error) {
 		Type:   contentType,
 		Width:  uint64(width),
 		Height: uint64(height),
-	}, nil
+	}, kv, nil
 }

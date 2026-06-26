@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { FilerClient, SearchResult } from '../api/client.js';
+import { FilerClient, SearchResult, ArtworkInfo } from '../api/client.js';
 
 const client = new FilerClient();
 const DEBOUNCE_MS = 300;
@@ -25,8 +25,26 @@ export class FilerSearch extends LitElement {
       margin-bottom: 1.5rem;
     }
     .result {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
       padding: 0.75rem 0;
       border-bottom: 1px solid #eee;
+    }
+    .result-artwork {
+      flex: 0 0 128px;
+      width: 128px;
+    }
+    .result-artwork img {
+      display: block;
+      width: 128px;
+      height: auto;
+      border-radius: 4px;
+      object-fit: cover;
+    }
+    .result-body {
+      flex: 1 1 auto;
+      min-width: 0;
     }
     .result-header {
       display: flex;
@@ -111,16 +129,26 @@ export class FilerSearch extends LitElement {
         ? html`<p class="error">${this.error}</p>`
         : this.searched && this.results.length === 0
         ? html`<p class="empty">No results found.</p>`
-        : this.results.map(r => html`
-          <div class="result">
-            <div class="result-header">
-              <span class="result-title">${r.title || r.path}</span>
-              <span class="result-rank">${(r.rank * 100).toFixed(1)}%</span>
+        : this.results.map(r => {
+          const art: ArtworkInfo | undefined = r.artwork?.[0];
+          return html`
+            <div class="result">
+              ${art ? html`
+                <div class="result-artwork">
+                  <img src="/api/artwork/${art.key}" alt="" width="128" />
+                </div>
+              ` : ''}
+              <div class="result-body">
+                <div class="result-header">
+                  <span class="result-title">${r.title || r.path}</span>
+                  <span class="result-rank">${Math.min(r.rank * 100, 100).toFixed(1)}%</span>
+                </div>
+                ${r.title ? html`<div class="result-path">${r.path}</div>` : ''}
+                ${r.summary ? html`<div class="result-summary">${r.summary}</div>` : ''}
+              </div>
             </div>
-            ${r.title ? html`<div class="result-path">${r.path}</div>` : ''}
-            ${r.summary ? html`<div class="result-summary">${r.summary}</div>` : ''}
-          </div>
-        `)
+          `;
+        })
       }
     `;
   }

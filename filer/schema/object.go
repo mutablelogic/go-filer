@@ -33,7 +33,7 @@ type Object struct {
 	ObjectKey
 	ObjectMeta
 	ObjectAttr
-	Artwork []ArtworkKey `json:"artwork,omitempty"`
+	Artwork []ArtworkInfo `json:"artwork,omitempty"`
 }
 
 // ObjectKey represents the unique identifier of an object, which consists of a volume and a path.
@@ -55,7 +55,6 @@ type ObjectAttr struct {
 	Size    int64     `json:"size"`
 	ETag    *string   `json:"etag,omitempty"`
 	ModTime time.Time `json:"last-modified,omitzero"`
-	IsDir   bool      `json:"dir,omitempty"`
 }
 
 // ObjectCreate represents the result of creating an object in the database as part of indexing

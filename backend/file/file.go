@@ -154,7 +154,7 @@ func (self *FileBackend) ReadObject(ctx context.Context, req schema.GetObjectReq
 	object, err := self.GetObject(ctx, req)
 	if err != nil {
 		return nil, nil, err
-	} else if object.IsDir {
+	} else if object.ContentType == schema.ContentTypeDirectory {
 		return nil, nil, gofiler.ErrBadParameter.Withf("cannot read content of a directory: %q", req.Path)
 	}
 
@@ -216,7 +216,6 @@ func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.Object
 			iterator.Body = append(iterator.Body, &schema.Object{
 				ObjectKey:  schema.ObjectKey{Volume: self.name, Path: entryPath},
 				ObjectMeta: schema.ObjectMeta{ContentType: schema.ContentTypeDirectory},
-				ObjectAttr: schema.ObjectAttr{IsDir: true},
 			})
 		} else {
 			obj, err := self.GetObject(ctx, schema.GetObjectRequest{

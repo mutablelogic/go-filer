@@ -38,11 +38,11 @@ func (e *jsonextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`application/json`)
 }
 
-func (e *jsonextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *jsonextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	lines := []string{}
@@ -51,16 +51,16 @@ func (e *jsonextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sch
 		return nil
 	})
 	if err != nil {
-		return kv, err
+		return kv, nil, err
 	}
 
 	// Now summarize the text
 	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), prompt); err != nil {
-		return kv, err
+		return kv, nil, err
 	} else if len(kv_) > 0 {
 		kv = append(kv, kv_...)
 	}
 
 	// Return the metadata
-	return kv, nil
+	return kv, nil, nil
 }

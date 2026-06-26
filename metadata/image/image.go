@@ -1,10 +1,8 @@
 package image
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"image"
 	"io"
 	"os"
 	"regexp"
@@ -89,43 +87,34 @@ func (e *imageextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`image/.*`)
 }
 
-func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, error) {
+func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	data, err := io.ReadAll(r)
+	// Create artwork file, and return image metdata
+	artwork, meta, err := CreateArtwork(r)
 	if err != nil {
-		return nil, err
+		return meta, []*schema.ArtworkMeta{artwork}, err
 	}
-
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-
-	// Append the metadata
-	kv := schema.AppendMeta([]schema.Meta{}, metadata.ImageFormat, format)
-	kv = schema.AppendMeta(kv, metadata.ImageWidth, cfg.Width)
-	kv = schema.AppendMeta(kv, metadata.ImageHeight, cfg.Height)
 
 	// Now summarize the image
 	summarizer, err := NewImageSummarizer(ctx)
 	if err != nil {
-		return kv, err
-	} else if err := summarizer.Summarize(ctx, data); err != nil {
-		return kv, err
+		return meta, []*schema.ArtworkMeta{artwork}, err
+	} else if err := summarizer.Summarize(ctx, artwork.Data); err != nil {
+		return meta, []*schema.ArtworkMeta{artwork}, err
 	}
 
 	// Add the summary to the metadata
-	kv = schema.AppendMeta(kv, metadata.ImageTitle, summarizer.Title)
-	kv = schema.AppendMeta(kv, metadata.ImageSummary, summarizer.Summary)
+	meta = schema.AppendMeta(meta, metadata.ImageTitle, summarizer.Title)
+	meta = schema.AppendMeta(meta, metadata.ImageSummary, summarizer.Summary)
 	if len(summarizer.Keywords) > 0 {
-		kv = schema.AppendMeta(kv, metadata.ImageTags, summarizer.Keywords)
+		meta = schema.AppendMeta(meta, metadata.ImageTags, summarizer.Keywords)
 	}
 
-	// Return the metadata
-	return kv, nil
+	// Return the metadata and artwork
+	return meta, []*schema.ArtworkMeta{artwork}, nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////
