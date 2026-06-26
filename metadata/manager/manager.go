@@ -79,9 +79,21 @@ func (m *Manager) GetMeta(ctx context.Context, r io.Reader) (_ *schema.ObjectMet
 		return nil, err
 	}
 
-	// Rewind by replaying sniffed bytes first, then the unread remainder.
+	// If the reader supports seeking, rewind to the start so downstream gets a
+	// seekable reader (e.g. ffmpeg needs to seek MP4 moov atoms). Fall back to
+	// MultiReader replay when seeking isn't available.
+	var metaReader io.Reader
+	if seeker, ok := r.(io.ReadSeeker); ok {
+		if _, serr := seeker.Seek(0, io.SeekStart); serr == nil {
+			metaReader = seeker
+		}
+	}
+	if metaReader == nil {
+		metaReader = io.MultiReader(bytes.NewReader(sniffed.Bytes()), r)
+	}
+
 	if meta, _, err := m.Get(ctx, result.ContentType, fileReader{
-		reader: io.MultiReader(bytes.NewReader(sniffed.Bytes()), r),
+		reader: metaReader,
 		name:   name,
 	}); err != nil {
 		return nil, err
