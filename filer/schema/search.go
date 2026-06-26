@@ -228,6 +228,10 @@ func (s *SearchResult) Scan(row pg.Row) error {
 			_ = json.Unmarshal(kv.Value, &s.Title)
 		case "summary":
 			_ = json.Unmarshal(kv.Value, &s.Summary)
+		case "description":
+			if s.Summary == "" {
+				_ = json.Unmarshal(kv.Value, &s.Summary)
+			}
 		case "lyrics":
 			if s.Summary == "" {
 				_ = json.Unmarshal(kv.Value, &s.Summary)
