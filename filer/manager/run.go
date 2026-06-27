@@ -309,20 +309,6 @@ func (manager *Manager) reindexVolumes(ctx context.Context, logger *slog.Logger)
 	return nil
 }
 
-func (manager *Manager) enqueueIndexObject(ctx context.Context, key schema.ObjectKey, force bool) error {
-	if manager.indexQueue == nil {
-		return gofiler.ErrServiceUnavailable.With("index queue not available")
-	}
-	payload, err := json.Marshal(indexObjectTask{ObjectKey: key, Force: force})
-	if err != nil {
-		return fmt.Errorf("failed to marshal index task: %w", err)
-	}
-	_, err = manager.queue.CreateTask(ctx, manager.indexQueue.Queue, pgqueueschema.TaskMeta{
-		Payload: payload,
-	})
-	return err
-}
-
 func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.Backend, logger *slog.Logger) error {
 	logger.DebugContext(ctx, "reindexing", "name", backend.Name())
 

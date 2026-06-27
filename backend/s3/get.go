@@ -44,7 +44,11 @@ func (self *S3Backend) GetObject(ctx context.Context, req schema.GetObjectReques
 	}
 
 	// Determine the content type, using the S3 metadata if present, or falling back to the file extension.
+	// Strip any parameters (e.g. "; charset=utf-8") that S3 may include.
 	contentType := aws.ToString(out.ContentType)
+	if base, _, found := strings.Cut(contentType, ";"); found {
+		contentType = strings.TrimSpace(base)
+	}
 	if contentType == "" {
 		contentType = mime.TypeByExtension(path.Ext(req.Path))
 	}
