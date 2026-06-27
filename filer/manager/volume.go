@@ -119,7 +119,7 @@ func (manager *Manager) CreateVolume(ctx context.Context, url *url.URL, meta sch
 	defer func() { endSpan(err) }()
 
 	// Check that the backend can be handled, and return the name
-	name, err := manager.volumes.Validate(url)
+	name, err := manager.volumes.Validate(ctx, url)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/url"
 
@@ -39,3 +40,7 @@ type Backend interface {
 	// Delete objects in the backend (single object or prefix)
 	DeleteObjects(context.Context, schema.DeleteObjectsRequest) error
 }
+
+// DecryptCredentailFunc is a function that decrypts a credential with the given
+// key string and returns the decrypted value or an error.
+type DecryptCredentailFunc func(context.Context, string) (json.RawMessage, error)

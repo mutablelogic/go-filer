@@ -368,7 +368,7 @@ func (manager *Manager) syncVolumes(ctx context.Context, logger *slog.Logger) er
 
 	// Insert backends
 	for _, volume := range inserted {
-		backend, err := manager.volumes.New(volume.URL)
+		backend, err := manager.volumes.New(ctx, volume.URL)
 		if err != nil {
 			return err
 		}

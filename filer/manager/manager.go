@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -49,7 +50,12 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 	} else if registry := llm.New(self.opt.clientopts...); registry == nil {
 		return nil, fmt.Errorf("failed to create llm registry")
 	} else {
-		self.volumes = backendregistry.New()
+		self.volumes = backendregistry.New(self.opt.tracer, func(ctx context.Context, key string) (json.RawMessage, error) {
+			if key == "" {
+				return nil, nil
+			}
+			return self.getCredential(ctx, schema.CredentialKey{Key: key})
+		})
 		self.queue = queue
 		self.metadata = metadata
 		self.llm = registry

@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 
@@ -14,15 +15,19 @@ import (
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	mime "github.com/mutablelogic/go-filer/metadata/mime"
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	attribute "go.opentelemetry.io/otel/attribute"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
 type FileBackend struct {
-	name string
-	fs   WritableFS
+	name   string
+	fs     WritableFS
+	tracer trace.Tracer
 }
 
 type token struct {
@@ -35,17 +40,23 @@ var _ backend.Backend = (*FileBackend)(nil)
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func New(url *url.URL) (*FileBackend, error) {
+func New(ctx context.Context, tracer trace.Tracer, _ backend.DecryptCredentailFunc, url *url.URL) (*FileBackend, error) {
 	self := new(FileBackend)
 
-	name, err := Validate(url)
-	if err != nil {
-		return nil, err
+	if url == nil || url.Scheme != "file" {
+		return nil, gofiler.ErrBadParameter.With("url with scheme 'file' is required")
+	} else if name := url.Host; !types.IsIdentifier(name) {
+		return nil, gofiler.ErrBadParameter.Withf("invalid file backend name: %q", name)
+	} else if info, err := os.Stat(url.Path); err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("invalid file backend path: %q", url.Path)
+	} else if !info.IsDir() {
+		return nil, gofiler.ErrBadParameter.Withf("file backend path is not a directory: %q", url.Path)
 	} else if wfs, err := newWritableFS(url.Path); err != nil {
 		return nil, err
 	} else {
 		self.name = name
 		self.fs = wfs
+		self.tracer = tracer
 	}
 
 	return self, nil
@@ -169,7 +180,18 @@ func (self *FileBackend) ReadObject(ctx context.Context, req schema.GetObjectReq
 }
 
 // List objects or directories in the backend
-func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.ObjectListIterator) error {
+func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.ObjectListIterator) (err error) {
+	ctx, endSpan := otel.StartSpan(self.tracer, ctx, "file.ListObjects",
+		attribute.String("req", types.Stringify(iterator)),
+	)
+	defer func() {
+		if errors.Is(err, io.EOF) {
+			endSpan(nil)
+		} else {
+			endSpan(err)
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -230,7 +252,7 @@ func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.Object
 	}
 
 	// Walk the directory tree and emit objects to the iterator
-	err := fs.WalkDir(self.fs, walkRoot, func(entryPath string, d fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(self.fs, walkRoot, func(entryPath string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

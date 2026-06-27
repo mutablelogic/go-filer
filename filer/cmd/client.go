@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 
 	// Packages
@@ -40,14 +41,15 @@ type SearchClientCommands struct {
 }
 
 type VolumeClientCommands struct {
-	VolumeGet     VolumeGetCmd        `cmd:"" name:"volume" help:"Get a volume by name." group:"VOLUME"`
-	VolumeList    VolumeListCmd       `cmd:"" name:"volumes" help:"List server volumes." group:"VOLUME"`
-	VolumeCreate  VolumeCreateFileCmd `cmd:"" name:"volume-create-file" help:"Create a new file-backed volume." group:"VOLUME"`
-	VolumeMount   VolumeMountCmd      `cmd:"" name:"volume-mount" help:"Mount a volume by name." group:"VOLUME"`
-	VolumeUnmount VolumeUnmountCmd    `cmd:"" name:"volume-unmount" help:"Unmount a volume by name." group:"VOLUME"`
-	VolumeUpdate  VolumeUpdateCmd     `cmd:"" name:"volume-update" help:"Update a volume by name." group:"VOLUME"`
-	VolumeDelete  VolumeDeleteCmd     `cmd:"" name:"volume-delete" help:"Delete a volume by name." group:"VOLUME"`
-	VolumeReindex VolumeReindexCmd    `cmd:"" name:"volume-reindex" help:"Reindex a volume by name." group:"VOLUME"`
+	VolumeGet        VolumeGetCmd        `cmd:"" name:"volume" help:"Get a volume by name." group:"VOLUME"`
+	VolumeList       VolumeListCmd       `cmd:"" name:"volumes" help:"List server volumes." group:"VOLUME"`
+	VolumeCreateFile VolumeCreateFileCmd `cmd:"" name:"volume-create-file" help:"Create a new file-backed volume." group:"VOLUME"`
+	VolumeCreateS3   VolumeCreateS3Cmd   `cmd:"" name:"volume-create-s3" help:"Create a new S3-backed volume." group:"VOLUME"`
+	VolumeMount      VolumeMountCmd      `cmd:"" name:"volume-mount" help:"Mount a volume by name." group:"VOLUME"`
+	VolumeUnmount    VolumeUnmountCmd    `cmd:"" name:"volume-unmount" help:"Unmount a volume by name." group:"VOLUME"`
+	VolumeUpdate     VolumeUpdateCmd     `cmd:"" name:"volume-update" help:"Update a volume by name." group:"VOLUME"`
+	VolumeDelete     VolumeDeleteCmd     `cmd:"" name:"volume-delete" help:"Delete a volume by name." group:"VOLUME"`
+	VolumeReindex    VolumeReindexCmd    `cmd:"" name:"volume-reindex" help:"Reindex a volume by name." group:"VOLUME"`
 }
 
 type MetadataClientCommands struct {
@@ -211,6 +213,14 @@ type VolumeCreateFileCmd struct {
 	Path string `arg:"" name:"path" type:"file" help:"Path to filesystem."`
 }
 
+type VolumeCreateS3Cmd struct {
+	URL       *url.URL `arg:"" name:"url" type:"url" help:"S3 URL (s3://bucket-name/prefix)."`
+	Endpoint  *url.URL `name:"endpoint" type:"url" help:"Custom S3 endpoint URL."`
+	Anonymous bool     `name:"anonymous" help:"Use anonymous credentials for S3." negatable:""`
+	AccessKey string   `name:"access-key" help:"AWS access credential."`
+	SecretKey string   `name:"secret-key" help:"AWS secret credential."`
+}
+
 type VolumeMountCmd struct {
 	VolumeGetCmd
 }
@@ -272,6 +282,43 @@ func (cmd *VolumeCreateFileCmd) Run(ctx server.Cmd) error {
 	return withClient(ctx, "volume-create-file", func(ctx context.Context, client *httpclient.Client) error {
 		volume, err := client.CreateVolume(ctx, schema.VolumeCreate{
 			URL: "file://" + cmd.Name + types.NormalisePath(cmd.Path),
+			VolumeMeta: schema.VolumeMeta{
+				Enabled: types.Ptr(true),
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(volume)
+		return nil
+	})
+}
+
+func (cmd *VolumeCreateS3Cmd) Run(ctx server.Cmd) error {
+	// Fix the URL to include additional parameters
+	if cmd.URL.Scheme != "s3" {
+		return fmt.Errorf("invalid URL scheme: %q (expected 's3')", cmd.URL.Scheme)
+	}
+	q := url.Values{}
+	if cmd.Anonymous {
+		q.Set("anonymous", "true")
+	}
+	if cmd.Endpoint != nil {
+		q.Set("endpoint", cmd.Endpoint.String())
+	}
+	if cmd.AccessKey != "" {
+		q.Set("access-key", cmd.AccessKey)
+	}
+	if cmd.SecretKey != "" {
+		q.Set("secret-key", cmd.SecretKey)
+	}
+	cmd.URL.RawQuery = q.Encode()
+
+	// Perform the request
+	return withClient(ctx, "volume-create-s3", func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := client.CreateVolume(ctx, schema.VolumeCreate{
+			URL: cmd.URL.String(),
 			VolumeMeta: schema.VolumeMeta{
 				Enabled: types.Ptr(true),
 			},

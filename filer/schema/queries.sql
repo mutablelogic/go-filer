@@ -406,6 +406,15 @@ ORDER BY
 
 -- credential.get
 SELECT
+	"key", "pv", "credential"
+FROM
+	${"schema"}."credential"
+WHERE
+	"key" = @key
+;
+
+-- credential.get_pv
+SELECT
 	"key", "credential"
 FROM
 	${"schema"}."credential"

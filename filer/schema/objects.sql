@@ -7,9 +7,13 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."volume" (
     "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
     "indexed_at"  TIMESTAMPTZ,
     PRIMARY KEY ("name"),
-    CHECK ("name" ~ '^[a-z_][a-z0-9_]*$'),
+    CHECK ("name" ~ '^[a-z0-9_][a-z0-9_.-]{1,61}[a-z0-9_]$'),
     UNIQUE ("url")
 );
+
+-- filer.volume.migration
+ALTER TABLE ${"schema"}."volume" DROP CONSTRAINT IF EXISTS volume_name_check;
+ALTER TABLE ${"schema"}."volume" ADD CONSTRAINT volume_name_check CHECK ("name" ~ '^[a-z0-9_][a-z0-9_.-]{1,61}[a-z0-9_]$');
 
 -- filter.object
 CREATE TABLE IF NOT EXISTS ${"schema"}."object" (
