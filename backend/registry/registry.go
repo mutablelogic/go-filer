@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"net/url"
 	"sync"
 
@@ -8,6 +9,8 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	file "github.com/mutablelogic/go-filer/backend/file"
+	s3 "github.com/mutablelogic/go-filer/backend/s3"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -15,32 +18,49 @@ import (
 
 type Registry struct {
 	sync.RWMutex
-	backends map[string]backend.Backend
+	tracer    trace.Tracer
+	decryptfn backend.DecryptCredentailFunc
+	backends  map[string]backend.Backend
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-// Validate checks that the provided URL is valid for a supported backend type, and returns the unique name for that backend if valid.
-func (*Registry) Validate(url *url.URL) (string, error) {
-	// Add cases for different backend types here
-	switch url.Scheme {
-	case "file":
-		return file.Validate(url)
-	default:
-		return "", gofiler.ErrBadParameter.Withf("unsupported backend scheme: %q", url.Scheme)
-	}
-}
-
 // New creates a new registry with no backends.
-func New() *Registry {
+func New(tracer trace.Tracer, decryptfn backend.DecryptCredentailFunc) *Registry {
 	return &Registry{
-		backends: make(map[string]backend.Backend),
+		tracer:    tracer,
+		decryptfn: decryptfn,
+		backends:  make(map[string]backend.Backend),
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+// Validate checks that the provided URL is valid for a supported backend type, and returns the unique name
+// for that backend if valid.
+func (r *Registry) Validate(ctx context.Context, url *url.URL) (string, error) {
+	// Add cases for different backend types here
+	switch url.Scheme {
+	case "file":
+		f, err := file.New(ctx, r.tracer, r.decryptfn, url)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		return f.Name(), nil
+	case "s3":
+		f, err := s3.New(ctx, r.tracer, r.decryptfn, url)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		return f.Name(), nil
+	default:
+		return "", gofiler.ErrBadParameter.Withf("unsupported backend scheme: %q", url.Scheme)
+	}
+}
 
 // Names returns a list of all backend names in the registry.
 func (r *Registry) Names() []string {
@@ -66,9 +86,8 @@ func (r *Registry) Get(name string) backend.Backend {
 }
 
 // New creates a new backend based on the provided URL, and adds it to the registry.
-//
-//	The URL must be valid for the backend type, and the backend name must be unique within the registry.
-func (r *Registry) New(path string) (backend.Backend, error) {
+// The URL must be valid for the backend type, and the backend name must be unique within the registry.
+func (r *Registry) New(ctx context.Context, path string) (backend.Backend, error) {
 	parsedURL, err := url.Parse(path)
 	if err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("invalid URL: %v", err)
@@ -84,7 +103,23 @@ func (r *Registry) New(path string) (backend.Backend, error) {
 	// Add cases for different backend types here
 	switch parsedURL.Scheme {
 	case "file":
-		backend, err := file.New(parsedURL)
+		backend, err := file.New(ctx, r.tracer, r.decryptfn, parsedURL)
+		if err != nil {
+			return nil, err
+		}
+
+		// Check for unique name
+		name := backend.Name()
+		if _, ok := r.backends[name]; ok {
+			return nil, gofiler.ErrConflict.Withf("backend with name %q already exists", name)
+		} else {
+			r.backends[name] = backend
+		}
+
+		// Return success
+		return backend, nil
+	case "s3":
+		backend, err := s3.New(ctx, r.tracer, r.decryptfn, parsedURL)
 		if err != nil {
 			return nil, err
 		}

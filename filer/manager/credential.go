@@ -120,6 +120,28 @@ func (m *Manager) GetCredential(ctx context.Context, key schema.CredentialKey, p
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
+// GetCredential retrieves a credential by key and decrypts the credential payload with
+// the stored passphrase version.
+func (m *Manager) getCredential(ctx context.Context, key schema.CredentialKey) (_ json.RawMessage, err error) {
+	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "GetCredential",
+		attribute.String("key", key.Key),
+	)
+	defer func() { endSpan(err) }()
+
+	var result schema.CredentialGet
+	var credentials json.RawMessage
+	if err := m.PoolConn.Get(ctx, &result, key); err != nil {
+		return nil, pg.NormalizeError(err)
+	} else if encrypted, ok := result.Credentials.([]byte); !ok {
+		return nil, gofiler.ErrInternalServerError.With("credential payload is invalid")
+	} else if err := m.decryptCredentials(encrypted, result.PV, &credentials); err != nil {
+		return nil, err
+	}
+
+	// Return the decrypted JSON payload
+	return credentials, nil
+}
+
 func (m *Manager) encryptCredentials(v any) (uint64, []byte, error) {
 	// Preserve the zero-value contract for raw credential payloads.
 	switch value := v.(type) {

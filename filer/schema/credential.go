@@ -32,6 +32,14 @@ type CredentialCreate struct {
 	Credentials any `json:"credentials" help:"Credential value"`
 }
 
+// CredentialGet contains the values required to retrieve a credential row.
+// The returned Credential includes PV and Credentials.
+type CredentialGet struct {
+	CredentialKey
+	PV          uint64 `json:"pv" help:"Passphrase version"`
+	Credentials any    `json:"credentials" help:"Credential value"`
+}
+
 type CredentialListRequest struct {
 	pg.OffsetLimit
 }
@@ -115,7 +123,11 @@ func (c CredentialKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 
 	switch op {
 	case pg.Get:
-		return bind.Query("credential.get"), nil
+		if bind.Has("pv") {
+			return bind.Query("credential.get_pv"), nil
+		} else {
+			return bind.Query("credential.get"), nil
+		}
 	case pg.Delete:
 		return bind.Query("credential.delete"), nil
 	default:
@@ -147,11 +159,17 @@ func (c *Credential) Scan(row pg.Row) error {
 
 // Expected column order: key, credential.
 func (c *CredentialCreate) Scan(row pg.Row) error {
-	var credentials []byte
-	if err := row.Scan(&c.Key, &credentials); err != nil {
+	if err := row.Scan(&c.Key, &c.Credentials); err != nil {
 		return err
 	}
-	c.Credentials = credentials
+	return nil
+}
+
+// Expected column order: pv, credential.
+func (c *CredentialGet) Scan(row pg.Row) error {
+	if err := row.Scan(&c.Key, &c.PV, &c.Credentials); err != nil {
+		return err
+	}
 	return nil
 }
 
