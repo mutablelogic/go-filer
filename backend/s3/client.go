@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -151,9 +150,6 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 		if err != nil {
 			return nil, nil, gofiler.ErrBadParameter.Withf("invalid secret-key: %v", err)
 		}
-
-		fmt.Println("accessKey:", accessKey, "secretKey:", secretKey)
-
 		cfgOpts = append(cfgOpts, awsconfig.WithCredentialsProvider(
 			awscredentials.NewStaticCredentialsProvider(string(accessKey), string(secretKey), ""),
 		))
@@ -170,7 +166,13 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 	}
 
 	// Build S3 client options
-	var s3Opts []func(*s3.Options)
+	s3Opts := []func(*s3.Options){
+		func(o *s3.Options) {
+			// Suppress noisy "no supported checksum" warnings for responses from
+			// servers that don't implement AWS checksum extensions (e.g. MinIO).
+			o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		},
+	}
 	if endpoint != "" {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(endpoint)
@@ -212,11 +214,6 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 // Create object in the backend
 func (self *S3Backend) CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error) {
 	return nil, gofiler.ErrNotImplemented.With("CreateObject")
-}
-
-// Read object content from the backend. Caller must close the returned reader.
-func (self *S3Backend) ReadObject(context.Context, schema.GetObjectRequest) (io.ReadCloser, *schema.Object, error) {
-	return nil, nil, gofiler.ErrNotImplemented.With("ReadObject")
 }
 
 // Delete objects in the backend (single object or prefix)

@@ -34,6 +34,7 @@ type ClientCommands struct {
 
 type ObjectClientCommands struct {
 	ObjectList ObjectListCmd `cmd:"" name:"objects" help:"List server objects." group:"OBJECT"`
+	ObjectGet  ObjectGetCmd  `cmd:"" name:"object" help:"Get object metadata by volume and path." group:"OBJECT"`
 }
 
 type SearchClientCommands struct {
@@ -69,10 +70,6 @@ type CredentialClientCommands struct {
 
 type LLMProviderClientCommands struct {
 	LLMProviderCreate LLMProviderCreateCmd `cmd:"" name:"llm-create" help:"Create or update an LLM provider." group:"LLM PROVIDER"`
-}
-
-type ObjectListCmd struct {
-	schema.ObjectListRequest
 }
 
 type SearchCmd struct {
@@ -126,6 +123,14 @@ func withClient(ctx server.Cmd, span string, fn func(context.Context, *httpclien
 ///////////////////////////////////////////////////////////////////////////////
 // OBJECT COMMANDS
 
+type ObjectListCmd struct {
+	schema.ObjectListRequest
+}
+
+type ObjectGetCmd struct {
+	schema.ObjectKey
+}
+
 func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 	// Set the width of the terminal
 	width := ctx.IsTerm()
@@ -156,6 +161,19 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 			return err
 		}
 
+		return nil
+	})
+}
+
+func (cmd *ObjectGetCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "object", func(ctx context.Context, client *httpclient.Client) error {
+		object, err := client.GetObject(ctx, cmd.Volume, cmd.Path)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(object)
 		return nil
 	})
 }

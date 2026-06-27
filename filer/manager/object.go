@@ -2,7 +2,9 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	pg "github.com/mutablelogic/go-pg"
+	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
@@ -47,14 +50,17 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 		return nil, err
 	}
 
-	// If the volume index delta is nil (indexing disabled) return now
-	if types.Value(volume.IndexDelta) == 0 {
+	// If the volume is not indexed, or the index delta is zero, return the backend object directly
+	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
 		return object, nil
 	}
 
 	// Get the metadata from the database (on error, return the object we have)
 	var result schema.Object
-	if err := manager.PoolConn.Get(ctx, &result, req); err != nil {
+	if err := manager.PoolConn.Get(ctx, &result, req); errors.Is(err, pg.ErrNotFound) {
+		// Kick off an indexing job for the object
+		return object, manager.enqueueIndexObject(ctx, object.ObjectKey, true)
+	} else if err != nil {
 		return object, err
 	}
 
@@ -63,7 +69,10 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 		return types.Ptr(result), nil
 	}
 
-	// TODO: Kick off an indexing job for the object, and return the object we have
+	// Kick off an indexing job for the object, and return the object we have
+	if err := manager.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
+		return object, err
+	}
 
 	// Return the backend object in preference to the database object, since the database object is stale
 	return object, nil
@@ -89,8 +98,9 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 		// or else return NotFound
 	}
 
-	// If indexing is not enabled, or no indexing has happened yet, iterate the backend directly.
-	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
+	// If indexing is not enabled, or no indexing has happened yet, or there is no last indexed object,
+	// iterate the backend directly.
+	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil || volume.LastIndexedObjectAt == nil {
 		b := manager.volumes.Get(volume.Name)
 		if b == nil {
 			return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
@@ -168,6 +178,20 @@ func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (
 		return nil, err
 	}
 	return types.Ptr(result), nil
+}
+
+func (manager *Manager) enqueueIndexObject(ctx context.Context, key schema.ObjectKey, force bool) error {
+	if manager.indexQueue == nil {
+		return gofiler.ErrServiceUnavailable.With("index queue not available")
+	}
+	payload, err := json.Marshal(indexObjectTask{ObjectKey: key, Force: force})
+	if err != nil {
+		return fmt.Errorf("failed to marshal index task: %w", err)
+	}
+	_, err = manager.queue.CreateTask(ctx, manager.indexQueue.Queue, pgqueueschema.TaskMeta{
+		Payload: payload,
+	})
+	return err
 }
 
 func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreate, artwork []*schema.ArtworkMeta) (_ *schema.Object, err error) {

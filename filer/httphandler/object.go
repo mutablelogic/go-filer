@@ -1,11 +1,13 @@
 package httphandler
 
 import (
+	"encoding/json"
 	"errors"
 	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -72,10 +74,12 @@ func HeadObject(w http.ResponseWriter, r *http.Request, manager *manager.Manager
 
 	// Get the object metadata
 	obj, err := manager.GetObject(r.Context(), req)
-	if err != nil {
+	if err != nil && obj == nil {
 		return httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
 	}
 
+	// TODO: An error occurred, but we have an object, so we continue...
+
 	// Set the content type and disposition headers
 	w.Header().Set(types.ContentTypeHeader, obj.ContentType)
 	if filename := filepath.Base(obj.Path); filename != "" {
@@ -94,66 +98,48 @@ func HeadObject(w http.ResponseWriter, r *http.Request, manager *manager.Manager
 	}
 	w.Header().Set(types.ContentModifiedHeader, obj.ModTime.Format(http.TimeFormat))
 
-	return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), obj)
-}
+	// Set the object header
+	if data, err := json.Marshal(obj); err == nil {
+		w.Header().Set(schema.ContentObjectHeader, string(data))
+	}
 
-/*
-	// Set the content type and disposition headers
-	w.Header().Set(types.ContentTypeHeader, obj.ContentType)
-	if filename := filepath.Base(obj.Path); filename != "" {
-		if cd := mime.FormatMediaType("inline", map[string]string{"filename": filename}); cd != "" {
-			w.Header().Set(types.ContentDispositonHeader, cd)
-		}
-	}
-	w.Header().Set(types.ContentPathHeader, obj.Path)
-
-	// Set etag, size and modified
-	if etag := types.Value(obj.ETag); etag != "" {
-		w.Header().Set(types.ContentHashHeader, etag)
-	}
-	if obj.Size >= 0 {
-		w.Header().Set(types.ContentLengthHeader, strconv.FormatInt(obj.Size, 10))
-	}
-	w.Header().Set(types.ContentModifiedHeader, obj.ModTime.Format(http.TimeFormat))
-
-	if checkPreconditions(w, r, obj) {
-		return obj, contentType, true, nil
-	}
-	return obj, contentType, false, nil
+	// Determine the response code based on the preconditions
+	return checkPreconditions(w, r, obj)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func checkPreconditions(w http.ResponseWriter, r *http.Request, obj *schema.Object) bool {
-	etag := obj.ETag
+func checkPreconditions(w http.ResponseWriter, r *http.Request, obj *schema.Object) error {
+	etag := types.Value(obj.ETag)
 	modtime := obj.ModTime
 
-	if im := r.Header.Get("If-Match"); im != "" {
+	if im := r.Header.Get(schema.ContentIfMatchHeader); im != "" {
 		if !matchETags(im, etag, true) {
 			w.WriteHeader(http.StatusPreconditionFailed)
-			return true
+			return nil
 		}
-	} else if ius := r.Header.Get("If-Unmodified-Since"); ius != "" {
+	} else if ius := r.Header.Get(schema.ContentIfUnmodifiedSinceHeader); ius != "" {
 		if t, err := http.ParseTime(ius); err == nil && modtime.After(t) {
 			w.WriteHeader(http.StatusPreconditionFailed)
-			return true
+			return nil
 		}
 	}
 
-	if inm := r.Header.Get("If-None-Match"); inm != "" {
+	if inm := r.Header.Get(schema.ContentIfNoneMatchHeader); inm != "" {
 		if matchETags(inm, etag, false) {
 			w.WriteHeader(http.StatusNotModified)
-			return true
+			return nil
 		}
-	} else if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+	} else if ims := r.Header.Get(schema.ContentIfModifiedSinceHeader); ims != "" {
 		if t, err := http.ParseTime(ims); err == nil && !modtime.After(t) {
 			w.WriteHeader(http.StatusNotModified)
-			return true
+			return nil
 		}
 	}
 
-	return false
+	w.WriteHeader(http.StatusOK)
+	return nil
 }
 
 func matchETags(header, etag string, strong bool) bool {
@@ -163,7 +149,7 @@ func matchETags(header, etag string, strong bool) bool {
 	if strong && strings.HasPrefix(etag, "W/") {
 		return false
 	}
-	for _, part := range strings.Split(header, ",") {
+	for part := range strings.SplitSeq(header, ",") {
 		part = strings.TrimSpace(part)
 		if strong && strings.HasPrefix(part, "W/") {
 			continue
@@ -175,4 +161,3 @@ func matchETags(header, etag string, strong bool) bool {
 	}
 	return false
 }
-*/

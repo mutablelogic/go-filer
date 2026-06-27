@@ -12,9 +12,12 @@ const (
 	NotifyChannel = "filer_changes"
 
 	// Content types which should move to the types package
-	ContentTypeDirectory         = "text/directory"
-	ContentIfModifiedSinceHeader = "If-Modified-Since"
-	ContentIfNoneMatchHeader     = "If-None-Match"
+	ContentTypeDirectory           = "text/directory"
+	ContentObjectHeader            = "X-Object"
+	ContentIfMatchHeader           = "If-Match"
+	ContentIfNoneMatchHeader       = "If-None-Match"
+	ContentIfModifiedSinceHeader   = "If-Modified-Since"
+	ContentIfUnmodifiedSinceHeader = "If-Unmodified-Since"
 )
 
 const (

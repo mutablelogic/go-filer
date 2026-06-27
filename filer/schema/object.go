@@ -38,8 +38,8 @@ type Object struct {
 
 // ObjectKey represents the unique identifier of an object, which consists of a volume and a path.
 type ObjectKey struct {
-	Volume string `json:"volume,omitempty"`
-	Path   string `json:"path,omitempty"`
+	Volume string `json:"volume,omitempty" arg:"" required:"" help:"Volume name"`
+	Path   string `json:"path,omitempty" arg:"" required:"" help:"Object path"`
 }
 
 type ObjectTouch ObjectKey
