@@ -9,6 +9,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	file "github.com/mutablelogic/go-filer/backend/file"
+	google "github.com/mutablelogic/go-filer/backend/google"
 	s3 "github.com/mutablelogic/go-filer/backend/s3"
 	trace "go.opentelemetry.io/otel/trace"
 )
@@ -52,6 +53,13 @@ func (r *Registry) Validate(ctx context.Context, url *url.URL) (string, error) {
 		return f.Name(), nil
 	case "s3":
 		f, err := s3.New(ctx, r.tracer, r.decryptfn, url)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		return f.Name(), nil
+	case "googledrive":
+		f, err := google.NewDriveBackend(ctx, r.tracer, r.decryptfn, url)
 		if err != nil {
 			return "", err
 		}
@@ -120,6 +128,22 @@ func (r *Registry) New(ctx context.Context, path string) (backend.Backend, error
 		return backend, nil
 	case "s3":
 		backend, err := s3.New(ctx, r.tracer, r.decryptfn, parsedURL)
+		if err != nil {
+			return nil, err
+		}
+
+		// Check for unique name
+		name := backend.Name()
+		if _, ok := r.backends[name]; ok {
+			return nil, gofiler.ErrConflict.Withf("backend with name %q already exists", name)
+		} else {
+			r.backends[name] = backend
+		}
+
+		// Return success
+		return backend, nil
+	case "googledrive":
+		backend, err := google.NewDriveBackend(ctx, r.tracer, r.decryptfn, parsedURL)
 		if err != nil {
 			return nil, err
 		}

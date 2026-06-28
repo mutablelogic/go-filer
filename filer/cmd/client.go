@@ -10,12 +10,17 @@ import (
 	"os"
 
 	// Packages
+	oidc "github.com/mutablelogic/go-auth/auth/oidc"
+	webcallback "github.com/mutablelogic/go-auth/auth/webcallback"
 	otel "github.com/mutablelogic/go-client/pkg/otel"
+	google "github.com/mutablelogic/go-filer/backend/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	"github.com/pkg/browser"
+	errgroup "golang.org/x/sync/errgroup"
 	term "golang.org/x/term"
 )
 
@@ -30,6 +35,7 @@ type ClientCommands struct {
 	ArtworkClientCommands
 	CredentialClientCommands
 	LLMProviderClientCommands
+	GoogleClientCommands
 }
 
 type ObjectClientCommands struct {
@@ -102,6 +108,10 @@ type LLMProviderCreateCmd struct {
 	schema.LLMProviderCreate
 }
 
+type GoogleClientCommands struct {
+	GoogleLogin GoogleLoginCmd `cmd:"" name:"google-login" help:"Login to the Google." group:"GOOGLE"`
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -110,6 +120,21 @@ func withClient(ctx server.Cmd, span string, fn func(context.Context, *httpclien
 	if err != nil {
 		return err
 	} else if client, err := httpclient.New(endpoint, opts...); err != nil {
+		return err
+	} else {
+		var err error
+		ctx, endfn := otel.StartSpan(ctx.Tracer(), ctx.Context(), span)
+		defer func() { endfn(err) }()
+		err = fn(ctx, client)
+		return err
+	}
+}
+
+func withGoogleClient(ctx server.Cmd, span string, fn func(context.Context, *google.Client) error) error {
+	_, opts, err := ctx.ClientEndpoint()
+	if err != nil {
+		return err
+	} else if client, err := google.New(opts...); err != nil {
 		return err
 	} else {
 		var err error
@@ -612,5 +637,105 @@ func (cmd *LLMProviderCreateCmd) Run(ctx server.Cmd) error {
 
 		fmt.Println(provider)
 		return nil
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// GOOGLE CLIENT COMMANDS
+
+type GoogleLoginCmd struct {
+	ReadOnly     bool   `name:"read-only" help:"Request read-only access to Google Drive." negatable:""`
+	ClientID     string `name:"client-id" help:"Google OAuth2 client ID." env:"GOOGLE_CLIENT_ID"`
+	ClientSecret string `name:"client-secret" help:"Google OAuth2 client secret." env:"GOOGLE_CLIENT_SECRET"`
+}
+
+func (cmd *GoogleLoginCmd) Run(globals server.Cmd) error {
+	logger := globals.Logger()
+
+	// Perform the request
+	return withClient(globals, "google-login", func(ctx context.Context, filerclient *httpclient.Client) error {
+		return withGoogleClient(globals, "google-login", func(ctx context.Context, client *google.Client) error {
+			config, err := client.DiscoverConfig(ctx)
+			if err != nil {
+				return err
+			}
+
+			// Get server metadata for flow
+			oauthconfig, err := config.AuthorizationCodeConfig()
+			if err != nil {
+				return err
+			}
+
+			// Create the callback listener first so the resolved loopback URL, including
+			// any auto-selected port, is used consistently for registration and the auth flow.
+			callback, err := webcallback.New("http://localhost/")
+			if err != nil {
+				return err
+			}
+
+			// Determine scopes for the authorization flow
+			scopes := []string{"https://www.googleapis.com/auth/drive"}
+			if cmd.ReadOnly {
+				scopes = []string{"https://www.googleapis.com/auth/drive.readonly"}
+			}
+			flow, err := oidc.NewAuthorizationCodeFlow(oauthconfig, cmd.ClientID, callback.URL(), scopes...)
+			if err != nil {
+				return err
+			}
+
+			authURL, err := url.Parse(flow.AuthorizationURL)
+			if err != nil {
+				return err
+			}
+
+			// Google only issues a refresh token when access_type=offline is set.
+			// prompt=consent forces re-consent so a refresh token is returned even
+			// if the user has previously authorized this client.
+			q := authURL.Query()
+			q.Set("access_type", "offline")
+			q.Set("prompt", "consent")
+			authURL.RawQuery = q.Encode()
+			flow.AuthorizationURL = authURL.String()
+
+			// In parallel, open the browser to the authorization URL and wait for the callback to be received,
+			// then exchange the code for a token and store it
+			g, groupCtx := errgroup.WithContext(ctx)
+			g.Go(func() error {
+				result, err := callback.Run(groupCtx)
+				if err != nil {
+					return err
+				}
+				code, err := flow.ValidateCallback(result.Query.Get("code"), result.Query.Get("state"))
+				if err != nil {
+					return err
+				}
+				token, err := client.ExchangeCode(groupCtx, flow, code, cmd.ClientSecret)
+				if err != nil {
+					return err
+				}
+				fmt.Println(types.Stringify(token))
+
+				credential, err := filerclient.CreateCredential(groupCtx, schema.CredentialCreate{
+					CredentialKey: schema.CredentialKey{
+						Key: "google",
+					},
+					Credentials: token,
+				})
+				if err != nil {
+					return err
+				}
+
+				logger.DebugContext(ctx, "Stored credential", "credential", credential)
+				return nil
+			})
+			g.Go(func() error {
+				logger.DebugContext(ctx, "Opening browser for authorization code flow", "url", flow.AuthorizationURL)
+				return browser.OpenURL(flow.AuthorizationURL)
+			})
+			if err := g.Wait(); err != nil {
+				return err
+			}
+			return nil
+		})
 	})
 }
