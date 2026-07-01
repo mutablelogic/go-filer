@@ -160,6 +160,19 @@ func (cmd *CredentialGetCmd) Run(ctx server.Cmd) error {
 	})
 }
 
+func (cmd *CredentialRotateCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "credential-rotate", func(ctx context.Context, client *httpclient.Client) error {
+		credential, err := client.RotateCredential(ctx, schema.CredentialKey{Key: cmd.Key})
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(credential)
+		return nil
+	})
+}
+
 func (cmd *CredentialDeleteCmd) Run(ctx server.Cmd) error {
 	// Perform the request
 	return withClient(ctx, "credential-delete", func(ctx context.Context, client *httpclient.Client) error {

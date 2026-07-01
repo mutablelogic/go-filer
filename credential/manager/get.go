@@ -23,27 +23,25 @@ func (m *Manager) GetCredential(ctx context.Context, key schema.CredentialKey, p
 	)
 	defer func() { endSpan(err) }()
 
-	// Determine the passphrase version for the provided passphrase.
-	var pv uint64
-	keys := m.passphrases.Keys()
-	for i := len(keys) - 1; i >= 0; i-- {
-		resolved, version := m.passphrases.Get(keys[i])
-		if resolved == passphrase {
-			pv = version
-			break
-		}
+	// Fetch the credential by key to get the stored passphrase version.
+	var result schema.CredentialGet
+	if err := m.PoolConn.Get(ctx, &result, key); err != nil {
+		return nil, pg.NormalizeError(err)
 	}
-	if pv == 0 {
+
+	// Verify the provided passphrase matches the stored passphrase version.
+	stored, _ := m.passphrases.Get(result.PV)
+	if stored != passphrase {
 		return nil, httpresponse.ErrBadRequest.Withf("invalid passphrase")
 	}
 
-	var result schema.CredentialCreate
-	var credentials json.RawMessage
-	if err := m.PoolConn.With("pv", pv).Get(ctx, &result, key); err != nil {
-		return nil, pg.NormalizeError(err)
-	} else if encrypted, ok := result.Credentials.([]byte); !ok {
+	// Decrypt the credential.
+	encrypted, ok := result.Credentials.([]byte)
+	if !ok {
 		return nil, httpresponse.ErrInternalError.With("credential payload is invalid")
-	} else if err := m.decryptCredentials(encrypted, pv, &credentials); err != nil {
+	}
+	var credentials json.RawMessage
+	if err := m.decryptCredentials(encrypted, result.PV, &credentials); err != nil {
 		return nil, err
 	}
 
