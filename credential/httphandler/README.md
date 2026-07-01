@@ -3,9 +3,7 @@
 
 Credentials store secret material - such as API keys or tokens - keyed by a unique
 identifier and used internally by other parts of the system (for example, filer
-backends) to authenticate against third-party services. The credential value itself
-is never returned once written: it is encrypted at rest, and only the key and update
-timestamp are ever exposed through the API.
+backends) to authenticate against third-party services.
 
 The available operations are create, get, list, delete and rotate:
 
