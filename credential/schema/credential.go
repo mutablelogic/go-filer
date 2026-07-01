@@ -42,6 +42,7 @@ type CredentialGet struct {
 
 type CredentialListRequest struct {
 	pg.OffsetLimit
+	Rotate *bool `json:"rotate,omitempty" help:"Return credentials that should be rotated to the latest passphrase version" negatable:""`
 }
 
 type CredentialList struct {
@@ -80,6 +81,9 @@ func (c CredentialList) String() string {
 
 func (r CredentialListRequest) Query() url.Values {
 	query := url.Values{}
+	if r.Rotate != nil {
+		query.Set("rotate", types.Stringify(types.Value(r.Rotate)))
+	}
 	if r.Offset > 0 {
 		query.Set("offset", types.Stringify(r.Offset))
 	}
@@ -140,6 +144,15 @@ func (c *CredentialListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) 
 
 	switch op {
 	case pg.List:
+		if c.Rotate != nil && bind.Has("latestpv") {
+			if *c.Rotate {
+				bind.Set("where", `WHERE "pv" != CAST(@latestpv AS INT)`)
+			} else {
+				bind.Set("where", `WHERE "pv" = CAST(@latestpv AS INT)`)
+			}
+		} else {
+			bind.Set("where", "")
+		}
 		return bind.Query("credential.list"), nil
 	default:
 		return "", httpresponse.ErrInternalError.Withf("unsupported CredentialListRequest operation %q", op)

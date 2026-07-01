@@ -7,6 +7,7 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/credential/schema"
 	pg "github.com/mutablelogic/go-pg"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
@@ -21,8 +22,17 @@ func (manager *Manager) ListCredentials(ctx context.Context, req schema.Credenti
 	)
 	defer func() { endSpan(err) }()
 
+	pool := manager.PoolConn
+	if req.Rotate != nil {
+		_, latestPV := manager.passphrases.Get(0)
+		if latestPV == 0 {
+			return nil, httpresponse.ErrServiceUnavailable.Withf("no encryption passphrase configured for credentials")
+		}
+		pool = pool.With("latestpv", latestPV).(pg.PoolConn)
+	}
+
 	var result schema.CredentialList
-	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
+	if err := pool.List(ctx, &result, &req); err != nil {
 		return nil, pg.NormalizeError(err)
 	} else {
 		result.CredentialListRequest = req

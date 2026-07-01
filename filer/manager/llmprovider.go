@@ -7,7 +7,7 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
-	"github.com/mutablelogic/go-pg"
+	pg "github.com/mutablelogic/go-pg"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )

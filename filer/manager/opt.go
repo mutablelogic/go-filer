@@ -2,8 +2,9 @@ package manager
 
 import (
 	// Packages
-	crypto "github.com/mutablelogic/go-auth/crypto"
+
 	client "github.com/mutablelogic/go-client"
+	credential "github.com/mutablelogic/go-filer/credential/manager"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
@@ -16,12 +17,12 @@ import (
 type Opt func(*opt) error
 
 type opt struct {
-	tracer      trace.Tracer
-	metrics     metric.Meter
-	schema      string
-	indexer     bool
-	passphrases *crypto.Passphrases
-	clientopts  []client.ClientOpt
+	tracer         trace.Tracer
+	metrics        metric.Meter
+	schema         string
+	indexer        bool
+	credentialopts []credential.Opt
+	clientopts     []client.ClientOpt
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +45,7 @@ func (o *opt) apply(opt []Opt) error {
 func (o *opt) defaults() {
 	o.schema = schema.DefaultSchema
 	o.indexer = false
-	o.passphrases = crypto.NewPassphrases()
+	o.credentialopts = []credential.Opt{}
 	o.clientopts = []client.ClientOpt{}
 }
 
@@ -70,6 +71,7 @@ func WithIndexer(indexer bool) Opt {
 // WithTracer sets the tracer used for tracing operations.
 func WithTracer(tracer trace.Tracer) Opt {
 	return func(o *opt) error {
+		o.credentialopts = append(o.credentialopts, credential.WithTracer(tracer))
 		o.tracer = tracer
 		return nil
 	}
@@ -83,10 +85,20 @@ func WithMeter(meter metric.Meter) Opt {
 	}
 }
 
+// WithSchema sets the database schema used for storing filer objects.
+func WithSchema(schema string) Opt {
+	return func(o *opt) error {
+		o.schema = schema
+		o.credentialopts = append(o.credentialopts, credential.WithSchema(schema))
+		return nil
+	}
+}
+
 // WithPassphrase registers an in-memory storage passphrase for a certificate
 // passphrase version. Versions are uint64 and passphrases must be non-empty.
 func WithPassphrase(version uint64, passphrase string) Opt {
 	return func(o *opt) error {
-		return o.passphrases.Set(version, passphrase)
+		o.credentialopts = append(o.credentialopts, credential.WithPassphrase(version, passphrase))
+		return nil
 	}
 }

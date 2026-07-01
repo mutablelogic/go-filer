@@ -11,6 +11,8 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	backendregistry "github.com/mutablelogic/go-filer/backend/registry"
+	credential "github.com/mutablelogic/go-filer/credential/manager"
+	credentialschema "github.com/mutablelogic/go-filer/credential/schema"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metadatamanager "github.com/mutablelogic/go-filer/metadata/manager"
 	llm "github.com/mutablelogic/go-llm/provider/registry"
@@ -30,6 +32,7 @@ type Manager struct {
 	queue      *pgqueue.Manager
 	indexQueue *pgqueueschema.Queue
 	metadata   *metadatamanager.Manager
+	credential *credential.Manager
 	llm        *llm.Registry
 }
 
@@ -49,16 +52,19 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 		return nil, err
 	} else if registry := llm.New(self.opt.clientopts...); registry == nil {
 		return nil, fmt.Errorf("failed to create llm registry")
+	} else if credential, err := credential.New(ctx, pool, self.credentialopts...); err != nil {
+		return nil, err
 	} else {
 		self.volumes = backendregistry.New(self.opt.tracer, func(ctx context.Context, key string) (json.RawMessage, error) {
 			if key == "" {
 				return nil, nil
 			}
-			return self.getCredential(ctx, schema.CredentialKey{Key: key})
+			return self.credential.GetCredentialWithoutPassphrase(ctx, credentialschema.CredentialKey{Key: key})
 		})
 		self.queue = queue
 		self.metadata = metadata
 		self.llm = registry
+		self.credential = credential
 	}
 
 	// Parse and register named queries so bind.Query(...) can resolve them.
@@ -75,7 +81,7 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 	}
 
 	// Create objects in the database schema. This is not done in a transaction
-	bootstrapCtx, endBootstrapSpan := otel.StartSpan(self.tracer, ctx, "bootstrap",
+	bootstrapCtx, endBootstrapSpan := otel.StartSpan(self.tracer, ctx, "filer.bootstrap",
 		attribute.String("schema", self.schema),
 	)
 	if err := bootstrap(bootstrapCtx, pool, self.schema); err != nil {

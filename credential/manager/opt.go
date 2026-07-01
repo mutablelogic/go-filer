@@ -60,3 +60,11 @@ func WithPassphrase(version uint64, passphrase string) Opt {
 		return o.passphrases.Set(version, passphrase)
 	}
 }
+
+// WithSchema sets the database schema used for storing filer objects.
+func WithSchema(schema string) Opt {
+	return func(o *opt) error {
+		o.schema = schema
+		return nil
+	}
+}

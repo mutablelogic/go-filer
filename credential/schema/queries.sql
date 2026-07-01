@@ -4,6 +4,7 @@ SELECT
 	"key", "updated_at"
 FROM
 	${"schema"}."credential"
+${where}
 ORDER BY
 	"key"
 ;

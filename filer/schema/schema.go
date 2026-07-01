@@ -23,7 +23,6 @@ const (
 const (
 	VolumeListLimit      = 100
 	ObjectListLimit      = 1000
-	CredentialListLimit  = 100
 	MetadataListLimit    = 100
 	LLMProviderListLimit = 100
 	SearchListLimit      = 25
