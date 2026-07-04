@@ -5,22 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
 
 	// Packages
-	otel "github.com/mutablelogic/go-client/pkg/otel"
+
 	gofiler "github.com/mutablelogic/go-filer"
-	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
 	pg "github.com/mutablelogic/go-pg"
 	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	broadcaster "github.com/mutablelogic/go-pg/pkg/broadcaster"
 	types "github.com/mutablelogic/go-server/pkg/types"
-	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -69,10 +66,8 @@ func (filer *Filer) Run(ctx context.Context, logger *slog.Logger) (err error) {
 	}
 
 	// Syncronize the volume registry on startup, so that any existing volumes are loaded
-	if filer.indexer {
-		if err := filer.syncVolumes(ctx, logger); err != nil {
-			return err
-		}
+	if err := filer.syncVolumes(ctx, logger); err != nil {
+		logger.WarnContext(ctx, "failed to sync volumes", "error", err.Error())
 	}
 
 	// Syncronize the LLM provider registry whenever a provider or credential change event is received
@@ -204,13 +199,8 @@ func (filer *Filer) Run(ctx context.Context, logger *slog.Logger) (err error) {
 				logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
 			}
 		case <-syncVolumesTickerC:
-			if filer.indexer {
-				logger.DebugContext(ctx, "Sync volumes ticker", "event", "sync-volumes-ticker")
-
-				// Syncronize the volume registry
-				if err := filer.syncVolumes(ctx, logger); err != nil {
-					logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
-				}
+			if err := filer.syncVolumes(ctx, logger); err != nil {
+				logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
 			}
 		case <-reindexVolumesTickerC:
 			logger.DebugContext(ctx, "Reindex volumes ticker", "event", "reindex-volumes-ticker")
@@ -225,74 +215,6 @@ func (filer *Filer) Run(ctx context.Context, logger *slog.Logger) (err error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
-
-func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force bool) (_ *schema.Object, err error) {
-	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "indexObject",
-		attribute.String("object", types.Stringify(key)),
-		attribute.Bool("force", force),
-	)
-	defer func() { endSpan(err) }()
-
-	// Obtain the backend of the object - backend might be disabled, so don't error
-	backend := filer.volumes.Get(key.Volume)
-	if backend == nil {
-		return nil, nil
-	}
-
-	// Read the object from the backend and extract metadata
-	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{
-		ObjectKey: key,
-	})
-	if errors.Is(err, gofiler.ErrNotFound) {
-		// Object no longer exists in the backend — remove it from the index
-		var deleted schema.Object
-		if delErr := filer.Tx(ctx, func(conn pg.Conn) error {
-			return conn.Delete(ctx, &deleted, key)
-		}); delErr != nil && !errors.Is(delErr, pg.ErrNotFound) {
-			return nil, delErr
-		}
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err = errors.Join(err, reader.Close())
-	}()
-
-	// Unless forced, check if the object has changed and skip re-indexing if not
-	if !force {
-		existing, err := filer.GetObject(ctx, object.ObjectKey)
-		if errors.Is(err, pg.ErrNotFound) {
-			// Continue
-		} else if err != nil {
-			return nil, err
-		} else if (existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag)) ||
-			(!existing.ModTime.IsZero() && !object.ModTime.IsZero() && existing.ModTime.Truncate(time.Second).Equal(object.ModTime.Truncate(time.Second))) {
-			// Object unchanged — touch indexed_at and return the refreshed object
-			return filer.touchObject(ctx, object.ObjectKey)
-		}
-	}
-
-	// Get the metadata for the object - hard error if nothing was extracted, warning otherwise
-	metadata, artwork, metaErr := filer.metadata.Get(ctx, object.ContentType, reader)
-	if metaErr != nil && metadata == nil {
-		return nil, metaErr
-	}
-
-	// Create the object in a transaction, and touch the volume's indexed_at
-	result, err := filer.createObject(ctx, schema.ObjectCreate{
-		ObjectKey:  object.ObjectKey,
-		ObjectAttr: object.ObjectAttr,
-		ObjectMeta: schema.ObjectMeta{
-			ContentType: object.ContentType,
-			Meta:        metadata,
-		},
-	}, artwork)
-	if err != nil {
-		return nil, err
-	}
-	return result, metaErr
-}
 
 func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) error {
 	var result schema.VolumeList
@@ -310,51 +232,30 @@ func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) err
 		return nil
 	} else if types.Value(result.Body[0].Enabled) == false {
 		// Do nothing
-	} else if backend := filer.volumes.Get(result.Body[0].Name); backend == nil {
+	}
+
+	backend := filer.volumes.Get(result.Body[0].Name)
+	if backend == nil {
 		logger.WarnContext(ctx, "volume not found in registry", "name", result.Body[0].Name)
-	} else {
-		// Touch indexed_at before reindexing so concurrent workers will not pick
-		// this volume as stale in the same scheduling window.
-		var touched schema.Volume
-		if err := filer.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
-			return err
-		}
-
-		// Create reindexing tasks for all objects in the volume
-		return filer.reindexVolumeInner(ctx, backend, logger)
+		return nil
 	}
 
-	return nil
-}
+	// Touch indexed_at before reindexing so concurrent workers will not pick
+	// this volume as stale in the same scheduling window.
+	var touched schema.Volume
+	if err := filer.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
+		return err
+	}
 
-func (filer *Filer) reindexVolumeInner(ctx context.Context, backend backend.Backend, logger *slog.Logger) error {
-	logger.DebugContext(ctx, "reindexing", "name", backend.Name())
-
-	iterator := &schema.ObjectListIterator{
+	// Create reindexing tasks for all objects in the volume
+	return filer.ReindexVolume(ctx, backend.Name(), schema.ObjectListFilters{
 		Recursive: true,
-	}
-	for {
-		err := backend.ListObjects(ctx, iterator)
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return gofiler.ErrInternalServerError.Withf("backend %q failure: %v", backend.Name(), err.Error())
-		}
-		for _, object := range iterator.Body {
-			if object.ContentType == schema.ContentTypeDirectory {
-				continue
-			}
-			if err := filer.enqueueIndexObject(ctx, object.ObjectKey, false); err != nil {
-				return err
-			}
-		}
-	}
-
-	logger.DebugContext(ctx, "reindexing done", "name", backend.Name())
-	return nil
+	})
 }
 
 func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error {
+	var result error
+
 	inserted, deleted, err := filer.syncVolumesInner(ctx)
 	if err != nil {
 		return err
@@ -363,8 +264,7 @@ func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error 
 	// Delete backends
 	for _, volume := range deleted {
 		if err := filer.volumes.Delete(volume.Name); err != nil {
-			logger.ErrorContext(ctx, "failed to unmount volume", "name", volume.Name, "error", err.Error())
-			err = errors.Join(err, err)
+			result = errors.Join(result, fmt.Errorf("failed to unmount volume %q: %v", volume.Name, err))
 		} else {
 			logger.InfoContext(ctx, "unmounted volume", "name", volume.Name)
 		}
@@ -374,14 +274,14 @@ func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error 
 	for _, volume := range inserted {
 		backend, err := filer.volumes.New(ctx, volume.URL)
 		if err != nil {
-			return err
+			result = errors.Join(result, fmt.Errorf("failed to mount volume %q: %v", volume.Name, err))
+		} else {
+			logger.InfoContext(ctx, "mounted volume", "name", backend.Name(), "url", backend.URL().String())
 		}
-		// Do something with the backend if needed
-		logger.InfoContext(ctx, "mounted volume", "name", backend.Name(), "url", backend.URL().String())
 	}
 
 	// Return any errors
-	return err
+	return result
 }
 
 func (filer *Filer) syncVolumesInner(ctx context.Context) (inserted []*schema.Volume, deleted []*schema.Volume, err error) {

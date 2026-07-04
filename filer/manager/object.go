@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"strings"
+	"time"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -269,4 +270,72 @@ func (filer *Filer) createObject(ctx context.Context, req schema.ObjectCreate, a
 
 	// Return the inserted object
 	return types.Ptr(result), nil
+}
+
+func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force bool) (_ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "indexObject",
+		attribute.String("object", types.Stringify(key)),
+		attribute.Bool("force", force),
+	)
+	defer func() { endSpan(err) }()
+
+	// Obtain the backend of the object - backend might be disabled, so don't error
+	backend := filer.volumes.Get(key.Volume)
+	if backend == nil {
+		return nil, nil
+	}
+
+	// Read the object from the backend and extract metadata
+	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{
+		ObjectKey: key,
+	})
+	if errors.Is(err, gofiler.ErrNotFound) {
+		// Object no longer exists in the backend — remove it from the index
+		var deleted schema.Object
+		if delErr := filer.Tx(ctx, func(conn pg.Conn) error {
+			return conn.Delete(ctx, &deleted, key)
+		}); delErr != nil && !errors.Is(delErr, pg.ErrNotFound) {
+			return nil, delErr
+		}
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = errors.Join(err, reader.Close())
+	}()
+
+	// Unless forced, check if the object has changed and skip re-indexing if not
+	if !force {
+		existing, err := filer.GetObject(ctx, object.ObjectKey)
+		if errors.Is(err, pg.ErrNotFound) {
+			// Continue
+		} else if err != nil {
+			return nil, err
+		} else if (existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag)) ||
+			(!existing.ModTime.IsZero() && !object.ModTime.IsZero() && existing.ModTime.Truncate(time.Second).Equal(object.ModTime.Truncate(time.Second))) {
+			// Object unchanged — touch indexed_at and return the refreshed object
+			return filer.touchObject(ctx, object.ObjectKey)
+		}
+	}
+
+	// Get the metadata for the object - hard error if nothing was extracted, warning otherwise
+	metadata, artwork, metaErr := filer.metadata.Get(ctx, object.ContentType, reader)
+	if metaErr != nil && metadata == nil {
+		return nil, metaErr
+	}
+
+	// Create the object in a transaction, and touch the volume's indexed_at
+	result, err := filer.createObject(ctx, schema.ObjectCreate{
+		ObjectKey:  object.ObjectKey,
+		ObjectAttr: object.ObjectAttr,
+		ObjectMeta: schema.ObjectMeta{
+			ContentType: object.ContentType,
+			Meta:        metadata,
+		},
+	}, artwork)
+	if err != nil {
+		return nil, err
+	}
+	return result, metaErr
 }

@@ -131,7 +131,9 @@ func RegisterVolumeHandlers(manager *manager.Filer, router *httprouter.Router) e
 				var req schema.ObjectListFilters
 				if err := httprequest.Read(r, &req); err != nil {
 					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-				} else if err := manager.ReindexVolume(r.Context(), r.PathValue("volume"), req); err != nil {
+				}
+
+				if err := manager.ReindexVolume(r.Context(), r.PathValue("volume"), req); err != nil {
 					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
 				} else {
 					httpresponse.Empty(w, http.StatusNoContent)

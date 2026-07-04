@@ -2,6 +2,8 @@ package manager
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/url"
 
 	// Packages
@@ -155,24 +157,33 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 		return gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", volume.Name)
 	}
 
-	// If indexing is not enabled, or no indexing has happened yet, return an error
-	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil || volume.Objects == 0 {
+	// If indexing is not enabled, return an error
+	if types.Value(volume.IndexDelta) == 0 {
 		return gofiler.ErrServiceUnavailable.Withf("volume %q is not indexed", volume.Name)
 	}
 
+	// Get the backend
+	backend := filer.volumes.Get(volume.Name)
+	if backend == nil {
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", volume.Name)
+	}
+
 	// Iterate through the objects in the volume, and reindex them according to the provided filters
-	var list schema.ObjectListRequest
-	list.Volume = volume.Name
-	list.ObjectListFilters = req
+	var iterator schema.ObjectListIterator
+
+	// Set iterator filters
+	iterator.Path = req.Path
+	iterator.Recursive = req.Recursive
+	iterator.Type = req.Type
+
 	for {
-		objects, err := filer.ListObjects(ctx, list)
-		if err != nil {
+		err := backend.ListObjects(ctx, &iterator)
+		done := errors.Is(err, io.EOF)
+		if err != nil && !done {
 			return err
-		} else if len(objects.Body) == 0 {
-			break
 		}
 
-		for _, object := range objects.Body {
+		for _, object := range iterator.Body {
 			if object.ContentType != schema.ContentTypeDirectory {
 				if err := filer.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
 					return err
@@ -180,8 +191,9 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 			}
 		}
 
-		// Iterate the list offset for the next iteration
-		list.Offset += uint64(len(objects.Body))
+		if done {
+			break
+		}
 	}
 
 	// Return success
