@@ -18,13 +18,13 @@ type LLMProviderName string
 
 type LLMProviderMeta struct {
 	Name       *string `json:"name,omitempty" help:"Provider name"`
-	URL        *string `json:"url,omitempty" help:"Provider URL"`
-	Credential *string `json:"credential,omitempty" help:"Credential key for authentication"`
+	URL        *string `json:"url,omitempty" help:"Provider URL (only used for the ollama provider)"`
+	Credential *string `json:"credential,omitempty" help:"Credential key for authentication (required for all providers except ollama)"`
 }
 
 type LLMProviderCreate struct {
 	LLMProviderMeta
-	Provider string `json:"provider,omitempty" arg:"" help:"Provider type (e.g. ollama, anthropic, openai)"`
+	Provider string `json:"provider,omitempty" enum:"anthropic,gemini,mistral,ollama,openai" arg:"" help:"Provider type"`
 }
 
 type LLMProvider struct {
