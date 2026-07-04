@@ -25,23 +25,23 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type Manager struct {
+type Filer struct {
 	opt
 	pg.PoolConn
+	*credential.Credentials
 	volumes    *backendregistry.Registry
 	queue      *pgqueue.Manager
 	indexQueue *pgqueueschema.Queue
 	metadata   *metadatamanager.Manager
-	credential *credential.Manager
 	llm        *llm.Registry
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-// New creates a new manager object
-func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err error) {
-	self := new(Manager)
+// New creates a new filer object
+func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Filer, err error) {
+	self := new(Filer)
 
 	// Apply options
 	if err := self.opt.apply(opts); err != nil {
@@ -52,19 +52,19 @@ func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err er
 		return nil, err
 	} else if registry := llm.New(self.opt.clientopts...); registry == nil {
 		return nil, fmt.Errorf("failed to create llm registry")
-	} else if credential, err := credential.New(ctx, pool, self.credentialopts...); err != nil {
+	} else if credentials, err := credential.New(ctx, pool, self.credentialopts...); err != nil {
 		return nil, err
 	} else {
 		self.volumes = backendregistry.New(self.opt.tracer, func(ctx context.Context, key string) (json.RawMessage, error) {
 			if key == "" {
 				return nil, nil
 			}
-			return self.credential.GetCredentialWithoutPassphrase(ctx, credentialschema.CredentialKey{Key: key})
+			return self.GetCredentialWithoutPassphrase(ctx, credentialschema.CredentialKey{Key: key})
 		})
 		self.queue = queue
 		self.metadata = metadata
 		self.llm = registry
-		self.credential = credential
+		self.Credentials = credentials
 	}
 
 	// Parse and register named queries so bind.Query(...) can resolve them.

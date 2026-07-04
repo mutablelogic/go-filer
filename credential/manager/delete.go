@@ -15,7 +15,7 @@ import (
 // PUBLIC METHODS
 
 // DeleteCredential deletes a credential row by key.
-func (m *Manager) DeleteCredential(ctx context.Context, key schema.CredentialKey) (_ *schema.Credential, err error) {
+func (m *Credentials) DeleteCredential(ctx context.Context, key schema.CredentialKey) (_ *schema.Credential, err error) {
 	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "DeleteCredential",
 		attribute.String("key", key.Key),
 	)

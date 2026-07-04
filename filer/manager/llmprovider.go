@@ -17,8 +17,8 @@ import (
 
 // CreateLLMProvider creates a new LLM provider which can be used for extracting
 // metadata whilst indexing objects
-func (m *Manager) CreateLLMProvider(ctx context.Context, req schema.LLMProviderCreate) (_ *schema.LLMProvider, err error) {
-	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "CreateLLMProvider",
+func (filer *Filer) CreateLLMProvider(ctx context.Context, req schema.LLMProviderCreate) (_ *schema.LLMProvider, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "CreateLLMProvider",
 		attribute.String("req", req.String()),
 	)
 	defer func() { endSpan(err) }()
@@ -30,13 +30,13 @@ func (m *Manager) CreateLLMProvider(ctx context.Context, req schema.LLMProviderC
 	provider.URL = req.URL
 
 	// TODO: Fetch credentials
-	if err := m.llm.Validate(ctx, provider, credentials); err != nil {
+	if err := filer.llm.Validate(ctx, provider, credentials); err != nil {
 		return nil, err
 	}
 
 	// Insert the provider into the database
 	var result schema.LLMProvider
-	if err := m.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+	if err := filer.PoolConn.Tx(ctx, func(conn pg.Conn) error {
 		if err := conn.Insert(ctx, &result, req); err != nil {
 			return err
 		}

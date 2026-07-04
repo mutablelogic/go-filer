@@ -2,7 +2,6 @@ package manager
 
 import (
 	// Packages
-
 	client "github.com/mutablelogic/go-client"
 	credential "github.com/mutablelogic/go-filer/credential/manager"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
@@ -45,7 +44,9 @@ func (o *opt) apply(opt []Opt) error {
 func (o *opt) defaults() {
 	o.schema = schema.DefaultSchema
 	o.indexer = false
-	o.credentialopts = []credential.Opt{}
+	o.credentialopts = []credential.Opt{
+		credential.WithSchema(o.schema),
+	}
 	o.clientopts = []client.ClientOpt{}
 }
 

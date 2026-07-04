@@ -46,14 +46,14 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	ctx.Logger().InfoContext(ctx.Context(), "starting credential server", "name", ctx.Name(), "version", ctx.Version())
 
 	// Create the manager, run the server, and return any error
-	return runner.WithManager(ctx, conn, func(manager *manager.Manager) error {
+	return runner.WithManager(ctx, conn, func(manager *manager.Credentials) error {
 		// Create an error context - which will cancel any other goroutine on exit
 		errgroup, errctx := errgroup.WithContext(ctx.Context())
 
 		// Register http handlers for the manager
 		runner.Register(func(router *httprouter.Router) error {
 			ctx.Logger().DebugContext(ctx.Context(), "registering http handlers")
-			return httphandler.RegisterCredentialHandlers(manager, router)
+			return httphandler.RegisterHandlers(manager, router)
 		})
 
 		// Run the manager
@@ -74,7 +74,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*manager.Manager) error) error {
+func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*manager.Credentials) error) error {
 	// Set basic mamager options
 	opts := []manager.Opt{
 		manager.WithTracer(ctx.Tracer()),

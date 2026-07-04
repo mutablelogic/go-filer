@@ -10,9 +10,9 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // HELPERS
 
-func newCryptManager(t *testing.T, opts ...Opt) *Manager {
+func newCryptManager(t *testing.T, opts ...Opt) *Credentials {
 	t.Helper()
-	m := &Manager{}
+	m := &Credentials{}
 	if err := m.opt.apply(opts); err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	// Packages
@@ -33,9 +34,17 @@ type indexObjectTask struct {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
+func (filer *Filer) Run(ctx context.Context, logger *slog.Logger) (err error) {
+	// If the context is cancelled while starting up (before the runloop's own
+	// graceful shutdown handling takes over), don't report that as a failure.
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = nil
+		}
+	}()
+
 	// Create a broadcaster for listening for events
-	events, err := broadcaster.NewBroadcaster(manager.PoolConn, schema.NotifyChannel)
+	events, err := broadcaster.NewBroadcaster(filer.PoolConn, schema.NotifyChannel)
 	if err != nil {
 		return err
 	}
@@ -47,7 +56,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	if err := events.Subscribe(ctx, func(event broadcaster.ChangeNotification) {
 		switch event.Table {
 		case "volume":
-			if manager.indexer {
+			if filer.indexer {
 				volumeChange <- event
 			}
 		case "llmprovider", "credential":
@@ -60,21 +69,21 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	// Syncronize the volume registry on startup, so that any existing volumes are loaded
-	if manager.indexer {
-		if err := manager.syncVolumes(ctx, logger); err != nil {
+	if filer.indexer {
+		if err := filer.syncVolumes(ctx, logger); err != nil {
 			return err
 		}
 	}
 
 	// Syncronize the LLM provider registry whenever a provider or credential change event is received
 	logger.DebugContext(ctx, "syncing LLM providers on startup")
-	if err := manager.syncLLMProviders(ctx, logger); err != nil {
+	if err := filer.syncLLMProviders(ctx, logger); err != nil {
 		return err
 	}
 
 	// Register a ticker to syncronize the volume registry every 5 minutes
 	syncVolumesTicker := make(chan json.RawMessage, 100)
-	_, err = manager.queue.RegisterTicker(ctx, "sync-volumes-ticker", pgqueueschema.TickerMeta{
+	_, err = filer.queue.RegisterTicker(ctx, "sync-volumes-ticker", pgqueueschema.TickerMeta{
 		Interval: types.Ptr(time.Minute * 5),
 	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
 		syncVolumesTicker <- payload
@@ -83,7 +92,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// Register a ticker to reindex volumes every 5 minutes
 	reindexVolumesTicker := make(chan json.RawMessage, 100)
-	_, err = manager.queue.RegisterTicker(ctx, "reindex-volumes-ticker", pgqueueschema.TickerMeta{
+	_, err = filer.queue.RegisterTicker(ctx, "reindex-volumes-ticker", pgqueueschema.TickerMeta{
 		Interval: types.Ptr(time.Minute * 5),
 	}, func(ctx context.Context, payload json.RawMessage) (any, error) {
 		reindexVolumesTicker <- payload
@@ -92,7 +101,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// Register a worker to process volume indexing jobs
 	warnChan := make(chan error, 100)
-	indexQueue, err := manager.queue.RegisterQueue(ctx, "index-object", pgqueueschema.QueueMeta{
+	indexQueue, err := filer.queue.RegisterQueue(ctx, "index-object", pgqueueschema.QueueMeta{
 		TTL:         types.Ptr(time.Duration(5 * time.Minute)),
 		Retries:     types.Ptr(uint64(3)),
 		RetryDelay:  types.Ptr(time.Minute),
@@ -106,7 +115,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 
 		// Index the object
 		logger.DebugContext(ctx, "Index object", "object", types.Stringify(task.ObjectKey), "force", task.Force)
-		indexed, err := manager.indexObject(ctx, task.ObjectKey, task.Force)
+		indexed, err := filer.indexObject(ctx, task.ObjectKey, task.Force)
 		if err != nil && indexed == nil {
 			return nil, gofiler.ErrInternalServerError.Withf("failed to index object: %v", err.Error())
 		} else if err != nil {
@@ -117,7 +126,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	manager.indexQueue = indexQueue
+	filer.indexQueue = indexQueue
 
 	// Allow graceful queue drain to cover task TTL plus pgqueue's force-release
 	// grace period, with a small buffer for cleanup/logging.
@@ -131,7 +140,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 	go func() {
 		defer close(queueDone)
 		defer close(warnChan)
-		if err := manager.queue.Run(ctx, logger); err != nil {
+		if err := filer.queue.Run(ctx, logger); err != nil {
 			logger.ErrorContext(ctx, "queue error", "error", err.Error())
 		}
 	}()
@@ -146,6 +155,15 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 			shutdownTimer.Stop()
 		}
 	}()
+
+	// Start the credential manager runloop in the background
+	var wg sync.WaitGroup
+	defer wg.Wait() // Wait for all background goroutines to finish before returning
+	wg.Go(func() {
+		if err := filer.Credentials.Run(ctx, logger); err != nil {
+			logger.ErrorContext(ctx, "credential manager error", "error", err.Error())
+		}
+	})
 
 	// Now start the runloop, which processes all the events
 	for {
@@ -175,22 +193,22 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 			logger.DebugContext(ctx, "LLM provider or credential change", "event", types.Stringify(event))
 
 			// Syncronize the LLM providers
-			if err := manager.syncLLMProviders(ctx, logger); err != nil {
+			if err := filer.syncLLMProviders(ctx, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to sync LLM providers", "error", err.Error())
 			}
 		case event := <-volumeChange:
 			logger.DebugContext(ctx, "Volume change", "event", types.Stringify(event))
 
 			// Syncronize the volume registry
-			if err := manager.syncVolumes(ctx, logger); err != nil {
+			if err := filer.syncVolumes(ctx, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
 			}
 		case <-syncVolumesTickerC:
-			if manager.indexer {
+			if filer.indexer {
 				logger.DebugContext(ctx, "Sync volumes ticker", "event", "sync-volumes-ticker")
 
 				// Syncronize the volume registry
-				if err := manager.syncVolumes(ctx, logger); err != nil {
+				if err := filer.syncVolumes(ctx, logger); err != nil {
 					logger.ErrorContext(ctx, "failed to sync volumes", "error", err.Error())
 				}
 			}
@@ -198,7 +216,7 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 			logger.DebugContext(ctx, "Reindex volumes ticker", "event", "reindex-volumes-ticker")
 
 			// Look for a volume that needs to be reindexed, and reindex it
-			if err := manager.reindexVolumes(ctx, logger); err != nil {
+			if err := filer.reindexVolumes(ctx, logger); err != nil {
 				logger.ErrorContext(ctx, "failed to reindex volumes", "error", err.Error())
 			}
 		}
@@ -208,15 +226,15 @@ func (manager *Manager) Run(ctx context.Context, logger *slog.Logger) error {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) indexObject(ctx context.Context, key schema.ObjectKey, force bool) (_ *schema.Object, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "indexObject",
+func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force bool) (_ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "indexObject",
 		attribute.String("object", types.Stringify(key)),
 		attribute.Bool("force", force),
 	)
 	defer func() { endSpan(err) }()
 
 	// Obtain the backend of the object - backend might be disabled, so don't error
-	backend := manager.volumes.Get(key.Volume)
+	backend := filer.volumes.Get(key.Volume)
 	if backend == nil {
 		return nil, nil
 	}
@@ -228,7 +246,7 @@ func (manager *Manager) indexObject(ctx context.Context, key schema.ObjectKey, f
 	if errors.Is(err, gofiler.ErrNotFound) {
 		// Object no longer exists in the backend — remove it from the index
 		var deleted schema.Object
-		if delErr := manager.Tx(ctx, func(conn pg.Conn) error {
+		if delErr := filer.Tx(ctx, func(conn pg.Conn) error {
 			return conn.Delete(ctx, &deleted, key)
 		}); delErr != nil && !errors.Is(delErr, pg.ErrNotFound) {
 			return nil, delErr
@@ -243,7 +261,7 @@ func (manager *Manager) indexObject(ctx context.Context, key schema.ObjectKey, f
 
 	// Unless forced, check if the object has changed and skip re-indexing if not
 	if !force {
-		existing, err := manager.GetObject(ctx, object.ObjectKey)
+		existing, err := filer.GetObject(ctx, object.ObjectKey)
 		if errors.Is(err, pg.ErrNotFound) {
 			// Continue
 		} else if err != nil {
@@ -251,18 +269,18 @@ func (manager *Manager) indexObject(ctx context.Context, key schema.ObjectKey, f
 		} else if (existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag)) ||
 			(!existing.ModTime.IsZero() && !object.ModTime.IsZero() && existing.ModTime.Truncate(time.Second).Equal(object.ModTime.Truncate(time.Second))) {
 			// Object unchanged — touch indexed_at and return the refreshed object
-			return manager.touchObject(ctx, object.ObjectKey)
+			return filer.touchObject(ctx, object.ObjectKey)
 		}
 	}
 
 	// Get the metadata for the object - hard error if nothing was extracted, warning otherwise
-	metadata, artwork, metaErr := manager.metadata.Get(ctx, object.ContentType, reader)
+	metadata, artwork, metaErr := filer.metadata.Get(ctx, object.ContentType, reader)
 	if metaErr != nil && metadata == nil {
 		return nil, metaErr
 	}
 
 	// Create the object in a transaction, and touch the volume's indexed_at
-	result, err := manager.createObject(ctx, schema.ObjectCreate{
+	result, err := filer.createObject(ctx, schema.ObjectCreate{
 		ObjectKey:  object.ObjectKey,
 		ObjectAttr: object.ObjectAttr,
 		ObjectMeta: schema.ObjectMeta{
@@ -276,9 +294,9 @@ func (manager *Manager) indexObject(ctx context.Context, key schema.ObjectKey, f
 	return result, metaErr
 }
 
-func (manager *Manager) reindexVolumes(ctx context.Context, logger *slog.Logger) error {
+func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) error {
 	var result schema.VolumeList
-	if err := manager.List(ctx, &result, &schema.VolumeListRequest{
+	if err := filer.List(ctx, &result, &schema.VolumeListRequest{
 		Enabled: types.Ptr(true),
 		Stale:   true,
 		OffsetLimit: pg.OffsetLimit{
@@ -292,24 +310,24 @@ func (manager *Manager) reindexVolumes(ctx context.Context, logger *slog.Logger)
 		return nil
 	} else if types.Value(result.Body[0].Enabled) == false {
 		// Do nothing
-	} else if backend := manager.volumes.Get(result.Body[0].Name); backend == nil {
+	} else if backend := filer.volumes.Get(result.Body[0].Name); backend == nil {
 		logger.WarnContext(ctx, "volume not found in registry", "name", result.Body[0].Name)
 	} else {
 		// Touch indexed_at before reindexing so concurrent workers will not pick
 		// this volume as stale in the same scheduling window.
 		var touched schema.Volume
-		if err := manager.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
+		if err := filer.Update(ctx, &touched, schema.VolumeTouch(backend.Name()), nil); err != nil {
 			return err
 		}
 
 		// Create reindexing tasks for all objects in the volume
-		return manager.reindexVolumeInner(ctx, backend, logger)
+		return filer.reindexVolumeInner(ctx, backend, logger)
 	}
 
 	return nil
 }
 
-func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.Backend, logger *slog.Logger) error {
+func (filer *Filer) reindexVolumeInner(ctx context.Context, backend backend.Backend, logger *slog.Logger) error {
 	logger.DebugContext(ctx, "reindexing", "name", backend.Name())
 
 	iterator := &schema.ObjectListIterator{
@@ -326,7 +344,7 @@ func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.
 			if object.ContentType == schema.ContentTypeDirectory {
 				continue
 			}
-			if err := manager.enqueueIndexObject(ctx, object.ObjectKey, false); err != nil {
+			if err := filer.enqueueIndexObject(ctx, object.ObjectKey, false); err != nil {
 				return err
 			}
 		}
@@ -336,15 +354,15 @@ func (manager *Manager) reindexVolumeInner(ctx context.Context, backend backend.
 	return nil
 }
 
-func (manager *Manager) syncVolumes(ctx context.Context, logger *slog.Logger) error {
-	inserted, deleted, err := manager.syncVolumesInner(ctx)
+func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error {
+	inserted, deleted, err := filer.syncVolumesInner(ctx)
 	if err != nil {
 		return err
 	}
 
 	// Delete backends
 	for _, volume := range deleted {
-		if err := manager.volumes.Delete(volume.Name); err != nil {
+		if err := filer.volumes.Delete(volume.Name); err != nil {
 			logger.ErrorContext(ctx, "failed to unmount volume", "name", volume.Name, "error", err.Error())
 			err = errors.Join(err, err)
 		} else {
@@ -354,7 +372,7 @@ func (manager *Manager) syncVolumes(ctx context.Context, logger *slog.Logger) er
 
 	// Insert backends
 	for _, volume := range inserted {
-		backend, err := manager.volumes.New(ctx, volume.URL)
+		backend, err := filer.volumes.New(ctx, volume.URL)
 		if err != nil {
 			return err
 		}
@@ -366,17 +384,17 @@ func (manager *Manager) syncVolumes(ctx context.Context, logger *slog.Logger) er
 	return err
 }
 
-func (manager *Manager) syncVolumesInner(ctx context.Context) (inserted []*schema.Volume, deleted []*schema.Volume, err error) {
+func (filer *Filer) syncVolumesInner(ctx context.Context) (inserted []*schema.Volume, deleted []*schema.Volume, err error) {
 	// Get a list of names
 	names := make(map[string]struct{})
-	for _, name := range manager.volumes.Names() {
+	for _, name := range filer.volumes.Names() {
 		names[name] = struct{}{}
 	}
 
 	// List all volumes from the database, and sync them with the registry
 	var offset uint64
 	for {
-		if volumes, err := manager.ListVolumes(ctx, schema.VolumeListRequest{
+		if volumes, err := filer.ListVolumes(ctx, schema.VolumeListRequest{
 			OffsetLimit: pg.OffsetLimit{
 				Offset: offset,
 			},
@@ -411,9 +429,9 @@ func (manager *Manager) syncVolumesInner(ctx context.Context) (inserted []*schem
 	return inserted, deleted, nil
 }
 
-func (manager *Manager) syncLLMProviders(ctx context.Context, logger *slog.Logger) error {
+func (filer *Filer) syncLLMProviders(ctx context.Context, logger *slog.Logger) error {
 	var providers []*llmschema.Provider
-	updates, deleted, err := manager.llm.Sync(providers, func(i int) (llmschema.ProviderCredentials, error) {
+	updates, deleted, err := filer.llm.Sync(providers, func(i int) (llmschema.ProviderCredentials, error) {
 		return llmschema.ProviderCredentials{}, nil
 	})
 	if err != nil {

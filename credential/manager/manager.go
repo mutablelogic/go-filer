@@ -16,7 +16,7 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type Manager struct {
+type Credentials struct {
 	opt
 	pg.PoolConn
 }
@@ -25,8 +25,8 @@ type Manager struct {
 // LIFECYCLE
 
 // New creates a new manager object
-func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Manager, err error) {
-	self := new(Manager)
+func New(ctx context.Context, pool pg.PoolConn, opts ...Opt) (_ *Credentials, err error) {
+	self := new(Credentials)
 
 	// Apply options
 	if err := self.opt.apply(opts); err != nil {

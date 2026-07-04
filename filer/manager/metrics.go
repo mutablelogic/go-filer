@@ -15,17 +15,17 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) RegisterVolumeMetrics(name string) (err error) {
+func (filer *Filer) RegisterVolumeMetrics(name string) (err error) {
 	// Register a gauge for indexed object count per volume.
-	if guage, err := manager.metrics.Int64ObservableGauge(
+	if guage, err := filer.metrics.Int64ObservableGauge(
 		name,
 		metric.WithDescription("Number of indexed objects in a volume"),
 		metric.WithUnit("{object}"),
 	); err != nil {
 		return pg.ErrInternalServerError.Withf("RegisterVolumeMetrics: %v", err)
-	} else if _, err := manager.metrics.RegisterCallback(func(parent context.Context, observer metric.Observer) (err error) {
+	} else if _, err := filer.metrics.RegisterCallback(func(parent context.Context, observer metric.Observer) (err error) {
 		// Otel span
-		ctx, endSpan := otel.StartSpan(manager.tracer, parent, "ObserveVolumeMetrics",
+		ctx, endSpan := otel.StartSpan(filer.tracer, parent, "ObserveVolumeMetrics",
 			attribute.String("name", name),
 		)
 		defer func() { endSpan(err) }()
@@ -36,7 +36,7 @@ func (manager *Manager) RegisterVolumeMetrics(name string) (err error) {
 		for {
 			// Perform pagination
 			req.Offset = offset
-			volumes, err := manager.ListVolumes(ctx, req)
+			volumes, err := filer.ListVolumes(ctx, req)
 			if err != nil {
 				return pg.ErrInternalServerError.Withf("RegisterVolumeMetrics: %v", err)
 			}

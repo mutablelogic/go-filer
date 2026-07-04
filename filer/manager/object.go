@@ -22,14 +22,14 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "GetObject",
+func (filer *Filer) GetObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "GetObject",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
 	// Check the volume first
-	volume, err := manager.GetVolume(ctx, req.Volume)
+	volume, err := filer.GetVolume(ctx, req.Volume)
 	if err != nil {
 		return nil, err
 	} else if types.Value(volume.Enabled) == false {
@@ -37,7 +37,7 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 	}
 
 	// Get the backend
-	backend := manager.volumes.Get(volume.Name)
+	backend := filer.volumes.Get(volume.Name)
 	if backend == nil {
 		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
 	}
@@ -57,9 +57,9 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 
 	// Get the metadata from the database (on error, return the object we have)
 	var result schema.Object
-	if err := manager.PoolConn.Get(ctx, &result, req); errors.Is(err, pg.ErrNotFound) {
+	if err := filer.PoolConn.Get(ctx, &result, req); errors.Is(err, pg.ErrNotFound) {
 		// Kick off an indexing job for the object
-		return object, manager.enqueueIndexObject(ctx, object.ObjectKey, true)
+		return object, filer.enqueueIndexObject(ctx, object.ObjectKey, true)
 	} else if err != nil {
 		return object, err
 	}
@@ -70,7 +70,7 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 	}
 
 	// Kick off an indexing job for the object, and return the object we have
-	if err := manager.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
+	if err := filer.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
 		return object, err
 	}
 
@@ -78,14 +78,14 @@ func (manager *Manager) GetObject(ctx context.Context, req schema.ObjectKey) (_ 
 	return object, nil
 }
 
-func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRequest) (_ *schema.ObjectList, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListObjects",
+func (filer *Filer) ListObjects(ctx context.Context, req schema.ObjectListRequest) (_ *schema.ObjectList, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "ListObjects",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
 	// Check the volume first
-	volume, err := manager.GetVolume(ctx, req.Volume)
+	volume, err := filer.GetVolume(ctx, req.Volume)
 	if err != nil {
 		return nil, err
 	} else if types.Value(volume.Enabled) == false {
@@ -101,7 +101,7 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 	// If indexing is not enabled, or no indexing has happened yet, or there is no last indexed object,
 	// iterate the backend directly.
 	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil || volume.LastIndexedObjectAt == nil {
-		b := manager.volumes.Get(volume.Name)
+		b := filer.volumes.Get(volume.Name)
 		if b == nil {
 			return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
 		}
@@ -151,7 +151,7 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 	// TODO: We're not respecting the recursive flag here, and maybe not the
 	// directory flag either?
 	var result schema.ObjectList
-	if err := manager.PoolConn.List(ctx, &result, &req); err != nil {
+	if err := filer.PoolConn.List(ctx, &result, &req); err != nil {
 		return nil, err
 	} else {
 		result.ObjectListRequest = req
@@ -165,14 +165,14 @@ func (manager *Manager) ListObjects(ctx context.Context, req schema.ObjectListRe
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "touchObject",
+func (filer *Filer) touchObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "touchObject",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
 	var result schema.Object
-	if err := manager.Tx(ctx, func(conn pg.Conn) error {
+	if err := filer.Tx(ctx, func(conn pg.Conn) error {
 		return conn.Update(ctx, &result, schema.ObjectTouch(req), nil)
 	}); err != nil {
 		return nil, err
@@ -180,22 +180,22 @@ func (manager *Manager) touchObject(ctx context.Context, req schema.ObjectKey) (
 	return types.Ptr(result), nil
 }
 
-func (manager *Manager) enqueueIndexObject(ctx context.Context, key schema.ObjectKey, force bool) error {
-	if manager.indexQueue == nil {
+func (filer *Filer) enqueueIndexObject(ctx context.Context, key schema.ObjectKey, force bool) error {
+	if filer.indexQueue == nil {
 		return gofiler.ErrServiceUnavailable.With("index queue not available")
 	}
 	payload, err := json.Marshal(indexObjectTask{ObjectKey: key, Force: force})
 	if err != nil {
 		return fmt.Errorf("failed to marshal index task: %w", err)
 	}
-	_, err = manager.queue.CreateTask(ctx, manager.indexQueue.Queue, pgqueueschema.TaskMeta{
+	_, err = filer.queue.CreateTask(ctx, filer.indexQueue.Queue, pgqueueschema.TaskMeta{
 		Payload: payload,
 	})
 	return err
 }
 
-func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreate, artwork []*schema.ArtworkMeta) (_ *schema.Object, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "createObject",
+func (filer *Filer) createObject(ctx context.Context, req schema.ObjectCreate, artwork []*schema.ArtworkMeta) (_ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "createObject",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
@@ -218,7 +218,7 @@ func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreat
 
 	// Upsert the object
 	var result schema.Object
-	if err := manager.Tx(ctx, func(conn pg.Conn) error {
+	if err := filer.Tx(ctx, func(conn pg.Conn) error {
 		// Delete the object first, to clear the metadata
 		if err := conn.Delete(ctx, &result, req.ObjectKey); errors.Is(err, pg.ErrNotFound) {
 			// Ignore not found errors, we will insert a new object
@@ -263,7 +263,7 @@ func (manager *Manager) createObject(ctx context.Context, req schema.ObjectCreat
 	}
 
 	// Re-fetch the object to get the metadata and artwork
-	if err := manager.PoolConn.Get(ctx, &result, req.ObjectKey); err != nil {
+	if err := filer.PoolConn.Get(ctx, &result, req.ObjectKey); err != nil {
 		return nil, pg.NormalizeError(err)
 	}
 

@@ -15,6 +15,7 @@ import (
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
 	openapi "github.com/mutablelogic/go-server/pkg/openapi"
+	"github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -27,7 +28,7 @@ type CredentialKey struct {
 	Key string `json:"key" help:"Credential key"`
 }
 
-func RegisterCredentialHandlers(manager *manager.Manager, router *httprouter.Router) error {
+func RegisterHandlers(manager *manager.Credentials, router *httprouter.Router) error {
 	documentation := openapi.ParseMarkdown(readme)
 	router.Spec().AddTag("Credentials", documentation.Section(1, "Credential Operations").Body)
 
@@ -67,6 +68,7 @@ func RegisterCredentialHandlers(manager *manager.Manager, router *httprouter.Rou
 			}, func(op httprequest.PathOperation) {
 				op.Summary("Create or Update Credential")
 				op.Description(documentation.Section(2, "PUT /credential").Body)
+				op.RequestBody(jsonschema.MustFor[schema.CredentialCreate]())
 				op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Credential](), "Created credential")
 				op.ErrorResponse(http.StatusBadRequest, "Invalid request")
 				op.ErrorResponse(http.StatusConflict, "Credential already exists")
@@ -108,6 +110,7 @@ func RegisterCredentialHandlers(manager *manager.Manager, router *httprouter.Rou
 			}, func(op httprequest.PathOperation) {
 				op.Summary("Get Credential")
 				op.Description(documentation.Section(2, "GET /credential/{key}").Body)
+				op.RequestBody(jsonschema.MustFor[string](), types.ContentTypeTextPlain)
 				op.JSONResponse(http.StatusOK, jsonschema.MustFor[json.RawMessage](), "Credential in JSON format")
 				op.ErrorResponse(http.StatusBadRequest, "Invalid passphrase")
 				op.ErrorResponse(http.StatusNotFound, "Credential not found")

@@ -10,7 +10,7 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (m *Manager) encryptCredentials(v any) (uint64, []byte, error) {
+func (m *Credentials) encryptCredentials(v any) (uint64, []byte, error) {
 	// Preserve the zero-value contract for raw credential payloads.
 	switch value := v.(type) {
 	case nil:
@@ -48,7 +48,7 @@ func (m *Manager) encryptCredentials(v any) (uint64, []byte, error) {
 	}
 }
 
-func (m *Manager) decryptCredentials(encrypted []byte, pv uint64, decrypted any) error {
+func (m *Credentials) decryptCredentials(encrypted []byte, pv uint64, decrypted any) error {
 	if len(encrypted) == 0 {
 		return nil
 	}

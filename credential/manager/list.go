@@ -16,7 +16,7 @@ import (
 // PUBLIC METHODS
 
 // ListCredentials returns a paginated list of credentials, excluding the encrypted credential payload.
-func (manager *Manager) ListCredentials(ctx context.Context, req schema.CredentialListRequest) (_ *schema.CredentialList, err error) {
+func (manager *Credentials) ListCredentials(ctx context.Context, req schema.CredentialListRequest) (_ *schema.CredentialList, err error) {
 	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "ListCredentials",
 		attribute.String("req", req.String()),
 	)

@@ -16,7 +16,7 @@ import (
 
 // CreateCredential persists an encrypted credential row and returns the public
 // credential shape, excluding passphrase version and encrypted payload.
-func (m *Manager) CreateCredential(ctx context.Context, req schema.CredentialCreate) (_ *schema.Credential, err error) {
+func (m *Credentials) CreateCredential(ctx context.Context, req schema.CredentialCreate) (_ *schema.Credential, err error) {
 	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "CreateCredential",
 		attribute.String("req", req.RedactedString()),
 	)

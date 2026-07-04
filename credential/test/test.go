@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 var (
-	shared  *manager.Manager
+	shared  *manager.Credentials
 	cancels cancelRegistry
 )
 
@@ -55,7 +55,7 @@ func (r *cancelRegistry) LoadAndDelete(t *testing.T) (context.CancelFunc, bool) 
 
 // Main is the test main function for tests. It starts up a container and runs the tests,
 // providing a manager instance to each test.
-func Main(m *testing.M, setup func(*manager.Manager) (func(), error), opts ...manager.Opt) {
+func Main(m *testing.M, setup func(*manager.Credentials) (func(), error), opts ...manager.Opt) {
 	test.Main(m, func(pool pg.PoolConn) (func(), error) {
 		manager, err := manager.New(context.Background(), pool, opts...)
 		if err != nil {
@@ -89,7 +89,7 @@ func Main(m *testing.M, setup func(*manager.Manager) (func(), error), opts ...ma
 }
 
 // Begin returns the shared test manager and a per-test context.
-func Begin(t *testing.T) (*manager.Manager, context.Context) {
+func Begin(t *testing.T) (*manager.Credentials, context.Context) {
 	t.Helper()
 	if shared == nil {
 		t.Fatal("test manager is not initialized; call test.Main from TestMain")

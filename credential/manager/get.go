@@ -17,7 +17,7 @@ import (
 
 // GetCredential retrieves a credential by key and decrypts the credential payload with
 // the given passphrase
-func (m *Manager) GetCredential(ctx context.Context, key schema.CredentialKey, passphrase string) (_ json.RawMessage, err error) {
+func (m *Credentials) GetCredential(ctx context.Context, key schema.CredentialKey, passphrase string) (_ json.RawMessage, err error) {
 	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "GetCredential",
 		attribute.String("key", key.Key),
 	)
@@ -55,7 +55,7 @@ func (m *Manager) GetCredential(ctx context.Context, key schema.CredentialKey, p
 // GetCredentialWithoutPassphrase retrieves and decrypts a credential using the stored
 // passphrase version. It is intended for internal server-side use only and must not
 // be exposed via any public API or HTTP handler.
-func (m *Manager) GetCredentialWithoutPassphrase(ctx context.Context, key schema.CredentialKey) (_ json.RawMessage, err error) {
+func (m *Credentials) GetCredentialWithoutPassphrase(ctx context.Context, key schema.CredentialKey) (_ json.RawMessage, err error) {
 	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "GetCredentialWithoutPassphrase",
 		attribute.String("key", key.Key),
 	)

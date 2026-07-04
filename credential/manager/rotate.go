@@ -18,7 +18,7 @@ import (
 
 // RotateCredential re-encrypts a credential with the latest passphrase version.
 // Returns gofiler.ErrNotModified if the credential is already at the latest version.
-func (m *Manager) RotateCredential(ctx context.Context, key schema.CredentialKey) (_ *schema.Credential, err error) {
+func (m *Credentials) RotateCredential(ctx context.Context, key schema.CredentialKey) (_ *schema.Credential, err error) {
 	ctx, endSpan := otel.StartSpan(m.tracer, ctx, "RotateCredential",
 		attribute.String("key", key.Key),
 	)
