@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"strings"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -195,11 +196,19 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 			return err
 		}
 
+		reqType := types.Value(req.Type)
 		for _, object := range iterator.Body {
-			if object.ContentType != schema.ContentTypeDirectory {
-				if err := filer.enqueueIndexObject(ctx, object.ObjectKey, force); err != nil {
-					return err
-				}
+			if object.ContentType == schema.ContentTypeDirectory {
+				continue
+			}
+			// The backend only special-cases text/directory when listing; any
+			// other requested type (e.g. "image" for "image/*") still needs to
+			// be matched against the object's actual content type here.
+			if reqType != "" && reqType != schema.ContentTypeDirectory && !strings.HasPrefix(object.ContentType, reqType) {
+				continue
+			}
+			if err := filer.enqueueIndexObject(ctx, object.ObjectKey, force); err != nil {
+				return err
 			}
 		}
 

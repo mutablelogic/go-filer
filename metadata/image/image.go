@@ -37,9 +37,9 @@ import (
 type imageextractor struct{}
 
 type imagesummarizer struct {
-	Title    string
-	Summary  string
-	Keywords []string
+	Title    string   `json:"title" min:"1" help:"A short, specific title for the image, in English."`
+	Summary  string   `json:"summary" min:"1" help:"A one-paragraph summary of what the image depicts, in English."`
+	Keywords []string `json:"keywords,omitempty" help:"Concepts, names, countries, regions and categories, only when there is a strong correlation to the image."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -2,6 +2,7 @@ package markdown
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -74,10 +75,30 @@ func init() {
 
 func NewTextReader(r io.Reader) *textreader {
 	scanner := bufio.NewScanner(r)
-	// Increase the maximum token size to tolerate long single-line inputs.
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, TextScannerMaxToken)
+	scanner.Split(splitLinesOrChunks(TextScannerMaxToken))
 	return &textreader{scanner: scanner}
+}
+
+// splitLinesOrChunks behaves like bufio.ScanLines, but if no newline is found
+// within maxChunk bytes, it emits a maxChunk-byte token anyway. This bounds
+// every token to maxChunk regardless of newlines, so a file with no (or very
+// long) line breaks - e.g. minified JSON - can never exceed the scanner's
+// buffer and abort with bufio.ErrTooLong.
+func splitLinesOrChunks(maxChunk int) bufio.SplitFunc {
+	return func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		if i := bytes.IndexByte(data, '\n'); i >= 0 && i < maxChunk {
+			return i + 1, data[:i], nil
+		}
+		if len(data) >= maxChunk {
+			return maxChunk, data[:maxChunk], nil
+		}
+		if atEOF && len(data) > 0 {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
+	}
 }
 
 func NewTextSummarizer(ctx context.Context) (*textsummarizer, error) {
