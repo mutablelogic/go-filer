@@ -1,11 +1,13 @@
 package image
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
-	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,7 +95,7 @@ func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) (
 	}
 
 	// Read the exif metadata from the image
-	exifMeta := ExtractExif(r)
+	exifMeta := ExtractEXIF(r)
 
 	// Seek back to the beginning of the file
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
@@ -111,7 +113,7 @@ func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) (
 	summarizer, err := NewImageSummarizer(ctx)
 	if err != nil {
 		return meta, []*schema.ArtworkMeta{artwork}, err
-	} else if err := summarizer.Summarize(ctx, artwork.Data); err != nil {
+	} else if err := summarizer.Summarize(ctx, artwork.Data, meta...); err != nil {
 		return meta, []*schema.ArtworkMeta{artwork}, err
 	}
 
@@ -129,42 +131,78 @@ func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) (
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - SUMMARIZER
 
-func (r *imagesummarizer) Summarize(ctx context.Context, data []byte) error {
+const summarizeInstruction = "Summarize this image in English, with title and summary paragraph. Include concepts, names, countries, regions and categories as keywords when there is a strong correlation to those concepts in the image. The returned data should be in JSON format, with no markdown or other formatting."
+
+func (r *imagesummarizer) Summarize(ctx context.Context, data []byte, meta ...schema.Meta) error {
 	if ollamaClient == nil {
 		return nil
 	}
+
+	message, err := llmschema.NewMessage(llmschema.RoleUser, summarizePrompt(meta), llmschema.WithAttachment(bytes.NewReader(data)))
+	if err != nil {
+		return err
+	}
+
 	opts := []llmopt.Opt{
 		llmopt.SetBool(llmopt.ThinkingKey, false),
 		ollama.WithJSONOutput(jsonschema.MustFor[imagesummarizer]()),
-	}
-
-	file, err := os.CreateTemp("", "go-filer-image-*.bin")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-
-	if _, err := file.Write(data); err != nil {
-		return err
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-
-	message, err := llmschema.NewMessage(llmschema.RoleUser, "Summarize this image in English, with title and summary paragraph. Include concepts, names, countries, regions and categories as keywords when there is a strong correlationto those concepts in the image. The returned data should be in JSON format, with no markdown or other formatting.", llmschema.WithAttachment(file))
-	if err != nil {
-		return err
 	}
 
 	session := new(llmschema.Conversation)
 	response, _, err := ollamaClient.WithSession(ctx, types.Value(ollamaModel), session, message, opts...)
 	if err != nil {
 		return err
-	} else if err := json.Unmarshal([]byte(response.Text()), r); err != nil {
+	}
+	if err := json.Unmarshal([]byte(stripCodeFence(response.Text())), r); err != nil {
 		return err
 	}
 
 	// Return success
 	return nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// summarizePrompt builds the instruction text sent to the model, appending
+// any known metadata (EXIF fields, dimensions, etc.) as extra context so the
+// model can ground its summary in facts we already know rather than guessing.
+func summarizePrompt(meta []schema.Meta) string {
+	if len(meta) == 0 {
+		return summarizeInstruction
+	}
+
+	var sb strings.Builder
+	sb.WriteString(summarizeInstruction)
+	sb.WriteString("\n\nThe following metadata was extracted from the image file and can be used as additional context:\n")
+	for _, m := range meta {
+		fmt.Fprintf(&sb, "- %s: %s\n", m.Key, metaValueString(m.Value))
+	}
+	return sb.String()
+}
+
+// metaValueString renders a Meta value for inclusion in a prompt, unquoting
+// JSON string values so they read naturally as plain text.
+func metaValueString(v json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(v, &s); err == nil {
+		return s
+	}
+	return string(v)
+}
+
+// stripCodeFence removes a wrapping markdown code fence (e.g. "```json ...
+// ```") from s, if present. Some models add one around JSON output despite
+// being instructed not to.
+func stripCodeFence(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	s = strings.TrimSuffix(s, "```")
+	s = strings.TrimPrefix(s, "```")
+	if i := strings.IndexByte(s, '\n'); i >= 0 && !strings.ContainsAny(s[:i], "{[\"") {
+		s = s[i+1:]
+	}
+	return strings.TrimSpace(s)
 }

@@ -18,7 +18,7 @@ import (
 // ExtractExif reads EXIF metadata from r and returns the fields useful for
 // indexing: orientation, camera make/model, lens, capture date and GPS
 // location. Returns an empty slice if the image has no readable EXIF data.
-func ExtractExif(r io.Reader) []schema.Meta {
+func ExtractEXIF(r io.Reader) []schema.Meta {
 	e, err := exif.Read(r)
 	if err != nil {
 		return nil
@@ -28,40 +28,41 @@ func ExtractExif(r io.Reader) []schema.Meta {
 	// Index tags by name. Where a name appears more than once (e.g. IFD0
 	// and the thumbnail IFD both carry Orientation), keep the first
 	// occurrence, since IFD0 (the main image) is enumerated first.
-	tags := make(map[string]*exif.Tag)
-	for _, tag := range e.Tags() {
-		if _, exists := tags[tag.Key()]; !exists {
-			tags[tag.Key()] = tag
+	tags := e.Tags()
+	tagmap := make(map[string]*exif.Tag, len(tags))
+	for _, tag := range tags {
+		if _, exists := tagmap[tag.Key()]; !exists {
+			tagmap[tag.Key()] = tag
 		}
 	}
 
 	var kv []schema.Meta
-	if v, ok := exifString(tags, "Make"); ok {
+	if v, ok := exifString(tagmap, "Make"); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageMake, v)
 	}
-	if v, ok := exifString(tags, "Model"); ok {
+	if v, ok := exifString(tagmap, "Model"); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageModel, v)
 	}
-	if v, ok := exifString(tags, "LensModel"); ok {
+	if v, ok := exifString(tagmap, "LensModel"); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageLensModel, v)
 	}
-	if v, ok := exifOrientation(tags); ok {
+	if v, ok := exifOrientation(tagmap); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageOrientation, v)
 	}
-	if t, ok := exifDateTime(tags); ok {
+	if t, ok := exifDateTime(tagmap); ok {
 		kv = schema.AppendMeta(kv, metadata.DateCreated, t.Format(time.RFC3339))
 	}
-	if lat, lng, ok := exifGPSLocation(tags); ok {
+	if lat, lng, ok := exifGPSLocation(tagmap); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageGPSLatitude, lat)
 		kv = schema.AppendMeta(kv, metadata.ImageGPSLongitude, lng)
 	}
-	if alt, ok := exifGPSAltitude(tags); ok {
+	if alt, ok := exifGPSAltitude(tagmap); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageGPSAltitude, alt)
 	}
-	if v, ok := exifRational(tags, "FNumber"); ok {
+	if v, ok := exifRational(tagmap, "FNumber"); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageAperture, v)
 	}
-	if v, ok := exifRational(tags, "ExposureTime"); ok {
+	if v, ok := exifRational(tagmap, "ExposureTime"); ok {
 		kv = schema.AppendMeta(kv, metadata.ImageShutterSpeed, v)
 	}
 
@@ -72,7 +73,7 @@ func ExtractExif(r io.Reader) []schema.Meta {
 // PRIVATE METHODS
 
 func exifString(tags map[string]*exif.Tag, key string) (string, bool) {
-	tag, ok := tags[key]
+	tag, ok := exifTag(tags, key)
 	if !ok {
 		return "", false
 	}
@@ -83,9 +84,22 @@ func exifString(tags map[string]*exif.Tag, key string) (string, bool) {
 	return s, true
 }
 
+func exifTag(tags map[string]*exif.Tag, key string) (*exif.Tag, bool) {
+	if tag, ok := tags[key]; ok {
+		return tag, true
+	}
+	if tag, ok := tags["exif:"+key]; ok {
+		return tag, true
+	}
+	if tag, ok := tags["tiff:"+key]; ok {
+		return tag, true
+	}
+	return nil, false
+}
+
 // exifOrientation returns the raw EXIF orientation code (1-8).
 func exifOrientation(tags map[string]*exif.Tag) (int, bool) {
-	tag, ok := tags["Orientation"]
+	tag, ok := exifTag(tags, "Orientation")
 	if !ok {
 		return 0, false
 	}
@@ -161,7 +175,7 @@ func exifGPSAltitude(tags map[string]*exif.Tag) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	if refTag, ok := tags["GPSAltitudeRef"]; ok {
+	if refTag, ok := exifTag(tags, "GPSAltitudeRef"); ok {
 		if b, ok := refTag.Any().(uint8); ok && b == 1 {
 			alt = -alt
 		}
@@ -170,7 +184,7 @@ func exifGPSAltitude(tags map[string]*exif.Tag) (float64, bool) {
 }
 
 func exifRational(tags map[string]*exif.Tag, key string) (float64, bool) {
-	tag, ok := tags[key]
+	tag, ok := exifTag(tags, key)
 	if !ok {
 		return 0, false
 	}
@@ -182,7 +196,7 @@ func exifRational(tags map[string]*exif.Tag, key string) (float64, bool) {
 }
 
 func exifRationalSlice(tags map[string]*exif.Tag, key string) ([]libexif.Rational, bool) {
-	tag, ok := tags[key]
+	tag, ok := exifTag(tags, key)
 	if !ok {
 		return nil, false
 	}
