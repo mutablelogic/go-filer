@@ -12,9 +12,9 @@ require (
 	github.com/mutablelogic/go-auth v0.0.14
 	github.com/mutablelogic/go-client v1.4.10
 	github.com/mutablelogic/go-llm v0.4.5
-	github.com/mutablelogic/go-media v1.8.4
+	github.com/mutablelogic/go-media v1.8.5
 	github.com/mutablelogic/go-pg v1.3.4
-	github.com/mutablelogic/go-server v1.6.38
+	github.com/mutablelogic/go-server v1.7.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.69.0
 	go.opentelemetry.io/otel v1.44.0

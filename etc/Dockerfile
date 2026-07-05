@@ -42,7 +42,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     libnuma-dev \
     libzvbi-dev && \
     git clone --depth 1 --branch ${GO_MEDIA_VERSION} https://github.com/mutablelogic/go-media /opt/go-media && \
-    make -C /opt/go-media ffmpeg && \
+    make -C /opt/go-media ffmpeg libexif libraw && \
     PKG_CONFIG_PATH=/opt/go-media/build/install/lib/pkgconfig \
     CGO_LDFLAGS_ALLOW='-(W|D).*' \
     CGO_LDFLAGS='-lstdc++' \
