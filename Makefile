@@ -22,6 +22,7 @@ BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}"
 DOCKER_REPO ?= ghcr.io/mutablelogic/filer
 DOCKER_SOURCE ?= $(shell cat go.mod | head -1 | cut -d ' ' -f 2)
 DOCKER_TAG = ${DOCKER_REPO}:${VERSION}-${OS}-${ARCH}
+GO_MEDIA_VERSION ?= $(shell awk '/mutablelogic\/go-media / { print $$2 }' go.mod)
 
 ###############################################################################
 # ALL
@@ -43,7 +44,7 @@ $(CMD_DIR): go-dep mkdir
 # Build the docker image
 .PHONY: docker
 docker: docker-dep
-	@echo build docker image ${DOCKER_TAG} OS=${OS} ARCH=${ARCH} SOURCE=${DOCKER_SOURCE} VERSION=${VERSION}
+	@echo build docker image ${DOCKER_TAG} OS=${OS} ARCH=${ARCH} SOURCE=${DOCKER_SOURCE} VERSION=${VERSION} GO_MEDIA_VERSION=${GO_MEDIA_VERSION}
 	@${DOCKER} build \
 		--tag ${DOCKER_TAG} \
 		--provenance=false \
@@ -51,6 +52,7 @@ docker: docker-dep
 		--build-arg OS=${OS} \
 		--build-arg SOURCE=${DOCKER_SOURCE} \
 		--build-arg VERSION=${VERSION} \
+		--build-arg GO_MEDIA_VERSION=${GO_MEDIA_VERSION} \
 		-f etc/Dockerfile .
 
 # Push docker container

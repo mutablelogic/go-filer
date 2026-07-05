@@ -1,7 +1,7 @@
 ARG OS
 ARG ARCH
 ARG DEBIAN_CODENAME=trixie
-ARG GO_MEDIA_VERSION=v1.8.3
+ARG GO_MEDIA_VERSION=v1.8.5
 
 # TypeScript build stage
 FROM node:22-slim AS ts-builder

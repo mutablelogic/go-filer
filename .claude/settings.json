@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(git fetch *)",
-      "Bash(gh pr *)"
+      "Bash(gh pr *)",
+      "Bash(git ls-remote *)",
+      "Bash(grep -E \"v1\\\\.8\\\\.[0-9]+$\")"
     ]
   }
 }
