@@ -169,6 +169,17 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 		return gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", volume.Name)
 	}
 
+	// If the path points at a single object rather than a directory, reindex
+	// just that object. ListObjects only lists directory contents, so a file
+	// path would otherwise be rejected with a "not a directory" error.
+	if reqPath := types.Value(req.Path); reqPath != "" {
+		if object, err := backend.GetObject(ctx, schema.GetObjectRequest{
+			ObjectKey: schema.ObjectKey{Volume: volume.Name, Path: reqPath},
+		}); err == nil {
+			return filer.enqueueIndexObject(ctx, object.ObjectKey, force)
+		}
+	}
+
 	// Iterate through the objects in the volume, and reindex them according to the provided filters
 	var iterator schema.ObjectListIterator
 

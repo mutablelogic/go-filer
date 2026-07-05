@@ -12,5 +12,5 @@ import (
 // LIFECYCLE
 
 func TestMain(m *testing.M) {
-	test.Main(m, nil, manager.WithPassphrase(1, "test-passphrase1"), manager.WithPassphrase(2, "test-passphrase2"))
+	test.Main(m, nil, manager.WithPassphrase(1, "test-passphrase1"), manager.WithPassphrase(2, "test-passphrase2"), manager.WithIndexer(true))
 }

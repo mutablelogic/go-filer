@@ -2,6 +2,8 @@ package manager_test
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -84,5 +86,44 @@ func TestVolumeDeleteWhileEnabled(t *testing.T) {
 
 	// Deleting an enabled (mounted) volume should fail
 	_, err = mgr.DeleteVolume(ctx, "test_volume_enabled")
+	require.Error(err)
+}
+
+func TestVolumeReindexObject(t *testing.T) {
+	require := require.New(t)
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	dir := t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(dir, "object.txt"), []byte("hello"), 0644))
+	require.NoError(os.Mkdir(filepath.Join(dir, "subdir"), 0755))
+
+	volURL := &url.URL{Scheme: "file", Host: "test_volume_reindex", Path: dir}
+	_, err := mgr.CreateVolume(ctx, volURL, schema.VolumeMeta{})
+	require.NoError(err)
+
+	_, err = mgr.UpdateVolume(ctx, "test_volume_reindex", schema.VolumeMeta{
+		IndexDelta: types.Ptr(time.Minute),
+	})
+	require.NoError(err)
+
+	// Volume mounting happens asynchronously in response to the change
+	// notification, so wait for it before reindexing.
+	require.Eventually(func() bool {
+		return mgr.ReindexVolume(ctx, "test_volume_reindex", schema.ObjectListFilters{
+			Path: types.Ptr("object.txt"),
+		}, false) == nil
+	}, 5*time.Second, 20*time.Millisecond, "volume did not mount in time")
+
+	// Reindexing a directory should still work as before
+	err = mgr.ReindexVolume(ctx, "test_volume_reindex", schema.ObjectListFilters{
+		Path: types.Ptr("subdir"),
+	}, false)
+	require.NoError(err)
+
+	// Reindexing a path that doesn't exist should fail
+	err = mgr.ReindexVolume(ctx, "test_volume_reindex", schema.ObjectListFilters{
+		Path: types.Ptr("does-not-exist"),
+	}, false)
 	require.Error(err)
 }
