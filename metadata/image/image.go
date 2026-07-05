@@ -42,6 +42,16 @@ type imagesummarizer struct {
 	Keywords []string `json:"keywords,omitempty" help:"Concepts, names, countries, regions and categories, only when there is a strong correlation to the image."`
 }
 
+// imagesummarizerResponse mirrors imagesummarizer but leaves keywords undecoded,
+// so a malformed keywords element (the model occasionally wraps a keyword in an
+// object instead of returning a plain string) does not abort decoding of the
+// title and summary fields too.
+type imagesummarizerResponse struct {
+	Title    string          `json:"title"`
+	Summary  string          `json:"summary"`
+	Keywords json.RawMessage `json:"keywords,omitempty"`
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
@@ -126,6 +136,53 @@ func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) (
 
 	// Return the metadata and artwork
 	return meta, []*schema.ArtworkMeta{artwork}, nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// UNMARSHAL
+
+func (r *imagesummarizer) UnmarshalJSON(data []byte) error {
+	var response imagesummarizerResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return err
+	}
+	r.Title = response.Title
+	r.Summary = response.Summary
+	r.Keywords = decodeKeywords(response.Keywords)
+	return nil
+}
+
+// decodeKeywords tolerates the model returning a keyword wrapped in an object
+// (e.g. {"keyword": "Pixel 8"}) instead of a plain string, by taking the first
+// string value found in each element.
+func decodeKeywords(data json.RawMessage) []string {
+	if len(data) == 0 {
+		return nil
+	}
+
+	var raw []any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+
+	keywords := make([]string, 0, len(raw))
+	for _, v := range raw {
+		switch v := v.(type) {
+		case string:
+			keywords = append(keywords, v)
+		case map[string]any:
+			for _, vv := range v {
+				if s, ok := vv.(string); ok {
+					keywords = append(keywords, s)
+					break
+				}
+			}
+		}
+	}
+	if len(keywords) == 0 {
+		return nil
+	}
+	return keywords
 }
 
 ///////////////////////////////////////////////////////////////////////////////
