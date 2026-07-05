@@ -7,13 +7,17 @@ CREATE TABLE IF NOT EXISTS ${"schema"}."volume" (
     "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now(),
     "indexed_at"  TIMESTAMPTZ,
     PRIMARY KEY ("name"),
-    CHECK ("name" ~ '^[a-z0-9_][a-z0-9_.-]{1,61}[a-z0-9_]$'),
+    CHECK ("name" ~ '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,61}[A-Za-z0-9_]$'),
     UNIQUE ("url")
 );
 
 -- filer.volume.migration
 ALTER TABLE ${"schema"}."volume" DROP CONSTRAINT IF EXISTS volume_name_check;
-ALTER TABLE ${"schema"}."volume" ADD CONSTRAINT volume_name_check CHECK ("name" ~ '^[a-z0-9_][a-z0-9_.-]{1,61}[a-z0-9_]$');
+ALTER TABLE ${"schema"}."volume" ADD CONSTRAINT volume_name_check CHECK ("name" ~ '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,61}[A-Za-z0-9_]$');
+
+-- filer.volume names are case-preserving but must not collide case-insensitively
+-- (e.g. "tv" and "Tv" cannot coexist).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_volume_name_lower ON ${"schema"}."volume" (lower("name"));
 
 -- filter.object
 CREATE TABLE IF NOT EXISTS ${"schema"}."object" (

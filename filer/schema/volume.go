@@ -172,7 +172,7 @@ func (v *VolumeList) ScanCount(row pg.Row) error {
 // SELECTOR
 
 func (v VolumeName) Select(bind *pg.Bind, op pg.Op) (string, error) {
-	name := strings.ToLower(strings.TrimSpace(string(v)))
+	name := strings.TrimSpace(string(v))
 	if !types.IsIdentifier(name) {
 		return "", gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
@@ -191,7 +191,7 @@ func (v VolumeName) Select(bind *pg.Bind, op pg.Op) (string, error) {
 }
 
 func (v VolumeTouch) Select(bind *pg.Bind, op pg.Op) (string, error) {
-	name := strings.ToLower(strings.TrimSpace(string(v)))
+	name := strings.TrimSpace(string(v))
 	if !types.IsIdentifier(name) {
 		return "", gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
