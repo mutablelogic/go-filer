@@ -8,9 +8,7 @@ import (
 	"os"
 
 	// Packages
-
 	otel "github.com/mutablelogic/go-client/pkg/otel"
-	google "github.com/mutablelogic/go-filer/backend/google"
 	credentialcmd "github.com/mutablelogic/go-filer/credential/cmd"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
@@ -90,21 +88,6 @@ func withClient(ctx server.Cmd, span string, fn func(context.Context, *httpclien
 	if err != nil {
 		return err
 	} else if client, err := httpclient.New(endpoint, opts...); err != nil {
-		return err
-	} else {
-		var err error
-		ctx, endfn := otel.StartSpan(ctx.Tracer(), ctx.Context(), span)
-		defer func() { endfn(err) }()
-		err = fn(ctx, client)
-		return err
-	}
-}
-
-func withGoogleClient(ctx server.Cmd, span string, fn func(context.Context, *google.Client) error) error {
-	_, opts, err := ctx.ClientEndpoint()
-	if err != nil {
-		return err
-	} else if client, err := google.New(opts...); err != nil {
 		return err
 	} else {
 		var err error
@@ -412,10 +395,9 @@ func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
 func (cmd *VolumeReindexCmd) Run(ctx server.Cmd) error {
 	// Perform the request
 	return withClient(ctx, "volume-reindex", func(ctx context.Context, client *httpclient.Client) error {
-		if err := client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters, cmd.Force); err != nil {
-			return err
-		}
-		return nil
+		return client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters, cmd.Force, func(total uint64) {
+			fmt.Println("Reindexing:", total, "objects considered")
+		})
 	})
 }
 

@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 
@@ -76,7 +77,10 @@ func (c *Client) DeleteVolume(ctx context.Context, name string) (*schema.Volume,
 	return types.Ptr(response), nil
 }
 
-func (c *Client) ReindexVolume(ctx context.Context, name string, meta schema.ObjectListFilters, force bool) error {
+// ReindexVolume requests reindexing of a volume. The response is a text/event-stream:
+// "progress" events report the running total of objects considered, invoking callback
+// if it is not nil, and a final "error" event reports any error encountered.
+func (c *Client) ReindexVolume(ctx context.Context, name string, meta schema.ObjectListFilters, force bool, callback func(total uint64)) error {
 	// Make the request payload
 	req, err := client.NewJSONRequest(meta)
 	if err != nil {
@@ -89,11 +93,28 @@ func (c *Client) ReindexVolume(ctx context.Context, name string, meta schema.Obj
 		query.Set("force", "true")
 	}
 
-	// Perform request
-	if err := c.DoWithContext(ctx, req, nil, client.OptPath("volume", name, "reindex"), client.OptQuery(query)); err != nil {
-		return err
-	}
-
-	// Return success
-	return nil
+	// Perform request, decoding the text/event-stream response
+	return c.DoWithContext(ctx, req, nil,
+		client.OptPath("volume", name, "reindex"),
+		client.OptQuery(query),
+		client.OptTextStreamCallback(func(evt client.TextStreamEvent) error {
+			switch evt.Event {
+			case schema.EventProgress:
+				var total uint64
+				if err := evt.Json(&total); err != nil {
+					return err
+				}
+				if callback != nil {
+					callback(total)
+				}
+			case schema.EventError:
+				var message string
+				if err := evt.Json(&message); err != nil {
+					return err
+				}
+				return errors.New(message)
+			}
+			return nil
+		}),
+	)
 }
