@@ -51,7 +51,7 @@ func (e *xmpextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^application/xmp\+xml$`)
 }
 
-func (e *xmpextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *xmpextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}

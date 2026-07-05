@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,6 +130,11 @@ func (filer *Filer) ListObjects(ctx context.Context, req schema.ObjectListReques
 				return nil, err
 			}
 			for _, obj := range iterator.Body {
+				// The backend only distinguishes directories from files via Type;
+				// apply the actual content-type filter here.
+				if !schema.MatchesContentType(obj.ContentType, types.Value(req.Type)) {
+					continue
+				}
 				if n >= offset {
 					if uint64(len(result.Body)) >= limit {
 						break outer
@@ -182,9 +188,6 @@ func (filer *Filer) touchObject(ctx context.Context, req schema.ObjectKey) (_ *s
 }
 
 func (filer *Filer) enqueueIndexObject(ctx context.Context, key schema.ObjectKey, force bool) error {
-	if filer.indexQueue == nil {
-		return gofiler.ErrServiceUnavailable.With("index queue not available")
-	}
 	payload, err := json.Marshal(indexObjectTask{ObjectKey: key, Force: force})
 	if err != nil {
 		return fmt.Errorf("failed to marshal index task: %w", err)
@@ -277,7 +280,13 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 		attribute.String("object", types.Stringify(key)),
 		attribute.Bool("force", force),
 	)
-	defer func() { endSpan(err) }()
+	defer func() {
+		if errors.Is(err, gofiler.ErrNotFound) {
+			endSpan(nil)
+		} else {
+			endSpan(err)
+		}
+	}()
 
 	// Obtain the backend of the object - backend might be disabled, so don't error
 	backend := filer.volumes.Get(key.Volume)
@@ -289,6 +298,7 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{
 		ObjectKey: key,
 	})
+
 	if errors.Is(err, gofiler.ErrNotFound) {
 		// Object no longer exists in the backend — remove it from the index
 		var deleted schema.Object
@@ -305,22 +315,39 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 		err = errors.Join(err, reader.Close())
 	}()
 
-	// Unless forced, check if the object has changed and skip re-indexing if not
+	// Unless forced, check if the object has changed in index and skip re-indexing if not
 	if !force {
-		existing, err := filer.GetObject(ctx, object.ObjectKey)
-		if errors.Is(err, pg.ErrNotFound) {
-			// Continue
-		} else if err != nil {
-			return nil, err
-		} else if (existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag)) ||
+		// Get the object from the database
+		var existing schema.Object
+		if err := filer.PoolConn.Get(ctx, &existing, object.ObjectKey); err != nil {
+			if errors.Is(err, pg.ErrNotFound) == false {
+				return nil, err
+			}
+		}
+
+		// Check if the object has changed in index - if not, touch the indexed_at and return the existing object
+		if (existing.ETag != nil && object.ETag != nil && types.Value(existing.ETag) == types.Value(object.ETag)) ||
 			(!existing.ModTime.IsZero() && !object.ModTime.IsZero() && existing.ModTime.Truncate(time.Second).Equal(object.ModTime.Truncate(time.Second))) {
 			// Object unchanged — touch indexed_at and return the refreshed object
 			return filer.touchObject(ctx, object.ObjectKey)
 		}
 	}
 
+	// Extractors need to seek within the object content. Use the reader directly
+	// if it's already seekable (e.g. local files), otherwise buffer it into memory.
+	var metaReader io.ReadSeeker
+	if seeker, ok := reader.(io.ReadSeeker); ok {
+		metaReader = seeker
+	} else {
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, err
+		}
+		metaReader = bytes.NewReader(data)
+	}
+
 	// Get the metadata for the object - hard error if nothing was extracted, warning otherwise
-	metadata, artwork, metaErr := filer.metadata.Get(ctx, object.ContentType, reader)
+	metadata, artwork, metaErr := filer.metadata.Get(ctx, object.ContentType, metaReader)
 	if metaErr != nil && metadata == nil {
 		return nil, metaErr
 	}
@@ -337,5 +364,7 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 	if err != nil {
 		return nil, err
 	}
+
+	// Return the result and any metadata extraction error (which is non-fatal)
 	return result, metaErr
 }

@@ -533,6 +533,21 @@ func (k ObjectTouch) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	}
 }
 
+// MatchesContentType reports whether contentType satisfies filter, using the
+// same semantics as ObjectListRequest.Select's SQL WHERE clause: an exact
+// match if filter contains a '/', otherwise a match against either the major
+// or minor component (e.g. "image" matches "image/jpeg" and "x/image"). An
+// empty filter matches everything.
+func MatchesContentType(contentType, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	if strings.Contains(filter, "/") {
+		return contentType == filter
+	}
+	return strings.HasPrefix(contentType, filter+"/") || strings.HasSuffix(contentType, "/"+filter)
+}
+
 func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Del("where")
 

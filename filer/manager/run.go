@@ -247,10 +247,11 @@ func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) err
 		return err
 	}
 
-	// Create reindexing tasks for all objects in the volume
+	// Create reindexing tasks for all objects in the volume - don't force if any objects are already
+	// indexed
 	return filer.ReindexVolume(ctx, backend.Name(), schema.ObjectListFilters{
 		Recursive: true,
-	})
+	}, false)
 }
 
 func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error {

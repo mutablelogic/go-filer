@@ -28,7 +28,7 @@ func TestExtractMetadata(t *testing.T) {
   <body></body>
 </html>`
 
-	kv, err := extractor.ExtractMetadata(context.Background(), strings.NewReader(input))
+	kv, _, err := extractor.ExtractMetadata(context.Background(), strings.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
 	}

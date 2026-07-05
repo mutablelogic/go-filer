@@ -142,10 +142,11 @@ func (filer *Filer) CreateVolume(ctx context.Context, url *url.URL, meta schema.
 }
 
 // ReindexVolume reindexes objects in a volume according to the provided object filters.
-func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.ObjectListFilters) (err error) {
+func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.ObjectListFilters, force bool) (err error) {
 	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "ReindexVolume",
 		attribute.String("volume", name),
 		attribute.String("req", types.Stringify(req)),
+		attribute.Bool("force", force),
 	)
 	defer func() { endSpan(err) }()
 
@@ -185,7 +186,7 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 
 		for _, object := range iterator.Body {
 			if object.ContentType != schema.ContentTypeDirectory {
-				if err := filer.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
+				if err := filer.enqueueIndexObject(ctx, object.ObjectKey, force); err != nil {
 					return err
 				}
 			}

@@ -41,7 +41,7 @@ func (e *codeextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^text/(x-)?(go|python|javascript|typescript|java|c|cpp|objective-c|csharp|ruby|php|rust|swift)$`)
 }
 
-func (e *codeextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *codeextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {

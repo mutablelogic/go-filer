@@ -23,6 +23,10 @@ type VolumeName struct {
 	Volume string `json:"volume" help:"Volume name"`
 }
 
+type VolumeReindexQuery struct {
+	Force bool `json:"force" help:"Force reindexing of all objects, even if they are already indexed" optional:"true"`
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
@@ -129,11 +133,12 @@ func RegisterVolumeHandlers(manager *manager.Filer, router *httprouter.Router) e
 			// POST
 			path.Post(func(w http.ResponseWriter, r *http.Request) {
 				var req schema.ObjectListFilters
-				if err := httprequest.Read(r, &req); err != nil {
+				var query VolumeReindexQuery
+				if err := httprequest.Query(r.URL.Query(), &query); err != nil {
 					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-				}
-
-				if err := manager.ReindexVolume(r.Context(), r.PathValue("volume"), req); err != nil {
+				} else if err := httprequest.Read(r, &req); err != nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+				} else if err := manager.ReindexVolume(r.Context(), r.PathValue("volume"), req, query.Force); err != nil {
 					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
 				} else {
 					httpresponse.Empty(w, http.StatusNoContent)
@@ -141,6 +146,7 @@ func RegisterVolumeHandlers(manager *manager.Filer, router *httprouter.Router) e
 			}, func(op httprequest.PathOperation) {
 				op.Summary("Reindex Volume")
 				op.Description(documentation.Section(3, "POST /volume/{volume}/reindex").Body)
+				op.Query(jsonschema.MustFor[VolumeReindexQuery]())
 				op.RequestBody(jsonschema.MustFor[schema.ObjectListFilters]())
 				op.Response(http.StatusNoContent, "", "Reindexing started")
 				op.ErrorResponse(http.StatusBadRequest, "Invalid request")

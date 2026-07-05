@@ -254,6 +254,7 @@ type VolumeDeleteCmd struct {
 type VolumeReindexCmd struct {
 	VolumeGetCmd
 	schema.ObjectListFilters
+	Force bool `json:"force" short:"f" help:"Force reindexing of all objects, even if they are already indexed"`
 }
 
 func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
@@ -411,7 +412,7 @@ func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
 func (cmd *VolumeReindexCmd) Run(ctx server.Cmd) error {
 	// Perform the request
 	return withClient(ctx, "volume-reindex", func(ctx context.Context, client *httpclient.Client) error {
-		if err := client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters); err != nil {
+		if err := client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters, cmd.Force); err != nil {
 			return err
 		}
 		return nil

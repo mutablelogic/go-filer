@@ -113,7 +113,7 @@ func (m *Manager) GetMeta(ctx context.Context, r io.Reader) (_ *schema.ObjectMet
 	return &result, nil
 }
 
-func (m *Manager) Get(ctx context.Context, mimeType string, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (m *Manager) Get(ctx context.Context, mimeType string, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	extractor, err := metadata.Get(mimeType)
 	if err != nil {
 		// It's only a warning if we couldn't find an extractor

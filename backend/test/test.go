@@ -1,12 +1,15 @@
 package test
 
 import (
+	"context"
+	"encoding/json"
 	"net/url"
 	"testing"
 
 	// Packages
 	backend "github.com/mutablelogic/go-filer/backend"
 	registry "github.com/mutablelogic/go-filer/backend/registry"
+	noop "go.opentelemetry.io/otel/trace/noop"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -22,7 +25,9 @@ var (
 // Main is the test main function for backend tests.
 func Main(m *testing.M) {
 	// Create a new registry
-	r = registry.New()
+	r = registry.New(noop.NewTracerProvider().Tracer("test"), func(context.Context, string) (json.RawMessage, error) {
+		return nil, nil
+	})
 	if r == nil {
 		panic("failed to create registry")
 	}
@@ -34,15 +39,16 @@ func BeginFile(t *testing.T) backend.Backend {
 	if r == nil {
 		t.Fatal("registry is not initialized")
 	}
+	ctx := context.Background()
 	tempdir := t.TempDir()
 	url, err := url.Parse("file://" + t.Name() + tempdir)
 	if err != nil {
 		t.Fatalf("failed to parse URL: %v", err)
 	}
-	if _, err := r.Validate(url); err != nil {
+	if _, err := r.Validate(ctx, url); err != nil {
 		t.Fatalf("failed to validate URL: %v", err)
 	}
-	backend, err := r.New(url.String())
+	backend, err := r.New(ctx, url.String())
 	if err != nil {
 		t.Fatalf("failed to create backend: %v", err)
 	}

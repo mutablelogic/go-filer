@@ -87,8 +87,16 @@ func (e *imageextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^image/.*`)
 }
 
-func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Read the exif metadata from the image
+	exifMeta := ExtractExif(r)
+
+	// Seek back to the beginning of the file
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
 		return nil, nil, err
 	}
 
@@ -97,6 +105,7 @@ func (e *imageextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]sc
 	if err != nil {
 		return meta, []*schema.ArtworkMeta{artwork}, err
 	}
+	meta = append(meta, exifMeta...)
 
 	// Now summarize the image
 	summarizer, err := NewImageSummarizer(ctx)
