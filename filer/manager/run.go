@@ -251,7 +251,9 @@ func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) err
 	// indexed
 	return filer.ReindexVolume(ctx, backend.Name(), schema.ObjectListFilters{
 		Recursive: true,
-	}, false)
+	}, false, func(offset uint64) {
+		logger.DebugContext(ctx, "Reindexing volume", "name", backend.Name(), "offset", offset)
+	})
 }
 
 func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error {

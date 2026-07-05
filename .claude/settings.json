@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/djt/go/pkg/mod/github.com/mutablelogic/go-server@v1.7.0/pkg/httpresponse/**)",
+      "Bash(go env *)",
+      "Bash(grep -rn \"func.*Response\\\\b\" \"$\\(go env GOPATH\\)/pkg/mod/github.com/mutablelogic/go-server@v1.7.0/pkg/httprequest/\"*.go)",
+      "Bash(grep -n \"ContentTypeTextStream\\\\|ContentTypeHeader\" \"$\\(go env GOPATH\\)/pkg/mod/github.com/mutablelogic/go-server@v1.7.0/pkg/types/\"*.go)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(go test *)"
+    ]
+  }
+}

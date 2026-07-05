@@ -136,19 +136,35 @@ func RegisterVolumeHandlers(manager *manager.Filer, router *httprouter.Router) e
 				var query VolumeReindexQuery
 				if err := httprequest.Query(r.URL.Query(), &query); err != nil {
 					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-				} else if err := httprequest.Read(r, &req); err != nil {
+					return
+				}
+				if err := httprequest.Read(r, &req); err != nil {
 					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-				} else if err := manager.ReindexVolume(r.Context(), r.PathValue("volume"), req, query.Force); err != nil {
-					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
+					return
+				}
+
+				// Stream the reindexing progress to the client as a text/event-stream
+				stream := httpresponse.NewTextStream(w)
+				defer stream.Close()
+
+				// Reindex the volume, streaming progress to the client
+				err := manager.ReindexVolume(r.Context(), r.PathValue("volume"), req, query.Force, func(total uint64) {
+					stream.Write(schema.EventProgress, total)
+				})
+
+				// Write the final event to the stream, indicating success or failure
+				if err != nil {
+					stream.Write(schema.EventError, err.Error())
 				} else {
-					httpresponse.Empty(w, http.StatusNoContent)
+					stream.Write(schema.EventDone)
 				}
 			}, func(op httprequest.PathOperation) {
 				op.Summary("Reindex Volume")
 				op.Description(documentation.Section(3, "POST /volume/{volume}/reindex").Body)
 				op.Query(jsonschema.MustFor[VolumeReindexQuery]())
 				op.RequestBody(jsonschema.MustFor[schema.ObjectListFilters]())
-				op.Response(http.StatusNoContent, "", "Reindexing started")
+				op.Response(http.StatusOK, "text/event-stream", "Reindexing progress, streamed as \"progress\" events with the running total of objects considered, followed by a final \"done\" or \"error\" event")
+				op.Response(http.StatusNoContent, "", "Reindexing started, no objects were considered")
 				op.ErrorResponse(http.StatusBadRequest, "Invalid request")
 				op.ErrorResponse(http.StatusNotFound, "Volume not found")
 				op.ErrorResponse(http.StatusServiceUnavailable, "Volume not mounted or not indexed")

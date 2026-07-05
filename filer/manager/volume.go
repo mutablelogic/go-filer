@@ -143,7 +143,7 @@ func (filer *Filer) CreateVolume(ctx context.Context, url *url.URL, meta schema.
 }
 
 // ReindexVolume reindexes objects in a volume according to the provided object filters.
-func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.ObjectListFilters, force bool) (err error) {
+func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.ObjectListFilters, force bool, callback func(total uint64)) (err error) {
 	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "ReindexVolume",
 		attribute.String("volume", name),
 		attribute.String("req", types.Stringify(req)),
@@ -181,14 +181,17 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 		}
 	}
 
-	// Iterate through the objects in the volume, and reindex them according to the provided filters
-	var iterator schema.ObjectListIterator
-
 	// Set iterator filters
+	var iterator schema.ObjectListIterator
 	iterator.Path = req.Path
 	iterator.Recursive = req.Recursive
 	iterator.Type = req.Type
 
+	// Filer by type
+	reqType := types.Value(req.Type)
+	var total uint64
+
+	// Iterate through the list of objects in the backend, and enqueue each object for indexing
 	for {
 		err := backend.ListObjects(ctx, &iterator)
 		done := errors.Is(err, io.EOF)
@@ -196,22 +199,29 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 			return err
 		}
 
-		reqType := types.Value(req.Type)
 		for _, object := range iterator.Body {
 			if object.ContentType == schema.ContentTypeDirectory {
 				continue
 			}
+
 			// The backend only special-cases text/directory when listing; any
 			// other requested type (e.g. "image" for "image/*") still needs to
 			// be matched against the object's actual content type here.
-			if reqType != "" && reqType != schema.ContentTypeDirectory && !strings.HasPrefix(object.ContentType, reqType) {
+			if reqType != "" && !strings.HasPrefix(object.ContentType, reqType) {
 				continue
 			}
 			if err := filer.enqueueIndexObject(ctx, object.ObjectKey, force); err != nil {
 				return err
 			}
+			total++
 		}
 
+		// Report progress to the callback, if provided
+		if callback != nil {
+			callback(total)
+		}
+
+		// If the iterator is done, break out of the loop
 		if done {
 			break
 		}

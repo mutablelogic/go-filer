@@ -112,18 +112,18 @@ func TestVolumeReindexObject(t *testing.T) {
 	require.Eventually(func() bool {
 		return mgr.ReindexVolume(ctx, "test_volume_reindex", schema.ObjectListFilters{
 			Path: types.Ptr("object.txt"),
-		}, false) == nil
+		}, false, nil) == nil
 	}, 5*time.Second, 20*time.Millisecond, "volume did not mount in time")
 
 	// Reindexing a directory should still work as before
 	err = mgr.ReindexVolume(ctx, "test_volume_reindex", schema.ObjectListFilters{
 		Path: types.Ptr("subdir"),
-	}, false)
+	}, false, nil)
 	require.NoError(err)
 
 	// Reindexing a path that doesn't exist should fail
 	err = mgr.ReindexVolume(ctx, "test_volume_reindex", schema.ObjectListFilters{
 		Path: types.Ptr("does-not-exist"),
-	}, false)
+	}, false, nil)
 	require.Error(err)
 }
