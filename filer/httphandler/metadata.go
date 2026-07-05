@@ -13,38 +13,63 @@ import (
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
-	openapi "github.com/mutablelogic/go-server/pkg/openapi"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
-// LIFECYCLE
+// TYPES
 
-func RegisterMetadataHandlers(manager *manager.Manager, router *httprouter.Router) error {
-	router.Spec().AddTag("Metadata", "Metadata Operations")
-
-	return errors.Join(
-		router.RegisterPath("metadata", nil, httprequest.NewPathItem("Metadata", "Manage metadata").
-			Post(
-				func(w http.ResponseWriter, r *http.Request) {
-					_ = GetMetadata(w, r, manager)
-				},
-				"Extract metadata for a file",
-				openapi.WithTags("Metadata"),
-				openapi.WithMultipartRequest(jsonschema.MustFor[metadataRequest]()),
-				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.ObjectMeta]()),
-			),
-		),
-	)
+type metadataRequest struct {
+	File types.File `json:"file" help:"The file to extract metadata from" validate:"required"`
 }
-
-///////////////////////////////////////////////////////////////////////////////
-// PUBLIC METHODS
 
 type fileReader struct {
 	reader io.Reader
 	name   string
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// LIFECYCLE
+
+// RegisterMetadataHandlers registers the metadata handlers
+func RegisterMetadataHandlers(manager *manager.Filer, router *httprouter.Router) error {
+	router.Spec().AddTag("Metadata", documentation.Section(2, "Metadata Operations").Body)
+	return errors.Join(
+		router.Register("metadata", nil, func(path httprequest.PathItem) {
+			path.Tag("Metadata")
+
+			// POST
+			path.Post(func(w http.ResponseWriter, r *http.Request) {
+				var req metadataRequest
+				if err := httprequest.Read(r, &req); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err))
+					return
+				}
+				if req.File.Body == nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(`missing or unreadable "file" form field`))
+					return
+				}
+				defer req.File.Body.Close()
+
+				reader := fileReader{reader: req.File.Body, name: req.File.Path}
+				if resp, err := manager.GetMetadata(r.Context(), reader); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err))
+				} else {
+					httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("Extract Metadata")
+				op.Description(documentation.Section(3, "POST /metadata").Body)
+				op.RequestBody(jsonschema.MustFor[metadataRequest](), types.ContentTypeFormData)
+				op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.ObjectMeta](), "Extracted metadata")
+				op.ErrorResponse(http.StatusBadRequest, "Missing or unreadable file, or unrecognised content")
+			})
+		}),
+	)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
 
 func (r fileReader) Read(p []byte) (int, error) {
 	if r.reader == nil {
@@ -62,26 +87,4 @@ func (r fileReader) Seek(offset int64, whence int) (int64, error) {
 		return s.Seek(offset, whence)
 	}
 	return 0, errors.New("not seekable")
-}
-
-type metadataRequest struct {
-	File types.File `json:"file" help:"The file to extract metadata from" validate:"required"`
-}
-
-func GetMetadata(w http.ResponseWriter, r *http.Request, manager *manager.Manager) error {
-	var req metadataRequest
-	if err := httprequest.Read(r, &req); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), nil)
-	}
-	if req.File.Body == nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(`missing or unreadable "file" form field`), nil)
-	}
-	defer req.File.Body.Close()
-
-	reader := fileReader{reader: req.File.Body, name: req.File.Path}
-	if resp, err := manager.GetMetadata(r.Context(), reader); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), nil)
-	} else {
-		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
-	}
 }

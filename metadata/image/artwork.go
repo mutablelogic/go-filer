@@ -3,19 +3,21 @@ package image
 import (
 	"bytes"
 	"image"
-	_ "image/gif"
-	"image/jpeg"
-	"image/png"
 	"io"
 	"slices"
 	"strings"
 
+	_ "image/gif"
+	"image/jpeg"
+	"image/png"
+
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
+
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	metadata "github.com/mutablelogic/go-filer/metadata"
-	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/tiff"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

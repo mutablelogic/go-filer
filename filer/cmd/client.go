@@ -1,22 +1,22 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 
 	// Packages
+
 	otel "github.com/mutablelogic/go-client/pkg/otel"
+	google "github.com/mutablelogic/go-filer/backend/google"
+	credentialcmd "github.com/mutablelogic/go-filer/credential/cmd"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
 	types "github.com/mutablelogic/go-server/pkg/types"
-	term "golang.org/x/term"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -28,8 +28,9 @@ type ClientCommands struct {
 	VolumeClientCommands
 	MetadataClientCommands
 	ArtworkClientCommands
-	CredentialClientCommands
 	LLMProviderClientCommands
+	GoogleClientCommands
+	credentialcmd.ClientCommands
 }
 
 type ObjectClientCommands struct {
@@ -61,13 +62,6 @@ type ArtworkClientCommands struct {
 	ArtworkCreate ArtworkCreateCmd `cmd:"" name:"artwork-upload" help:"Upload a new artwork." group:"ARTWORK"`
 }
 
-type CredentialClientCommands struct {
-	CredentialList   CredentialListCmd   `cmd:"" name:"credentials" help:"List credential keys." group:"CREDENTIAL"`
-	CredentialGet    CredentialGetCmd    `cmd:"" name:"credential-get" help:"Get a credential by key." group:"CREDENTIAL"`
-	CredentialCreate CredentialCreateCmd `cmd:"" name:"credential-set" help:"Create or update a credential from stdin." group:"CREDENTIAL"`
-	CredentialDelete CredentialDeleteCmd `cmd:"" name:"credential-delete" help:"Delete a credential by key." group:"CREDENTIAL"`
-}
-
 type LLMProviderClientCommands struct {
 	LLMProviderCreate LLMProviderCreateCmd `cmd:"" name:"llm-create" help:"Create or update an LLM provider." group:"LLM PROVIDER"`
 }
@@ -80,26 +74,12 @@ type MetadataCmd struct {
 	Path string `arg:"" name:"path" type:"file" help:"Path to the local file."`
 }
 
-type CredentialCreateCmd struct {
-	Json bool   `name:"json" help:"Interpret the credential value as JSON." negatable:""`
-	Key  string `arg:"" name:"key" help:"Credential key (identifier)."`
-}
-
-type CredentialGetCmd struct {
-	Json bool   `name:"json" help:"Output string credentials as JSON strings." negatable:""`
-	Key  string `arg:"" name:"key" help:"Credential key (identifier)."`
-}
-
-type CredentialListCmd struct {
-	schema.CredentialListRequest
-}
-
-type CredentialDeleteCmd struct {
-	Key string `arg:"" name:"key" help:"Credential key (identifier)."`
-}
-
 type LLMProviderCreateCmd struct {
 	schema.LLMProviderCreate
+}
+
+type GoogleClientCommands struct {
+	GoogleLogin GoogleLoginCmd `cmd:"" name:"google-login" help:"Login to the Google." group:"GOOGLE"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -110,6 +90,21 @@ func withClient(ctx server.Cmd, span string, fn func(context.Context, *httpclien
 	if err != nil {
 		return err
 	} else if client, err := httpclient.New(endpoint, opts...); err != nil {
+		return err
+	} else {
+		var err error
+		ctx, endfn := otel.StartSpan(ctx.Tracer(), ctx.Context(), span)
+		defer func() { endfn(err) }()
+		err = fn(ctx, client)
+		return err
+	}
+}
+
+func withGoogleClient(ctx server.Cmd, span string, fn func(context.Context, *google.Client) error) error {
+	_, opts, err := ctx.ClientEndpoint()
+	if err != nil {
+		return err
+	} else if client, err := google.New(opts...); err != nil {
 		return err
 	} else {
 		var err error
@@ -259,6 +254,7 @@ type VolumeDeleteCmd struct {
 type VolumeReindexCmd struct {
 	VolumeGetCmd
 	schema.ObjectListFilters
+	Force bool `json:"force" short:"f" help:"Force reindexing of all objects, even if they are already indexed"`
 }
 
 func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
@@ -416,7 +412,7 @@ func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
 func (cmd *VolumeReindexCmd) Run(ctx server.Cmd) error {
 	// Perform the request
 	return withClient(ctx, "volume-reindex", func(ctx context.Context, client *httpclient.Client) error {
-		if err := client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters); err != nil {
+		if err := client.ReindexVolume(ctx, cmd.Name, cmd.ObjectListFilters, cmd.Force); err != nil {
 			return err
 		}
 		return nil
@@ -473,133 +469,6 @@ func (cmd *ArtworkCreateCmd) Run(ctx server.Cmd) error {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// CREDENTIAL COMMANDS
-
-func (cmd *CredentialListCmd) Run(ctx server.Cmd) error {
-	// Set the width of the terminal
-	width := ctx.IsTerm()
-	debug := ctx.IsDebug()
-
-	// Perform the request
-	return withClient(ctx, "credentials", func(ctx context.Context, client *httpclient.Client) error {
-		credentials, err := client.ListCredentials(ctx, cmd.CredentialListRequest)
-		if err != nil {
-			return err
-		}
-
-		// With debugging
-		if debug {
-			fmt.Println(credentials)
-			return nil
-		}
-
-		// Credentials list table
-		table := tui.TableFor[*schema.Credential](tui.SetWidth(width))
-		if _, err := table.Write(os.Stdout, credentials.Body...); err != nil {
-			return err
-		}
-
-		// Credentials list summary
-		summary := tui.TableSummary("credentials", uint(credentials.Count), uint(len(credentials.Body)), credentials.Offset, credentials.Limit)
-		if _, err := summary.Write(os.Stdout); err != nil {
-			return err
-		}
-
-		return nil
-	})
-}
-
-func (cmd *CredentialCreateCmd) Run(ctx server.Cmd) error {
-	credentials, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())), "Credential: ")
-	if err != nil {
-		return err
-	}
-	credentials = bytes.TrimSpace(credentials)
-	if len(credentials) == 0 {
-		return fmt.Errorf("credential value is required")
-	}
-
-	var credentialValue any = string(credentials)
-	if cmd.Json {
-		if err := json.Unmarshal(credentials, &credentialValue); err != nil {
-			return err
-		}
-	}
-
-	// Perform the request
-	return withClient(ctx, "credential-set", func(ctx context.Context, client *httpclient.Client) error {
-		credential, err := client.CreateCredential(ctx, schema.CredentialCreate{
-			CredentialKey: schema.CredentialKey{
-				Key: cmd.Key,
-			},
-			Credentials: credentialValue,
-		})
-		if err != nil {
-			return err
-		}
-
-		fmt.Println(credential)
-		return nil
-	})
-}
-
-func (cmd *CredentialGetCmd) Run(ctx server.Cmd) error {
-	passphrase, err := readCredential(term.IsTerminal(int(os.Stdin.Fd())), "Passphrase: ")
-	if err != nil {
-		return err
-	}
-	passphrase = bytes.TrimSpace(passphrase)
-	if len(passphrase) == 0 {
-		return fmt.Errorf("passphrase is required")
-	}
-
-	// Perform the request
-	return withClient(ctx, "credential-get", func(ctx context.Context, client *httpclient.Client) error {
-		var credential any
-		if err := client.GetCredential(ctx, schema.CredentialKey{Key: cmd.Key}, string(passphrase), &credential); err != nil {
-			return err
-		}
-
-		return writeCredential(os.Stdout, credential, cmd.Json)
-	})
-}
-
-func (cmd *CredentialDeleteCmd) Run(ctx server.Cmd) error {
-	// Perform the request
-	return withClient(ctx, "credential-delete", func(ctx context.Context, client *httpclient.Client) error {
-		credential, err := client.DeleteCredential(ctx, schema.CredentialKey{Key: cmd.Key})
-		if err != nil {
-			return err
-		}
-
-		fmt.Println(credential)
-		return nil
-	})
-}
-
-func readCredential(isTerm bool, prompt string) ([]byte, error) {
-	if isTerm {
-		fmt.Fprint(os.Stderr, prompt)
-		value, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
-		return value, err
-	} else {
-		return io.ReadAll(os.Stdin)
-	}
-}
-
-func writeCredential(w io.Writer, credential any, jsonString bool) error {
-	if value, ok := credential.(string); ok && !jsonString {
-		_, err := fmt.Fprintln(w, value)
-		return err
-	}
-
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(credential)
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // LLM PROVIDER COMMANDS
 
 func (cmd *LLMProviderCreateCmd) Run(ctx server.Cmd) error {
@@ -614,3 +483,105 @@ func (cmd *LLMProviderCreateCmd) Run(ctx server.Cmd) error {
 		return nil
 	})
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// GOOGLE CLIENT COMMANDS
+
+type GoogleLoginCmd struct {
+	ReadOnly     bool   `name:"read-only" help:"Request read-only access to Google Drive." negatable:""`
+	ClientID     string `name:"client-id" help:"Google OAuth2 client ID." env:"GOOGLE_CLIENT_ID"`
+	ClientSecret string `name:"client-secret" help:"Google OAuth2 client secret." env:"GOOGLE_CLIENT_SECRET"`
+}
+
+/*
+func (cmd *GoogleLoginCmd) Run(globals server.Cmd) error {
+	logger := globals.Logger()
+
+	// Perform the request
+	return withClient(globals, "google-login", func(ctx context.Context, filerclient *httpclient.Client) error {
+		return withGoogleClient(globals, "google-login", func(ctx context.Context, client *google.Client) error {
+			config, err := client.DiscoverConfig(ctx)
+			if err != nil {
+				return err
+			}
+
+			// Get server metadata for flow
+			oauthconfig, err := config.AuthorizationCodeConfig()
+			if err != nil {
+				return err
+			}
+
+			// Create the callback listener first so the resolved loopback URL, including
+			// any auto-selected port, is used consistently for registration and the auth flow.
+			callback, err := webcallback.New("http://localhost/")
+			if err != nil {
+				return err
+			}
+
+			// Determine scopes for the authorization flow
+			scopes := []string{"https://www.googleapis.com/auth/drive"}
+			if cmd.ReadOnly {
+				scopes = []string{"https://www.googleapis.com/auth/drive.readonly"}
+			}
+			flow, err := oidc.NewAuthorizationCodeFlow(oauthconfig, cmd.ClientID, callback.URL(), scopes...)
+			if err != nil {
+				return err
+			}
+
+			authURL, err := url.Parse(flow.AuthorizationURL)
+			if err != nil {
+				return err
+			}
+
+			// Google only issues a refresh token when access_type=offline is set.
+			// prompt=consent forces re-consent so a refresh token is returned even
+			// if the user has previously authorized this client.
+			q := authURL.Query()
+			q.Set("access_type", "offline")
+			q.Set("prompt", "consent")
+			authURL.RawQuery = q.Encode()
+			flow.AuthorizationURL = authURL.String()
+
+			// In parallel, open the browser to the authorization URL and wait for the callback to be received,
+			// then exchange the code for a token and store it
+			g, groupCtx := errgroup.WithContext(ctx)
+			g.Go(func() error {
+				result, err := callback.Run(groupCtx)
+				if err != nil {
+					return err
+				}
+				code, err := flow.ValidateCallback(result.Query.Get("code"), result.Query.Get("state"))
+				if err != nil {
+					return err
+				}
+				token, err := client.ExchangeCode(groupCtx, flow, code, cmd.ClientSecret)
+				if err != nil {
+					return err
+				}
+				fmt.Println(types.Stringify(token))
+
+				credential, err := filerclient.CreateCredential(groupCtx, schema.CredentialCreate{
+					CredentialKey: schema.CredentialKey{
+						Key: "google",
+					},
+					Credentials: token,
+				})
+				if err != nil {
+					return err
+				}
+
+				logger.DebugContext(ctx, "Stored credential", "credential", credential)
+				return nil
+			})
+			g.Go(func() error {
+				logger.DebugContext(ctx, "Opening browser for authorization code flow", "url", flow.AuthorizationURL)
+				return browser.OpenURL(flow.AuthorizationURL)
+			})
+			if err := g.Wait(); err != nil {
+				return err
+			}
+			return nil
+		})
+	})
+}
+*/

@@ -108,7 +108,7 @@ func (e *textextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^text/plain$`)
 }
 
-func (e *textextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *textextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := NewTextSummarizer(ctx)
 	if err != nil {

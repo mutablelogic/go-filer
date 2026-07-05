@@ -15,15 +15,15 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) CreateArtwork(ctx context.Context, req schema.ArtworkMeta, object *schema.ObjectKey) (_ *schema.Artwork, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "CreateArtwork",
+func (filer *Filer) CreateArtwork(ctx context.Context, req schema.ArtworkMeta, object *schema.ObjectKey) (_ *schema.Artwork, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "CreateArtwork",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
 
 	// Create the artwork in a transaction
 	var result schema.Artwork
-	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+	if err := filer.PoolConn.Tx(ctx, func(conn pg.Conn) error {
 		if err := conn.Insert(ctx, &result, req); err != nil {
 			return err
 		}
@@ -43,15 +43,15 @@ func (manager *Manager) CreateArtwork(ctx context.Context, req schema.ArtworkMet
 	return types.Ptr(result), nil
 }
 
-func (manager *Manager) LinkArtwork(ctx context.Context, object schema.ObjectKey, artwork schema.ArtworkKey) (_ *schema.ObjectArtwork, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "LinkArtwork",
+func (filer *Filer) LinkArtwork(ctx context.Context, object schema.ObjectKey, artwork schema.ArtworkKey) (_ *schema.ObjectArtwork, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "LinkArtwork",
 		attribute.String("object", types.Stringify(object)),
 		attribute.String("artwork", string(artwork)),
 	)
 	defer func() { endSpan(err) }()
 
 	var result schema.ObjectArtwork
-	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+	if err := filer.PoolConn.Tx(ctx, func(conn pg.Conn) error {
 		return conn.Insert(ctx, &result, schema.ObjectArtwork{
 			ObjectKey:  object,
 			ArtworkKey: artwork,
@@ -62,15 +62,15 @@ func (manager *Manager) LinkArtwork(ctx context.Context, object schema.ObjectKey
 	return types.Ptr(result), nil
 }
 
-func (manager *Manager) UnlinkArtwork(ctx context.Context, object schema.ObjectKey, artwork schema.ArtworkKey) (_ *schema.ObjectArtwork, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "UnlinkArtwork",
+func (filer *Filer) UnlinkArtwork(ctx context.Context, object schema.ObjectKey, artwork schema.ArtworkKey) (_ *schema.ObjectArtwork, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "UnlinkArtwork",
 		attribute.String("object", types.Stringify(object)),
 		attribute.String("artwork", string(artwork)),
 	)
 	defer func() { endSpan(err) }()
 
 	var result schema.ObjectArtwork
-	if err := manager.PoolConn.Tx(ctx, func(conn pg.Conn) error {
+	if err := filer.PoolConn.Tx(ctx, func(conn pg.Conn) error {
 		return conn.Delete(ctx, &result, schema.ObjectArtwork{
 			ObjectKey:  object,
 			ArtworkKey: artwork,
@@ -81,8 +81,8 @@ func (manager *Manager) UnlinkArtwork(ctx context.Context, object schema.ObjectK
 	return types.Ptr(result), nil
 }
 
-func (manager *Manager) GetArtwork(ctx context.Context, req schema.GetArtworkRequest) (_ *schema.Artwork, err error) {
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "GetArtwork",
+func (filer *Filer) GetArtwork(ctx context.Context, req schema.GetArtworkRequest) (_ *schema.Artwork, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "GetArtwork",
 		attribute.String("req", types.Stringify(req)),
 	)
 	defer func() { endSpan(err) }()
@@ -91,7 +91,7 @@ func (manager *Manager) GetArtwork(ctx context.Context, req schema.GetArtworkReq
 	// to avoid pulling the binary data when a 304 will be returned.
 	if req.IfModifiedSince != nil || req.IfNoneMatch != nil {
 		var info schema.ArtworkInfo
-		if err := manager.PoolConn.Get(ctx, &info, schema.ArtworkInfoKey(req.Key)); err != nil {
+		if err := filer.PoolConn.Get(ctx, &info, schema.ArtworkInfoKey(req.Key)); err != nil {
 			return nil, pg.NormalizeError(err)
 		}
 		if req.IfNoneMatch != nil && (*req.IfNoneMatch == "*" || *req.IfNoneMatch == string(info.ETag)) {
@@ -104,7 +104,7 @@ func (manager *Manager) GetArtwork(ctx context.Context, req schema.GetArtworkReq
 
 	// Fetch the full artwork including binary data
 	var result schema.Artwork
-	if err := manager.PoolConn.Get(ctx, &result, req.Key); err != nil {
+	if err := filer.PoolConn.Get(ctx, &result, req.Key); err != nil {
 		return nil, pg.NormalizeError(err)
 	}
 

@@ -13,146 +13,146 @@ import (
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
-	openapi "github.com/mutablelogic/go-server/pkg/openapi"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type VolumePathParams struct {
-	Name string `json:"name" help:"Volume name" required:""`
+type VolumeName struct {
+	Volume string `json:"volume" help:"Volume name"`
+}
+
+type VolumeReindexQuery struct {
+	Force bool `json:"force" help:"Force reindexing of all objects, even if they are already indexed" optional:"true"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-func RegisterVolumeHandlers(manager *manager.Manager, router *httprouter.Router) error {
-	router.Spec().AddTag("Volumes", "Volume Operations")
-
+// RegisterVolumeHandlers registers the volume handlers
+func RegisterVolumeHandlers(manager *manager.Filer, router *httprouter.Router) error {
+	router.Spec().AddTag("Volumes", documentation.Section(2, "Volume Operations").Body)
 	return errors.Join(
-		router.RegisterPath("volume", nil, httprequest.NewPathItem("Volumes", "Manage volumes").
-			Get(
-				func(w http.ResponseWriter, r *http.Request) {
-					_ = ListVolumes(w, r, manager)
-				},
-				"List volumes",
-				openapi.WithTags("Volumes"),
-				openapi.WithJSONRequest(jsonschema.MustFor[schema.VolumeListRequest]()),
-				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.VolumeList]()),
-			).
-			Post(
-				func(w http.ResponseWriter, r *http.Request) {
-					_ = CreateVolume(w, r, manager)
-				},
-				"Create volume",
-				openapi.WithTags("Volumes"),
-				openapi.WithJSONRequest(jsonschema.MustFor[schema.VolumeCreate]()),
-				openapi.WithJSONResponse(http.StatusCreated, jsonschema.MustFor[schema.Volume]()),
-			),
-		),
-		router.RegisterPath("volume/{name}", nil, httprequest.NewPathItem("Volumes", "Manage a volume").
-			Get(
-				func(w http.ResponseWriter, r *http.Request) {
-					_ = GetVolume(w, r, manager, r.PathValue("name"))
-				},
-				"Get volume",
-				openapi.WithTags("Volumes"),
-				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume]()),
-			).
-			Delete(
-				func(w http.ResponseWriter, r *http.Request) {
-					_ = DeleteVolume(w, r, manager, r.PathValue("name"))
-				},
-				"Delete volume",
-				openapi.WithTags("Volumes"),
-				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume]()),
-			).
-			Patch(
-				func(w http.ResponseWriter, r *http.Request) {
-					_ = UpdateVolume(w, r, manager, r.PathValue("name"))
-				},
-				"Mount or unmount a volume, change parameters",
-				openapi.WithTags("Volumes"),
-				openapi.WithJSONRequest(jsonschema.MustFor[schema.VolumeMeta]()),
-				openapi.WithJSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume]()),
-			),
-		),
-		router.RegisterPath("volume/{name}/reindex", nil, httprequest.NewPathItem("Volumes", "Reindex objects in a volume").
-			Post(
-				func(w http.ResponseWriter, r *http.Request) {
-					_ = ReindexVolume(w, r, manager, r.PathValue("name"))
-				},
-				"Reindex a volume",
-				openapi.WithTags("Volumes"),
-				openapi.WithJSONRequest(jsonschema.MustFor[schema.ObjectListFilters]()),
-				openapi.WithNoContentResponse(http.StatusNoContent, "Reindexing started"),
-			),
-		),
+		router.Register("volume", nil, func(path httprequest.PathItem) {
+			path.Tag("Volumes")
+
+			// GET
+			path.Get(func(w http.ResponseWriter, r *http.Request) {
+				var req schema.VolumeListRequest
+				if err := httprequest.Query(r.URL.Query(), &req); err != nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+				} else if resp, err := manager.ListVolumes(r.Context(), req); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
+				} else {
+					httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("List Volumes")
+				op.Description(documentation.Section(3, "GET /volume").Body)
+				op.Query(jsonschema.MustFor[schema.VolumeListRequest]())
+				op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.VolumeList](), "List of volumes")
+				op.ErrorResponse(http.StatusBadRequest, "Invalid request")
+			})
+
+			// POST
+			path.Post(func(w http.ResponseWriter, r *http.Request) {
+				var meta schema.VolumeCreate
+				if err := httprequest.Read(r, &meta); err != nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+				} else if url_, err := url.Parse(meta.URL); err != nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+				} else if volume, err := manager.CreateVolume(r.Context(), url_, meta.VolumeMeta); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), meta.URL)
+				} else {
+					httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), volume)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("Create Volume")
+				op.Description(documentation.Section(3, "POST /volume").Body)
+				op.RequestBody(jsonschema.MustFor[schema.VolumeCreate]())
+				op.JSONResponse(http.StatusCreated, jsonschema.MustFor[schema.Volume](), "Created volume")
+				op.ErrorResponse(http.StatusBadRequest, "Invalid request, or unsupported backend URL")
+				op.ErrorResponse(http.StatusConflict, "A volume with that name already exists")
+			})
+		}),
+		router.Register("volume/{volume}", jsonschema.MustFor[VolumeName](), func(path httprequest.PathItem) {
+			path.Tag("Volumes")
+
+			// GET
+			path.Get(func(w http.ResponseWriter, r *http.Request) {
+				if volume, err := manager.GetVolume(r.Context(), r.PathValue("volume")); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("volume"))
+				} else {
+					httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("Get Volume")
+				op.Description(documentation.Section(3, "GET /volume/{volume}").Body)
+				op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume](), "Volume")
+				op.ErrorResponse(http.StatusNotFound, "Volume not found")
+			})
+
+			// DELETE
+			path.Delete(func(w http.ResponseWriter, r *http.Request) {
+				if volume, err := manager.DeleteVolume(r.Context(), r.PathValue("volume")); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("volume"))
+				} else {
+					httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("Delete Volume")
+				op.Description(documentation.Section(3, "DELETE /volume/{volume}").Body)
+				op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume](), "Deleted volume")
+				op.ErrorResponse(http.StatusNotFound, "Volume not found")
+				op.ErrorResponse(http.StatusConflict, "Volume must be unmounted before it can be deleted")
+			})
+
+			// PATCH
+			path.Patch(func(w http.ResponseWriter, r *http.Request) {
+				var meta schema.VolumeMeta
+				if err := httprequest.Read(r, &meta); err != nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+				} else if volume, err := manager.UpdateVolume(r.Context(), r.PathValue("volume"), meta); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("volume"))
+				} else {
+					httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("Update Volume")
+				op.Description(documentation.Section(3, "PATCH /volume/{volume}").Body)
+				op.RequestBody(jsonschema.MustFor[schema.VolumeMeta]())
+				op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume](), "Updated volume")
+				op.ErrorResponse(http.StatusBadRequest, "Invalid request")
+				op.ErrorResponse(http.StatusNotFound, "Volume not found")
+			})
+		}),
+		router.Register("volume/{volume}/reindex", jsonschema.MustFor[VolumeName](), func(path httprequest.PathItem) {
+			path.Tag("Volumes")
+
+			// POST
+			path.Post(func(w http.ResponseWriter, r *http.Request) {
+				var req schema.ObjectListFilters
+				var query VolumeReindexQuery
+				if err := httprequest.Query(r.URL.Query(), &query); err != nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+				} else if err := httprequest.Read(r, &req); err != nil {
+					httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
+				} else if err := manager.ReindexVolume(r.Context(), r.PathValue("volume"), req, query.Force); err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
+				} else {
+					httpresponse.Empty(w, http.StatusNoContent)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("Reindex Volume")
+				op.Description(documentation.Section(3, "POST /volume/{volume}/reindex").Body)
+				op.Query(jsonschema.MustFor[VolumeReindexQuery]())
+				op.RequestBody(jsonschema.MustFor[schema.ObjectListFilters]())
+				op.Response(http.StatusNoContent, "", "Reindexing started")
+				op.ErrorResponse(http.StatusBadRequest, "Invalid request")
+				op.ErrorResponse(http.StatusNotFound, "Volume not found")
+				op.ErrorResponse(http.StatusServiceUnavailable, "Volume not mounted or not indexed")
+			})
+		}),
 	)
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// PUBLIC METHODS
-
-func GetVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, name string) error {
-	if volume, err := manager.GetVolume(r.Context(), name); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), name)
-	} else {
-		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
-	}
-}
-
-func UpdateVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, name string) error {
-	var meta schema.VolumeMeta
-	if err := httprequest.Read(r, &meta); err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	} else if volume, err := manager.UpdateVolume(r.Context(), name, meta); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), name)
-	} else {
-		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
-	}
-}
-
-func ListVolumes(w http.ResponseWriter, r *http.Request, manager *manager.Manager) error {
-	var req schema.VolumeListRequest
-	if err := httprequest.Query(r.URL.Query(), &req); err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	} else if resp, err := manager.ListVolumes(r.Context(), req); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
-	} else {
-		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), resp)
-	}
-}
-
-func DeleteVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, name string) error {
-	if volume, err := manager.DeleteVolume(r.Context(), name); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), name)
-	} else {
-		return httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
-	}
-}
-
-func CreateVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager) error {
-	var meta schema.VolumeCreate
-	if err := httprequest.Read(r, &meta); err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	} else if url_, err := url.Parse(meta.URL); err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	} else if volume, err := manager.CreateVolume(r.Context(), url_, meta.VolumeMeta); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), meta.URL)
-	} else {
-		return httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), volume)
-	}
-}
-
-func ReindexVolume(w http.ResponseWriter, r *http.Request, manager *manager.Manager, volume string) error {
-	var req schema.ObjectListFilters
-	if err := httprequest.Read(r, &req); err != nil {
-		return httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()))
-	} else if err := manager.ReindexVolume(r.Context(), volume, req); err != nil {
-		return httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
-	} else {
-		return httpresponse.Empty(w, http.StatusNoContent)
-	}
 }

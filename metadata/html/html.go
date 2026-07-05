@@ -34,7 +34,7 @@ func (e *htmlextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^text/(x)?html$`)
 }
 
-func (e *htmlextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *htmlextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}

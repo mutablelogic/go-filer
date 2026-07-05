@@ -38,7 +38,7 @@ func (e *jsonextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^application/json$`)
 }
 
-func (e *jsonextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *jsonextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {

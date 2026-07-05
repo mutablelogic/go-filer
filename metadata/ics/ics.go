@@ -32,7 +32,7 @@ func (e *icsextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^text/calendar$`)
 }
 
-func (e *icsextractor) ExtractMetadata(_ context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *icsextractor) ExtractMetadata(_ context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	props := parse(r)
 
 	var (

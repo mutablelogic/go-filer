@@ -5,7 +5,8 @@ import (
 	"fmt"
 
 	// Packages
-	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
+	credentialhttphandler "github.com/mutablelogic/go-filer/credential/httphandler"
+	filerhttphandler "github.com/mutablelogic/go-filer/filer/httphandler"
 	manager "github.com/mutablelogic/go-filer/filer/manager"
 	pg "github.com/mutablelogic/go-pg"
 	pgcmd "github.com/mutablelogic/go-pg/pkg/cmd"
@@ -49,7 +50,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	ctx.Logger().InfoContext(ctx.Context(), "starting filer server", "name", ctx.Name(), "version", ctx.Version(), "indexer", runner.Indexer)
 
 	// Create the manager, run the server, and return any error
-	return runner.WithManager(ctx, conn, func(manager *manager.Manager) error {
+	return runner.WithManager(ctx, conn, func(manager *manager.Filer) error {
 		// Create an error context - which will cancel any other goroutine on exit
 		errgroup, errctx := errgroup.WithContext(ctx.Context())
 
@@ -57,13 +58,8 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 		runner.Register(func(router *httprouter.Router) error {
 			ctx.Logger().DebugContext(ctx.Context(), "registering http handlers")
 			return errors.Join(
-				httphandler.RegisterVolumeHandlers(manager, router),
-				httphandler.RegisterObjectHandlers(manager, router),
-				httphandler.RegisterSearchHandlers(manager, router),
-				httphandler.RegisterMetadataHandlers(manager, router),
-				httphandler.RegisterArtworkHandlers(manager, router),
-				httphandler.RegisterCredentialHandlers(manager, router),
-				httphandler.RegisterLLMProviderHandlers(manager, router),
+				filerhttphandler.RegisterHandlers(manager, router),
+				credentialhttphandler.RegisterHandlers(manager.Credentials, router),
 			)
 		})
 
@@ -90,7 +86,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*manager.Manager) error) error {
+func (runner *RunServer) WithManager(ctx server.Cmd, conn pg.PoolConn, fn func(*manager.Filer) error) error {
 	_, clientopts, err := ctx.ClientEndpoint()
 	if err != nil {
 		return err

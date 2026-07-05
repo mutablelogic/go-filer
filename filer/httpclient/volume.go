@@ -3,6 +3,7 @@ package httpclient
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -75,15 +76,21 @@ func (c *Client) DeleteVolume(ctx context.Context, name string) (*schema.Volume,
 	return types.Ptr(response), nil
 }
 
-func (c *Client) ReindexVolume(ctx context.Context, name string, meta schema.ObjectListFilters) error {
+func (c *Client) ReindexVolume(ctx context.Context, name string, meta schema.ObjectListFilters, force bool) error {
 	// Make the request payload
 	req, err := client.NewJSONRequest(meta)
 	if err != nil {
 		return err
 	}
 
+	// Make the query
+	query := url.Values{}
+	if force {
+		query.Set("force", "true")
+	}
+
 	// Perform request
-	if err := c.DoWithContext(ctx, req, nil, client.OptPath("volume", name, "reindex")); err != nil {
+	if err := c.DoWithContext(ctx, req, nil, client.OptPath("volume", name, "reindex"), client.OptQuery(query)); err != nil {
 		return err
 	}
 

@@ -14,16 +14,16 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (manager *Manager) GetMetadata(ctx context.Context, r io.Reader) (_ *schema.ObjectMeta, err error) {
+func (filer *Filer) GetMetadata(ctx context.Context, r io.Reader) (_ *schema.ObjectMeta, err error) {
 	name := "unknown"
 	if fr, ok := r.(metadata.FileReader); ok {
 		name = fr.Name()
 	}
-	ctx, endSpan := otel.StartSpan(manager.tracer, ctx, "GetMetadata",
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "GetMetadata",
 		attribute.String("name", name),
 	)
 	defer func() { endSpan(err) }()
 
 	// Return success
-	return manager.metadata.GetMeta(ctx, r)
+	return filer.metadata.GetMeta(ctx, r)
 }

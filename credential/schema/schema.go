@@ -1,0 +1,25 @@
+package schema
+
+import (
+	_ "embed"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// CONSTANTS
+
+const (
+	DefaultSchema = "credential"
+)
+
+const (
+	CredentialListLimit = 100
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+//go:embed objects.sql
+var Objects string
+
+//go:embed queries.sql
+var Queries string

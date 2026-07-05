@@ -37,7 +37,7 @@ func (e *audioextractor) MediaType() *regexp.Regexp {
 	return regexp.MustCompile(`^audio/.*`)
 }
 
-func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.Reader) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	reader, err := ffmpeg.NewReader(r)
 	if err != nil {
 		return nil, nil, err

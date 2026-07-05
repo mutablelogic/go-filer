@@ -45,7 +45,7 @@ func TestExtractMetadata(t *testing.T) {
   </rdf:RDF>
 </x:xmpmeta>`
 
-	meta, err := new(xmpextractor).ExtractMetadata(context.Background(), bytes.NewBufferString(sample))
+	meta, _, err := new(xmpextractor).ExtractMetadata(context.Background(), bytes.NewReader([]byte(sample)))
 	if err != nil {
 		t.Fatalf("ExtractMetadata() error = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestExtractMetadataPhotoshopDateCreated(t *testing.T) {
    </rdf:RDF>
 </x:xmpmeta>`
 
-	meta, err := new(xmpextractor).ExtractMetadata(context.Background(), bytes.NewBufferString(sample))
+	meta, _, err := new(xmpextractor).ExtractMetadata(context.Background(), bytes.NewReader([]byte(sample)))
 	if err != nil {
 		t.Fatalf("ExtractMetadata() error = %v", err)
 	}

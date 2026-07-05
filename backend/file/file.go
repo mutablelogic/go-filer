@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	mime "github.com/mutablelogic/go-filer/metadata/mime"
-	otel "github.com/mutablelogic/go-client/pkg/otel"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 	trace "go.opentelemetry.io/otel/trace"
@@ -224,7 +224,6 @@ func (self FileBackend) ListObjects(ctx context.Context, iterator *schema.Object
 	}
 
 	errPageFull := errors.New("page full")
-
 	n := uint64(0)
 	appendEntry := func(entryPath string, isDir bool) error {
 		defer func() { n++ }()

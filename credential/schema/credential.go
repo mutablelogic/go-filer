@@ -6,8 +6,8 @@ import (
 	"time"
 
 	// Packages
-	gofiler "github.com/mutablelogic/go-filer"
 	pg "github.com/mutablelogic/go-pg"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -42,6 +42,7 @@ type CredentialGet struct {
 
 type CredentialListRequest struct {
 	pg.OffsetLimit
+	Rotate *bool `json:"rotate,omitempty" help:"Return credentials that should be rotated to the latest passphrase version" negatable:""`
 }
 
 type CredentialList struct {
@@ -80,6 +81,9 @@ func (c CredentialList) String() string {
 
 func (r CredentialListRequest) Query() url.Values {
 	query := url.Values{}
+	if r.Rotate != nil {
+		query.Set("rotate", types.Stringify(types.Value(r.Rotate)))
+	}
 	if r.Offset > 0 {
 		query.Set("offset", types.Stringify(r.Offset))
 	}
@@ -116,7 +120,7 @@ func (r Credential) Cell(col int) string {
 
 func (c CredentialKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	if key := strings.TrimSpace(c.Key); !types.IsIdentifier(key) {
-		return "", gofiler.ErrBadParameter.With("credential key must be a non-empty identifier")
+		return "", httpresponse.ErrBadRequest.With("credential key must be a non-empty identifier")
 	} else {
 		bind.Set("key", key)
 	}
@@ -131,7 +135,7 @@ func (c CredentialKey) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	case pg.Delete:
 		return bind.Query("credential.delete"), nil
 	default:
-		return "", gofiler.ErrInternalServerError.Withf("unsupported CredentialKey operation %q", op)
+		return "", httpresponse.ErrInternalError.Withf("unsupported CredentialKey operation %q", op)
 	}
 }
 
@@ -140,9 +144,18 @@ func (c *CredentialListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) 
 
 	switch op {
 	case pg.List:
+		if c.Rotate != nil && bind.Has("latestpv") {
+			if *c.Rotate {
+				bind.Set("where", `WHERE "pv" != CAST(@latestpv AS INT)`)
+			} else {
+				bind.Set("where", `WHERE "pv" = CAST(@latestpv AS INT)`)
+			}
+		} else {
+			bind.Set("where", "")
+		}
 		return bind.Query("credential.list"), nil
 	default:
-		return "", gofiler.ErrInternalServerError.Withf("unsupported CredentialListRequest operation %q", op)
+		return "", httpresponse.ErrInternalError.Withf("unsupported CredentialListRequest operation %q", op)
 	}
 }
 
@@ -191,15 +204,15 @@ func (c *CredentialList) ScanCount(row pg.Row) error {
 
 func (c CredentialCreate) Insert(bind *pg.Bind) (string, error) {
 	if key := strings.TrimSpace(c.Key); !types.IsIdentifier(key) {
-		return "", gofiler.ErrBadParameter.With("credential key must be a non-empty identifier")
+		return "", httpresponse.ErrBadRequest.With("credential key must be a non-empty identifier")
 	} else {
 		bind.Set("key", key)
 	}
 
 	if isEmptyCredential(c.Credentials) {
-		return "", gofiler.ErrBadParameter.With("credentials are required")
+		return "", httpresponse.ErrBadRequest.With("credentials are required")
 	} else if !bind.Has("pv") {
-		return "", gofiler.ErrInternalServerError.With("credential create requires passphrase version binding")
+		return "", httpresponse.ErrInternalError.With("credential create requires passphrase version binding")
 	} else {
 		bind.Set("credentials", c.Credentials)
 	}
@@ -207,7 +220,7 @@ func (c CredentialCreate) Insert(bind *pg.Bind) (string, error) {
 }
 
 func (c CredentialCreate) Update(_ *pg.Bind) error {
-	return gofiler.ErrNotImplemented.With("CredentialCreate: update: not supported")
+	return httpresponse.ErrNotImplemented.With("CredentialCreate: update: not supported")
 }
 
 ///////////////////////////////////////////////////////////////////////////////
