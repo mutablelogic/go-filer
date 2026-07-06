@@ -51,15 +51,16 @@ type SearchClientCommands struct {
 }
 
 type VolumeClientCommands struct {
-	VolumeGet        VolumeGetCmd        `cmd:"" name:"volume" help:"Get a volume by name." group:"VOLUME"`
-	VolumeList       VolumeListCmd       `cmd:"" name:"volumes" help:"List server volumes." group:"VOLUME"`
-	VolumeCreateFile VolumeCreateFileCmd `cmd:"" name:"volume-create-file" help:"Create a new file-backed volume." group:"VOLUME"`
-	VolumeCreateS3   VolumeCreateS3Cmd   `cmd:"" name:"volume-create-s3" help:"Create a new S3-backed volume." group:"VOLUME"`
-	VolumeMount      VolumeMountCmd      `cmd:"" name:"volume-mount" help:"Mount a volume by name." group:"VOLUME"`
-	VolumeUnmount    VolumeUnmountCmd    `cmd:"" name:"volume-unmount" help:"Unmount a volume by name." group:"VOLUME"`
-	VolumeUpdate     VolumeUpdateCmd     `cmd:"" name:"volume-update" help:"Update a volume by name." group:"VOLUME"`
-	VolumeDelete     VolumeDeleteCmd     `cmd:"" name:"volume-delete" help:"Delete a volume by name." group:"VOLUME"`
-	VolumeReindex    VolumeReindexCmd    `cmd:"" name:"volume-reindex" help:"Reindex a volume by name." group:"VOLUME"`
+	VolumeGet          VolumeGetCmd          `cmd:"" name:"volume" help:"Get a volume by name." group:"VOLUME"`
+	VolumeList         VolumeListCmd         `cmd:"" name:"volumes" help:"List server volumes." group:"VOLUME"`
+	VolumeCreateFile   VolumeCreateFileCmd   `cmd:"" name:"volume-create-file" help:"Create a new file-backed volume." group:"VOLUME"`
+	VolumeCreateS3     VolumeCreateS3Cmd     `cmd:"" name:"volume-create-s3" help:"Create a new S3-backed volume." group:"VOLUME"`
+	VolumeCreateGoogle VolumeCreateGoogleCmd `cmd:"" name:"volume-create-google" help:"Create a new Google Drive-backed volume." group:"VOLUME"`
+	VolumeMount        VolumeMountCmd        `cmd:"" name:"volume-mount" help:"Mount a volume by name." group:"VOLUME"`
+	VolumeUnmount      VolumeUnmountCmd      `cmd:"" name:"volume-unmount" help:"Unmount a volume by name." group:"VOLUME"`
+	VolumeUpdate       VolumeUpdateCmd       `cmd:"" name:"volume-update" help:"Update a volume by name." group:"VOLUME"`
+	VolumeDelete       VolumeDeleteCmd       `cmd:"" name:"volume-delete" help:"Delete a volume by name." group:"VOLUME"`
+	VolumeReindex      VolumeReindexCmd      `cmd:"" name:"volume-reindex" help:"Reindex a volume by name." group:"VOLUME"`
 }
 
 type MetadataClientCommands struct {
@@ -445,6 +446,11 @@ type VolumeCreateS3Cmd struct {
 	SessionToken string   `name:"session-token" help:"AWS session token credential."`
 }
 
+type VolumeCreateGoogleCmd struct {
+	Name string `arg:"" name:"name" help:"Volume name."`
+	Path string `arg:"" name:"path" optional:"" help:"Path prefix within Google Drive. Defaults to the drive root."`
+}
+
 type VolumeMountCmd struct {
 	VolumeGetCmd
 }
@@ -550,6 +556,24 @@ func (cmd *VolumeCreateS3Cmd) Run(ctx server.Cmd) error {
 	return withClient(ctx, "volume-create-s3", func(ctx context.Context, client *httpclient.Client) error {
 		volume, err := client.CreateVolume(ctx, schema.VolumeCreate{
 			URL: cmd.URL.String(),
+			VolumeMeta: schema.VolumeMeta{
+				Enabled: types.Ptr(true),
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(volume)
+		return nil
+	})
+}
+
+func (cmd *VolumeCreateGoogleCmd) Run(ctx server.Cmd) error {
+	// Perform the request
+	return withClient(ctx, "volume-create-google", func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := client.CreateVolume(ctx, schema.VolumeCreate{
+			URL: "googledrive://" + cmd.Name + types.NormalisePath(cmd.Path),
 			VolumeMeta: schema.VolumeMeta{
 				Enabled: types.Ptr(true),
 			},
