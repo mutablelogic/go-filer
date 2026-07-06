@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"strings"
@@ -228,5 +229,57 @@ func (filer *Filer) ReindexVolume(ctx context.Context, name string, req schema.O
 	}
 
 	// Return success
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// pruneVolume considers objects which were indexed before the previous full volume reindex.
+func (filer *Filer) pruneVolume(ctx context.Context, volume *schema.Volume, callback func(total uint64)) (err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "PruneVolume",
+		attribute.String("volume", volume.Name),
+	)
+	defer func() { endSpan(err) }()
+
+	// Check the volume first
+	if types.Value(volume.Enabled) == false {
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", volume.Name)
+	} else if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is not indexed", volume.Name)
+	}
+
+	// Perform the request
+	req := schema.PruneObjectsRequest{
+		ObjectListRequest: schema.ObjectListRequest{
+			Volume: volume.Name,
+			OffsetLimit: pg.OffsetLimit{
+				Limit: types.Ptr(uint64(schema.ObjectListLimit)),
+			},
+		},
+		LastIndexed: volume.IndexedAt,
+	}
+	var total uint64
+	for {
+		var result schema.ObjectList
+		if err := filer.PoolConn.List(ctx, &result, &req); err != nil {
+			return pg.NormalizeError(err)
+		}
+		if len(result.Body) == 0 {
+			break
+		}
+
+		for _, object := range result.Body {
+			fmt.Println("pruning object", object.Path)
+			total++
+		}
+
+		if callback != nil {
+			callback(total)
+		}
+
+		req.Offset += uint64(len(result.Body))
+	}
+
 	return nil
 }

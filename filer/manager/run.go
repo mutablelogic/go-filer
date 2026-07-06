@@ -240,6 +240,15 @@ func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) err
 		return nil
 	}
 
+	// Prune any objects that were indexed before the last full reindex
+	if types.Value(result.Body[0].IndexDelta) > 0 && result.Body[0].IndexedAt != nil {
+		if err := filer.pruneVolume(ctx, result.Body[0], func(total uint64) {
+			logger.DebugContext(ctx, "Pruning volume", "name", backend.Name(), "total", total)
+		}); err != nil {
+			return err
+		}
+	}
+
 	// Touch indexed_at before reindexing so concurrent workers will not pick
 	// this volume as stale in the same scheduling window.
 	var touched schema.Volume

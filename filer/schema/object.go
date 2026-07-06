@@ -105,6 +105,11 @@ type ObjectListRequest struct {
 	ObjectListFilters
 }
 
+type PruneObjectsRequest struct {
+	ObjectListRequest
+	LastIndexed *time.Time `json:"last_indexed,omitempty"`
+}
+
 type ObjectListIterator struct {
 	Path      *string   `json:"path,omitempty"`                             // Path prefix within the backend
 	Type      *string   `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
@@ -252,6 +257,10 @@ func (r ObjectListFilters) String() string {
 }
 
 func (r ObjectListRequest) String() string {
+	return types.Stringify(r)
+}
+
+func (r PruneObjectsRequest) String() string {
 	return types.Stringify(r)
 }
 
@@ -557,10 +566,59 @@ func MatchesContentType(contentType, filter string) bool {
 
 func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Del("where")
+	if err := r.selectWhere(bind); err != nil {
+		return "", err
+	}
+
+	// Create the where
+	if where := bind.Join("where", " AND "); where != "" {
+		bind.Set("where", "WHERE "+where)
+	} else {
+		bind.Set("where", "")
+	}
+
+	r.OffsetLimit.Bind(bind, ObjectListLimit)
+
+	switch op {
+	case pg.List:
+		return bind.Query("filer.object_list"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectListRequest operation %q", op)
+	}
+}
+
+func (r *PruneObjectsRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	bind.Del("where")
+	if err := r.ObjectListRequest.selectWhere(bind); err != nil {
+		return "", err
+	}
+	if r.LastIndexed == nil || r.LastIndexed.IsZero() {
+		return "", httpresponse.ErrBadRequest.With("missing last indexed time")
+	}
+	bind.Append("where", `o."indexed_at" < `+bind.Set("last_indexed", *r.LastIndexed))
+
+	// Create the where
+	if where := bind.Join("where", " AND "); where != "" {
+		bind.Set("where", "WHERE "+where)
+	} else {
+		bind.Set("where", "")
+	}
+
+	r.OffsetLimit.Bind(bind, ObjectListLimit)
+
+	switch op {
+	case pg.List:
+		return bind.Query("filer.object_list"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported PruneObjectsRequest operation %q", op)
+	}
+}
+
+func (r *ObjectListRequest) selectWhere(bind *pg.Bind) error {
 
 	// Volume
 	if volume := strings.TrimSpace(r.Volume); !types.IsIdentifier(volume) {
-		return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
+		return httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
 	} else {
 		bind.Append("where", `o."volume" = `+bind.Set("volume", volume))
 	}
@@ -591,19 +649,5 @@ func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 		}
 	}
 
-	// Create the where
-	if where := bind.Join("where", " AND "); where != "" {
-		bind.Set("where", "WHERE "+where)
-	} else {
-		bind.Set("where", "")
-	}
-
-	r.OffsetLimit.Bind(bind, ObjectListLimit)
-
-	switch op {
-	case pg.List:
-		return bind.Query("filer.object_list"), nil
-	default:
-		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectListRequest operation %q", op)
-	}
+	return nil
 }
