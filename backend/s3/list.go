@@ -152,7 +152,7 @@ func (self *S3Backend) ListObjects(ctx context.Context, iterator *schema.ObjectL
 					ContentType: mime.TypeByExtension(path.Ext(objPath)),
 				},
 				ObjectAttr: schema.ObjectAttr{
-					Size: aws.ToInt64(item.Size),
+					Size: types.Ptr(aws.ToInt64(item.Size)),
 					ETag: stripETagQuotes(item.ETag),
 				},
 			}

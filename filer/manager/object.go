@@ -15,6 +15,7 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	metadataMime "github.com/mutablelogic/go-filer/metadata/mime"
 	pg "github.com/mutablelogic/go-pg"
 	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -155,8 +156,10 @@ func (filer *Filer) ListObjects(ctx context.Context, req schema.ObjectListReques
 	}
 
 	// Use the database index to return the objects
-	// TODO: We're not respecting the recursive flag here, and maybe not the
-	// directory flag either?
+	if types.Value(req.Type) == schema.ContentTypeDirectory {
+		return filer.listIndexedDirectories(ctx, req)
+	}
+
 	var result schema.ObjectList
 	if err := filer.PoolConn.List(ctx, &result, &req); err != nil {
 		return nil, err
@@ -167,6 +170,109 @@ func (filer *Filer) ListObjects(ctx context.Context, req schema.ObjectListReques
 
 	// Return success
 	return types.Ptr(result), nil
+}
+
+func (filer *Filer) listIndexedDirectories(ctx context.Context, req schema.ObjectListRequest) (*schema.ObjectList, error) {
+	objectReq := req
+	objectReq.Type = nil
+	objectReq.Recursive = true
+	objectReq.Offset = 0
+	objectReq.Limit = types.Ptr(uint64(schema.ObjectListLimit))
+
+	var objects schema.ObjectList
+	if err := filer.PoolConn.List(ctx, &objects, &objectReq); err != nil {
+		return nil, err
+	}
+
+	reqPath := strings.TrimPrefix(strings.TrimSuffix(types.NormalisePath(types.Value(req.Path)), "/"), "/")
+	seen := make(map[string]bool)
+	dirs := make([]*schema.Object, 0)
+	for _, obj := range objects.Body {
+		parts := strings.Split(obj.Path, "/")
+		for i := 1; i < len(parts); i++ {
+			dir := strings.Join(parts[:i], "/")
+			if dir == reqPath || seen[dir] {
+				continue
+			}
+			if reqPath != "" {
+				if !strings.HasPrefix(dir, reqPath+"/") {
+					continue
+				}
+				remainder := strings.TrimPrefix(dir, reqPath+"/")
+				if !req.Recursive && strings.Contains(remainder, "/") {
+					continue
+				}
+			} else if !req.Recursive && strings.Contains(dir, "/") {
+				continue
+			}
+			seen[dir] = true
+			dirs = append(dirs, &schema.Object{
+				ObjectKey: schema.ObjectKey{Volume: req.Volume, Path: dir},
+				ObjectMeta: schema.ObjectMeta{
+					ContentType: schema.ContentTypeDirectory,
+				},
+			})
+		}
+	}
+
+	result := schema.ObjectList{
+		ObjectListRequest: req,
+		Count:             len(dirs),
+		Body:              dirs,
+	}
+	result.OffsetLimit.Clamp(uint64(result.Count))
+	return types.Ptr(result), nil
+}
+
+func (filer *Filer) CreateObject(ctx context.Context, req schema.CreateObjectRequest, attr schema.ObjectAttr) (_ *schema.Object, _ bool, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "CreateObject",
+		attribute.String("req", types.Stringify(req)),
+		attribute.String("attr", types.Stringify(attr)),
+	)
+	defer func() {
+		if errors.Is(err, gofiler.ErrConflict) || errors.Is(err, gofiler.ErrNotModified) {
+			endSpan(nil)
+		} else {
+			endSpan(err)
+		}
+	}()
+
+	// Check the volume first
+	volume, err := filer.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, false, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, false, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := filer.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, false, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	created := false
+	current, err := backend.GetObject(ctx, schema.GetObjectRequest{
+		ObjectKey: req.ObjectKey,
+	})
+	if errors.Is(err, gofiler.ErrNotFound) {
+		created = true
+	} else if err != nil {
+		return nil, false, err
+	} else if req.IfNotExists {
+		return nil, false, gofiler.ErrConflict.Withf("object already exists: %q", req.Path)
+	} else if createObjectHasPreconditions(req, attr) && createObjectNotModified(current, attr) {
+		return current, false, gofiler.ErrNotModified
+	}
+
+	// Create the object in the backend. The backend owns IfNotExists semantics.
+	object, err := backend.CreateObject(ctx, req)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Kick off an indexing job for the object, and return the backend object.
+	return object, created, filer.enqueueIndexObject(ctx, object.ObjectKey, true)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -187,7 +293,30 @@ func (filer *Filer) touchObject(ctx context.Context, req schema.ObjectKey) (_ *s
 	return types.Ptr(result), nil
 }
 
+func createObjectHasPreconditions(req schema.CreateObjectRequest, attr schema.ObjectAttr) bool {
+	return req.IfNotExists || attr.ETag != nil || !attr.ModTime.IsZero()
+}
+
+func createObjectNotModified(current *schema.Object, attr schema.ObjectAttr) bool {
+	if current == nil {
+		return false
+	}
+	if attr.Size != nil && (current.Size == nil || types.Value(current.Size) != types.Value(attr.Size)) {
+		return false
+	}
+	if attr.ETag != nil {
+		return current.ETag != nil && types.Value(current.ETag) == types.Value(attr.ETag)
+	}
+	return !attr.ModTime.IsZero() && !current.ModTime.IsZero() && current.ModTime.Truncate(time.Second).Equal(attr.ModTime.Truncate(time.Second))
+}
+
 func (filer *Filer) enqueueIndexObject(ctx context.Context, key schema.ObjectKey, force bool) error {
+	if enabled, err := filer.indexingEnabled(ctx, key.Volume); err != nil {
+		return err
+	} else if !enabled {
+		return nil
+	}
+
 	payload, err := json.Marshal(indexObjectTask{ObjectKey: key, Force: force})
 	if err != nil {
 		return fmt.Errorf("failed to marshal index task: %w", err)
@@ -196,6 +325,14 @@ func (filer *Filer) enqueueIndexObject(ctx context.Context, key schema.ObjectKey
 		Payload: payload,
 	})
 	return err
+}
+
+func (filer *Filer) indexingEnabled(ctx context.Context, volume string) (bool, error) {
+	v, err := filer.GetVolume(ctx, volume)
+	if err != nil {
+		return false, err
+	}
+	return types.Value(v.IndexDelta) != 0, nil
 }
 
 func (filer *Filer) createObject(ctx context.Context, req schema.ObjectCreate, artwork []*schema.ArtworkMeta) (_ *schema.Object, err error) {
@@ -288,6 +425,12 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 		}
 	}()
 
+	if enabled, err := filer.indexingEnabled(ctx, key.Volume); err != nil {
+		return nil, err
+	} else if !enabled {
+		return nil, nil
+	}
+
 	// Obtain the backend of the object - backend might be disabled, so don't error
 	backend := filer.volumes.Get(key.Volume)
 	if backend == nil {
@@ -336,20 +479,37 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 	// Extractors need to seek within the object content. Use the reader directly
 	// if it's already seekable (e.g. local files), otherwise buffer it into memory.
 	var metaReader io.ReadSeeker
+	var metaErr error
 	if seeker, ok := reader.(io.ReadSeeker); ok {
 		metaReader = seeker
 	} else {
-		data, err := io.ReadAll(reader)
+		data, err := readAllObject(reader, object)
 		if err != nil {
+			metaErr = err
+		} else {
+			metaReader = bytes.NewReader(data)
+		}
+	}
+	if metaReader != nil {
+		namedReader := namedReadSeeker{ReadSeeker: metaReader, name: object.Path}
+		if contentType, _, err := metadataMime.Type(namedReader); err == nil && contentType != types.ContentTypeBinary {
+			object.ContentType = contentType
+		}
+		if _, err := metaReader.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
-		metaReader = bytes.NewReader(data)
 	}
 
-	// Get the metadata for the object - hard error if nothing was extracted, warning otherwise
-	metadata, artwork, metaErr := filer.metadata.Get(ctx, object.ContentType, metaReader)
-	if metaErr != nil && metadata == nil {
-		return nil, metaErr
+	// Get the metadata for the object. Read and extraction failures should not
+	// prevent the object itself from being indexed.
+	metadata := []schema.Meta{}
+	var artwork []*schema.ArtworkMeta
+	if metaReader != nil {
+		metadata, artwork, metaErr = filer.metadata.Get(ctx, object.ContentType, metaReader)
+		if metaErr != nil && metadata == nil {
+			metadata = []schema.Meta{}
+			metaErr = fmt.Errorf("extract metadata for %q: %w", object.Path, metaErr)
+		}
 	}
 
 	// Create the object in a transaction, and touch the volume's indexed_at
@@ -367,4 +527,28 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 
 	// Return the result and any metadata extraction error (which is non-fatal)
 	return result, metaErr
+}
+
+func readAllObject(reader io.Reader, object *schema.Object) ([]byte, error) {
+	data, err := io.ReadAll(reader)
+	if err == nil {
+		return data, nil
+	}
+
+	if object == nil {
+		return nil, fmt.Errorf("read object content: %w (read=%d)", err, len(data))
+	}
+	if object.Size == nil {
+		return nil, fmt.Errorf("read object content %q: %w (read=%d expected=unknown)", object.Path, err, len(data))
+	}
+	return nil, fmt.Errorf("read object content %q: %w (read=%d expected=%d)", object.Path, err, len(data), types.Value(object.Size))
+}
+
+type namedReadSeeker struct {
+	io.ReadSeeker
+	name string
+}
+
+func (r namedReadSeeker) Name() string {
+	return r.name
 }

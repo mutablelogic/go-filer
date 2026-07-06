@@ -83,6 +83,34 @@ Get the metadata of an object as HTTP headers, without returning its content. Re
 
 Supports conditional requests via `If-Match`, `If-None-Match`, `If-Modified-Since` and `If-Unmodified-Since` headers: returns 304 if the object matches the conditions for a conditional GET, or 412 if it fails the conditions for a conditional update.
 
+### PUT /object/{volume}/{path...}
+
+Create or replace an object in a mounted volume. The request body is stored as the object content. `Content-Type` is used as the object content type when supplied; otherwise the backend may detect or default the type. `Content-Length`, `ETag` and `Last-Modified` are treated as optional object attributes used to decide whether the existing object already matches the upload request.
+
+New objects are created when no object exists at the requested path. Existing objects are replaced unless a precondition prevents the write.
+
+Supported preconditions:
+
+| Header | Meaning |
+| ------ | ------- |
+| `If-None-Match: *` | Create only if the object does not already exist. |
+| `Content-Length` | If supplied with `ETag` or `Last-Modified`, the existing object size must match before a 304 response is returned. |
+| `ETag` | If supplied, an existing object with the same ETag and matching size is treated as already current. |
+| `Last-Modified` | If `ETag` is not supplied, an existing object with the same modified time and matching size is treated as already current. |
+
+Responses:
+
+| Status | Meaning |
+| ------ | ------- |
+| `201 Created` | Object was created, and the new object metadata is returned. |
+| `200 OK` | Existing object was replaced, and the updated object metadata is returned. |
+| `304 Not Modified` | Object already matches the request headers. |
+| `400 Bad Request` | Invalid volume or object path. |
+| `404 Not Found` | Volume or object not found. |
+| `409 Conflict` | Object already exists, usually because `If-None-Match: *` was supplied. |
+| `412 Precondition Failed` | Object does not match the conditional request headers. |
+| `503 Service Unavailable` | Volume not mounted. |
+
 ## Search operations
 
 The filer system also provides search capabilities, allowing users to query objects based on various criteria such as metadata, content, and other attributes. This enables efficient retrieval of relevant data across multiple volumes.

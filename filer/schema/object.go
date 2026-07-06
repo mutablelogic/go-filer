@@ -52,7 +52,7 @@ type ObjectMeta struct {
 
 // ObjectAttr represents the attributes of an object, which are immutable and cannot be updated.
 type ObjectAttr struct {
-	Size    int64     `json:"size"`
+	Size    *int64    `json:"size,omitempty"`
 	ETag    *string   `json:"etag,omitempty"`
 	ModTime time.Time `json:"last-modified,omitzero"`
 }
@@ -69,6 +69,7 @@ type CreateObjectRequest struct {
 	ObjectKey
 	Body        io.Reader `json:"-"`
 	IfNotExists bool      // if true, fail with ErrConflict when the object already exists
+	ModTime     time.Time `json:"last-modified,omitzero"`
 	ObjectMeta
 }
 
@@ -216,7 +217,7 @@ func (o Object) Matches(other *Object) bool {
 	if o.Path != other.Path {
 		return matched
 	}
-	if o.Size != other.Size {
+	if o.Size != nil && other.Size != nil && types.Value(o.Size) != types.Value(other.Size) {
 		return matched
 	}
 	if o.ETag != nil && other.ETag != nil && types.Value(o.ETag) == types.Value(other.ETag) {
@@ -314,7 +315,10 @@ func (r Object) Cell(col int) string {
 	case 1:
 		return r.Path
 	case 2:
-		return fmt.Sprint(r.Size)
+		if r.Size == nil {
+			return ""
+		}
+		return fmt.Sprint(types.Value(r.Size))
 	case 3:
 		return r.ContentType
 	case 4:
@@ -364,16 +368,19 @@ func (o ObjectCreate) Insert(bind *pg.Bind) (string, error) {
 	} else {
 		bind.Set("modified_at", o.ModTime)
 	}
-	if o.Size < 0 {
+	if o.Size == nil {
+		return "", gofiler.ErrBadParameter.With("missing object size")
+	} else if types.Value(o.Size) < 0 {
 		return "", gofiler.ErrBadParameter.With("invalid object size")
 	} else {
-		bind.Set("size", o.Size)
+		bind.Set("size", types.Value(o.Size))
 	}
 	if contentType := strings.TrimSpace(o.ContentType); contentType == "" {
 		return "", gofiler.ErrBadParameter.With("missing content type")
 	} else {
 		bind.Set("type", contentType)
 	}
+	bind.Set("etag", types.Value(o.ETag))
 
 	// Return the query
 	return bind.Query("filer.object_upsert"), nil
@@ -560,14 +567,22 @@ func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 
 	// Path
 	if path := strings.TrimSpace(types.Value(r.Path)); path != "" {
-		path := types.NormalisePath(path)
-		bind.Append("where", `o."path" = `+bind.Set("path", path))
+		path := strings.TrimPrefix(strings.TrimSuffix(types.NormalisePath(path), "/"), "/")
+		if path != "" {
+			if r.Recursive {
+				bind.Append("where", `(o."path" = `+bind.Set("path", path)+` OR o."path" LIKE `+bind.Set("path_prefix", path+"/%")+`)`)
+			} else {
+				bind.Append("where", fmt.Sprintf(`(o."path" = %s OR (o."path" LIKE %s AND POSITION('/' IN SUBSTRING(o."path" FROM %d)) = 0))`, bind.Set("path", path), bind.Set("path_prefix", path+"/%"), len(path)+2))
+			}
+		}
 	}
 
 	// Type
 	if contentType := strings.TrimSpace(types.Value(r.Type)); contentType != "" {
-		// If type has a '/' then treat as full content type, otherwise match major or minor type.
-		if strings.Contains(contentType, "/") {
+		if contentType == ContentTypeDirectory {
+			bind.Append("where", `FALSE`)
+		} else if strings.Contains(contentType, "/") {
+			// If type has a '/' then treat as full content type, otherwise match major or minor type.
 			bind.Append("where", `o."type" = `+bind.Set("type", contentType))
 		} else {
 			bind.Append("where", `(o."type" LIKE `+bind.Set("type_major", contentType+"/%")+

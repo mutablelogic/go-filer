@@ -6,13 +6,14 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.27
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.26
+	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.30
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.2
 	github.com/aws/smithy-go v1.27.3
 	github.com/carlos7ags/folio v0.9.1
 	github.com/mutablelogic/go-auth v0.0.14
 	github.com/mutablelogic/go-client v1.4.10
 	github.com/mutablelogic/go-llm v0.4.5
-	github.com/mutablelogic/go-media v1.8.5
+	github.com/mutablelogic/go-media v1.8.6
 	github.com/mutablelogic/go-pg v1.3.4
 	github.com/mutablelogic/go-server v1.7.0
 	github.com/stretchr/testify v1.11.1

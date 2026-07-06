@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -14,6 +15,7 @@ type WritableFS interface {
 	fs.FS
 	Root() string
 	Create(name string) (*os.File, error)
+	Chtimes(name string, atime, mtime time.Time) error
 	MkdirAll(name string, perm fs.FileMode) error
 	Remove(name string) error
 	RemoveAll(name string) error
@@ -62,6 +64,13 @@ func (w *dirFS) Create(name string) (*os.File, error) {
 		return nil, err
 	}
 	return os.Create(osPath)
+}
+
+func (w *dirFS) Chtimes(name string, atime, mtime time.Time) error {
+	if !fs.ValidPath(name) {
+		return &fs.PathError{Op: "chtimes", Path: name, Err: fs.ErrInvalid}
+	}
+	return os.Chtimes(filepath.Join(w.root, filepath.FromSlash(name)), atime, mtime)
 }
 
 // MkdirAll creates the named directory and any necessary parents.

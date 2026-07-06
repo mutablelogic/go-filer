@@ -129,6 +129,9 @@ func byReader(name string, r io.Reader) (string, []schema.Meta, error) {
 	if n == 0 {
 		return t, nil, nil
 	}
+	if strings.EqualFold(filepath.Ext(name), ".ts") && isMPEGTransportStream(buf[:n]) {
+		return "video/mp2t", nil, nil
+	}
 	if sniffed := http.DetectContentType(buf[:n]); sniffed != types.ContentTypeBinary {
 		mediatype, params, err := mime.ParseMediaType(sniffed)
 		if err != nil {
@@ -155,4 +158,16 @@ func byReader(name string, r io.Reader) (string, []schema.Meta, error) {
 
 	// If we couldn't sniff a more specific type, return the one from the extension (which may be empty)
 	return t, nil, nil
+}
+
+func isMPEGTransportStream(data []byte) bool {
+	for _, packetSize := range []int{188, 192, 204} {
+		if len(data) < packetSize*2 {
+			continue
+		}
+		if data[0] == 0x47 && data[packetSize] == 0x47 {
+			return true
+		}
+	}
+	return false
 }

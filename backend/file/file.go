@@ -106,11 +106,19 @@ func (self *FileBackend) CreateObject(ctx context.Context, req schema.CreateObje
 	if err != nil {
 		return nil, err
 	}
-	defer r.Close()
 
 	// Copy the body to the file
 	if req.Body != nil {
 		if _, err := io.Copy(r, req.Body); err != nil {
+			_ = r.Close()
+			return nil, err
+		}
+	}
+	if err := r.Close(); err != nil {
+		return nil, err
+	}
+	if !req.ModTime.IsZero() {
+		if err := self.fs.Chtimes(req.Path, req.ModTime, req.ModTime); err != nil {
 			return nil, err
 		}
 	}
@@ -153,7 +161,7 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 			Meta:        meta,
 		},
 		ObjectAttr: schema.ObjectAttr{
-			Size:    info.Size(),
+			Size:    types.Ptr(info.Size()),
 			ModTime: info.ModTime(),
 		},
 	}, nil

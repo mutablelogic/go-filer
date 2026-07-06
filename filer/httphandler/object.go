@@ -90,8 +90,8 @@ func RegisterObjectHandlers(manager *manager.Filer, router *httprouter.Router) e
 				if etag := types.Value(obj.ETag); etag != "" {
 					w.Header().Set(types.ContentHashHeader, etag)
 				}
-				if obj.Size >= 0 {
-					w.Header().Set(types.ContentLengthHeader, strconv.FormatInt(obj.Size, 10))
+				if obj.Size != nil && types.Value(obj.Size) >= 0 {
+					w.Header().Set(types.ContentLengthHeader, strconv.FormatInt(types.Value(obj.Size), 10))
 				}
 				w.Header().Set(types.ContentModifiedHeader, obj.ModTime.Format(http.TimeFormat))
 
@@ -109,6 +109,67 @@ func RegisterObjectHandlers(manager *manager.Filer, router *httprouter.Router) e
 				op.Response(http.StatusNotModified, "", "Object matches the conditional request headers")
 				op.ErrorResponse(http.StatusBadRequest, "Invalid volume or object path")
 				op.ErrorResponse(http.StatusNotFound, "Volume or object not found")
+				op.ErrorResponse(http.StatusPreconditionFailed, "Object does not match the conditional request headers")
+				op.ErrorResponse(http.StatusServiceUnavailable, "Volume not mounted")
+			})
+
+			// PUT
+			path.Put(func(w http.ResponseWriter, r *http.Request) {
+				req := schema.CreateObjectRequest{
+					ObjectKey: schema.ObjectKey{
+						Volume: r.PathValue("volume"),
+						Path:   r.PathValue("path"),
+					},
+					Body: r.Body,
+				}
+				attr := schema.ObjectAttr{}
+
+				if contentType := r.Header.Get(types.ContentTypeHeader); contentType != "" {
+					req.ContentType = contentType
+				}
+				if etag := r.Header.Get(types.ContentHashHeader); etag != "" {
+					attr.ETag = types.Ptr(etag)
+				}
+				if r.ContentLength >= 0 {
+					attr.Size = types.Ptr(r.ContentLength)
+				} else if size := r.Header.Get(types.ContentLengthHeader); size != "" {
+					if value, err := strconv.ParseInt(size, 10, 64); err != nil {
+						httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()), types.Stringify(req))
+						return
+					} else {
+						attr.Size = types.Ptr(value)
+					}
+				}
+				if modified := r.Header.Get(types.ContentModifiedHeader); modified != "" {
+					if value, err := http.ParseTime(modified); err != nil {
+						httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()), types.Stringify(req))
+						return
+					} else {
+						req.ModTime = value
+						attr.ModTime = value
+					}
+				}
+				if strings.TrimSpace(r.Header.Get(schema.ContentIfNoneMatchHeader)) == "*" {
+					req.IfNotExists = true
+				}
+
+				obj, created, err := manager.CreateObject(r.Context(), req, attr)
+				if err != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
+				} else if created {
+					httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), obj)
+				} else {
+					httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), obj)
+				}
+			}, func(op httprequest.PathOperation) {
+				op.Summary("Create or Update Object")
+				op.Description(documentation.Section(3, "PUT /object/{volume}/{path...}").Body)
+				op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Object](), "Updated object")
+				op.JSONResponse(http.StatusCreated, jsonschema.MustFor[schema.Object](), "Created object")
+				op.Response(http.StatusNotModified, "", "Object already matches the request headers")
+				op.ErrorResponse(http.StatusBadRequest, "Invalid volume or object path")
+				op.ErrorResponse(http.StatusNotFound, "Volume or object not found")
+				op.ErrorResponse(http.StatusConflict, "Object already exists")
 				op.ErrorResponse(http.StatusPreconditionFailed, "Object does not match the conditional request headers")
 				op.ErrorResponse(http.StatusServiceUnavailable, "Volume not mounted")
 			})

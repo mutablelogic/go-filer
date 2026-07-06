@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path"
 	"strings"
+	"time"
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
@@ -63,7 +64,7 @@ func (self *S3Backend) GetObject(ctx context.Context, req schema.GetObjectReques
 			ContentType: contentType,
 		},
 		ObjectAttr: schema.ObjectAttr{
-			Size: aws.ToInt64(out.ContentLength),
+			Size: types.Ptr(aws.ToInt64(out.ContentLength)),
 			ETag: stripETagQuotes(out.ETag),
 		},
 	}
@@ -72,6 +73,11 @@ func (self *S3Backend) GetObject(ctx context.Context, req schema.GetObjectReques
 	}
 	for k, v := range out.Metadata {
 		obj.Meta = schema.AppendMeta(obj.Meta, k, v)
+	}
+	if modified := out.Metadata[schema.AttrLastModified]; modified != "" {
+		if value, err := time.Parse(time.RFC3339, modified); err == nil {
+			obj.ModTime = value
+		}
 	}
 
 	return obj, nil
