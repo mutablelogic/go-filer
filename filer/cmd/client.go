@@ -329,6 +329,7 @@ type VolumeCreateFileCmd struct {
 type VolumeCreateS3Cmd struct {
 	URL       *url.URL `arg:"" name:"url" type:"url" help:"S3 URL (s3://bucket-name/prefix)."`
 	Endpoint  *url.URL `name:"endpoint" type:"url" help:"Custom S3 endpoint URL."`
+	Region    string   `name:"region" help:"AWS region. Defaults to us-east-1 for custom endpoints."`
 	Anonymous bool     `name:"anonymous" help:"Use anonymous credentials for S3." negatable:""`
 	AccessKey string   `name:"access-key" help:"AWS access credential."`
 	SecretKey string   `name:"secret-key" help:"AWS secret credential."`
@@ -420,6 +421,9 @@ func (cmd *VolumeCreateS3Cmd) Run(ctx server.Cmd) error {
 	}
 	if cmd.Endpoint != nil {
 		q.Set("endpoint", cmd.Endpoint.String())
+	}
+	if cmd.Region != "" {
+		q.Set("region", cmd.Region)
 	}
 	if cmd.AccessKey != "" {
 		q.Set("access-key", cmd.AccessKey)

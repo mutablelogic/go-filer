@@ -57,6 +57,7 @@ func (r *Registry) Validate(ctx context.Context, url *url.URL) (string, error) {
 			return "", err
 		}
 		defer f.Close()
+		*url = *f.URL()
 		return f.Name(), nil
 	case "googledrive":
 		f, err := google.NewDriveBackend(ctx, r.tracer, r.decryptfn, url)

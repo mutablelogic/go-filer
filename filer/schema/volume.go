@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -92,7 +93,7 @@ func (r VolumeListRequest) Query() url.Values {
 // TABLE OUTPUT
 
 func (r Volume) Header() []string {
-	return []string{"Volume", "URL", "Enabled", "Created At", "Indexed Objects", "Index Delta", "Indexed At", "Last Indexed Object At"}
+	return []string{"Volume", "URL", "Params", "Enabled", "Created At", "Indexed Objects", "Index Delta", "Indexed At", "Last Indexed Object At"}
 }
 
 func (r Volume) Width(col int) int {
@@ -104,31 +105,46 @@ func (r Volume) Cell(col int) string {
 	case 0:
 		return r.Name
 	case 1:
-		return r.URL
+		parsed, err := url.Parse(r.URL)
+		if err != nil {
+			return r.URL
+		}
+		parsed.RawQuery = ""
+		return parsed.String()
 	case 2:
+		params := volumeURLParams(r.URL)
+		if len(params) == 0 {
+			return ""
+		}
+		data, err := json.MarshalIndent(params, "", "  ")
+		if err != nil {
+			return err.Error()
+		}
+		return string(data)
+	case 3:
 		if r.Enabled == nil {
 			return ""
 		}
 		return fmt.Sprint(*r.Enabled)
-	case 3:
-		return r.CreatedAt.Format(time.RFC3339)
 	case 4:
+		return r.CreatedAt.Format(time.RFC3339)
+	case 5:
 		if r.Objects > 0 {
 			return fmt.Sprint(r.Objects)
 		} else {
 			return ""
 		}
-	case 5:
+	case 6:
 		if r.IndexDelta == nil {
 			return "disabled"
 		}
 		return r.IndexDelta.String()
-	case 6:
+	case 7:
 		if r.IndexedAt == nil {
 			return ""
 		}
 		return r.IndexedAt.Format(time.RFC3339)
-	case 7:
+	case 8:
 		if r.LastIndexedObjectAt == nil {
 			return ""
 		}
@@ -136,6 +152,26 @@ func (r Volume) Cell(col int) string {
 	default:
 		return ""
 	}
+}
+
+func volumeURLParams(raw string) map[string]string {
+	url, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	values := url.Query()
+	if len(values) == 0 {
+		return nil
+	}
+	params := make(map[string]string, len(values))
+	for key, value := range values {
+		if len(value) == 0 {
+			params[key] = ""
+		} else {
+			params[key] = value[0]
+		}
+	}
+	return params
 }
 
 ////////////////////////////////////////////////////////////////////////////////

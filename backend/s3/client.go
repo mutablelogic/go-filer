@@ -161,6 +161,10 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 	if err != nil {
 		return nil, nil, gofiler.ErrBadParameter.Withf("failed to load AWS config: %v", err)
 	}
+	if config.Region == "" {
+		config.Region = "us-east-1"
+	}
+	region = config.Region
 	if tracer != nil {
 		otelaws.AppendMiddlewares(&config.APIOptions)
 	}
