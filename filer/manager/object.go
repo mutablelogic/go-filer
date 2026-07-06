@@ -388,13 +388,17 @@ func readObjectNotModified(current *schema.Object, attr schema.ObjectAttr) bool 
 	if current == nil {
 		return false
 	}
-	if attr.Size != nil && current.Size != nil && types.Value(current.Size) == types.Value(attr.Size) {
-		return true
+	sizeMatches := attr.Size != nil && current.Size != nil && types.Value(current.Size) == types.Value(attr.Size)
+	if attr.Size != nil && !sizeMatches {
+		return false
 	}
-	if attr.ETag != nil && current.ETag != nil && types.Value(current.ETag) == types.Value(attr.ETag) {
-		return true
+	if attr.ETag != nil {
+		return current.ETag != nil && types.Value(current.ETag) == types.Value(attr.ETag)
 	}
-	return !attr.ModTime.IsZero() && !current.ModTime.IsZero() && current.ModTime.Truncate(time.Second).Equal(attr.ModTime.Truncate(time.Second))
+	if !attr.ModTime.IsZero() {
+		return !current.ModTime.IsZero() && current.ModTime.Truncate(time.Second).Equal(attr.ModTime.Truncate(time.Second))
+	}
+	return sizeMatches
 }
 
 func createObjectNotModified(current *schema.Object, attr schema.ObjectAttr) bool {

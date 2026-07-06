@@ -239,6 +239,36 @@ func TestObjectReadObjectNotModified(t *testing.T) {
 	require.Equal(types.Value(created.Size), types.Value(object.Size))
 }
 
+func TestObjectReadObjectETagPrecedence(t *testing.T) {
+	require := require.New(t)
+	mgr, ctx := test.Begin(t)
+	defer test.End(t)
+
+	volume := createMountedFileVolume(t, "test_object_read_object_etag_precedence")
+	body := []byte("read object etag precedence")
+	created, _, err := mgr.CreateObject(ctx, schema.CreateObjectRequest{
+		ObjectKey: schema.ObjectKey{Volume: volume, Path: "cached.txt"},
+		Body:      bytes.NewReader(body),
+	}, schema.ObjectAttr{})
+	require.NoError(err)
+	require.NotNil(created)
+
+	reader, object, err := mgr.ReadObject(ctx, schema.ObjectKey{Volume: volume, Path: "cached.txt"}, schema.ObjectAttr{
+		Size:    created.Size,
+		ETag:    types.Ptr("different"),
+		ModTime: created.ModTime,
+	})
+	require.NoError(err)
+	require.NotNil(reader)
+	defer reader.Close()
+	require.NotNil(object)
+	require.Equal(created.Path, object.Path)
+
+	data, err := io.ReadAll(reader)
+	require.NoError(err)
+	require.Equal(body, data)
+}
+
 func createMountedFileVolume(t *testing.T, name string) string {
 	t.Helper()
 	require := require.New(t)

@@ -278,8 +278,8 @@ func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) (err e
 
 	// Delete backends
 	for _, volume := range deleted {
-		if err := filer.volumes.Delete(volume.Name); err != nil {
-			err = errors.Join(err, fmt.Errorf("failed to unmount volume %q: %v", volume.Name, err))
+		if deleteErr := filer.volumes.Delete(volume.Name); deleteErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to unmount volume %q: %v", volume.Name, deleteErr))
 		} else {
 			logger.InfoContext(ctx, "unmounted volume", "name", volume.Name)
 		}
@@ -287,9 +287,9 @@ func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) (err e
 
 	// Insert backends
 	for _, volume := range inserted {
-		backend, err := filer.volumes.New(ctx, volume.URL)
-		if err != nil {
-			err = errors.Join(err, fmt.Errorf("failed to mount volume %q: %v", volume.Name, err))
+		backend, mountErr := filer.volumes.New(ctx, volume.URL)
+		if mountErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to mount volume %q: %v", volume.Name, mountErr))
 		} else {
 			logger.InfoContext(ctx, "mounted volume", "name", backend.Name(), "url", backend.URL().String())
 		}
