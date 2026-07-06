@@ -126,7 +126,7 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 	}
 
 	// Explicit credentials take precedence over anonymous access
-	var accessKey, secretKey []byte
+	var accessKey, secretKey, sessionToken []byte
 	if accessCredential := q.Get("access-key"); accessCredential != "" {
 		var err error
 		accessKey, err = decryptfn(ctx, accessCredential)
@@ -141,6 +141,13 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 			return nil, nil, err
 		}
 	}
+	if sessionCredential := q.Get("session-token"); sessionCredential != "" {
+		var err error
+		sessionToken, err = decryptfn(ctx, sessionCredential)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if len(accessKey) != 0 && len(secretKey) != 0 {
 		accessKey, err := strconv.Unquote(string(accessKey))
 		if err != nil {
@@ -150,8 +157,15 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 		if err != nil {
 			return nil, nil, gofiler.ErrBadParameter.Withf("invalid secret-key: %v", err)
 		}
+		var token string
+		if len(sessionToken) != 0 {
+			token, err = strconv.Unquote(string(sessionToken))
+			if err != nil {
+				return nil, nil, gofiler.ErrBadParameter.Withf("invalid session-token: %v", err)
+			}
+		}
 		cfgOpts = append(cfgOpts, awsconfig.WithCredentialsProvider(
-			awscredentials.NewStaticCredentialsProvider(string(accessKey), string(secretKey), ""),
+			awscredentials.NewStaticCredentialsProvider(accessKey, secretKey, token),
 		))
 	} else if anonymous {
 		cfgOpts = append(cfgOpts, awsconfig.WithCredentialsProvider(aws.AnonymousCredentials{}))
@@ -209,6 +223,9 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 	}
 	if secretKey := q.Get("secret-key"); secretKey != "" {
 		uq.Set("secret-key", secretKey)
+	}
+	if sessionToken := q.Get("session-token"); sessionToken != "" {
+		uq.Set("session-token", sessionToken)
 	}
 	if len(uq) > 0 {
 		u.RawQuery = uq.Encode()

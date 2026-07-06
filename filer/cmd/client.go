@@ -327,12 +327,13 @@ type VolumeCreateFileCmd struct {
 }
 
 type VolumeCreateS3Cmd struct {
-	URL       *url.URL `arg:"" name:"url" type:"url" help:"S3 URL (s3://bucket-name/prefix)."`
-	Endpoint  *url.URL `name:"endpoint" type:"url" help:"Custom S3 endpoint URL."`
-	Region    string   `name:"region" help:"AWS region. Defaults to us-east-1 for custom endpoints."`
-	Anonymous bool     `name:"anonymous" help:"Use anonymous credentials for S3." negatable:""`
-	AccessKey string   `name:"access-key" help:"AWS access credential."`
-	SecretKey string   `name:"secret-key" help:"AWS secret credential."`
+	URL          *url.URL `arg:"" name:"url" type:"url" help:"S3 URL (s3://bucket-name/prefix)."`
+	Endpoint     *url.URL `name:"endpoint" type:"url" help:"Custom S3 endpoint URL."`
+	Region       string   `name:"region" help:"AWS region. Defaults to us-east-1 for custom endpoints."`
+	Anonymous    bool     `name:"anonymous" help:"Use anonymous credentials for S3." negatable:""`
+	AccessKey    string   `name:"access-key" help:"AWS access credential."`
+	SecretKey    string   `name:"secret-key" help:"AWS secret credential."`
+	SessionToken string   `name:"session-token" help:"AWS session token credential."`
 }
 
 type VolumeMountCmd struct {
@@ -430,6 +431,9 @@ func (cmd *VolumeCreateS3Cmd) Run(ctx server.Cmd) error {
 	}
 	if cmd.SecretKey != "" {
 		q.Set("secret-key", cmd.SecretKey)
+	}
+	if cmd.SessionToken != "" {
+		q.Set("session-token", cmd.SessionToken)
 	}
 	cmd.URL.RawQuery = q.Encode()
 
