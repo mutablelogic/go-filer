@@ -41,8 +41,9 @@ type ClientCommands struct {
 
 type ObjectClientCommands struct {
 	ObjectList ObjectListCmd `cmd:"" name:"objects" help:"List server objects." group:"OBJECT"`
-	ObjectGet  ObjectGetCmd  `cmd:"" name:"object" help:"Get object metadata by volume and path." group:"OBJECT"`
+	ObjectHead ObjectHeadCmd `cmd:"" name:"object" help:"Get object metadata by volume and path." group:"OBJECT"`
 	ObjectPut  ObjectPutCmd  `cmd:"" name:"object-upload" help:"Upload an object to a volume." group:"OBJECT"`
+	ObjectGet  ObjectGetCmd  `cmd:"" name:"object-download" help:"Download an object from a volume." group:"OBJECT"`
 }
 
 type SearchClientCommands struct {
@@ -138,11 +139,15 @@ type ObjectListCmd struct {
 	schema.ObjectListRequest
 }
 
-type ObjectGetCmd struct {
+type ObjectHeadCmd struct {
 	schema.ObjectKey
 }
 
 type ObjectPutCmd struct {
+	schema.ObjectKey
+}
+
+type ObjectGetCmd struct {
 	schema.ObjectKey
 }
 
@@ -180,7 +185,7 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 	})
 }
 
-func (cmd *ObjectGetCmd) Run(ctx server.Cmd) error {
+func (cmd *ObjectHeadCmd) Run(ctx server.Cmd) error {
 	// Perform the request
 	return withClient(ctx, "object", func(ctx context.Context, client *httpclient.Client) error {
 		object, err := client.GetObject(ctx, cmd.Volume, cmd.Path)
@@ -188,6 +193,100 @@ func (cmd *ObjectGetCmd) Run(ctx server.Cmd) error {
 			return err
 		}
 
+		fmt.Println(object)
+		return nil
+	})
+}
+
+func (cmd *ObjectGetCmd) Run(ctx server.Cmd) error {
+	width := ctx.IsTerm()
+	output := objectDownloadPath(cmd.Path)
+	if output == "." || output == "/" || output == "" {
+		return gofiler.ErrBadParameter.Withf("invalid output path for object: %q", cmd.Path)
+	}
+
+	attr := schema.ObjectAttr{}
+	if info, err := os.Stat(output); err == nil {
+		if info.IsDir() {
+			return gofiler.ErrBadParameter.Withf("output path is a directory: %q", output)
+		}
+		attr.Size = types.Ptr(info.Size())
+		attr.ModTime = info.ModTime()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	bar := tui.Progress(tui.SetWidth(width))
+	var written int64
+	var total int64
+	progress := func() {
+		if width == 0 {
+			return
+		}
+		percent := float64(100)
+		if total > 0 {
+			percent = float64(written) * 100 / float64(total)
+		}
+		fmt.Fprint(os.Stderr, "\r\x1b[K")
+		_, _ = bar.Write(os.Stderr, fmt.Sprintf("%s %d/%d", output, written, total), percent)
+	}
+
+	return withClient(ctx, "object-download", func(ctx context.Context, client *httpclient.Client) error {
+		dir := filepath.Dir(output)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+		tmp, err := os.CreateTemp(dir, "."+filepath.Base(output)+".*.tmp")
+		if err != nil {
+			return err
+		}
+		tmpName := tmp.Name()
+		committed := false
+		defer func() {
+			_ = tmp.Close()
+			if !committed {
+				_ = os.Remove(tmpName)
+			}
+		}()
+
+		object, err := client.ReadObjectWithMeta(ctx, cmd.Volume, cmd.Path, attr, func(object *schema.Object) error {
+			if object != nil && object.Size != nil {
+				total = types.Value(object.Size)
+			}
+			progress()
+			return nil
+		}, func(data []byte) error {
+			if _, err := tmp.Write(data); err != nil {
+				return err
+			}
+			written += int64(len(data))
+			progress()
+			return nil
+		})
+		if errors.Is(err, httpresponse.Err(http.StatusNotModified)) {
+			if width > 0 {
+				fmt.Fprint(os.Stderr, "\r\x1b[K")
+			}
+			fmt.Println(object)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		progress()
+		if err := tmp.Close(); err != nil {
+			return err
+		}
+		if err := os.Rename(tmpName, output); err != nil {
+			return err
+		}
+		committed = true
+		if object != nil && !object.ModTime.IsZero() {
+			_ = os.Chtimes(output, object.ModTime, object.ModTime)
+		}
+		if width > 0 {
+			fmt.Fprint(os.Stderr, "\r\x1b[K")
+		}
 		fmt.Println(object)
 		return nil
 	})
@@ -265,6 +364,16 @@ func (cmd *ObjectPutCmd) Run(ctx server.Cmd) error {
 
 func objectUploadPath(localPath string) string {
 	path := filepath.ToSlash(localPath)
+	if index := strings.Index(path, "/./"); index >= 0 {
+		path = path[index+3:]
+	} else if strings.HasPrefix(path, "./") {
+		path = strings.TrimPrefix(path, "./")
+	}
+	return strings.TrimPrefix(types.NormalisePath(path), "/")
+}
+
+func objectDownloadPath(remotePath string) string {
+	path := filepath.ToSlash(remotePath)
 	if index := strings.Index(path, "/./"); index >= 0 {
 		path = path[index+3:]
 	} else if strings.HasPrefix(path, "./") {

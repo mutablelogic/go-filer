@@ -134,7 +134,9 @@ func (filer *Filer) GetObject(ctx context.Context, req schema.ObjectKey) (_ *sch
 	object, err := backend.GetObject(ctx, schema.GetObjectRequest{
 		ObjectKey: req,
 	})
-	if err != nil {
+	if errors.Is(err, gofiler.ErrNotFound) {
+		return nil, errors.Join(err, filer.deleteIndexedObject(ctx, req))
+	} else if err != nil {
 		return nil, err
 	}
 
@@ -166,21 +168,70 @@ func (filer *Filer) GetObject(ctx context.Context, req schema.ObjectKey) (_ *sch
 	return object, nil
 }
 
-func (filer *Filer) ReadObject(ctx context.Context, req schema.GetObjectRequest, attr schema.ObjectAttr) (_ io.ReadCloser, _ *schema.Object, err error) {
-	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "CreateObject",
+func (filer *Filer) ReadObject(ctx context.Context, req schema.ObjectKey, attr schema.ObjectAttr) (_ io.ReadCloser, _ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "ReadObject",
 		attribute.String("req", types.Stringify(req)),
 		attribute.String("attr", types.Stringify(attr)),
 	)
-	defer func() {
-		if errors.Is(err, gofiler.ErrNotModified) {
-			endSpan(nil)
-		} else {
-			endSpan(err)
-		}
-	}()
+	defer func() { endSpan(err) }()
 
-	// TODO
-	return nil, nil, nil
+	// Check the volume first
+	volume, err := filer.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, nil, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := filer.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Check for preconditions. If the object matches the preconditions, return a not modified error.
+	if readObjectHasPreconditions(attr) {
+		object, err := backend.GetObject(ctx, schema.GetObjectRequest{ObjectKey: req})
+		if errors.Is(err, gofiler.ErrNotFound) {
+			return nil, nil, errors.Join(err, filer.deleteIndexedObject(ctx, req))
+		} else if err != nil {
+			return nil, nil, err
+		}
+		if types.Value(volume.IndexDelta) > 0 && volume.IndexedAt != nil {
+			var indexed schema.Object
+			if err := filer.PoolConn.Get(ctx, &indexed, req); errors.Is(err, pg.ErrNotFound) {
+				// Continue with backend metadata
+			} else if err != nil {
+				return nil, nil, err
+			} else if indexed.Matches(object) {
+				object = &indexed
+			}
+		}
+		if readObjectNotModified(object, attr) {
+			return nil, object, gofiler.ErrNotModified
+		}
+	}
+
+	// Read the object from the backend
+	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: req})
+	if errors.Is(err, gofiler.ErrNotFound) {
+		return nil, nil, errors.Join(err, filer.deleteIndexedObject(ctx, req))
+	} else if err != nil {
+		return nil, nil, err
+	}
+
+	// Enrich the metadata with the database metadata if the volume is indexed and the object is indexed
+	if types.Value(volume.IndexDelta) > 0 && volume.IndexedAt != nil {
+		var indexed schema.Object
+		if err := filer.PoolConn.Get(ctx, &indexed, req); errors.Is(err, pg.ErrNotFound) {
+			// Return backend metadata
+		} else if err != nil {
+			return nil, nil, err
+		} else if indexed.Matches(object) {
+			object = &indexed
+		}
+	}
+	return reader, object, nil
 }
 
 func (filer *Filer) CreateObject(ctx context.Context, req schema.CreateObjectRequest, attr schema.ObjectAttr) (_ *schema.Object, _ bool, err error) {
@@ -315,8 +366,35 @@ func (filer *Filer) touchObject(ctx context.Context, req schema.ObjectKey) (_ *s
 	return types.Ptr(result), nil
 }
 
+func (filer *Filer) deleteIndexedObject(ctx context.Context, key schema.ObjectKey) error {
+	var deleted schema.Object
+	if err := filer.Tx(ctx, func(conn pg.Conn) error {
+		return conn.Delete(ctx, &deleted, key)
+	}); err != nil && !errors.Is(err, pg.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 func createObjectHasPreconditions(req schema.CreateObjectRequest, attr schema.ObjectAttr) bool {
 	return req.IfNotExists || attr.ETag != nil || !attr.ModTime.IsZero()
+}
+
+func readObjectHasPreconditions(attr schema.ObjectAttr) bool {
+	return attr.Size != nil || attr.ETag != nil || !attr.ModTime.IsZero()
+}
+
+func readObjectNotModified(current *schema.Object, attr schema.ObjectAttr) bool {
+	if current == nil {
+		return false
+	}
+	if attr.Size != nil && current.Size != nil && types.Value(current.Size) == types.Value(attr.Size) {
+		return true
+	}
+	if attr.ETag != nil && current.ETag != nil && types.Value(current.ETag) == types.Value(attr.ETag) {
+		return true
+	}
+	return !attr.ModTime.IsZero() && !current.ModTime.IsZero() && current.ModTime.Truncate(time.Second).Equal(attr.ModTime.Truncate(time.Second))
 }
 
 func createObjectNotModified(current *schema.Object, attr schema.ObjectAttr) bool {
@@ -466,10 +544,7 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 
 	if errors.Is(err, gofiler.ErrNotFound) {
 		// Object no longer exists in the backend — remove it from the index
-		var deleted schema.Object
-		if delErr := filer.Tx(ctx, func(conn pg.Conn) error {
-			return conn.Delete(ctx, &deleted, key)
-		}); delErr != nil && !errors.Is(delErr, pg.ErrNotFound) {
+		if delErr := filer.deleteIndexedObject(ctx, key); delErr != nil {
 			return nil, delErr
 		}
 		return nil, nil

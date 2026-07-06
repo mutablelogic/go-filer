@@ -624,15 +624,15 @@ func (r *ObjectListRequest) selectWhere(bind *pg.Bind) error {
 	}
 
 	// Path
-	if path := strings.TrimSpace(types.Value(r.Path)); path != "" {
-		path := strings.TrimPrefix(strings.TrimSuffix(types.NormalisePath(path), "/"), "/")
-		if path != "" {
-			if r.Recursive {
-				bind.Append("where", `(o."path" = `+bind.Set("path", path)+` OR o."path" LIKE `+bind.Set("path_prefix", path+"/%")+`)`)
-			} else {
-				bind.Append("where", fmt.Sprintf(`(o."path" = %s OR (o."path" LIKE %s AND POSITION('/' IN SUBSTRING(o."path" FROM %d)) = 0))`, bind.Set("path", path), bind.Set("path_prefix", path+"/%"), len(path)+2))
-			}
+	path := strings.TrimPrefix(strings.TrimSuffix(types.NormalisePath(strings.TrimSpace(types.Value(r.Path))), "/"), "/")
+	if path != "" {
+		if r.Recursive {
+			bind.Append("where", `(o."path" = `+bind.Set("path", path)+` OR o."path" LIKE `+bind.Set("path_prefix", path+"/%")+`)`)
+		} else {
+			bind.Append("where", fmt.Sprintf(`(o."path" = %s OR (o."path" LIKE %s AND POSITION('/' IN SUBSTRING(o."path" FROM %d)) = 0))`, bind.Set("path", path), bind.Set("path_prefix", path+"/%"), len(path)+2))
 		}
+	} else if !r.Recursive {
+		bind.Append("where", `POSITION('/' IN o."path") = 0`)
 	}
 
 	// Type
