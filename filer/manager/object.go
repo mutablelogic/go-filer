@@ -179,48 +179,59 @@ func (filer *Filer) listIndexedDirectories(ctx context.Context, req schema.Objec
 	objectReq.Offset = 0
 	objectReq.Limit = types.Ptr(uint64(schema.ObjectListLimit))
 
-	var objects schema.ObjectList
-	if err := filer.PoolConn.List(ctx, &objects, &objectReq); err != nil {
-		return nil, err
-	}
-
 	reqPath := strings.TrimPrefix(strings.TrimSuffix(types.NormalisePath(types.Value(req.Path)), "/"), "/")
 	seen := make(map[string]bool)
 	dirs := make([]*schema.Object, 0)
-	for _, obj := range objects.Body {
-		parts := strings.Split(obj.Path, "/")
-		for i := 1; i < len(parts); i++ {
-			dir := strings.Join(parts[:i], "/")
-			if dir == reqPath || seen[dir] {
-				continue
-			}
-			if reqPath != "" {
-				if !strings.HasPrefix(dir, reqPath+"/") {
-					continue
-				}
-				remainder := strings.TrimPrefix(dir, reqPath+"/")
-				if !req.Recursive && strings.Contains(remainder, "/") {
-					continue
-				}
-			} else if !req.Recursive && strings.Contains(dir, "/") {
-				continue
-			}
-			seen[dir] = true
-			dirs = append(dirs, &schema.Object{
-				ObjectKey: schema.ObjectKey{Volume: req.Volume, Path: dir},
-				ObjectMeta: schema.ObjectMeta{
-					ContentType: schema.ContentTypeDirectory,
-				},
-			})
+	for {
+		var objects schema.ObjectList
+		if err := filer.PoolConn.List(ctx, &objects, &objectReq); err != nil {
+			return nil, err
 		}
+		for _, obj := range objects.Body {
+			parts := strings.Split(obj.Path, "/")
+			for i := 1; i < len(parts); i++ {
+				dir := strings.Join(parts[:i], "/")
+				if dir == reqPath || seen[dir] {
+					continue
+				}
+				if reqPath != "" {
+					if !strings.HasPrefix(dir, reqPath+"/") {
+						continue
+					}
+					remainder := strings.TrimPrefix(dir, reqPath+"/")
+					if !req.Recursive && strings.Contains(remainder, "/") {
+						continue
+					}
+				} else if !req.Recursive && strings.Contains(dir, "/") {
+					continue
+				}
+				seen[dir] = true
+				dirs = append(dirs, &schema.Object{
+					ObjectKey: schema.ObjectKey{Volume: req.Volume, Path: dir},
+					ObjectMeta: schema.ObjectMeta{
+						ContentType: schema.ContentTypeDirectory,
+					},
+				})
+			}
+		}
+		if len(objects.Body) == 0 || objectReq.Limit == nil || uint64(len(objects.Body)) < types.Value(objectReq.Limit) {
+			break
+		}
+		objectReq.Offset += uint64(len(objects.Body))
 	}
 
 	result := schema.ObjectList{
 		ObjectListRequest: req,
 		Count:             len(dirs),
-		Body:              dirs,
 	}
 	result.OffsetLimit.Clamp(uint64(result.Count))
+	if result.Offset < uint64(len(dirs)) {
+		end := uint64(len(dirs))
+		if result.Limit != nil && result.Offset+types.Value(result.Limit) < end {
+			end = result.Offset + types.Value(result.Limit)
+		}
+		result.Body = dirs[result.Offset:end]
+	}
 	return types.Ptr(result), nil
 }
 

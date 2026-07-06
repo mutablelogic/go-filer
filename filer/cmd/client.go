@@ -239,7 +239,7 @@ func (cmd *ObjectPutCmd) Run(ctx server.Cmd) error {
 		defer f.Close()
 
 		progress(0, info.Size())
-		uploaded, err := client.PutObject(ctx, object.Volume, object.Path, newProgressReader(f, info.Size(), progress), attr, contentType)
+		uploaded, err := client.PutObject(ctx, object.Volume, object.Path, newProgressReader(f, info.Size(), progress), attr, httpclient.PutObjectContentType(contentType))
 		if err != nil {
 			if errors.Is(err, httpresponse.Err(http.StatusNotModified)) {
 				if width > 0 {

@@ -76,7 +76,12 @@ func (self *S3Backend) CreateObject(ctx context.Context, req schema.CreateObject
 	if err != nil {
 		return nil, err
 	}
-	obj := &schema.Object{
+	obj, err := self.GetObject(ctx, schema.GetObjectRequest{ObjectKey: req.ObjectKey})
+	if err == nil {
+		return obj, nil
+	}
+
+	return &schema.Object{
 		ObjectKey: req.ObjectKey,
 		ObjectMeta: schema.ObjectMeta{
 			ContentType: req.ContentType,
@@ -86,6 +91,5 @@ func (self *S3Backend) CreateObject(ctx context.Context, req schema.CreateObject
 			ETag:    stripETagQuotes(output.ETag),
 			ModTime: req.ModTime,
 		},
-	}
-	return obj, nil
+	}, nil
 }

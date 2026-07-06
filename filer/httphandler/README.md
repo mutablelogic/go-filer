@@ -108,7 +108,6 @@ Responses:
 | `400 Bad Request` | Invalid volume or object path. |
 | `404 Not Found` | Volume or object not found. |
 | `409 Conflict` | Object already exists, usually because `If-None-Match: *` was supplied. |
-| `412 Precondition Failed` | Object does not match the conditional request headers. |
 | `503 Service Unavailable` | Volume not mounted. |
 
 ## Search operations

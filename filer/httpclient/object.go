@@ -27,8 +27,27 @@ type putObjectPayload struct {
 	contentType string
 }
 
+type putObjectOptions struct {
+	contentType string
+	ifNotExists bool
+}
+
+type PutObjectOpt func(*putObjectOptions)
+
 var _ client.Unmarshaler = (*getObjectResponse)(nil)
 var _ client.Payload = (*putObjectPayload)(nil)
+
+func PutObjectContentType(contentType string) PutObjectOpt {
+	return func(opts *putObjectOptions) {
+		opts.contentType = contentType
+	}
+}
+
+func PutObjectIfNotExists() PutObjectOpt {
+	return func(opts *putObjectOptions) {
+		opts.ifNotExists = true
+	}
+}
 
 func (r *getObjectResponse) Unmarshal(header http.Header, _ io.Reader) error {
 	data := header.Get(schema.ContentObjectHeader)
@@ -77,28 +96,33 @@ func (c *Client) GetObject(ctx context.Context, volume, path string) (*schema.Ob
 	return response.Object, nil
 }
 
-func (c *Client) PutObject(ctx context.Context, volume, path string, r io.Reader, attr schema.ObjectAttr, contentType ...string) (*schema.Object, error) {
+func (c *Client) PutObject(ctx context.Context, volume, path string, r io.Reader, attr schema.ObjectAttr, opts ...PutObjectOpt) (*schema.Object, error) {
 	if r == nil {
 		return nil, gofiler.ErrBadParameter.With("reader is required")
 	}
+	var putOpts putObjectOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&putOpts)
+		}
+	}
 
-	opts := []client.RequestOpt{client.OptPath("object", volume, path)}
+	reqOpts := []client.RequestOpt{client.OptPath("object", volume, path)}
 	if attr.Size != nil {
-		opts = append(opts, client.OptReqHeader(types.ContentLengthHeader, strconv.FormatInt(types.Value(attr.Size), 10)))
+		reqOpts = append(reqOpts, client.OptReqHeader(types.ContentLengthHeader, strconv.FormatInt(types.Value(attr.Size), 10)))
 	}
 	if etag := types.Value(attr.ETag); etag != "" {
-		opts = append(opts, client.OptReqHeader(types.ContentHashHeader, etag))
+		reqOpts = append(reqOpts, client.OptReqHeader(types.ContentHashHeader, etag))
 	}
 	if !attr.ModTime.IsZero() {
-		opts = append(opts, client.OptReqHeader(types.ContentModifiedHeader, attr.ModTime.Format(http.TimeFormat)))
+		reqOpts = append(reqOpts, client.OptReqHeader(types.ContentModifiedHeader, attr.ModTime.Format(http.TimeFormat)))
 	}
-	typ := ""
-	if len(contentType) > 0 {
-		typ = contentType[0]
+	if putOpts.ifNotExists {
+		reqOpts = append(reqOpts, client.OptReqHeader(schema.ContentIfNoneMatchHeader, "*"))
 	}
 
 	var response schema.Object
-	if err := c.DoWithContext(ctx, &putObjectPayload{body: r, contentType: typ}, &response, opts...); err != nil {
+	if err := c.DoWithContext(ctx, &putObjectPayload{body: r, contentType: putOpts.contentType}, &response, reqOpts...); err != nil {
 		return nil, err
 	}
 	return types.Ptr(response), nil
