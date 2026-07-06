@@ -1,6 +1,7 @@
 package httphandler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -72,6 +73,9 @@ func RegisterObjectHandlers(manager *manager.Filer, router *httprouter.Router) e
 				// Get the object metadata
 				obj, err := manager.GetObject(r.Context(), req)
 				if err != nil && obj == nil {
+					if requestCanceled(r, err) {
+						return
+					}
 					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
 					return
 				}
@@ -109,6 +113,9 @@ func RegisterObjectHandlers(manager *manager.Filer, router *httprouter.Router) e
 					return
 				}
 				if err != nil {
+					if requestCanceled(r, err) {
+						return
+					}
 					httpresponse.Error(w, gofiler.HTTPErr(err), types.Stringify(req))
 					return
 				}
@@ -118,6 +125,10 @@ func RegisterObjectHandlers(manager *manager.Filer, router *httprouter.Router) e
 				w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 				if status := preconditionStatus(r, obj); status != http.StatusOK {
 					w.WriteHeader(status)
+					return
+				}
+				if seeker, ok := reader.(io.ReadSeeker); ok {
+					http.ServeContent(w, r, filepath.Base(obj.Path), obj.ModTime, seeker)
 					return
 				}
 				w.WriteHeader(http.StatusOK)
@@ -202,6 +213,10 @@ func RegisterObjectHandlers(manager *manager.Filer, router *httprouter.Router) e
 
 func checkPreconditions(w http.ResponseWriter, r *http.Request, obj *schema.Object) {
 	w.WriteHeader(preconditionStatus(r, obj))
+}
+
+func requestCanceled(r *http.Request, err error) bool {
+	return errors.Is(err, context.Canceled) || r.Context().Err() != nil
 }
 
 func preconditionStatus(r *http.Request, obj *schema.Object) int {
