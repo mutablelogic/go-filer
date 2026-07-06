@@ -2,7 +2,9 @@ package s3
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"io/fs"
 	"strings"
 
 	// Packages
@@ -14,6 +16,20 @@ import (
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+type rangeReadCloser struct {
+	ctx    context.Context
+	client *s3svc.Client
+	bucket string
+	key    string
+	size   int64
+	pos    int64
+	body   io.ReadCloser
+	closed bool
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -34,15 +50,119 @@ func (self *S3Backend) ReadObject(ctx context.Context, req schema.GetObjectReque
 		return nil, nil, gofiler.ErrBadParameter.Withf("cannot read content of a directory: %q", req.Path)
 	}
 
-	// Stream the object content from S3
+	// Return a range-backed reader so metadata extractors can seek within large
+	// remote objects without forcing a full S3 download into memory.
 	basePrefix := strings.TrimPrefix(strings.TrimSuffix(self.url.Path, "/"), "/")
-	out, err := self.client.GetObject(ctx, &s3svc.GetObjectInput{
-		Bucket: aws.String(self.url.Host),
-		Key:    aws.String(s3KeyFromPath(req.Path, basePrefix)),
-	})
-	if err != nil {
-		return nil, nil, err
+	size := int64(-1)
+	if object.Size != nil {
+		size = types.Value(object.Size)
+	}
+	return &rangeReadCloser{
+		ctx:    ctx,
+		client: self.client,
+		bucket: self.url.Host,
+		key:    s3KeyFromPath(req.Path, basePrefix),
+		size:   size,
+	}, object, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+func (r *rangeReadCloser) Read(data []byte) (int, error) {
+	if r.closed {
+		return 0, fs.ErrClosed
+	}
+	if len(data) == 0 {
+		return 0, nil
+	}
+	if r.size >= 0 && r.pos >= r.size {
+		return 0, io.EOF
+	}
+	if r.size >= 0 && int64(len(data)) > r.size-r.pos {
+		data = data[:int(r.size-r.pos)]
+	}
+	for {
+		if r.body == nil {
+			if err := r.open(len(data)); err != nil {
+				return 0, err
+			}
+		}
+		n, err := r.body.Read(data)
+		r.pos += int64(n)
+		if err == io.EOF {
+			_ = r.body.Close()
+			r.body = nil
+			if r.size < 0 || r.pos >= r.size {
+				return n, err
+			}
+			if n == 0 {
+				continue
+			}
+			return n, nil
+		}
+		return n, err
+	}
+}
+
+func (r *rangeReadCloser) Seek(offset int64, whence int) (int64, error) {
+	if r.closed {
+		return 0, fs.ErrClosed
 	}
 
-	return out.Body, object, nil
+	var pos int64
+	switch whence {
+	case io.SeekStart:
+		pos = offset
+	case io.SeekCurrent:
+		pos = r.pos + offset
+	case io.SeekEnd:
+		if r.size < 0 {
+			return 0, fmt.Errorf("s3 seek end: object size is unknown")
+		}
+		pos = r.size + offset
+	default:
+		return 0, fmt.Errorf("s3 seek: invalid whence %d", whence)
+	}
+	if pos < 0 {
+		return 0, fmt.Errorf("s3 seek: negative position %d", pos)
+	}
+	if r.body != nil {
+		_ = r.body.Close()
+		r.body = nil
+	}
+	r.pos = pos
+	return r.pos, nil
+}
+
+func (r *rangeReadCloser) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	if r.body != nil {
+		return r.body.Close()
+	}
+	return nil
+}
+
+func (r *rangeReadCloser) open(size int) error {
+	if size <= 0 {
+		return nil
+	}
+	rangeEnd := r.pos + int64(size) - 1
+	if r.size >= 0 && rangeEnd >= r.size {
+		rangeEnd = r.size - 1
+	}
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", r.pos, rangeEnd)
+	out, err := r.client.GetObject(r.ctx, &s3svc.GetObjectInput{
+		Bucket: aws.String(r.bucket),
+		Key:    aws.String(r.key),
+		Range:  aws.String(rangeHeader),
+	})
+	if err != nil {
+		return err
+	}
+	r.body = out.Body
+	return nil
 }

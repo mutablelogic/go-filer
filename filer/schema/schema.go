@@ -18,6 +18,7 @@ const (
 	ContentIfNoneMatchHeader       = "If-None-Match"
 	ContentIfModifiedSinceHeader   = "If-Modified-Since"
 	ContentIfUnmodifiedSinceHeader = "If-Unmodified-Since"
+	AttrLastModified               = "last-modified"
 )
 
 const (

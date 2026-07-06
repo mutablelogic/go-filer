@@ -22,6 +22,8 @@ github.com/aws/aws-sdk-go-v2/credentials v1.19.26 h1:Si8kk1kyJnuJWCEgiwpBtTdtgSd
 github.com/aws/aws-sdk-go-v2/credentials v1.19.26/go.mod h1:lBckz+W9SAdNtSDw3pYgQUJDJFcBBWry0GSzw+bK0TY=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.30 h1:/hi1JADLEW9YYryEz1w4GQu0EtP23pP553Cf9KgsDV4=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.30/go.mod h1:/3AOgy4K17Dm4ucMZVC/MJkzy5kmfKUcINRHZyo0koQ=
+github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.30 h1:qzaF2qXmjqBcLbtcpIxOddoDH5eKIRdmOiKt7BatgDc=
+github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.30/go.mod h1:5LlJNctj1Y7l59FPonG4LNjK5DvorTKIS+pAVuWAh3s=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.30 h1:xM/Is9cKMHa8Jj8zkvWhvrFkZsXJV9E+BB4g0HW0duQ=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.30/go.mod h1:WueJeNDZvK1fMYEWJIkcivBfEzUkTpBhzlrUKKY8EuA=
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30 h1:jn46zC9LdsVR/ZpMIJqMqb8hHv31BlLx3ulVqNspUOk=
@@ -207,8 +209,8 @@ github.com/mutablelogic/go-client v1.4.10 h1:Jb+H9QWiAEIieMzl/WcsPfwnZgT3nTRVOwO
 github.com/mutablelogic/go-client v1.4.10/go.mod h1:g8c6RlvIC0wC5rpoqtqk7eznBxormwrxArxH9I5rNRQ=
 github.com/mutablelogic/go-llm v0.4.5 h1:SVZpuqPXM3rrRMiR3UV6LBDRnhe1NC3y2D8m4jhdPVg=
 github.com/mutablelogic/go-llm v0.4.5/go.mod h1:J1DetK4aP+JstDM5Z3b4H+HKRFKMRjCBcsdml+tYKvI=
-github.com/mutablelogic/go-media v1.8.5 h1:RxkAlmfUnWzYQLR4qwsUWnUzI4H/6rx1JrlH107UNw0=
-github.com/mutablelogic/go-media v1.8.5/go.mod h1:d/DjzZ8N4eFoTgmxT9NM63og4SHFXEr6iN0W7iSzrt0=
+github.com/mutablelogic/go-media v1.8.6 h1:sOGyTD+HTmQ0WaGyU2KeimNqM6jD9/dNHTJb3X+ahzM=
+github.com/mutablelogic/go-media v1.8.6/go.mod h1:d/DjzZ8N4eFoTgmxT9NM63og4SHFXEr6iN0W7iSzrt0=
 github.com/mutablelogic/go-pg v1.3.4 h1:t+r57hMA7docztovNhS49DwsFuUFYG4pBStpcpsNKHs=
 github.com/mutablelogic/go-pg v1.3.4/go.mod h1:ctvPpr81dFTWP34zAAw3ZdRf+tHaYArm/fjX6LSJR9c=
 github.com/mutablelogic/go-server v1.7.0 h1:S3IfrbyuFQTUcEiXpawBx2Umejiz6i9/v3wPB1mjQl8=

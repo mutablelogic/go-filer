@@ -161,6 +161,10 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 	if err != nil {
 		return nil, nil, gofiler.ErrBadParameter.Withf("failed to load AWS config: %v", err)
 	}
+	if config.Region == "" {
+		config.Region = "us-east-1"
+	}
+	region = config.Region
 	if tracer != nil {
 		otelaws.AppendMiddlewares(&config.APIOptions)
 	}
@@ -168,6 +172,10 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 	// Build S3 client options
 	s3Opts := []func(*s3.Options){
 		func(o *s3.Options) {
+			// Avoid SDK-selected request checksums for streaming uploads. Non-TLS S3
+			// compatible endpoints cannot use trailing checksums with unseekable bodies.
+			o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+
 			// Suppress noisy "no supported checksum" warnings for responses from
 			// servers that don't implement AWS checksum extensions (e.g. MinIO).
 			o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
@@ -210,11 +218,6 @@ func s3Client(ctx context.Context, tracer trace.Tracer, decryptfn backend.Decryp
 
 ////////////////////////////////////////////////////////////////////////////////
 // STUBS
-
-// Create object in the backend
-func (self *S3Backend) CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error) {
-	return nil, gofiler.ErrNotImplemented.With("CreateObject")
-}
 
 // Delete objects in the backend (single object or prefix)
 func (self *S3Backend) DeleteObjects(context.Context, schema.DeleteObjectsRequest) error {

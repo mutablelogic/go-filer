@@ -49,8 +49,8 @@ func TestCreateObject_001(t *testing.T) {
 		if obj.Path != "meta.txt" {
 			t.Errorf("Path: got %q, want %q", obj.Path, "meta.txt")
 		}
-		if obj.Size != int64(len(body)) {
-			t.Errorf("Size: got %d, want %d", obj.Size, len(body))
+		if types.Value(obj.Size) != int64(len(body)) {
+			t.Errorf("Size: got %d, want %d", types.Value(obj.Size), len(body))
 		}
 		if obj.ModTime.IsZero() {
 			t.Error("ModTime should not be zero")
@@ -58,7 +58,7 @@ func TestCreateObject_001(t *testing.T) {
 		if obj.ContentType == "" {
 			t.Error("ContentType should not be empty")
 		}
-		if obj.IsDir {
+		if obj.ContentType == schema.ContentTypeDirectory {
 			t.Error("IsDir should be false for a file")
 		}
 	})
@@ -70,8 +70,8 @@ func TestCreateObject_001(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if obj.Size != 0 {
-			t.Errorf("Size: got %d, want 0", obj.Size)
+		if types.Value(obj.Size) != 0 {
+			t.Errorf("Size: got %d, want 0", types.Value(obj.Size))
 		}
 	})
 
@@ -90,8 +90,8 @@ func TestCreateObject_001(t *testing.T) {
 	t.Run("overwrites-existing-file", func(t *testing.T) {
 		createObject(t, backend, ctx, "overwrite.txt", []byte("original"))
 		obj := createObject(t, backend, ctx, "overwrite.txt", []byte("new"))
-		if obj.Size != int64(len("new")) {
-			t.Errorf("Size: got %d, want %d", obj.Size, len("new"))
+		if types.Value(obj.Size) != int64(len("new")) {
+			t.Errorf("Size: got %d, want %d", types.Value(obj.Size), len("new"))
 		}
 	})
 
@@ -148,8 +148,8 @@ func TestGetObject_001(t *testing.T) {
 		if obj.Path != "meta.txt" {
 			t.Errorf("Path: got %q, want %q", obj.Path, "meta.txt")
 		}
-		if obj.Size != int64(len(body)) {
-			t.Errorf("Size: got %d, want %d", obj.Size, len(body))
+		if types.Value(obj.Size) != int64(len(body)) {
+			t.Errorf("Size: got %d, want %d", types.Value(obj.Size), len(body))
 		}
 		if obj.ModTime.IsZero() {
 			t.Error("ModTime should not be zero")
@@ -157,7 +157,7 @@ func TestGetObject_001(t *testing.T) {
 		if obj.ContentType == "" {
 			t.Error("ContentType should not be empty")
 		}
-		if obj.IsDir {
+		if obj.ContentType == schema.ContentTypeDirectory {
 			t.Error("IsDir should be false")
 		}
 	})
@@ -209,8 +209,8 @@ func TestReadObject_001(t *testing.T) {
 		if string(got) != string(body) {
 			t.Errorf("content: got %q, want %q", got, body)
 		}
-		if obj.Size != int64(len(body)) {
-			t.Errorf("Size: got %d, want %d", obj.Size, len(body))
+		if types.Value(obj.Size) != int64(len(body)) {
+			t.Errorf("Size: got %d, want %d", types.Value(obj.Size), len(body))
 		}
 		if obj.ContentType == "" {
 			t.Error("ContentType should not be empty")
@@ -436,7 +436,7 @@ func TestFileBackend_002(t *testing.T) {
 		t.Errorf("expected %d objects, got %d", count*2, len(iterator.Body))
 	}
 	for _, obj := range iterator.Body {
-		if obj.IsDir {
+		if obj.ContentType == schema.ContentTypeDirectory {
 			t.Errorf("expected file, got directory: %q", obj.Path)
 		}
 	}
@@ -463,7 +463,7 @@ func TestFileBackend_003(t *testing.T) {
 		}
 	}
 
-		// Path that does not exist
+	// Path that does not exist
 	t.Run("path-not-found", func(t *testing.T) {
 		iterator := &schema.ObjectListIterator{Path: types.Ptr("doesnotexist")}
 		if err := backend.ListObjects(ctx, iterator); !errors.Is(err, gofiler.ErrNotFound) {
@@ -498,7 +498,7 @@ func TestFileBackend_003(t *testing.T) {
 			t.Errorf("expected 3 directories, got %d", len(iterator.Body))
 		}
 		for _, obj := range iterator.Body {
-			if !obj.IsDir {
+			if obj.ContentType != schema.ContentTypeDirectory {
 				t.Errorf("expected directory, got file: %q", obj.Path)
 			}
 		}
@@ -518,7 +518,7 @@ func TestFileBackend_003(t *testing.T) {
 			t.Errorf("expected 4 directories, got %d", len(iterator.Body))
 		}
 		for _, obj := range iterator.Body {
-			if !obj.IsDir {
+			if obj.ContentType != schema.ContentTypeDirectory {
 				t.Errorf("expected directory, got file: %q", obj.Path)
 			}
 		}

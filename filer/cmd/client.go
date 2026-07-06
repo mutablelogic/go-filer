@@ -3,16 +3,24 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
+	gofiler "github.com/mutablelogic/go-filer"
 	credentialcmd "github.com/mutablelogic/go-filer/credential/cmd"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	metadataMime "github.com/mutablelogic/go-filer/metadata/mime"
 	server "github.com/mutablelogic/go-server"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -34,6 +42,7 @@ type ClientCommands struct {
 type ObjectClientCommands struct {
 	ObjectList ObjectListCmd `cmd:"" name:"objects" help:"List server objects." group:"OBJECT"`
 	ObjectGet  ObjectGetCmd  `cmd:"" name:"object" help:"Get object metadata by volume and path." group:"OBJECT"`
+	ObjectPut  ObjectPutCmd  `cmd:"" name:"object-upload" help:"Upload an object to a volume." group:"OBJECT"`
 }
 
 type SearchClientCommands struct {
@@ -80,6 +89,14 @@ type GoogleClientCommands struct {
 	GoogleLogin GoogleLoginCmd `cmd:"" name:"google-login" help:"Login to the Google." group:"GOOGLE"`
 }
 
+type progressReader struct {
+	r        io.Reader
+	total    int64
+	written  int64
+	lastEmit int64
+	cb       func(written, total int64)
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -98,6 +115,22 @@ func withClient(ctx server.Cmd, span string, fn func(context.Context, *httpclien
 	}
 }
 
+func newProgressReader(r io.Reader, total int64, cb func(written, total int64)) io.Reader {
+	return &progressReader{r: r, total: total, cb: cb}
+}
+
+func (r *progressReader) Read(data []byte) (int, error) {
+	n, err := r.r.Read(data)
+	if n > 0 {
+		r.written += int64(n)
+		if r.written-r.lastEmit >= 64*1024 || (r.total > 0 && r.written >= r.total) {
+			r.lastEmit = r.written
+			r.cb(r.written, r.total)
+		}
+	}
+	return n, err
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // OBJECT COMMANDS
 
@@ -106,6 +139,10 @@ type ObjectListCmd struct {
 }
 
 type ObjectGetCmd struct {
+	schema.ObjectKey
+}
+
+type ObjectPutCmd struct {
 	schema.ObjectKey
 }
 
@@ -154,6 +191,86 @@ func (cmd *ObjectGetCmd) Run(ctx server.Cmd) error {
 		fmt.Println(object)
 		return nil
 	})
+}
+
+func (cmd *ObjectPutCmd) Run(ctx server.Cmd) error {
+	width := ctx.IsTerm()
+	info, err := os.Stat(cmd.Path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return gofiler.ErrNotFound.Withf("object not found: %q", cmd.Path)
+		}
+		return err
+	} else if info.IsDir() {
+		return gofiler.ErrBadParameter.Withf("object path is a directory: %q", cmd.Path)
+	}
+
+	object := schema.ObjectKey{
+		Volume: cmd.Volume,
+		Path:   objectUploadPath(cmd.Path),
+	}
+	attr := schema.ObjectAttr{
+		Size:    types.Ptr(info.Size()),
+		ModTime: info.ModTime(),
+	}
+	contentType := metadataMime.TypeByExtension(filepath.Ext(cmd.Path))
+	bar := tui.Progress(tui.SetWidth(width))
+	progress := func(written, total int64) {
+		if width == 0 {
+			return
+		}
+		percent := float64(100)
+		if total > 0 {
+			percent = float64(written) * 100 / float64(total)
+		}
+		fmt.Fprint(os.Stderr, "\r\x1b[K")
+		_, _ = bar.Write(os.Stderr, fmt.Sprintf("%s %d/%d", object.Path, written, total), percent)
+	}
+
+	// Perform the request
+	return withClient(ctx, "object", func(ctx context.Context, client *httpclient.Client) error {
+		f, err := os.Open(cmd.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return gofiler.ErrNotFound.Withf("object not found: %q", cmd.Path)
+			}
+			return err
+		}
+		defer f.Close()
+
+		progress(0, info.Size())
+		uploaded, err := client.PutObject(ctx, object.Volume, object.Path, newProgressReader(f, info.Size(), progress), attr, httpclient.PutObjectContentType(contentType))
+		if err != nil {
+			if errors.Is(err, httpresponse.Err(http.StatusNotModified)) {
+				if width > 0 {
+					fmt.Fprint(os.Stderr, "\r\x1b[K")
+				}
+				uploaded, err = client.GetObject(ctx, object.Volume, object.Path)
+				if err != nil {
+					return err
+				}
+				fmt.Println(uploaded)
+				return nil
+			}
+			return err
+		}
+		if width > 0 {
+			fmt.Fprint(os.Stderr, "\r\x1b[K")
+		}
+
+		fmt.Println(uploaded)
+		return nil
+	})
+}
+
+func objectUploadPath(localPath string) string {
+	path := filepath.ToSlash(localPath)
+	if index := strings.Index(path, "/./"); index >= 0 {
+		path = path[index+3:]
+	} else if strings.HasPrefix(path, "./") {
+		path = strings.TrimPrefix(path, "./")
+	}
+	return strings.TrimPrefix(types.NormalisePath(path), "/")
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -212,6 +329,7 @@ type VolumeCreateFileCmd struct {
 type VolumeCreateS3Cmd struct {
 	URL       *url.URL `arg:"" name:"url" type:"url" help:"S3 URL (s3://bucket-name/prefix)."`
 	Endpoint  *url.URL `name:"endpoint" type:"url" help:"Custom S3 endpoint URL."`
+	Region    string   `name:"region" help:"AWS region. Defaults to us-east-1 for custom endpoints."`
 	Anonymous bool     `name:"anonymous" help:"Use anonymous credentials for S3." negatable:""`
 	AccessKey string   `name:"access-key" help:"AWS access credential."`
 	SecretKey string   `name:"secret-key" help:"AWS secret credential."`
@@ -303,6 +421,9 @@ func (cmd *VolumeCreateS3Cmd) Run(ctx server.Cmd) error {
 	}
 	if cmd.Endpoint != nil {
 		q.Set("endpoint", cmd.Endpoint.String())
+	}
+	if cmd.Region != "" {
+		q.Set("region", cmd.Region)
 	}
 	if cmd.AccessKey != "" {
 		q.Set("access-key", cmd.AccessKey)
