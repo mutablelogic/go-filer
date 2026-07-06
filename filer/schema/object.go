@@ -105,6 +105,11 @@ type ObjectListRequest struct {
 	ObjectListFilters
 }
 
+type PruneObjectsRequest struct {
+	ObjectListRequest
+	LastIndexed *time.Time `json:"last_indexed,omitempty"`
+}
+
 type ObjectListIterator struct {
 	Path      *string   `json:"path,omitempty"`                             // Path prefix within the backend
 	Type      *string   `json:"type,omitempty"`                             // optional content type to filter by. If text/directory, will return directories, rather than objects
@@ -252,6 +257,10 @@ func (r ObjectListFilters) String() string {
 }
 
 func (r ObjectListRequest) String() string {
+	return types.Stringify(r)
+}
+
+func (r PruneObjectsRequest) String() string {
 	return types.Stringify(r)
 }
 
@@ -557,38 +566,8 @@ func MatchesContentType(contentType, filter string) bool {
 
 func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	bind.Del("where")
-
-	// Volume
-	if volume := strings.TrimSpace(r.Volume); !types.IsIdentifier(volume) {
-		return "", httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
-	} else {
-		bind.Append("where", `o."volume" = `+bind.Set("volume", volume))
-	}
-
-	// Path
-	if path := strings.TrimSpace(types.Value(r.Path)); path != "" {
-		path := strings.TrimPrefix(strings.TrimSuffix(types.NormalisePath(path), "/"), "/")
-		if path != "" {
-			if r.Recursive {
-				bind.Append("where", `(o."path" = `+bind.Set("path", path)+` OR o."path" LIKE `+bind.Set("path_prefix", path+"/%")+`)`)
-			} else {
-				bind.Append("where", fmt.Sprintf(`(o."path" = %s OR (o."path" LIKE %s AND POSITION('/' IN SUBSTRING(o."path" FROM %d)) = 0))`, bind.Set("path", path), bind.Set("path_prefix", path+"/%"), len(path)+2))
-			}
-		}
-	}
-
-	// Type
-	if contentType := strings.TrimSpace(types.Value(r.Type)); contentType != "" {
-		if contentType == ContentTypeDirectory {
-			bind.Append("where", `FALSE`)
-		} else if strings.Contains(contentType, "/") {
-			// If type has a '/' then treat as full content type, otherwise match major or minor type.
-			bind.Append("where", `o."type" = `+bind.Set("type", contentType))
-		} else {
-			bind.Append("where", `(o."type" LIKE `+bind.Set("type_major", contentType+"/%")+
-				` OR o."type" LIKE `+bind.Set("type_minor", "%/"+contentType)+
-				`)`)
-		}
+	if err := r.selectWhere(bind); err != nil {
+		return "", err
 	}
 
 	// Create the where
@@ -606,4 +585,69 @@ func (r *ObjectListRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
 	default:
 		return "", gofiler.ErrInternalServerError.Withf("unsupported ObjectListRequest operation %q", op)
 	}
+}
+
+func (r *PruneObjectsRequest) Select(bind *pg.Bind, op pg.Op) (string, error) {
+	bind.Del("where")
+	if err := r.ObjectListRequest.selectWhere(bind); err != nil {
+		return "", err
+	}
+	if r.LastIndexed == nil || r.LastIndexed.IsZero() {
+		return "", httpresponse.ErrBadRequest.With("missing last indexed time")
+	}
+	bind.Append("where", `o."indexed_at" < `+bind.Set("last_indexed", *r.LastIndexed))
+
+	// Create the where
+	if where := bind.Join("where", " AND "); where != "" {
+		bind.Set("where", "WHERE "+where)
+	} else {
+		bind.Set("where", "")
+	}
+
+	r.OffsetLimit.Bind(bind, ObjectListLimit)
+
+	switch op {
+	case pg.List:
+		return bind.Query("filer.object_list"), nil
+	default:
+		return "", gofiler.ErrInternalServerError.Withf("unsupported PruneObjectsRequest operation %q", op)
+	}
+}
+
+func (r *ObjectListRequest) selectWhere(bind *pg.Bind) error {
+
+	// Volume
+	if volume := strings.TrimSpace(r.Volume); !types.IsIdentifier(volume) {
+		return httpresponse.ErrBadRequest.Withf("invalid volume name %q", volume)
+	} else {
+		bind.Append("where", `o."volume" = `+bind.Set("volume", volume))
+	}
+
+	// Path
+	path := strings.TrimPrefix(strings.TrimSuffix(types.NormalisePath(strings.TrimSpace(types.Value(r.Path))), "/"), "/")
+	if path != "" {
+		if r.Recursive {
+			bind.Append("where", `(o."path" = `+bind.Set("path", path)+` OR o."path" LIKE `+bind.Set("path_prefix", path+"/%")+`)`)
+		} else {
+			bind.Append("where", fmt.Sprintf(`(o."path" = %s OR (o."path" LIKE %s AND POSITION('/' IN SUBSTRING(o."path" FROM %d)) = 0))`, bind.Set("path", path), bind.Set("path_prefix", path+"/%"), len(path)+2))
+		}
+	} else if !r.Recursive {
+		bind.Append("where", `POSITION('/' IN o."path") = 0`)
+	}
+
+	// Type
+	if contentType := strings.TrimSpace(types.Value(r.Type)); contentType != "" {
+		if contentType == ContentTypeDirectory {
+			bind.Append("where", `FALSE`)
+		} else if strings.Contains(contentType, "/") {
+			// If type has a '/' then treat as full content type, otherwise match major or minor type.
+			bind.Append("where", `o."type" = `+bind.Set("type", contentType))
+		} else {
+			bind.Append("where", `(o."type" LIKE `+bind.Set("type_major", contentType+"/%")+
+				` OR o."type" LIKE `+bind.Set("type_minor", "%/"+contentType)+
+				`)`)
+		}
+	}
+
+	return nil
 }

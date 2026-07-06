@@ -25,62 +25,6 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (filer *Filer) GetObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
-	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "GetObject",
-		attribute.String("req", types.Stringify(req)),
-	)
-	defer func() { endSpan(err) }()
-
-	// Check the volume first
-	volume, err := filer.GetVolume(ctx, req.Volume)
-	if err != nil {
-		return nil, err
-	} else if types.Value(volume.Enabled) == false {
-		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
-	}
-
-	// Get the backend
-	backend := filer.volumes.Get(volume.Name)
-	if backend == nil {
-		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
-	}
-
-	// Get the object from the backend first
-	object, err := backend.GetObject(ctx, schema.GetObjectRequest{
-		ObjectKey: req,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// If the volume is not indexed, or the index delta is zero, return the backend object directly
-	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
-		return object, nil
-	}
-
-	// Get the metadata from the database (on error, return the object we have)
-	var result schema.Object
-	if err := filer.PoolConn.Get(ctx, &result, req); errors.Is(err, pg.ErrNotFound) {
-		// Kick off an indexing job for the object
-		return object, filer.enqueueIndexObject(ctx, object.ObjectKey, true)
-	} else if err != nil {
-		return object, err
-	}
-
-	// If the objects match, return the result from the database
-	if result.Matches(object) {
-		return types.Ptr(result), nil
-	}
-
-	// Kick off an indexing job for the object, and return the object we have
-	if err := filer.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
-		return object, err
-	}
-
-	// Return the backend object in preference to the database object, since the database object is stale
-	return object, nil
-}
-
 func (filer *Filer) ListObjects(ctx context.Context, req schema.ObjectListRequest) (_ *schema.ObjectList, err error) {
 	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "ListObjects",
 		attribute.String("req", types.Stringify(req)),
@@ -93,12 +37,6 @@ func (filer *Filer) ListObjects(ctx context.Context, req schema.ObjectListReques
 		return nil, err
 	} else if types.Value(volume.Enabled) == false {
 		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
-	}
-
-	// Check prefix/path argument
-	if path := types.Value(req.Path); path != "" {
-		// TODO: Path should be a valid prefix or valid object
-		// or else return NotFound
 	}
 
 	// If indexing is not enabled, or no indexing has happened yet, or there is no last indexed object,
@@ -172,6 +110,184 @@ func (filer *Filer) ListObjects(ctx context.Context, req schema.ObjectListReques
 	return types.Ptr(result), nil
 }
 
+func (filer *Filer) GetObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "GetObject",
+		attribute.String("req", types.Stringify(req)),
+	)
+	defer func() { endSpan(err) }()
+
+	// Check the volume first
+	volume, err := filer.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := filer.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the object from the backend first
+	object, err := backend.GetObject(ctx, schema.GetObjectRequest{
+		ObjectKey: req,
+	})
+	if errors.Is(err, gofiler.ErrNotFound) {
+		return nil, errors.Join(err, filer.deleteIndexedObject(ctx, req))
+	} else if err != nil {
+		return nil, err
+	}
+
+	// If the volume is not indexed, or the index delta is zero, return the backend object directly
+	if types.Value(volume.IndexDelta) == 0 || volume.IndexedAt == nil {
+		return object, nil
+	}
+
+	// Get the metadata from the database (on error, return the object we have)
+	var result schema.Object
+	if err := filer.PoolConn.Get(ctx, &result, req); errors.Is(err, pg.ErrNotFound) {
+		// Kick off an indexing job for the object
+		return object, filer.enqueueIndexObject(ctx, object.ObjectKey, true)
+	} else if err != nil {
+		return object, err
+	}
+
+	// If the objects match, return the result from the database
+	if result.Matches(object) {
+		return types.Ptr(result), nil
+	}
+
+	// Kick off an indexing job for the object, and return the object we have
+	if err := filer.enqueueIndexObject(ctx, object.ObjectKey, true); err != nil {
+		return object, err
+	}
+
+	// Return the backend object in preference to the database object, since the database object is stale
+	return object, nil
+}
+
+func (filer *Filer) ReadObject(ctx context.Context, req schema.ObjectKey, attr schema.ObjectAttr) (_ io.ReadCloser, _ *schema.Object, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "ReadObject",
+		attribute.String("req", types.Stringify(req)),
+		attribute.String("attr", types.Stringify(attr)),
+	)
+	defer func() { endSpan(err) }()
+
+	// Check the volume first
+	volume, err := filer.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, nil, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := filer.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, nil, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Check for preconditions. If the object matches the preconditions, return a not modified error.
+	if readObjectHasPreconditions(attr) {
+		object, err := backend.GetObject(ctx, schema.GetObjectRequest{ObjectKey: req})
+		if errors.Is(err, gofiler.ErrNotFound) {
+			return nil, nil, errors.Join(err, filer.deleteIndexedObject(ctx, req))
+		} else if err != nil {
+			return nil, nil, err
+		}
+		if types.Value(volume.IndexDelta) > 0 && volume.IndexedAt != nil {
+			var indexed schema.Object
+			if err := filer.PoolConn.Get(ctx, &indexed, req); errors.Is(err, pg.ErrNotFound) {
+				// Continue with backend metadata
+			} else if err != nil {
+				return nil, nil, err
+			} else if indexed.Matches(object) {
+				object = &indexed
+			}
+		}
+		if readObjectNotModified(object, attr) {
+			return nil, object, gofiler.ErrNotModified
+		}
+	}
+
+	// Read the object from the backend
+	reader, object, err := backend.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: req})
+	if errors.Is(err, gofiler.ErrNotFound) {
+		return nil, nil, errors.Join(err, filer.deleteIndexedObject(ctx, req))
+	} else if err != nil {
+		return nil, nil, err
+	}
+
+	// Enrich the metadata with the database metadata if the volume is indexed and the object is indexed
+	if types.Value(volume.IndexDelta) > 0 && volume.IndexedAt != nil {
+		var indexed schema.Object
+		if err := filer.PoolConn.Get(ctx, &indexed, req); errors.Is(err, pg.ErrNotFound) {
+			// Return backend metadata
+		} else if err != nil {
+			return nil, nil, err
+		} else if indexed.Matches(object) {
+			object = &indexed
+		}
+	}
+	return reader, object, nil
+}
+
+func (filer *Filer) CreateObject(ctx context.Context, req schema.CreateObjectRequest, attr schema.ObjectAttr) (_ *schema.Object, _ bool, err error) {
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "CreateObject",
+		attribute.String("req", types.Stringify(req)),
+		attribute.String("attr", types.Stringify(attr)),
+	)
+	defer func() {
+		if errors.Is(err, gofiler.ErrConflict) || errors.Is(err, gofiler.ErrNotModified) {
+			endSpan(nil)
+		} else {
+			endSpan(err)
+		}
+	}()
+
+	// Check the volume first
+	volume, err := filer.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return nil, false, err
+	} else if types.Value(volume.Enabled) == false {
+		return nil, false, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	// Get the backend
+	backend := filer.volumes.Get(volume.Name)
+	if backend == nil {
+		return nil, false, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
+	}
+
+	created := false
+	current, err := backend.GetObject(ctx, schema.GetObjectRequest{
+		ObjectKey: req.ObjectKey,
+	})
+	if errors.Is(err, gofiler.ErrNotFound) {
+		created = true
+	} else if err != nil {
+		return nil, false, err
+	} else if req.IfNotExists {
+		return nil, false, gofiler.ErrConflict.Withf("object already exists: %q", req.Path)
+	} else if createObjectHasPreconditions(req, attr) && createObjectNotModified(current, attr) {
+		return current, false, gofiler.ErrNotModified
+	}
+
+	// Create the object in the backend. The backend owns IfNotExists semantics.
+	object, err := backend.CreateObject(ctx, req)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Kick off an indexing job for the object, and return the backend object.
+	return object, created, filer.enqueueIndexObject(ctx, object.ObjectKey, true)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
 func (filer *Filer) listIndexedDirectories(ctx context.Context, req schema.ObjectListRequest) (*schema.ObjectList, error) {
 	objectReq := req
 	objectReq.Type = nil
@@ -235,60 +351,6 @@ func (filer *Filer) listIndexedDirectories(ctx context.Context, req schema.Objec
 	return types.Ptr(result), nil
 }
 
-func (filer *Filer) CreateObject(ctx context.Context, req schema.CreateObjectRequest, attr schema.ObjectAttr) (_ *schema.Object, _ bool, err error) {
-	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "CreateObject",
-		attribute.String("req", types.Stringify(req)),
-		attribute.String("attr", types.Stringify(attr)),
-	)
-	defer func() {
-		if errors.Is(err, gofiler.ErrConflict) || errors.Is(err, gofiler.ErrNotModified) {
-			endSpan(nil)
-		} else {
-			endSpan(err)
-		}
-	}()
-
-	// Check the volume first
-	volume, err := filer.GetVolume(ctx, req.Volume)
-	if err != nil {
-		return nil, false, err
-	} else if types.Value(volume.Enabled) == false {
-		return nil, false, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
-	}
-
-	// Get the backend
-	backend := filer.volumes.Get(volume.Name)
-	if backend == nil {
-		return nil, false, gofiler.ErrServiceUnavailable.Withf("volume %q is not mounted", req.Volume)
-	}
-
-	created := false
-	current, err := backend.GetObject(ctx, schema.GetObjectRequest{
-		ObjectKey: req.ObjectKey,
-	})
-	if errors.Is(err, gofiler.ErrNotFound) {
-		created = true
-	} else if err != nil {
-		return nil, false, err
-	} else if req.IfNotExists {
-		return nil, false, gofiler.ErrConflict.Withf("object already exists: %q", req.Path)
-	} else if createObjectHasPreconditions(req, attr) && createObjectNotModified(current, attr) {
-		return current, false, gofiler.ErrNotModified
-	}
-
-	// Create the object in the backend. The backend owns IfNotExists semantics.
-	object, err := backend.CreateObject(ctx, req)
-	if err != nil {
-		return nil, false, err
-	}
-
-	// Kick off an indexing job for the object, and return the backend object.
-	return object, created, filer.enqueueIndexObject(ctx, object.ObjectKey, true)
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
-
 func (filer *Filer) touchObject(ctx context.Context, req schema.ObjectKey) (_ *schema.Object, err error) {
 	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "touchObject",
 		attribute.String("req", types.Stringify(req)),
@@ -304,8 +366,39 @@ func (filer *Filer) touchObject(ctx context.Context, req schema.ObjectKey) (_ *s
 	return types.Ptr(result), nil
 }
 
+func (filer *Filer) deleteIndexedObject(ctx context.Context, key schema.ObjectKey) error {
+	var deleted schema.Object
+	if err := filer.Tx(ctx, func(conn pg.Conn) error {
+		return conn.Delete(ctx, &deleted, key)
+	}); err != nil && !errors.Is(err, pg.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 func createObjectHasPreconditions(req schema.CreateObjectRequest, attr schema.ObjectAttr) bool {
 	return req.IfNotExists || attr.ETag != nil || !attr.ModTime.IsZero()
+}
+
+func readObjectHasPreconditions(attr schema.ObjectAttr) bool {
+	return attr.Size != nil || attr.ETag != nil || !attr.ModTime.IsZero()
+}
+
+func readObjectNotModified(current *schema.Object, attr schema.ObjectAttr) bool {
+	if current == nil {
+		return false
+	}
+	sizeMatches := attr.Size != nil && current.Size != nil && types.Value(current.Size) == types.Value(attr.Size)
+	if attr.Size != nil && !sizeMatches {
+		return false
+	}
+	if attr.ETag != nil {
+		return current.ETag != nil && types.Value(current.ETag) == types.Value(attr.ETag)
+	}
+	if !attr.ModTime.IsZero() {
+		return !current.ModTime.IsZero() && current.ModTime.Truncate(time.Second).Equal(attr.ModTime.Truncate(time.Second))
+	}
+	return sizeMatches
 }
 
 func createObjectNotModified(current *schema.Object, attr schema.ObjectAttr) bool {
@@ -455,10 +548,7 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 
 	if errors.Is(err, gofiler.ErrNotFound) {
 		// Object no longer exists in the backend — remove it from the index
-		var deleted schema.Object
-		if delErr := filer.Tx(ctx, func(conn pg.Conn) error {
-			return conn.Delete(ctx, &deleted, key)
-		}); delErr != nil && !errors.Is(delErr, pg.ErrNotFound) {
+		if delErr := filer.deleteIndexedObject(ctx, key); delErr != nil {
 			return nil, delErr
 		}
 		return nil, nil

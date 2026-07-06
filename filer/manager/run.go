@@ -10,7 +10,7 @@ import (
 	"time"
 
 	// Packages
-
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
@@ -240,6 +240,15 @@ func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) err
 		return nil
 	}
 
+	// Prune any objects that were indexed before the last full reindex
+	if types.Value(result.Body[0].IndexDelta) > 0 && result.Body[0].IndexedAt != nil {
+		if err := filer.pruneVolume(ctx, result.Body[0], func(total uint64) {
+			logger.DebugContext(ctx, "Pruning volume", "name", backend.Name(), "total", total)
+		}); err != nil {
+			return err
+		}
+	}
+
 	// Touch indexed_at before reindexing so concurrent workers will not pick
 	// this volume as stale in the same scheduling window.
 	var touched schema.Volume
@@ -256,9 +265,12 @@ func (filer *Filer) reindexVolumes(ctx context.Context, logger *slog.Logger) err
 	})
 }
 
-func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error {
-	var result error
+func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) (err error) {
+	// OTEL
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "SyncVolumes")
+	defer func() { endSpan(err) }()
 
+	// Sync the volume registry with the database, return inserted and deleted volumes
 	inserted, deleted, err := filer.syncVolumesInner(ctx)
 	if err != nil {
 		return err
@@ -266,8 +278,8 @@ func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error 
 
 	// Delete backends
 	for _, volume := range deleted {
-		if err := filer.volumes.Delete(volume.Name); err != nil {
-			result = errors.Join(result, fmt.Errorf("failed to unmount volume %q: %v", volume.Name, err))
+		if deleteErr := filer.volumes.Delete(volume.Name); deleteErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to unmount volume %q: %v", volume.Name, deleteErr))
 		} else {
 			logger.InfoContext(ctx, "unmounted volume", "name", volume.Name)
 		}
@@ -275,16 +287,16 @@ func (filer *Filer) syncVolumes(ctx context.Context, logger *slog.Logger) error 
 
 	// Insert backends
 	for _, volume := range inserted {
-		backend, err := filer.volumes.New(ctx, volume.URL)
-		if err != nil {
-			result = errors.Join(result, fmt.Errorf("failed to mount volume %q: %v", volume.Name, err))
+		backend, mountErr := filer.volumes.New(ctx, volume.URL)
+		if mountErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to mount volume %q: %v", volume.Name, mountErr))
 		} else {
 			logger.InfoContext(ctx, "mounted volume", "name", backend.Name(), "url", backend.URL().String())
 		}
 	}
 
 	// Return any errors
-	return result
+	return err
 }
 
 func (filer *Filer) syncVolumesInner(ctx context.Context) (inserted []*schema.Volume, deleted []*schema.Volume, err error) {
@@ -332,7 +344,11 @@ func (filer *Filer) syncVolumesInner(ctx context.Context) (inserted []*schema.Vo
 	return inserted, deleted, nil
 }
 
-func (filer *Filer) syncLLMProviders(ctx context.Context, logger *slog.Logger) error {
+func (filer *Filer) syncLLMProviders(ctx context.Context, logger *slog.Logger) (err error) {
+	// OTEL
+	ctx, endSpan := otel.StartSpan(filer.tracer, ctx, "SyncLLMProviders")
+	defer func() { endSpan(err) }()
+
 	var providers []*llmschema.Provider
 	updates, deleted, err := filer.llm.Sync(providers, func(i int) (llmschema.ProviderCredentials, error) {
 		return llmschema.ProviderCredentials{}, nil
@@ -341,7 +357,7 @@ func (filer *Filer) syncLLMProviders(ctx context.Context, logger *slog.Logger) e
 		return err
 	}
 
-	logger.DebugContext(ctx, "Sync LLM providers", "updates", updates, "deletes", deleted)
+	logger.DebugContext(ctx, "TODO: Sync LLM providers", "updates", updates, "deletes", deleted)
 
 	// Return any errors
 	return err

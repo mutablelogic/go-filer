@@ -56,7 +56,13 @@ export interface SearchParams {
 }
 
 export class FilerClient {
-  constructor(private readonly baseUrl: string = '/api') {}
+  constructor(private readonly baseUrl: string = '/api') { }
+
+  objectUrl(volume: string, path: string): string {
+    const encodedVolume = encodeURIComponent(volume);
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    return `${this.baseUrl}/object/${encodedVolume}/${encodedPath}`;
+  }
 
   async listVolumes(): Promise<VolumeList> {
     return this.get<VolumeList>('volume');

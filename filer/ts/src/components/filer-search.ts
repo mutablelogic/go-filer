@@ -154,6 +154,28 @@ export class FilerSearch extends LitElement {
       overflow-y: auto;
       padding: 1.25rem;
     }
+    .preview {
+      margin-bottom: 1rem;
+      border: 1px solid #eee;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #f7f7f7;
+    }
+    .preview img,
+    .preview video {
+      display: block;
+      width: 100%;
+      max-height: 60vh;
+      object-fit: contain;
+      background: #111;
+    }
+    .preview audio {
+      display: block;
+      width: 100%;
+      padding: 0.75rem;
+      box-sizing: border-box;
+      background: #fff;
+    }
     .drawer-body pre {
       margin: 0;
       font-size: 0.8rem;
@@ -206,6 +228,20 @@ export class FilerSearch extends LitElement {
     this.selected = null;
   }
 
+  private renderPreview(object: SearchResult) {
+    const url = client.objectUrl(object.volume, object.path);
+    if (object.type.startsWith('image/')) {
+      return html`<div class="preview"><img src=${url} alt=${object.title || object.path} /></div>`;
+    }
+    if (object.type.startsWith('video/')) {
+      return html`<div class="preview"><video src=${url} controls preload="metadata"></video></div>`;
+    }
+    if (object.type.startsWith('audio/')) {
+      return html`<div class="preview"><audio src=${url} controls preload="metadata"></audio></div>`;
+    }
+    return '';
+  }
+
   render() {
     return html`
       <input
@@ -220,10 +256,10 @@ export class FilerSearch extends LitElement {
       ${this.error
         ? html`<p class="error">${this.error}</p>`
         : this.searched && this.results.length === 0
-        ? html`<p class="empty">No results found.</p>`
-        : this.results.map(r => {
-          const art: ArtworkInfo | undefined = r.artwork?.[0];
-          return html`
+          ? html`<p class="empty">No results found.</p>`
+          : this.results.map(r => {
+            const art: ArtworkInfo | undefined = r.artwork?.[0];
+            return html`
             <div class="result">
               ${art ? html`
                 <div class="result-artwork">
@@ -240,7 +276,7 @@ export class FilerSearch extends LitElement {
               </div>
             </div>
           `;
-        })
+          })
       }
 
       <div class=${classMap({ backdrop: true, open: !!this.selected })} @click=${this.closeDrawer}></div>
@@ -250,6 +286,7 @@ export class FilerSearch extends LitElement {
           <button class="drawer-close" @click=${this.closeDrawer}>&#x2715;</button>
         </div>
         <div class="drawer-body">
+          ${this.selected ? this.renderPreview(this.selected) : ''}
           <pre>${this.selected ? JSON.stringify(this.selected, null, 2) : ''}</pre>
         </div>
       </div>
