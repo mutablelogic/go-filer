@@ -14,6 +14,7 @@ import (
 	types "github.com/mutablelogic/go-server/pkg/types"
 	trace "go.opentelemetry.io/otel/trace"
 	oauth2 "golang.org/x/oauth2"
+	google "golang.org/x/oauth2/google"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -21,9 +22,15 @@ import (
 
 type Client struct {
 	*authclient.Client
-	url    *url.URL
-	tracer trace.Tracer
-	token  oauth2.Token
+	url         *url.URL
+	tracer      trace.Tracer
+	tokenSource oauth2.TokenSource
+}
+
+// serviceAccountKey is used to sniff whether a credential blob is a Google
+// service account key (as opposed to a user oauth2.Token) before parsing it.
+type serviceAccountKey struct {
+	Type string `json:"type"`
 }
 
 var _ backend.Backend = (*Client)(nil)
@@ -34,6 +41,7 @@ var _ backend.Backend = (*Client)(nil)
 const (
 	driveScheme        = "googledrive"
 	driveCredentialKey = "google"
+	driveScope         = "https://www.googleapis.com/auth/drive"
 	endpoint           = "https://www.googleapis.com/"
 )
 
@@ -67,9 +75,24 @@ func NewDriveBackend(ctx context.Context, tracer trace.Tracer, decryptfn backend
 		return nil, err
 	}
 
-	var token oauth2.Token
-	if err := json.Unmarshal(raw, &token); err != nil {
+	var probe serviceAccountKey
+	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("invalid %q credential: %v", driveCredentialKey, err)
+	}
+
+	var tokenSource oauth2.TokenSource
+	if probe.Type == "service_account" {
+		cfg, err := google.JWTConfigFromJSON(raw, driveScope)
+		if err != nil {
+			return nil, gofiler.ErrBadParameter.Withf("invalid %q service account credential: %v", driveCredentialKey, err)
+		}
+		tokenSource = cfg.TokenSource(ctx)
+	} else {
+		var token oauth2.Token
+		if err := json.Unmarshal(raw, &token); err != nil {
+			return nil, gofiler.ErrBadParameter.Withf("invalid %q credential: %v", driveCredentialKey, err)
+		}
+		tokenSource = oauth2.StaticTokenSource(&token)
 	}
 
 	client, err := New(client.OptTracer(tracer))
@@ -82,7 +105,7 @@ func NewDriveBackend(ctx context.Context, tracer trace.Tracer, decryptfn backend
 			Path:   "/" + strings.TrimPrefix(strings.TrimSuffix(u.Path, "/"), "/"),
 		}
 		client.tracer = tracer
-		client.token = token
+		client.tokenSource = tokenSource
 	}
 
 	return client, nil

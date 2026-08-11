@@ -8,9 +8,9 @@ import (
 
 	// Packages
 	reader "github.com/carlos7ags/folio/reader"
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
+	text "github.com/mutablelogic/go-filer/_filer/metadata/text"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
-	text "github.com/mutablelogic/go-filer/metadata/text"
 	llm "github.com/mutablelogic/go-llm"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
 )

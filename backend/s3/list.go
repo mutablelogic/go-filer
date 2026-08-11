@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"path"
 	"strings"
 
@@ -12,7 +13,6 @@ import (
 	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	mime "github.com/mutablelogic/go-filer/metadata/mime"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )

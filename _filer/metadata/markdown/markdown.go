@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	// Packages
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
+	text "github.com/mutablelogic/go-filer/_filer/metadata/text"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
-	text "github.com/mutablelogic/go-filer/metadata/text"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

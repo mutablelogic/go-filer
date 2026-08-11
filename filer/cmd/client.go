@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,7 +19,6 @@ import (
 	credentialcmd "github.com/mutablelogic/go-filer/credential/cmd"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadataMime "github.com/mutablelogic/go-filer/metadata/mime"
 	server "github.com/mutablelogic/go-server"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
@@ -313,7 +313,7 @@ func (cmd *ObjectPutCmd) Run(ctx server.Cmd) error {
 		Size:    types.Ptr(info.Size()),
 		ModTime: info.ModTime(),
 	}
-	contentType := metadataMime.TypeByExtension(filepath.Ext(cmd.Path))
+	contentType := mime.TypeByExtension(filepath.Ext(cmd.Path))
 	bar := tui.Progress(tui.SetWidth(width))
 	progress := func(written, total int64) {
 		if width == 0 {

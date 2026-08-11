@@ -15,7 +15,7 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadataMime "github.com/mutablelogic/go-filer/metadata/mime"
+	metadata "github.com/mutablelogic/go-media/metadata"
 	pg "github.com/mutablelogic/go-pg"
 	pgqueueschema "github.com/mutablelogic/go-pg/pgqueue/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -593,7 +593,7 @@ func (filer *Filer) indexObject(ctx context.Context, key schema.ObjectKey, force
 	}
 	if metaReader != nil {
 		namedReader := namedReadSeeker{ReadSeeker: metaReader, name: object.Path}
-		if contentType, _, err := metadataMime.Type(namedReader); err == nil && contentType != types.ContentTypeBinary {
+		if contentType, _, err := metadata.ContentType(namedReader); err == nil && contentType != types.ContentTypeBinary {
 			object.ContentType = contentType
 		}
 		if _, err := metaReader.Seek(0, io.SeekStart); err != nil {

@@ -15,8 +15,8 @@ import (
 	_ "golang.org/x/image/tiff"
 
 	// Packages
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
 	xdraw "golang.org/x/image/draw"
 )
 

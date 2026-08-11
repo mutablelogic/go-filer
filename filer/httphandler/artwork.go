@@ -10,9 +10,9 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	image "github.com/mutablelogic/go-filer/_filer/metadata/image"
 	manager "github.com/mutablelogic/go-filer/filer/manager"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	image "github.com/mutablelogic/go-filer/metadata/image"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"

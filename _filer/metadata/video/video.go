@@ -1,4 +1,4 @@
-package audio
+package video
 
 import (
 	"bytes"
@@ -9,22 +9,22 @@ import (
 	"time"
 
 	// Packages
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
+	imageutil "github.com/mutablelogic/go-filer/_filer/metadata/image"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
-	imageutil "github.com/mutablelogic/go-filer/metadata/image"
 	ffmpeg "github.com/mutablelogic/go-media/pkg/ffmpeg"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type audioextractor struct{}
+type videoextractor struct{}
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 func init() {
-	metadata.RegisterExtractor(new(audioextractor))
+	metadata.RegisterExtractor(new(videoextractor))
 	ffmpeg.SetLogging(false, func(_ string) {
 		// Supress logging
 	})
@@ -33,11 +33,11 @@ func init() {
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (e *audioextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`^audio/.*`)
+func (e *videoextractor) MediaType() *regexp.Regexp {
+	return regexp.MustCompile(`video/.*`)
 }
 
-func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *videoextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	reader, err := ffmpeg.NewReader(r)
 	if err != nil {
 		return nil, nil, err
@@ -45,8 +45,8 @@ func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) (
 	defer reader.Close()
 
 	// Add duration
-	kv := schema.AppendMeta([]schema.Meta{}, metadata.AudioDurationSecs, reader.Duration().Seconds())
-	kv = schema.AppendMeta(kv, metadata.AudioDuration, reader.Duration().Truncate(time.Second).String())
+	kv := schema.AppendMeta([]schema.Meta{}, metadata.VideoDurationSecs, reader.Duration().Seconds())
+	kv = schema.AppendMeta(kv, metadata.VideoDuration, reader.Duration().Truncate(time.Second).String())
 
 	// Add other metadata
 	for _, meta := range reader.Metadata() {
@@ -68,9 +68,6 @@ func (e *audioextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) (
 	return kv, artwork, nil
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
-
 func sanitizeKey(key string) string {
 	key = strings.ToLower(key)
 
@@ -82,24 +79,20 @@ func sanitizeKey(key string) string {
 
 	// Supress common keys that are not useful
 	switch key {
-	case "eitunnorm", "tagging-time", "accurateripdiscid", "accurateripresult", "comment", "id3v1-comment":
+	case "compatible-brands", "major-brand", "minor-version", "comment":
 		return ""
-	case "id3v2-priv-averagelevel", "id3v2-priv-google-originalclientid", "id3v2-priv-www-amazon-com":
+	case "itunes-cddb-1", "itunmovi", "gapless-playback", "itunextc":
 		return ""
-	case "itunes-cddb-1", "itunmovi", "itunnorm", "itunsmpb", "gapless-playback", "itunextc", "compatible-brands", "itunes-cddb-ids":
-		return ""
-	case "account-id", "major-brand", "minor-version":
-		return ""
-	case "itunes-cddb-tracknumber":
-		return metadata.AudioTrack
-	case "artists", "artist", "album-artist":
-		return metadata.AudioArtist
-	case "album", "albumtitle":
-		return metadata.AudioAlbum
-	case "genre", "music-genre":
-		return metadata.AudioGenre
-	case "originalyear", "year", "date", "originaldate", "tdor":
-		return metadata.AudioYear
+	case "title":
+		return metadata.VideoTitle
+	case "director":
+		return metadata.VideoDirector
+	case "description":
+		return metadata.VideoDescription
+	case "synopsis":
+		return metadata.VideoSynopsis
+	case "date", "year":
+		return metadata.VideoYear
 	}
 
 	// Return lowercase and trim any leading/trailing underscores

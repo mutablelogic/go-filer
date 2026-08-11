@@ -9,9 +9,9 @@ import (
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
+	mime "github.com/mutablelogic/go-filer/_filer/metadata/mime"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
-	mime "github.com/mutablelogic/go-filer/metadata/mime"
 )
 
 ////////////////////////////////////////////////////////////////////////////////

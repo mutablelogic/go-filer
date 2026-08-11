@@ -37,10 +37,6 @@ func (c *Client) ReadObject(context.Context, schema.GetObjectRequest) (io.ReadCl
 	return nil, nil, gofiler.ErrNotImplemented.With("ReadObject")
 }
 
-func (c *Client) ListObjects(context.Context, *schema.ObjectListIterator) error {
-	return gofiler.ErrNotImplemented.With("ListObjects")
-}
-
 func (c *Client) DeleteObjects(context.Context, schema.DeleteObjectsRequest) error {
 	return gofiler.ErrNotImplemented.With("DeleteObjects")
 }

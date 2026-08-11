@@ -9,8 +9,8 @@ import (
 	"time"
 
 	// Packages
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -36,13 +36,13 @@ func (e *icsextractor) ExtractMetadata(_ context.Context, r io.ReadSeeker) ([]sc
 	props := parse(r)
 
 	var (
-		kv         []schema.Meta
-		eventCount int
-		summaries  []string
-		start      time.Time
-		end        time.Time
-		organizers []string
-		locations  []string
+		kv           []schema.Meta
+		eventCount   int
+		summaries    []string
+		start        time.Time
+		end          time.Time
+		organizers   []string
+		locations    []string
 		categories   []string
 		descriptions []string
 		urls         []string

@@ -1,4 +1,4 @@
-package markdown
+package json
 
 import (
 	"context"
@@ -7,38 +7,45 @@ import (
 	"strings"
 
 	// Packages
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
+	text "github.com/mutablelogic/go-filer/_filer/metadata/text"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
-	text "github.com/mutablelogic/go-filer/metadata/text"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type srtextractor struct{}
+type jsonextractor struct{}
+
+///////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+const (
+	prompt = "This is a JSON file. Summarize its purpose, and include any relevant keywords."
+)
 
 ///////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 func init() {
-	metadata.RegisterExtractor(new(srtextractor))
+	metadata.RegisterExtractor(new(jsonextractor))
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (e *srtextractor) MediaType() *regexp.Regexp {
-	return regexp.MustCompile(`^(application/x-subrip|text/srt)$`)
+func (e *jsonextractor) MediaType() *regexp.Regexp {
+	return regexp.MustCompile(`^application/json$`)
 }
 
-func (e *srtextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
+func (e *jsonextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]schema.Meta, []*schema.ArtworkMeta, error) {
 	// Initialise summarizer first so ollamaMaxInputTokens is set before reading
 	summarizer, err := text.NewTextSummarizer(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var lines []string
+	lines := []string{}
 	kv, err := text.NewTextReader(r).Read(ctx, func(_ int, line string) error {
 		lines = append(lines, line)
 		return nil
@@ -48,7 +55,7 @@ func (e *srtextractor) ExtractMetadata(ctx context.Context, r io.ReadSeeker) ([]
 	}
 
 	// Now summarize the text
-	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), "This content contains subtitles in SRT format. Summarize the subtitle content in English."); err != nil {
+	if kv_, err := summarizer.Summarize(ctx, strings.Join(lines, "\n"), prompt); err != nil {
 		return kv, nil, err
 	} else if len(kv_) > 0 {
 		kv = append(kv, kv_...)

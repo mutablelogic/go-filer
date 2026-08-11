@@ -6,6 +6,8 @@ NPM ?= $(shell which npm 2>/dev/null)
 # Locations
 BUILD_DIR ?= build
 CMD_DIR := $(wildcard cmd/*)
+GO_MEDIA_DIR ?= $(BUILD_DIR)/go-media
+GO_MEDIA_PKG_CONFIG ?= $(abspath $(BUILD_DIR))/install/lib/pkgconfig
 
 # Set OS and Architecture
 ARCH ?= $(shell arch | tr A-Z a-z | sed 's/x86_64/amd64/' | sed 's/i386/amd64/' | sed 's/armv7l/arm/' | sed 's/aarch64/arm64/')
@@ -24,6 +26,16 @@ DOCKER_SOURCE ?= $(shell cat go.mod | head -1 | cut -d ' ' -f 2)
 DOCKER_TAG = ${DOCKER_REPO}:${VERSION}-${OS}-${ARCH}
 GO_MEDIA_VERSION ?= $(shell awk '/mutablelogic\/go-media / { print $$2 }' go.mod)
 
+# Extra CGO linker flags used for Linux builds (matches Docker build stage).
+# On macOS this is intentionally empty to avoid duplicate stdlib warnings.
+CGO_EXTRA_LDFLAGS :=
+ifeq ($(OS),linux)
+CGO_EXTRA_LDFLAGS := -lstdc++
+endif
+ifeq ($(OS),darwin)
+CGO_EXTRA_LDFLAGS := -Wl,-no_warn_duplicate_libraries
+endif
+
 ###############################################################################
 # ALL
 
@@ -35,11 +47,25 @@ all: ts build
 
 # Build the commands in the cmd directory
 .PHONY: build
-build: tidy $(CMD_DIR)
+build: tidy go-media $(CMD_DIR)
 
 $(CMD_DIR): go-dep mkdir
 	@echo Build $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
-	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
+	@PKG_CONFIG_PATH=${GO_MEDIA_PKG_CONFIG} \
+	CGO_LDFLAGS_ALLOW='-(W|D).*' \
+	CGO_LDFLAGS='${CGO_EXTRA_LDFLAGS}' \
+	GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
+
+.PHONY: go-media
+go-media: go-dep mkdir
+	@echo Build go-media dependencies GO_MEDIA_VERSION=${GO_MEDIA_VERSION}
+	@mkdir -p ${GO_MEDIA_DIR}
+	@if [ ! -d "${GO_MEDIA_DIR}/.git" ]; then \
+		git clone https://github.com/mutablelogic/go-media ${GO_MEDIA_DIR}; \
+	fi
+	@git -C ${GO_MEDIA_DIR} fetch --tags --depth 1 origin
+	@git -C ${GO_MEDIA_DIR} checkout ${GO_MEDIA_VERSION}
+	@${MAKE} -C ${GO_MEDIA_DIR} BUILD_DIR=$(abspath ${BUILD_DIR}) ffmpeg libexif libraw
 
 # Build the docker image
 .PHONY: docker
@@ -85,9 +111,12 @@ FILER_EXT = $(if $(filter windows,$(OS)),.exe,)
 # Build just the filer binary (client-only, no server).
 # Respects GOOS and GOARCH env vars for cross-compilation.
 .PHONY: client
-client: go-dep mkdir
+client: go-dep mkdir go-media
 	@echo Build client GOOS=${OS} GOARCH=${ARCH}
-	@GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -tags client -o ${BUILD_DIR}/filer${FILER_EXT} ./cmd/filer
+	@PKG_CONFIG_PATH=${GO_MEDIA_PKG_CONFIG} \
+	CGO_LDFLAGS_ALLOW='-(W|D).*' \
+	CGO_LDFLAGS='${CGO_EXTRA_LDFLAGS}' \
+	GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -tags client -o ${BUILD_DIR}/filer${FILER_EXT} ./cmd/filer
 
 ###############################################################################
 # TEST
@@ -134,6 +163,8 @@ clean: tidy
 .PHONY: go-dep
 go-dep:
 	@test -f "${GO}" && test -x "${GO}"  || (echo "Missing go binary" && exit 1)
+	@test -x "$(shell which git 2>/dev/null)" || (echo "Missing git binary" && exit 1)
+	@test -x "$(shell which make 2>/dev/null)" || (echo "Missing make binary" && exit 1)
 
 .PHONY: docker-dep
 docker-dep:

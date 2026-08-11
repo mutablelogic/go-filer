@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	metadata "github.com/mutablelogic/go-filer/metadata"
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
 )
 
 func TestExtractMetadata(t *testing.T) {

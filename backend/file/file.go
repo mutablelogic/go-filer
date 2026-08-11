@@ -1,6 +1,7 @@
 package file
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -15,7 +16,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	backend "github.com/mutablelogic/go-filer/backend"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	mime "github.com/mutablelogic/go-filer/metadata/mime"
+	metadata "github.com/mutablelogic/go-media/metadata"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 	trace "go.opentelemetry.io/otel/trace"
@@ -146,9 +147,27 @@ func (self *FileBackend) GetObject(ctx context.Context, req schema.GetObjectRequ
 	}
 	defer f.Close()
 
-	contentType, meta, err := mime.Type(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
+	}
+
+	// Detect content type and extract metadata using go-media metadata handlers.
+	contentType, attrs, err := metadata.ContentType(bytes.NewReader(data))
+	if err != nil {
+		contentType = types.ContentTypeBinary
+	}
+
+	entries, extractErr := metadata.GetMetadata(ctx, bytes.NewReader(data), contentType)
+	meta := make([]schema.Meta, 0, len(attrs)+len(entries))
+	for k, v := range attrs {
+		meta = schema.AppendMeta(meta, k, v)
+	}
+	for _, entry := range entries {
+		meta = schema.AppendMeta(meta, entry.Key(), entry.Value())
+	}
+	if extractErr != nil && len(meta) == 0 {
+		return nil, extractErr
 	}
 
 	return &schema.Object{

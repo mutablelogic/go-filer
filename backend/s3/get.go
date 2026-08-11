@@ -3,6 +3,7 @@ package s3
 import (
 	"context"
 	"errors"
+	"mime"
 	"path"
 	"strings"
 	"time"
@@ -14,7 +15,6 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	mime "github.com/mutablelogic/go-filer/metadata/mime"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	attribute "go.opentelemetry.io/otel/attribute"
 )

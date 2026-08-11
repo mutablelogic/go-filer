@@ -10,11 +10,11 @@ import (
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
+	metadatamanager "github.com/mutablelogic/go-filer/_filer/metadata/manager"
 	backendregistry "github.com/mutablelogic/go-filer/backend/registry"
 	credential "github.com/mutablelogic/go-filer/credential/manager"
 	credentialschema "github.com/mutablelogic/go-filer/credential/schema"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadatamanager "github.com/mutablelogic/go-filer/metadata/manager"
 	llm "github.com/mutablelogic/go-llm/provider/registry"
 	pg "github.com/mutablelogic/go-pg"
 	pgqueue "github.com/mutablelogic/go-pg/pgqueue/manager"

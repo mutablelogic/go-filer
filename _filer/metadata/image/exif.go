@@ -6,8 +6,8 @@ import (
 	"time"
 
 	// Packages
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
 	exif "github.com/mutablelogic/go-media/pkg/exif"
 	libexif "github.com/mutablelogic/go-media/sys/libexif"
 )

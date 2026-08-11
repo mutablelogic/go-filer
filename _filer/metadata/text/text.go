@@ -14,8 +14,8 @@ import (
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
+	metadata "github.com/mutablelogic/go-filer/_filer/metadata"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	metadata "github.com/mutablelogic/go-filer/metadata"
 	llmschema "github.com/mutablelogic/go-llm/kernel/schema"
 	llmopt "github.com/mutablelogic/go-llm/pkg/opt"
 	ollama "github.com/mutablelogic/go-llm/provider/ollama"
