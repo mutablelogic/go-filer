@@ -2,6 +2,8 @@ package fs
 
 import (
 	"context"
+	"errors"
+	"io"
 	"io/fs"
 	"testing"
 	"testing/fstest"
@@ -53,4 +55,48 @@ func Test_Trace(t *testing.T) {
 		assert.Equal(t, test.status, spans[i].Status().Code)
 	}
 	assert.Contains(t, spans[1].Status().Description, "/missing.txt")
+}
+
+func Test_TraceListAndRead(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer provider.Shutdown(context.Background())
+	files := fstest.MapFS{"a/b.txt": {Data: []byte("b")}, "a/c.txt": {Data: []byte("c")}}
+	self, err := NewFS("test", files, nil, filer.Opts{Tracer: provider.Tracer("test")})
+	require.NoError(t, err)
+
+	// A listing's span lasts until there are no more objects
+	iter, err := self.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
+	require.NoError(t, err)
+	assert.Empty(t, recorder.Ended())
+	for {
+		if _, err := iter.Next(context.Background()); errors.Is(err, io.EOF) {
+			break
+		} else {
+			require.NoError(t, err)
+		}
+	}
+	require.Len(t, recorder.Ended(), 1)
+	assert.Equal(t, "fs.ListObjects", recorder.Ended()[0].Name())
+	assert.Equal(t, codes.Unset, recorder.Ended()[0].Status().Code)
+	require.NoError(t, iter.Close())
+	assert.Len(t, recorder.Ended(), 1)
+
+	// Reading a file's content is a span, which fails when the file has
+	// changed since it was returned
+	read, _, err := self.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/b.txt"}})
+	require.NoError(t, err)
+	require.NoError(t, read(context.Background(), func(io.Reader) error { return nil }))
+	read, _, err = self.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/c.txt"}})
+	require.NoError(t, err)
+	files["a/c.txt"] = &fstest.MapFile{Data: []byte("changed")}
+	require.ErrorIs(t, read(context.Background(), func(io.Reader) error { return nil }), filer.ErrPreconditionFailed)
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 5)
+	assert.Equal(t, "fs.ReadObject", spans[1].Name())
+	assert.Equal(t, "fs.ReadObject.Read", spans[2].Name())
+	assert.Equal(t, codes.Unset, spans[2].Status().Code)
+	assert.Equal(t, "fs.ReadObject.Read", spans[4].Name())
+	assert.Equal(t, codes.Error, spans[4].Status().Code)
 }

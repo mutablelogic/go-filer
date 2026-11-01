@@ -24,6 +24,7 @@ type FS struct {
 	name string
 	fs   fs.FS
 	path string // the directory of the filesystem, when it has one
+	dir  bool   // the filesystem is the directory's, which New opened, so it can be opened again
 	opt
 	filer.Opts
 
@@ -52,6 +53,7 @@ func New(name, path string, values url.Values, opts filer.Opts) (*FS, error) {
 	if err != nil {
 		return nil, errors.Join(err, wfs.Close())
 	}
+	self.dir = true
 	return self, nil
 }
 
@@ -118,10 +120,11 @@ func (self *FS) Close() error {
 
 // Clone returns a new filesystem of the directory, which is opened again,
 // so it's the directory which is at its path, with the options changed by
-// the patch. A filesystem which isn't of a directory can't be cloned, as it
-// owns the filesystem it's backed by.
+// the patch. Only a filesystem which New created can be cloned, as another
+// owns the filesystem it's backed by, which can restrict what it has, or
+// whether it can be written, even when it has a path.
 func (self *FS) Clone(_ context.Context, patch url.Values) (filer.Filer, error) {
-	if self.path == "" {
+	if !self.dir {
 		return nil, filer.ErrNotImplemented.Withf("Volume %q isn't a directory, so it can't be cloned", self.name)
 	} else if clone, err := New(self.name, self.path, filer.PatchValues(self.opt.values(), patch), self.Opts); err != nil {
 		return nil, err

@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -49,8 +50,10 @@ const (
 	// placeholders, such as ${S3_SECRET}, are expanded by the provider of
 	// credentials, when the bucket is checked. A value which isn't a
 	// placeholder is stored by the provider, once the bucket is checked, and
-	// the URL has its placeholder, so it never has the credentials. The
-	// session token is optional.
+	// the URL has its placeholder, so it never has the credentials. A
+	// credential which starts with "$" is given with "$$", so $$word is
+	// $word, rather than the placeholder of word. The session token is
+	// optional.
 	optAccessKeyID     = "access-key-id"
 	optSecretAccessKey = "secret-access-key"
 	optSessionToken    = "session-token"
@@ -188,6 +191,16 @@ func parseBool(values url.Values, key string) (bool, error) {
 	} else {
 		return b, nil
 	}
+}
+
+// literal returns the credential of a value which isn't a placeholder, which
+// is the value, unless it starts with "$$", which is a "$", so a credential
+// which would be a placeholder, such as $word, is given as $$word
+func literal(value string) string {
+	if strings.HasPrefix(value, "$$") {
+		return value[1:]
+	}
+	return value
 }
 
 // isPlaceholder returns true when the value of a credential is a

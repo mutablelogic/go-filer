@@ -28,6 +28,7 @@ type listIterator struct {
 	recursive bool
 	frames    []*listFrame
 	closed    bool
+	end       func(error) // ends the listing's span, once there are no more objects, or an error, or it's closed
 }
 
 // listFrame holds the remaining entries of one directory
@@ -43,22 +44,43 @@ var _ schema.ListObjectsIterator = (*listIterator)(nil)
 
 // List objects in the filesystem
 func (self *FS) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (_ schema.ListObjectsIterator, err error) {
+	// The span lasts as long as the iterator, unless it can't be returned
 	ctx, end := self.span(ctx, "ListObjects", req)
-	defer func() { end(err) }()
+	defer func() {
+		if err != nil {
+			end(err)
+		}
+	}()
 	defer func() { err = objectError("list", req.Path, err) }()
 
 	if err := self.checkRequest(ctx); err != nil {
 		return nil, err
+	} else if iter, err := newListIterator(self, req); err != nil {
+		return nil, err
 	} else {
-		return newListIterator(self, req)
+		iter.end = end
+		return iter, nil
 	}
 }
 
-// Next returns the next object, or io.EOF when there are no more objects
+// Next returns the next object, or io.EOF when there are no more objects.
+// The listing's span ends once there are no more objects, or there's an
+// error.
 func (self *listIterator) Next(ctx context.Context) (*schema.Object, error) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
+	object, err := self.next(ctx)
+	if errors.Is(err, io.EOF) {
+		self.finish(nil)
+	} else if err != nil && !errors.Is(err, fs.ErrClosed) {
+		self.finish(err)
+	}
+	return object, err
+}
+
+// next returns the next object, or io.EOF, which must be locked
+func (self *listIterator) next(ctx context.Context) (*schema.Object, error) {
 	if err := self.checkRequest(ctx); err != nil {
 		return nil, err
 	}
@@ -186,7 +208,16 @@ func (self *listIterator) Close() error {
 
 	self.frames = nil
 	self.closed = true
+	self.finish(nil)
 	return nil
+}
+
+// finish ends the listing's span, with the error, once, which must be locked
+func (self *listIterator) finish(err error) {
+	if self.end != nil {
+		self.end(err)
+		self.end = nil
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
