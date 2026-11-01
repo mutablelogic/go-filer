@@ -1,0 +1,273 @@
+package seaweedfs
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"math/rand/v2"
+	"path"
+	"strings"
+	"time"
+
+	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
+	filer_pb "github.com/mutablelogic/go-filer/filer/s3/seaweedfs/filer_pb"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
+	grpc "google.golang.org/grpc"
+	insecure "google.golang.org/grpc/credentials/insecure"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// seen are the changes of the latest time which are sent, as a filer can send
+// a change more than once, and when it's subscribed to again, the change of
+// the time it's subscribed from
+type seen struct {
+	ts      int64
+	changes map[string]bool
+}
+
+// Watcher watches the changes to the objects of a bucket of a filer, beneath
+// a prefix, by subscribing to the changes to the filer's metadata
+type Watcher struct {
+	conn   *grpc.ClientConn
+	client filer_pb.SeaweedFilerClient
+	dir    string // the filer's directory of the objects, which ends with "/"
+	id     int32  // the id of the subscriber, which the filer tells apart
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+const (
+	// clientName is the name of the subscriber, which the filer logs
+	clientName = "go-filer"
+
+	// uploadsDir is the directory of a bucket where SeaweedFS keeps the
+	// parts of multipart uploads, which aren't objects
+	uploadsDir = ".uploads"
+
+	// configTimeout is how long the filer's configuration is waited for
+	configTimeout = 10 * time.Second
+
+	// maxFailures is how many times subscribing can fail in a row, before
+	// it's an error, rather than subscribing again
+	maxFailures = 5
+)
+
+var (
+	// retryMin and retryMax are how long subscribing again is waited for,
+	// which doubles each time it fails
+	retryMin = time.Second
+	retryMax = 30 * time.Second
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// LIFECYCLE
+
+// New returns a watcher of the objects of the bucket, beneath the prefix,
+// of the filer whose gRPC service is at the address, as host:port, such as
+// 192.168.86.21:18888, which is the filer's port, plus 10000. The filer's
+// configuration is got, which is its directory of buckets, so a filer which
+// can't be reached is an error.
+func New(ctx context.Context, addr, bucket, prefix string) (*Watcher, error) {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("SeaweedFS filer %q: %v", addr, err)
+	}
+	self := &Watcher{conn: conn, client: filer_pb.NewSeaweedFilerClient(conn), id: rand.Int32()}
+
+	// The filer's directory of buckets
+	ctx, cancel := context.WithTimeout(ctx, configTimeout)
+	defer cancel()
+	config, err := self.client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+	if err != nil {
+		return nil, errors.Join(gofiler.ErrServiceUnavailable.Withf("SeaweedFS filer %q: %v", addr, err), conn.Close())
+	} else if config.DirBuckets == "" {
+		return nil, errors.Join(gofiler.ErrServiceUnavailable.Withf("SeaweedFS filer %q has no directory of buckets", addr), conn.Close())
+	}
+	self.dir = strings.TrimSuffix(path.Join(config.DirBuckets, bucket, prefix), "/") + "/"
+
+	// Return success
+	return self, nil
+}
+
+// Close the connection to the filer
+func (self *Watcher) Close() error {
+	return self.conn.Close()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+// Watch sends the changes to the objects to the channel, from now, until the
+// context is cancelled, when it returns nil, or subscribing fails too many
+// times in a row. The ready function, when it's set, is called once, when the
+// changes are first subscribed to, which are from when it's called, so none
+// are missed. When subscribing fails, it's subscribed to again, from the
+// last change, after a while, which doubles while it fails.
+func (self *Watcher) Watch(ctx context.Context, ch chan<- schema.Event, ready func()) error {
+	since, retry, failures := time.Now().UnixNano(), retryMin, 0
+	seen := &seen{}
+	subscribed := func() {
+		if ready != nil {
+			ready()
+			ready = nil
+		}
+	}
+	for {
+		received, err := self.subscribe(ctx, ch, since, seen, subscribed)
+		if seen.ts > since {
+			since = seen.ts
+		}
+		if ctx.Err() != nil {
+			return nil
+		} else if received {
+			failures, retry = 0, retryMin
+		}
+		if failures++; failures >= maxFailures {
+			return gofiler.ErrServiceUnavailable.Withf("SeaweedFS filer: %v", err)
+		}
+
+		// Wait to subscribe again
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(retry):
+		}
+		retry = min(retry*2, retryMax)
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// subscribe subscribes to the changes since the time, and sends them to the
+// channel, until it fails, or the context is cancelled, and returns whether
+// any were received, skipping those which are seen, and calling subscribed
+// once the subscription is made
+func (self *Watcher) subscribe(ctx context.Context, ch chan<- schema.Event, since int64, seen *seen, subscribed func()) (bool, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := self.client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+		ClientName:  clientName,
+		PathPrefix:  self.dir,
+		SinceNs:     since,
+		ClientId:    self.id,
+		ClientEpoch: 1,
+	})
+	if err != nil {
+		return false, err
+	}
+	subscribed()
+
+	// Send the changes
+	received := false
+	for {
+		response, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return received, nil
+		} else if err != nil {
+			return received, err
+		}
+		received = true
+		if !seen.add(response) {
+			continue
+		}
+		for _, event := range self.events(response) {
+			select {
+			case ch <- event:
+			case <-ctx.Done():
+				return received, ctx.Err()
+			}
+		}
+	}
+}
+
+// events returns the changes to the objects of a change to the filer's
+// metadata: an entry which is created, updated or deleted, or which is
+// renamed, which is deleted from its path, and created at the other, but
+// not those which aren't objects of the bucket, beneath the prefix
+func (self *Watcher) events(response *filer_pb.SubscribeMetadataResponse) []schema.Event {
+	notification := response.EventNotification
+	if notification == nil {
+		return nil
+	}
+	old, new := notification.OldEntry, notification.NewEntry
+	oldPath, newPath := "", ""
+	if old != nil {
+		oldPath = self.path(response.Directory, old.Name)
+	}
+	if new != nil {
+		dir := response.Directory
+		if notification.NewParentPath != "" {
+			dir = notification.NewParentPath
+		}
+		newPath = self.path(dir, new.Name)
+	}
+
+	// The changes, of the paths which are objects
+	var events []schema.Event
+	switch {
+	case oldPath != "" && newPath != "" && oldPath == newPath:
+		events = append(events, event(schema.EventTypeUpdated, newPath))
+	default:
+		if oldPath != "" {
+			events = append(events, event(schema.EventTypeDeleted, oldPath))
+		}
+		if newPath != "" {
+			events = append(events, event(schema.EventTypeCreated, newPath))
+		}
+	}
+	return events
+}
+
+// add returns true when the change is new, and records it, which is false
+// when it's of a time before the latest, or is the same change, of the same
+// time, as one which is seen
+func (s *seen) add(response *filer_pb.SubscribeMetadataResponse) bool {
+	if response.TsNs < s.ts {
+		return false
+	} else if response.TsNs > s.ts {
+		s.ts, s.changes = response.TsNs, map[string]bool{}
+	}
+	notification := response.EventNotification
+	key := fmt.Sprintf("%s\x00%s\x00%s\x00%s", response.Directory, entryName(notification.GetOldEntry()), entryName(notification.GetNewEntry()), notification.GetNewParentPath())
+	if s.changes[key] {
+		return false
+	}
+	s.changes[key] = true
+	return true
+}
+
+// entryName returns the name of the entry, or empty when there's none
+func entryName(entry *filer_pb.Entry) string {
+	if entry == nil {
+		return ""
+	}
+	return entry.Name
+}
+
+// path returns the path of the object of the entry, with the name, in the
+// filer's directory, relative to the objects' directory, or empty, when it
+// isn't beneath it, or it's an upload's, or isn't the path of an object
+func (self *Watcher) path(dir, name string) string {
+	full := strings.TrimSuffix(dir, "/") + "/" + name
+	rel, ok := strings.CutPrefix(full, self.dir)
+	if !ok || rel == "" || rel == uploadsDir || strings.HasPrefix(rel, uploadsDir+"/") {
+		return ""
+	}
+	for _, elem := range strings.Split(rel, "/") {
+		if elem == "" || elem == "." || elem == ".." {
+			return ""
+		}
+	}
+	return "/" + rel
+}
+
+// event returns the change of the path
+func event(eventType schema.EventType, path string) schema.Event {
+	return schema.Event{EventType: eventType, ObjectKey: schema.ObjectKey{Path: path}}
+}
