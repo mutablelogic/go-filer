@@ -318,3 +318,38 @@ func Test_WatcherPaths(t *testing.T) {
 		assert.Equal(t, want != "", ok, p)
 	}
 }
+
+func Test_WatcherNoise(t *testing.T) {
+	_, addr := newFakeFiler(t)
+	watcher, err := New(context.Background(), addr, "media", "")
+	require.NoError(t, err)
+	defer watcher.Close()
+	dir := "/buckets/media/doc"
+	directory := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true}
+	}
+	tmp := ".::TMPNAME:D:169681%15451993254543216532:libraw"
+
+	// An update of a directory, such as its time, isn't a change, but one
+	// which is created, deleted or renamed is
+	assert.Empty(t, watcher.events(change(1, dir, directory("libexif"), directory("libexif"), "")))
+	assert.Equal(t, []schema.Event{event(schema.EventTypeCreated, "/doc/libexif")}, watcher.events(change(1, dir, nil, directory("libexif"), "")))
+	assert.Equal(t, []schema.Event{event(schema.EventTypeDeleted, "/doc/libexif")}, watcher.events(change(1, dir, directory("libexif"), nil, "")))
+	assert.Equal(t, []schema.Event{event(schema.EventTypeDeleted, "/doc/a"), event(schema.EventTypeCreated, "/doc/b")}, watcher.events(change(1, dir, directory("a"), directory("b"), dir)))
+
+	// An entry which is being written, with a temporary name, or beneath one,
+	// isn't a change, until it's renamed, when it's created
+	for _, response := range []*filer_pb.SubscribeMetadataResponse{
+		change(1, dir, nil, directory(tmp), ""),
+		change(1, dir, directory(tmp), directory(tmp), ""),
+		change(1, dir, nil, entry(tmp), ""),
+		change(1, dir+"/"+tmp, nil, entry("a.txt"), ""),
+		change(1, dir, directory(tmp), nil, ""),
+	} {
+		assert.Empty(t, watcher.events(response))
+	}
+	assert.Equal(t, []schema.Event{event(schema.EventTypeCreated, "/doc/libraw")}, watcher.events(change(1, dir, directory(tmp), directory("libraw"), dir)))
+
+	// A file which is updated is a change
+	assert.Equal(t, []schema.Event{event(schema.EventTypeUpdated, "/doc/a.txt")}, watcher.events(change(1, dir, entry("a.txt"), entry("a.txt"), "")))
+}
