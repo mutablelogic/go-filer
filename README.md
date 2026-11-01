@@ -1,192 +1,52 @@
 # go-filer
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/mutablelogic/go-filer.svg)](https://pkg.go.dev/github.com/mutablelogic/go-filer)
-[![License](https://img.shields.io/badge/license-Apache-blue.svg)](LICENSE)
+A backend stores the objects in a volume. Each backend implements `backend.Backend`, and must behave the same way, so that a volume can be stored on the local filesystem (`file://`) or in S3 without clients seeing a difference. The semantics follow S3, and the filesystem backend emulates S3 where they differ.
 
-A file storage server and Go SDK with a unified HTTP API across local disk, S3-compatible object stores, and in-memory storage.
+Only the filesystem backend is implemented. This document records how an S3 backend maps onto the interface, and where the backends cannot behave identically.
 
-## Features
+## Object Model
 
-- **Multiple backends**: `file://` (local disk), `s3://` (AWS S3 and S3-compatible), `mem://` (in-memory)
-- **HTTP API server**: REST endpoints for listing, uploading, downloading, and deleting objects with streaming multipart uploads
-- **CLI**: List, upload, download, head, and delete objects against a running server
-- **Go SDK**: Typed client library (`pkg/httpclient`) for embedding filer into Go applications
-- **Conditional create**: `If-None-Match: *` support to prevent overwriting existing objects
-- **User metadata**: Arbitrary key-value metadata on objects, preserved across backends
-- **Pagination**: Offset/limit pagination with count-only mode
-- **Concurrent uploads**: Parallel multi-file uploads with per-file progress callbacks
-- **Docker image**: Multi-arch (`linux/amd64`, `linux/arm64`) image published to `ghcr.io/mutablelogic/filer`
+- An object is a file, identified by its path within the volume, which starts with `/`. The root of the volume is `/`.
+- A directory exists when an object exists beneath it. Directories have no size or modification time.
+- The key of a file is its path, and the key of a directory is its path followed by `/`. Listings are in the byte order of keys, as in S3.
+- Empty directories are pruned by the filesystem backend, as an S3 prefix with no objects beneath it does not exist.
+- Files which are not regular files, such as sockets, named pipes and devices, are not objects.
+- Hidden files and directories, whose names start with `.`, are not objects.
 
-## Quick Start
+## Operations
 
-### Server
+| Operation | Filesystem | S3 |
+| ----------- | ------------ | ---- |
+| `GetObject` of a file | `stat` | `HeadObject` |
+| `GetObject` of a directory | `stat` | `HeadObject` returns 404, then `ListObjectsV2` with `Prefix="dir/"` and `MaxKeys=1` to check the directory exists |
+| `ListObjects` | Walk the directory, in key order | `ListObjectsV2` with `Delimiter="/"`, or no delimiter when recursive. Directories are the `CommonPrefixes` |
+| `ListObjects` with `StartAfter` | Seek within each directory | `StartAfter`, dropping a `CommonPrefix` equal to it |
+| `ListObjects` of a missing path | 404 | An empty listing, so an extra request is needed to return 404 |
+| `DeleteObjects` of a file | `remove` | `HeadObject` for the metadata, and to return 404 as `DeleteObject` succeeds for missing keys, then `DeleteObject` |
+| `DeleteObjects` of a directory | `RemoveAll` | List the prefix, then `DeleteObjects` in batches of 1000. The count is the number of keys deleted |
+| Remove empty parent directories | After each delete | Not needed, as empty prefixes do not exist |
 
-Run the server with a local data directory mounted at `/data`:
+## Modification Time
 
-```bash
-docker volume create filer-data
-docker run -d --name filer \
-  -v filer-data:/data -p 8087:8087 \
-  ghcr.io/mutablelogic/filer
-```
+The modification time of an object is stored in the `x-amz-meta-mtime` metadata of an S3 object, which is used in preference to `LastModified`. `LastModified` is the time the object was uploaded, and cannot be set, so it is only used when the metadata is not set.
 
-The server defaults to `run file://data/data`, which creates a backend named `data` rooted at `/data`. Override the listen address or UID/GID as needed:
+`ListObjectsV2` does not return metadata, so a listing from S3 has the `LastModified` time, which can differ from the modification time returned by `GetObject`.
 
-```bash
-docker run -d --name filer \
-  -v /host/path:/data -p 8087:8087 \
-  -e FILER_UID=1234 -e FILER_GID=1234 \
-  ghcr.io/mutablelogic/filer
-```
+## Differences
 
-### Build from source
+These cannot be made identical, and are known differences between the backends:
 
-```bash
-git clone https://github.com/mutablelogic/go-filer
-cd go-filer
+- **Keys.** S3 allows keys which cannot be represented as paths, such as those containing `//`, `.` or `..` elements, `\` or `:`, or a trailing `/`, and a file and a directory with the same name, such as `a` and `a/b`. The S3 backend skips these keys in listings, so that they are not objects, in the same way as hidden files.
+- **Directory markers.** Zero-byte objects whose keys end in `/` are created by the S3 console and some tools to represent directories. They are not objects, and are skipped in listings.
+- **Atomicity.** Deleting a directory in S3 takes several requests, and can fail part of the way through. Deleting a directory on the filesystem is not atomic either.
+- **ETag.** S3 returns an ETag for each object. The filesystem backend does not set it.
 
-# Full binary (server + client)
-make build
+## Errors
 
-# Client-only binary (no server component)
-make filer-client
-```
+Backend errors are converted to HTTP errors by `omodie.HTTPErr`. The filesystem backend returns `fs` errors, such as `fs.ErrNotExist`. The S3 backend converts S3 errors in the same way:
 
-Binaries are placed in `build/filer`. Pre-built client-only binaries for Linux, macOS, and Windows are also available on the [releases page](https://github.com/mutablelogic/go-filer/releases).
-
-## Server Configuration
-
-### Backends
-
-One or more backend URLs are passed as positional arguments to `filer run`. Multiple backends can be registered simultaneously.
-
-| Scheme | Example | Description |
-|--------|---------|-------------|
-| `file://` | `file://mydata/var/data` | Local filesystem. Name is `mydata`, path is `/var/data` |
-| `s3://` | `s3://my-bucket/pre/fix` | AWS S3 or S3-compatible rooted at a specific prefix |
-| `mem://` | `mem://cache` | In-memory (data lost on restart) |
-
-```bash
-# Two backends: a local disk backend and an S3 backend
-filer run file://local/var/data s3://my-bucket/
-```
-
-### AWS / S3 credentials
-
-| Flag | Env Variable | Description |
-|------|-------------|-------------|
-| `--aws.profile` | `AWS_PROFILE` | AWS credentials profile (SSO, assume-role) |
-| `--aws.access-key` | `AWS_ACCESS_KEY_ID` | Static access key |
-| `--aws.secret-key` | `AWS_SECRET_ACCESS_KEY` | Static secret key |
-| `--aws.session-token` | `AWS_SESSION_TOKEN` | Session token for temporary credentials |
-| `--aws.region` | `AWS_REGION` | AWS region |
-| `--aws.endpoint` | — | Custom S3-compatible endpoint, e.g. `http://localhost:9000` |
-
-Credential priority: `--aws.profile` → `--aws.access-key` → anonymous.
-
-### HTTP
-
-| Flag | Env Variable | Default | Description |
-|------|-------------|---------|-------------|
-| `--http.addr` | `FILER_ADDR` | `:8087` | HTTP listen address |
-| `--http.prefix` | — | `/api/filer` | HTTP path prefix |
-| `--http.timeout` | — | `30s` | Request timeout |
-| `--http.origin` | — | (same-origin) | CORS origin (`*` to allow all) |
-
-## CLI Commands
-
-Released binaries are client-only. The full binary (built with `make build`) includes the `run` server command. All client commands point at a running server via `--http.addr`.
-
-### Server
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `run [backend...]` | Start the HTTP server | `filer run file://data/var/data` |
-
-### Client
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `backends` | List registered backends | `filer backends` |
-| `list <backend>` | List objects in a backend | `filer list data --path /docs --recursive` |
-| `head <backend> <path>` | Print object metadata | `filer head data /docs/report.pdf` |
-| `get <backend> <path>` | Download an object to stdout | `filer get data /docs/report.pdf > report.pdf` |
-| `upload <backend> <path>` | Upload a file or directory | `filer upload data /docs ./local-dir` |
-| `download <backend> <path>` | Download objects to a local directory | `filer download data /docs ./output` |
-| `delete <backend> <path>` | Delete an object or path prefix | `filer delete data /docs/old.txt` |
-
-## REST API
-
-All endpoints are prefixed with `--http.prefix` (default `/api/filer`).
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/filer` | List registered backends |
-| `GET` | `/api/filer/{backend}` | List objects (query: `path`, `recursive`, `offset`, `limit`) |
-| `PUT` | `/api/filer/{backend}/{path}` | Upload an object |
-| `GET` | `/api/filer/{backend}/{path}` | Download an object |
-| `HEAD` | `/api/filer/{backend}/{path}` | Get object metadata |
-| `DELETE` | `/api/filer/{backend}/{path}` | Delete an object or path prefix |
-
-Object metadata is returned in the `X-Object-Meta` response header as a JSON blob. Multi-file uploads are streamed as multipart requests and return JSON on completion.
-
-### Object JSON fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Backend name (listing responses only) |
-| `path` | string | Object path, e.g. `/docs/report.pdf` |
-| `dir` | bool | `true` for directory entries in non-recursive listings |
-| `size` | int64 | Size in bytes (0 for directories) |
-| `last-modified` | RFC3339 | Last-modified timestamp |
-| `type` | string | MIME content type |
-| `etag` | string | ETag (S3 backends only) |
-| `meta` | object | User-defined key-value metadata |
-
-## Go SDK
-
-```go
-import httpclient "github.com/mutablelogic/go-filer/pkg/httpclient"
-
-c, err := httpclient.New("http://localhost:8087/api/filer")
-
-// List objects
-resp, err := c.ListObjects(ctx, "data", schema.ListObjectsRequest{
-    Path:      "/docs",
-    Recursive: true,
-    Limit:     100,
-})
-
-// Upload
-obj, err := c.CreateObject(ctx, "data", schema.CreateObjectRequest{
-    Path:        "/docs/hello.txt",
-    Body:        strings.NewReader("hello world"),
-    ContentType: "text/plain",
-})
-
-// Download
-obj, err := c.ReadObject(ctx, "data", schema.ReadObjectRequest{Path: "/docs/hello.txt"},
-    func(chunk []byte) error {
-        _, err := os.Stdout.Write(chunk)
-        return err
-    })
-
-// Delete
-obj, err := c.DeleteObject(ctx, "data", schema.DeleteObjectRequest{Path: "/docs/hello.txt"})
-```
-
-## Architecture
-
-```
-cmd/filer/          CLI + HTTP server binary
-pkg/backend/        Storage backends (file, s3, mem) via gocloud.dev/blob
-pkg/httpclient/     Typed Go HTTP client
-pkg/httphandler/    HTTP handler registration + request/response encoding
-pkg/manager/        Backend registry and lifecycle management
-pkg/schema/         Shared request/response types
-pkg/version/        Build metadata
-```
-
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE).
+| S3 error | Error | HTTP status |
+| ---------- | ------- | ------------- |
+| `NoSuchKey`, `NoSuchBucket` | `fs.ErrNotExist` | 404 |
+| `AccessDenied` | `omodie.ErrForbidden` | 403 |
+| `SlowDown`, `ServiceUnavailable` | `omodie.ErrServiceUnavailable` | 503 |

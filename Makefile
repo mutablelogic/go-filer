@@ -1,141 +1,53 @@
 # Executables
 GO ?= $(shell which go 2>/dev/null)
-DOCKER ?= $(shell which docker 2>/dev/null)
-NPM ?= $(shell which npm 2>/dev/null)
+GOWORK ?= off
 
 # Locations
 BUILD_DIR ?= build
-CMD_DIR := $(wildcard cmd/*)
-GO_MEDIA_DIR ?= $(BUILD_DIR)/go-media
-GO_MEDIA_PKG_CONFIG ?= $(abspath $(BUILD_DIR))/install/lib/pkgconfig
 
-# Set OS and Architecture
-ARCH ?= $(shell arch | tr A-Z a-z | sed 's/x86_64/amd64/' | sed 's/i386/amd64/' | sed 's/armv7l/arm/' | sed 's/aarch64/arm64/')
-OS ?= $(shell uname | tr A-Z a-z)
-VERSION ?= $(shell git describe --tags --always | sed 's/^v//')
-
-# Set build flags
-VERSION_PKG = github.com/mutablelogic/go-server/pkg/version
-BUILD_LD_FLAGS += -X $(VERSION_PKG).GitTag=$(shell git describe --tags --always)
-BUILD_LD_FLAGS += -X $(VERSION_PKG).GitBranch=$(shell git name-rev HEAD --name-only --always)
-BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}"
-
-# Docker
-DOCKER_REPO ?= ghcr.io/mutablelogic/filer
-DOCKER_SOURCE ?= $(shell cat go.mod | head -1 | cut -d ' ' -f 2)
-DOCKER_TAG = ${DOCKER_REPO}:${VERSION}-${OS}-${ARCH}
-GO_MEDIA_VERSION ?= $(shell awk '/mutablelogic\/go-media / { print $$2 }' go.mod)
-
-# Extra CGO linker flags used for Linux builds (matches Docker build stage).
-# On macOS this is intentionally empty to avoid duplicate stdlib warnings.
-CGO_EXTRA_LDFLAGS :=
-ifeq ($(OS),linux)
-CGO_EXTRA_LDFLAGS := -lstdc++
-endif
-ifeq ($(OS),darwin)
-CGO_EXTRA_LDFLAGS := -Wl,-no_warn_duplicate_libraries
-endif
+# The platforms the packages are vetted for, as each has its own way of
+# watching files, and only some are tested
+VET_PLATFORMS ?= darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 freebsd/amd64
 
 ###############################################################################
 # ALL
 
 .PHONY: all
-all: ts build
-
-###############################################################################
-# BUILD
-
-# Build the commands in the cmd directory
-.PHONY: build
-build: tidy go-media $(CMD_DIR)
-
-$(CMD_DIR): go-dep mkdir
-	@echo Build $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
-	@PKG_CONFIG_PATH=${GO_MEDIA_PKG_CONFIG} \
-	CGO_LDFLAGS_ALLOW='-(W|D).*' \
-	CGO_LDFLAGS='${CGO_EXTRA_LDFLAGS}' \
-	GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
-
-.PHONY: go-media
-go-media: go-dep mkdir
-	@echo Build go-media dependencies GO_MEDIA_VERSION=${GO_MEDIA_VERSION}
-	@mkdir -p ${GO_MEDIA_DIR}
-	@if [ ! -d "${GO_MEDIA_DIR}/.git" ]; then \
-		git clone https://github.com/mutablelogic/go-media ${GO_MEDIA_DIR}; \
-	fi
-	@git -C ${GO_MEDIA_DIR} fetch --tags --depth 1 origin
-	@git -C ${GO_MEDIA_DIR} checkout ${GO_MEDIA_VERSION}
-	@${MAKE} -C ${GO_MEDIA_DIR} BUILD_DIR=$(abspath ${BUILD_DIR}) ffmpeg libexif libraw
-
-# Build the docker image
-.PHONY: docker
-docker: docker-dep
-	@echo build docker image ${DOCKER_TAG} OS=${OS} ARCH=${ARCH} SOURCE=${DOCKER_SOURCE} VERSION=${VERSION} GO_MEDIA_VERSION=${GO_MEDIA_VERSION}
-	@${DOCKER} build \
-		--tag ${DOCKER_TAG} \
-		--provenance=false \
-		--build-arg ARCH=${ARCH} \
-		--build-arg OS=${OS} \
-		--build-arg SOURCE=${DOCKER_SOURCE} \
-		--build-arg VERSION=${VERSION} \
-		--build-arg GO_MEDIA_VERSION=${GO_MEDIA_VERSION} \
-		-f etc/Dockerfile .
-
-# Push docker container
-.PHONY: docker-push
-docker-push: docker-dep 
-	@echo push docker image: ${DOCKER_TAG}
-	@${DOCKER} push ${DOCKER_TAG}
-
-# Print out the version
-.PHONY: docker-version
-docker-version: docker-dep 
-	@echo "tag=${VERSION}"
-
-###############################################################################
-# TYPESCRIPT
-
-TS_DIR := filer/ts
-
-.PHONY: ts
-ts: npm-dep mkdir
-	@echo Build TypeScript
-	@cd $(TS_DIR) && ${NPM} install --silent && node build.js
-
-###############################################################################
-# CLI
-
-# Append .exe when cross-compiling for Windows
-FILER_EXT = $(if $(filter windows,$(OS)),.exe,)
-
-# Build just the filer binary (client-only, no server).
-# Respects GOOS and GOARCH env vars for cross-compilation.
-.PHONY: client
-client: go-dep mkdir go-media
-	@echo Build client GOOS=${OS} GOARCH=${ARCH}
-	@PKG_CONFIG_PATH=${GO_MEDIA_PKG_CONFIG} \
-	CGO_LDFLAGS_ALLOW='-(W|D).*' \
-	CGO_LDFLAGS='${CGO_EXTRA_LDFLAGS}' \
-	GOOS=${OS} GOARCH=${ARCH} ${GO} build ${BUILD_FLAGS} -tags client -o ${BUILD_DIR}/filer${FILER_EXT} ./cmd/filer
+all: test
 
 ###############################################################################
 # TEST
 
 .PHONY: test
-test: unit-test coverage-test
+test: vet unit-test coverage-test
+
+# Vet the packages for each platform, with cgo, which watching files on macOS
+# needs, for this platform, and without it for the others
+.PHONY: vet
+vet: go-dep
+	@echo Vet
+	@GOWORK=${GOWORK} ${GO} vet ./...
+	@for platform in ${VET_PLATFORMS}; do \
+		echo "Vet $$platform"; \
+		GOWORK=${GOWORK} GOOS=$${platform%/*} GOARCH=$${platform#*/} CGO_ENABLED=0 ${GO} vet ./... || exit 1; \
+	done
 
 .PHONY: unit-test
 unit-test: go-dep
 	@echo Unit Tests
-	@${GO} test .
-	@${GO} test ./filer/...
-	@${GO} test ./metadata/...
-	@${GO} test ./backend/...
+	@GOWORK=${GOWORK} CGO_ENABLED=1 ${GO} test ./...
+
+# The tests with the race detector, which needs cgo, as watching files on
+# macOS does
+.PHONY: race-test
+race-test: go-dep
+	@echo Race Tests
+	@GOWORK=${GOWORK} CGO_ENABLED=1 ${GO} test -race ./...
 
 .PHONY: coverage-test
 coverage-test: go-dep mkdir
 	@echo Test Coverage
-	@${GO} test -v -coverprofile ${BUILD_DIR}/coverprofile.out ./filer/... ./metadata/... ./backend/...
+	@GOWORK=${GOWORK} CGO_ENABLED=1 ${GO} test -v -coverprofile ${BUILD_DIR}/coverprofile.out ./...
 	@${GO} tool cover -func ${BUILD_DIR}/coverprofile.out > ${BUILD_DIR}/coverage.txt
 
 ###############################################################################
@@ -146,13 +58,13 @@ coverage-test: go-dep mkdir
 mkdir:
 	@install -d $(BUILD_DIR)
 
-.PHONY: go-dep tidy
-tidy:
+.PHONY: tidy
+tidy: go-dep
 	@echo 'go tidy'
-	@$(GO) mod tidy
+	@GOWORK=${GOWORK} $(GO) mod tidy
 
 .PHONY: clean
-clean: tidy
+clean:
 	@echo 'clean'
 	@rm -fr $(BUILD_DIR)
 	@$(GO) clean
@@ -163,17 +75,3 @@ clean: tidy
 .PHONY: go-dep
 go-dep:
 	@test -f "${GO}" && test -x "${GO}"  || (echo "Missing go binary" && exit 1)
-	@test -x "$(shell which git 2>/dev/null)" || (echo "Missing git binary" && exit 1)
-	@test -x "$(shell which make 2>/dev/null)" || (echo "Missing make binary" && exit 1)
-
-.PHONY: docker-dep
-docker-dep:
-	@test -f "${DOCKER}" && test -x "${DOCKER}"  || (echo "Missing docker binary" && exit 1)
-
-.PHONY: npm-dep
-npm-dep:
-	@test -f "${NPM}" && test -x "${NPM}"  || (echo "Missing npm binary" && exit 1)
-
-.PHONY: wasmbuild-dep
-wasmbuild-dep:
-	@test -f "${WASMBUILD}" && test -x "${WASMBUILD}"  || (echo "Missing wasmbuild binary" && exit 1)

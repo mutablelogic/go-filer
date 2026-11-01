@@ -1,0 +1,83 @@
+name: Test
+
+# Pull requests and pushes to main are tested on Linux, macOS and Windows,
+# with cgo, which watching files on macOS needs, and with the race detector,
+# as each platform watches files its own way. The repository is public, so
+# the macOS and Windows runners cost no more than Linux's.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A pull request's run is cancelled when it's pushed to again, as only its
+# latest commit is merged, but each push to main is tested
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The packages are vetted for every platform, including those which aren't
+  # tested
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: make vet
+
+  # Its name has no matrix in it, as GitHub adds the OS to it when it runs
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Report results for every platform, even if one fails
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Configure git line endings
+        shell: bash
+        run: git config --global core.autocrlf input
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # make, and gcc for cgo and the race detector. Keeps the Go toolchain,
+      # which is installed outside MSYS2, visible in the msys2 shell.
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          path-type: inherit
+          install: make mingw-w64-x86_64-gcc
+
+      # The tests are run once, with the race detector, which tests as much
+      # as they do without it
+      - name: Race Test
+        if: runner.os != 'Windows'
+        run: make race-test
+
+      - name: Race Test (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: make race-test
