@@ -19,10 +19,12 @@ import (
 // TYPES
 
 // reader reads a file's content, from its offset, which can seek, so it can
-// be read in ranges. The content is requested when it's read, from the
-// offset, with the file's entity tag, so a file which changed since it was
-// returned isn't read. Seeking only changes the offset, so the content is
-// requested again from the new offset, when it's read.
+// be read in ranges. The content is requested from the start before it's
+// read, and again from the offset it seeks to, within the file, with the
+// file's entity tag, so a file which changed since it was returned isn't
+// read, which is known before a response is written. Seeking to the end, or
+// beyond it, isn't requested, and a seek to where the content is requested
+// from, such as back to the start, keeps it.
 type reader struct {
 	*S3
 	ctx    context.Context
@@ -30,7 +32,8 @@ type reader struct {
 	etag   string        // the entity tag of the file, which it must still have
 	size   int64         // the size of the file
 	offset int64         // where the next read is from
-	body   io.ReadCloser // the content from the offset, or nil when it isn't requested
+	at     int64         // where the content which is requested is read from
+	body   io.ReadCloser // the content which is requested, or nil when it isn't
 }
 
 var _ io.ReadSeekCloser = (*reader)(nil)
@@ -64,26 +67,32 @@ func (self *S3) ReadObject(ctx context.Context, req schema.GetObjectRequest) (_ 
 		ctx, end := self.span(ctx, "ReadObject.Read", req)
 		defer func() { end(err) }()
 
+		// The content is requested before it's read, so a file which changed
+		// isn't read, before a response is written
 		r := &reader{S3: self, ctx: ctx, rel: rel, etag: aws.ToString(object.ETag), size: aws.ToInt64(object.Size)}
 		defer func() { err = errors.Join(err, r.Close()) }()
+		if err := r.request(); err != nil {
+			return err
+		}
 		return fn(r)
 	}, object, nil
 }
 
-// Read reads the content from the offset, which is requested when there's
-// none, unless it's at the end of the file, which isn't requested
+// Read reads the content from the offset, which is requested when it isn't,
+// unless it's at the end of the file, or beyond it
 func (r *reader) Read(data []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
-	} else if r.body == nil && r.offset >= r.size && r.size > 0 {
+	} else if r.offset >= r.size {
 		return 0, io.EOF
-	} else if r.body == nil {
+	} else if r.body == nil || r.at != r.offset {
 		if err := r.request(); err != nil {
 			return 0, err
 		}
 	}
 	n, err := r.body.Read(data)
 	r.offset += int64(n)
+	r.at += int64(n)
 	if err != nil && !errors.Is(err, io.EOF) {
 		if ctxErr := r.ctx.Err(); ctxErr != nil {
 			err = ctxErr
@@ -95,8 +104,9 @@ func (r *reader) Read(data []byte) (int, error) {
 }
 
 // Seek changes the offset of the next read, from the start or end of the
-// file, or the offset, and the content is requested again from it, unless
-// it's the same
+// file, or the offset, and the content is requested from it, unless it's
+// requested from there, or it's at the end of the file, or beyond it, so a
+// file which changed is known before a response of the range is written
 func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	case io.SeekStart:
@@ -109,11 +119,12 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	}
 	if offset < 0 {
 		return 0, &fs.PathError{Op: "seek", Path: "/" + r.rel, Err: fs.ErrInvalid}
-	} else if offset != r.offset {
-		if err := r.Close(); err != nil {
+	}
+	r.offset = offset
+	if r.offset < r.size && (r.body == nil || r.at != r.offset) {
+		if err := r.request(); err != nil {
 			return 0, err
 		}
-		r.offset = offset
 	}
 	return r.offset, nil
 }
@@ -132,8 +143,12 @@ func (r *reader) Close() error {
 // PRIVATE METHODS
 
 // request requests the content from the offset, of the file with the
-// entity tag, which is ErrPreconditionFailed when it has changed
+// entity tag, which is ErrPreconditionFailed when it has changed, in place of
+// the content which is requested
 func (r *reader) request() error {
+	if err := r.Close(); err != nil {
+		return err
+	}
 	input := &s3.GetObjectInput{
 		Bucket:  aws.String(r.bucket),
 		Key:     aws.String(r.prefix + r.rel),
@@ -146,6 +161,6 @@ func (r *reader) request() error {
 	if err != nil {
 		return r.objectError("read", r.rel, err)
 	}
-	r.body = response.Body
+	r.body, r.at = response.Body, r.offset
 	return nil
 }
