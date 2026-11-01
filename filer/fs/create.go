@@ -24,7 +24,7 @@ import (
 // modification time of the object. Metadata is not yet supported, and
 // returns an error.
 func (self *FS) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (_ *schema.Object, err error) {
-	ctx, end := self.span(ctx, "CreateObject", req.Path)
+	ctx, end := self.span(ctx, "CreateObject", req)
 	defer func() { end(err) }()
 	defer func() { err = objectError("create", req.Path, err) }()
 

@@ -19,7 +19,7 @@ import (
 // been modified since IfModifiedSince, to the second. A directory, which has
 // no modification time, is always returned.
 func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *schema.Object, err error) {
-	ctx, end := self.span(ctx, "GetObject", req.Path)
+	ctx, end := self.span(ctx, "GetObject", req)
 	defer func() { end(err) }()
 
 	if err := self.checkRequest(ctx); err != nil {

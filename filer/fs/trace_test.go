@@ -9,6 +9,7 @@ import (
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	types "github.com/mutablelogic/go-server/pkg/types"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 	attribute "go.opentelemetry.io/otel/attribute"
@@ -35,11 +36,12 @@ func Test_Trace(t *testing.T) {
 	spans := recorder.Ended()
 	require.Len(t, spans, 2)
 	for i, test := range []struct {
-		name, path string
-		status     codes.Code
+		name   string
+		req    any
+		status codes.Code
 	}{
-		{"fs.ListObjects", "/a", codes.Unset},
-		{"fs.GetObject", "/missing.txt", codes.Error},
+		{"fs.ListObjects", schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a"}, Recursive: true}, codes.Unset},
+		{"fs.GetObject", schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/missing.txt"}}, codes.Error},
 	} {
 		assert.Equal(t, test.name, spans[i].Name())
 		attrs := map[attribute.Key]attribute.Value{}
@@ -47,11 +49,8 @@ func Test_Trace(t *testing.T) {
 			attrs[attr.Key] = attr.Value
 		}
 		assert.Equal(t, "test", attrs["filer.volume"].AsString())
-		assert.Equal(t, test.path, attrs["arg.path"].AsString())
+		assert.Equal(t, types.Stringify(test.req), attrs["arg.req"].AsString())
 		assert.Equal(t, test.status, spans[i].Status().Code)
-		if i == 0 {
-			assert.True(t, attrs["arg.recursive"].AsBool())
-		}
 	}
 	assert.Contains(t, spans[1].Status().Description, "/missing.txt")
 }
