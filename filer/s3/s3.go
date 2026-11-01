@@ -1,0 +1,123 @@
+// Package s3 is a filer of the objects in an S3 bucket, or one which is
+// compatible, beneath a prefix
+package s3
+
+import (
+	"context"
+	"net/url"
+	"regexp"
+	"strings"
+
+	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// S3 is a filer of the objects in a bucket, beneath a prefix
+type S3 struct {
+	opt
+	bucket string // the bucket
+	prefix string // the prefix of the objects' keys, which is empty, or ends with "/"
+}
+
+var _ gofiler.Filer = (*S3)(nil)
+
+////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+// bucketName is the pattern of a bucket's name: 3 to 63 lowercase letters,
+// numbers, dots and hyphens, which starts and ends with a letter or number
+var bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+
+////////////////////////////////////////////////////////////////////////////////
+// LIFECYCLE
+
+// New returns a filer of the objects in the bucket of the URL, which is
+// s3://<bucket>/<prefix>, beneath the prefix, with the options of its query
+// (see opt.go), which name the volume. Requests aren't made yet, so the
+// bucket isn't checked.
+func New(ctx context.Context, u *url.URL) (*S3, error) {
+	self := new(S3)
+	if u == nil || u.Scheme != schema.SchemeS3 {
+		return nil, gofiler.ErrBadParameter.Withf("Not an %s url: %v", schema.SchemeS3, u)
+	} else if !bucketName.MatchString(u.Host) {
+		return nil, gofiler.ErrBadParameter.Withf("Invalid bucket: %q", u.Host)
+	} else {
+		self.bucket = u.Host
+	}
+
+	// The prefix, which ends with "/", so it's a directory
+	if prefix := strings.Trim(u.Path, "/"); prefix != "" {
+		self.prefix = prefix + "/"
+	}
+
+	// Set the options
+	if values, err := url.ParseQuery(u.RawQuery); err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("Invalid options: %v", err)
+	} else if opt, err := parseOpts(values); err != nil {
+		return nil, err
+	} else {
+		self.opt = opt
+	}
+
+	// Return success
+	return self, nil
+}
+
+// Close the filer
+func (self *S3) Close() error {
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - PROPERTIES
+
+// URL returns the URL of the bucket, which the filer can be created again
+// from, with the options which are set as its query
+func (self *S3) URL() *url.URL {
+	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values().Encode()}
+}
+
+// Readonly returns true when objects can't be created or deleted, which is
+// when requests are anonymous, without credentials, too
+func (self *S3) Readonly() bool {
+	return self.readonly || self.anonymous
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - OBJECTS
+
+// CreateObject creates an object in the bucket
+func (self *S3) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
+	return nil, gofiler.ErrNotImplemented.With("CreateObject")
+}
+
+// GetObject returns the metadata of an object in the bucket
+func (self *S3) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	return nil, gofiler.ErrNotImplemented.With("GetObject")
+}
+
+// ReadObject returns an object in the bucket, and a function which reads it
+func (self *S3) ReadObject(ctx context.Context, req schema.GetObjectRequest) (gofiler.ReadObjectFunc, *schema.Object, error) {
+	return nil, nil, gofiler.ErrNotImplemented.With("ReadObject")
+}
+
+// ListObjects lists the objects in the bucket, beneath a path
+func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	return nil, gofiler.ErrNotImplemented.With("ListObjects")
+}
+
+// DeleteObjects deletes an object, or the objects beneath a directory, in the
+// bucket
+func (self *S3) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
+	return nil, gofiler.ErrNotImplemented.With("DeleteObjects")
+}
+
+// WatchObjects can't watch a bucket, which needs its event notifications, and
+// a queue
+func (self *S3) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
+	return gofiler.ErrNotImplemented.With("a bucket can't be watched")
+}

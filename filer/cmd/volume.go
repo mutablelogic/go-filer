@@ -55,8 +55,8 @@ type VolumeDeleteCmd struct {
 }
 
 type VolumeCreateCmd struct {
-	URL  string   `arg:"" name:"url" help:"URL of the volume's backend, such as file://media/mnt/folder, whose host is the volume's name, or a directory on the server, such as /mnt/media, with --name."`
-	Name string   `name:"name" help:"Volume name, which is an identifier, and is the URL's host when it has none. Defaults to the URL's host."`
+	URL  string   `arg:"" name:"url" help:"URL of the volume's backend, such as file://media/mnt/folder, whose host is the volume's name, or a directory on the server, such as /mnt/media, with --name, or a bucket, such as s3://bucket/prefix?name=photos."`
+	Name string   `name:"name" help:"Volume name, which is an identifier. For a file URL it's the host, and otherwise the name option, which it defaults to, and sets when the URL has none."`
 	Opt  []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option of the volume, such as readonly=true, skip=^\\. or package=\\.bundle$, which can be repeated, and is added to those of the URL. An option without a value, such as readonly, is empty, which for readonly is true."`
 }
 
@@ -237,40 +237,54 @@ func (cmd *VolumeCreateCmd) volume() (schema.Volume, error) {
 		if err != nil {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid url: %q", cmd.URL)
 		}
-		u = &url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: query}
+		u = &url.URL{Scheme: schema.SchemeFile, Path: filepath.ToSlash(path), RawQuery: query}
 		if !strings.HasPrefix(u.Path, "/") {
 			u.Path = "/" + u.Path
 		}
 	}
 
-	// The name is the URL's host, unless it's set, when the URL has no host,
-	// or is the same
-	name := cmd.Name
-	switch {
-	case name == "" && u.Host == "":
-		return schema.Volume{}, gofiler.ErrBadParameter.Withf("the volume needs a name, with --name, or as the host of the url: %q", cmd.URL)
-	case name == "":
-		name = u.Host
-	case u.Host == "":
-		u.Host = name
-	case u.Host != name:
-		return schema.Volume{}, gofiler.ErrBadParameter.Withf("the name %q isn't the host of the url: %q", name, cmd.URL)
-	}
-
 	// Add the options to those of the URL, each of which is KEY=VALUE, or a
 	// key without a value
-	if len(cmd.Opt) > 0 {
-		query, err := url.ParseQuery(u.RawQuery)
-		if err != nil {
-			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid options of url %q: %v", cmd.URL, err)
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid options of url %q: %v", cmd.URL, err)
+	}
+	for _, opt := range cmd.Opt {
+		key, value, _ := strings.Cut(opt, "=")
+		if key = strings.TrimSpace(key); key == "" {
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid option: %q", opt)
 		}
-		for _, opt := range cmd.Opt {
-			key, value, _ := strings.Cut(opt, "=")
-			if key = strings.TrimSpace(key); key == "" {
-				return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid option: %q", opt)
-			}
-			query.Add(key, value)
+		query.Add(key, value)
+	}
+
+	// The name of a file volume is the URL's host, unless it's set, when the
+	// URL has no host, or is the same. Otherwise it's the name option, such
+	// as s3://bucket/?name=photos, which --name sets.
+	name := cmd.Name
+	if u.Scheme == schema.SchemeFile {
+		switch {
+		case name == "" && u.Host == "":
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("the volume needs a name, with --name, or as the host of the url: %q", cmd.URL)
+		case name == "":
+			name = u.Host
+		case u.Host == "":
+			u.Host = name
+		case u.Host != name:
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("the name %q isn't the host of the url: %q", name, cmd.URL)
 		}
+	} else {
+		switch option := query.Get("name"); {
+		case name == "" && option == "":
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("the volume needs a name, with --name, or the name option of the url: %q", cmd.URL)
+		case name == "":
+			name = option
+		case option == "":
+			query.Set("name", name)
+		case option != name:
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("the name %q isn't the name option of the url: %q", name, cmd.URL)
+		}
+	}
+	if len(query) > 0 {
 		u.RawQuery = query.Encode()
 	}
 

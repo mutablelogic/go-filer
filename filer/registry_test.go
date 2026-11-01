@@ -456,22 +456,62 @@ func Test_Registry_Keys(t *testing.T) {
 
 func Test_Registry_Schemes(t *testing.T) {
 	r, dir := newRegistry(t)
-	assert.Equal(t, []string{"file"}, r.Schemes())
+	assert.Equal(t, []string{"file", "s3"}, r.Schemes())
 
 	// Each scheme can be validated, and an unsupported one can't
-	u := fileURL(t, dir, "media")
-	for _, scheme := range r.Schemes() {
-		u.Scheme = scheme
+	for _, u := range []*url.URL{fileURL(t, dir, "media"), mustURL(t, "s3://bucket/photos?name=media")} {
 		_, err := r.Validate(context.Background(), u)
-		assert.NoError(t, err, scheme)
+		assert.NoError(t, err, u)
 	}
+	u := fileURL(t, dir, "media")
 	u.Scheme = "ftp"
 	_, err := r.Validate(context.Background(), u)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
 	// The schemes can be changed without changing the registry
 	r.Schemes()[0] = "changed"
-	assert.Equal(t, []string{"file"}, r.Schemes())
+	assert.Equal(t, []string{"file", "s3"}, r.Schemes())
+}
+
+func Test_Registry_S3(t *testing.T) {
+	r, _ := newRegistry(t)
+
+	// A bucket's volume is named by its name option, and isn't watched, as
+	// it can't be, and can be removed
+	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly"))
+	require.NoError(t, err)
+	assert.Equal(t, "s3://bucket/photos/?name=photos&readonly=true", b.URL().String())
+	volume, err := r.Volume("photos")
+	require.NoError(t, err)
+	assert.Equal(t, schema.Volume{Name: "photos", URL: b.URL().String(), Readonly: true}, *volume)
+	require.NoError(t, r.Del(context.Background(), "photos"))
+
+	// The name option must be the volume's
+	_, err = r.Add(context.Background(), "other", mustURL(t, "s3://bucket/photos?name=photos"))
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos"))
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+}
+
+func Test_VolumeName(t *testing.T) {
+	for _, test := range []struct{ url, want string }{
+		{"file://media/mnt/media", "media"},
+		{"file://media/mnt/media?name=other", "other"},
+		{"file:///mnt/media", ""},
+		{"s3://bucket/photos?name=photos", "photos"},
+		{"s3://bucket/photos", ""},
+	} {
+		assert.Equal(t, test.want, VolumeName(mustURL(t, test.url)), test.url)
+	}
+	assert.Equal(t, "", VolumeName(nil))
+}
+
+// mustURL parses the URL, or fails the test
+func mustURL(t *testing.T, value string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(value)
+	require.NoError(t, err)
+	return u
 }
 
 // watchAll watches every volume of the registry, until the test ends, and

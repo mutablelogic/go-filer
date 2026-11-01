@@ -13,6 +13,7 @@ import (
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -124,11 +125,11 @@ func (self *FS) Readonly() bool {
 // defaults as its query
 func (self *FS) URL() *url.URL {
 	url := &url.URL{
-		Scheme: "fs",
+		Scheme: schema.SchemeFS,
 		Host:   self.name,
 	}
 	if self.path != "" {
-		url.Scheme, url.Path = "file", urlPath(self.path)
+		url.Scheme, url.Path = schema.SchemeFile, urlPath(self.path)
 	}
 
 	// Set the options which aren't the defaults, including whether it's

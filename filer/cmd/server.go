@@ -21,7 +21,7 @@ import (
 // TYPES
 
 type Flags struct {
-	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, whose host is its name, such as file://media/mnt/media?readonly=true, which can be repeated."`
+	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, named by the host of a file URL, such as file://media/mnt/media?readonly=true, or otherwise by its name option, such as s3://bucket/photos?name=photos, which can be repeated."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -53,17 +53,20 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 		err = errors.Join(err, registry.Close())
 	}()
 
-	// Add the volumes, whose names are the hosts of their URLs
+	// Add the volumes, whose names are the hosts of their file URLs, or the
+	// name options of the others
 	for _, volume := range flags.Volume {
 		u, err := url.Parse(volume)
 		if err != nil {
 			return gofiler.ErrBadParameter.Withf("invalid volume %q: %v", volume, err)
-		} else if u.Host == "" {
-			return gofiler.ErrBadParameter.Withf("volume %q has no name, which is the host of its url", volume)
-		} else if _, err := registry.Add(ctx.Context(), u.Host, u); err != nil {
-			return fmt.Errorf("volume %q: %w", u.Host, err)
 		}
-		ctx.Logger().InfoContext(ctx.Context(), "added volume", "name", u.Host, "url", u.String())
+		name := filer.VolumeName(u)
+		if name == "" {
+			return gofiler.ErrBadParameter.Withf("volume %q has no name, which is the host of a file url, or the name option", volume)
+		} else if _, err := registry.Add(ctx.Context(), name, u); err != nil {
+			return fmt.Errorf("volume %q: %w", name, err)
+		}
+		ctx.Logger().InfoContext(ctx.Context(), "added volume", "name", name, "url", u.String())
 	}
 
 	// Register the HTTP handlers
