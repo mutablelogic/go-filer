@@ -101,8 +101,11 @@ func parse(u *url.URL) (*S3, error) {
 		self.bucket = u.Host
 	}
 
-	// The prefix, which ends with "/", so it's a directory
-	if prefix := strings.Trim(u.Path, "/"); prefix != "" {
+	// The prefix, which ends with "/", so it's a directory, without elements
+	// which are empty, or "." or "..", which would be another directory's
+	if prefix := strings.Trim(u.Path, "/"); prefix != "" && !isRelPath(prefix) {
+		return nil, gofiler.ErrBadParameter.Withf("Invalid prefix: %q", prefix)
+	} else if prefix != "" {
 		self.prefix = prefix + "/"
 	}
 

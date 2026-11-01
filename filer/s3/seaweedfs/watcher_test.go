@@ -152,13 +152,17 @@ func Test_Watcher(t *testing.T) {
 	for _, response := range []*filer_pb.SubscribeMetadataResponse{
 		change(base+8, "/buckets/media/photos2", nil, entry("x.jpg"), ""),
 		change(base+9, "/buckets/media", nil, entry("photos"), ""),
-		change(base+10, dir+"/.uploads/123", nil, entry("1.part"), ""),
+		change(base+10, "/buckets/media/.uploads/123", nil, entry("1.part"), ""),
+		change(base+10, dir+"/a.jpg.versions", nil, entry("v1"), ""),
+		change(base+10, dir+"/2026/b.jpg.versions", entry("v1"), entry("v2"), ""),
 		change(base+11, dir, nil, entry(".."), ""),
 		{TsNs: base + 12},
 		change(base+13, dir, nil, entry("last.jpg"), ""),
 	} {
 		filer.responses <- response
 	}
+	assert.Equal(t, schema.Event{EventType: schema.EventTypeRescan, ObjectKey: schema.ObjectKey{Path: "/"}}, receive(t, ch))
+	assert.Equal(t, schema.Event{EventType: schema.EventTypeRescan, ObjectKey: schema.ObjectKey{Path: "/2026"}}, receive(t, ch))
 	assert.Equal(t, schema.Event{EventType: schema.EventTypeCreated, ObjectKey: schema.ObjectKey{Path: "/last.jpg"}}, receive(t, ch))
 
 	// A change which is sent again, of the same time, as a filer can, or one
@@ -184,6 +188,7 @@ func Test_Watcher(t *testing.T) {
 	assert.GreaterOrEqual(t, requests[0].SinceNs, start)
 	assert.Equal(t, base+13, requests[1].SinceNs)
 	assert.Equal(t, requests[0].ClientId, requests[1].ClientId)
+	assert.Greater(t, requests[1].ClientEpoch, requests[0].ClientEpoch)
 
 	// Watching ends when it's cancelled
 	cancel()
@@ -228,4 +233,88 @@ func Test_WatcherNotFound(t *testing.T) {
 	listener.Close()
 	_, err = New(context.Background(), addr, "media", "")
 	assert.True(t, errors.Is(err, gofiler.ErrServiceUnavailable), err)
+}
+
+func Test_WatcherDuplicates(t *testing.T) {
+	defer func(retry time.Duration) { retryMin = retry }(retryMin)
+	retryMin = time.Millisecond
+	filer, addr := newFakeFiler(t)
+	watcher, err := New(context.Background(), addr, "media", "")
+	require.NoError(t, err)
+	defer watcher.Close()
+
+	// Subscriptions which only send a change which is seen, and fail, don't
+	// make progress, so watching fails, too many times in a row
+	done := make(chan error, 1)
+	go func() {
+		done <- watcher.Watch(context.Background(), make(chan schema.Event, 10), nil)
+	}()
+	ts := time.Now().UnixNano() + int64(time.Hour)
+	filer.responses <- change(ts, "/buckets/media", nil, entry("a.jpg"), "")
+	filer.responses <- nil
+	for range maxFailures - 1 {
+		filer.responses <- change(ts, "/buckets/media", nil, entry("a.jpg"), "")
+		filer.responses <- nil
+	}
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	case <-time.After(5 * time.Second):
+		t.Fatal("watching didn't fail")
+	}
+}
+
+func Test_WatcherClose(t *testing.T) {
+	filer, addr := newFakeFiler(t)
+	watcher, err := New(context.Background(), addr, "media", "")
+	require.NoError(t, err)
+
+	// Watching which is blocked, sending a change which isn't received, ends
+	// when the watcher is closed, and each watch is its own subscriber
+	done := make(chan error, 1)
+	go func() {
+		done <- watcher.Watch(context.Background(), make(chan schema.Event), nil)
+	}()
+	filer.responses <- change(time.Now().UnixNano()+int64(time.Hour), "/buckets/media", nil, entry("a.jpg"), "")
+	go watcher.Watch(context.Background(), make(chan schema.Event), nil)
+	require.Eventually(t, func() bool { return len(filer.subscriptions()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	requests := filer.subscriptions()
+	assert.NotEqual(t, requests[0].ClientId, requests[1].ClientId)
+	require.NoError(t, watcher.Close())
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("watching didn't end")
+	}
+}
+
+func Test_WatcherPaths(t *testing.T) {
+	_, addr := newFakeFiler(t)
+
+	// A prefix which isn't a path isn't watched
+	for _, prefix := range []string{"../other", "a//b", "./a", "a/.."} {
+		_, err := New(context.Background(), addr, "media", prefix)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, prefix)
+	}
+
+	// The uploads of the bucket aren't objects, even beneath a prefix which
+	// is their directory, but a directory of the prefix of their name is
+	watcher, err := New(context.Background(), addr, "media", ".uploads")
+	require.NoError(t, err)
+	defer watcher.Close()
+	assert.Empty(t, watcher.path("/buckets/media/.uploads/123", "1.part"))
+	watcher, err = New(context.Background(), addr, "media", "photos")
+	require.NoError(t, err)
+	defer watcher.Close()
+	assert.Equal(t, "/.uploads/a.jpg", watcher.path("/buckets/media/photos/.uploads", "a.jpg"))
+	assert.Empty(t, watcher.path("/buckets/media/.uploads", "photos"))
+	assert.Empty(t, watcher.path("/buckets/other/photos", "a.jpg"))
+
+	// A version of a key is beneath its directory
+	for p, want := range map[string]string{"/a.jpg.versions/v1": "/", "/a/b.jpg.versions/v1": "/a", "/a.versions": "", "/.versions/v1": ""} {
+		dir, ok := versionedDir(p)
+		assert.Equal(t, want, dir, p)
+		assert.Equal(t, want != "", ok, p)
+	}
 }
