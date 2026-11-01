@@ -82,9 +82,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 			}
 		}
 		self.broadcaster.end(false)
-		self.setListening(false)
 	}()
-	self.setListening(true)
 
 	// Watch the volumes, and send their changes, until it's stopped
 	ticker := time.NewTicker(rescanInterval)
@@ -126,26 +124,6 @@ func (self *Registry) WatchObjects(ctx context.Context, ch chan<- schema.Event) 
 // Running returns true when Run is running
 func (self *Registry) Running() bool {
 	return self.running.Load()
-}
-
-// WaitListening waits until Run is running, so the changes from then are
-// sent to the subscriptions, or returns the context's error when it's
-// cancelled first
-func (self *Registry) WaitListening(ctx context.Context) error {
-	self.RLock()
-	listening := self.listening
-	self.RUnlock()
-	select {
-	case <-listening:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// Subscribers returns how many subscriptions there are
-func (self *Registry) Subscribers() int {
-	return self.broadcaster.len()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -222,23 +200,6 @@ func (self *Registry) changedVolumes() {
 	select {
 	case self.changed <- struct{}{}:
 	default:
-	}
-}
-
-// setListening sets whether Run is running, closing the channel which
-// WaitListening waits for, once it is, or replacing it, once it isn't
-func (self *Registry) setListening(listening bool) {
-	self.Lock()
-	defer self.Unlock()
-	select {
-	case <-self.listening:
-		if !listening {
-			self.listening = make(chan struct{})
-		}
-	default:
-		if listening {
-			close(self.listening)
-		}
 	}
 }
 

@@ -29,14 +29,13 @@ func Test_Registry_Run(t *testing.T) {
 	require.NoError(t, err)
 	ch, done := make(chan schema.Event, 100), make(chan error, 1)
 	go func() { done <- r.WatchObjects(context.Background(), ch) }()
-	require.Eventually(t, func() bool { return r.Subscribers() == 1 }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return r.broadcaster.len() == 1 }, 5*time.Second, time.Millisecond)
 
-	// It runs once at a time, and is listening once it's running
+	// It runs once at a time
 	ctx, cancel := context.WithCancel(context.Background())
 	running := make(chan error, 1)
 	go func() { running <- r.Run(ctx, nil) }()
-	require.NoError(t, r.WaitListening(context.Background()))
-	assert.True(t, r.Running())
+	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
 	assert.ErrorIs(t, r.Run(context.Background(), nil), gofiler.ErrConflict)
 
 	// The volumes are watched, which are added before it runs, and after
@@ -55,19 +54,16 @@ func Test_Registry_Run(t *testing.T) {
 		assert.NotEqual(t, "/gone.txt", (<-ch).Path)
 	}
 
-	// When it stops, every watch ends, and it isn't listening
+	// When it stops, every watch ends
 	cancel()
 	assert.NoError(t, <-running)
 	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
-	assert.Equal(t, 0, r.Subscribers())
+	assert.Equal(t, 0, r.broadcaster.len())
 	assert.False(t, r.Running())
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer waitCancel()
-	assert.ErrorIs(t, r.WaitListening(waitCtx), context.DeadlineExceeded)
 
 	// And when the registry is closed, it stops
 	go func() { running <- r.Run(context.Background(), nil) }()
-	require.NoError(t, r.WaitListening(context.Background()))
+	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
 	require.NoError(t, r.Close())
 	select {
 	case err := <-running:

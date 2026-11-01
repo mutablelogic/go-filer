@@ -28,13 +28,12 @@ type Registry struct {
 	opt
 	backend map[string]*entry
 
-	// The subscriptions, which Run sends the changes to the volumes to, the
-	// channel which tells Run a volume is added or updated, whether Run is
-	// running, and the channel which is closed once it is
+	// The calls to WatchObjects, which Run sends the changes to the volumes
+	// to, the channel which tells Run a volume is added or updated, and
+	// whether Run is running
 	broadcaster *broadcaster
 	changed     chan struct{}
 	running     atomic.Bool
-	listening   chan struct{}
 
 	// The backends which are being closed, by Del, Update or Close, which
 	// Close waits for, as a backend which Update is closing is no longer the
@@ -104,7 +103,6 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 		backend:     make(map[string]*entry),
 		broadcaster: newBroadcaster(),
 		changed:     make(chan struct{}, 1),
-		listening:   make(chan struct{}),
 		teardown:    make(map[*entry]struct{}),
 		done:        make(chan struct{}),
 	}

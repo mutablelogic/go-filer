@@ -47,7 +47,7 @@ func newClient(t *testing.T) (*httpclient.Client, func() string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	running := make(chan error, 1)
 	go func() { running <- registry.Run(ctx, nil) }()
-	require.NoError(t, registry.WaitListening(context.Background()))
+	require.Eventually(t, registry.Running, 5*time.Second, time.Millisecond)
 	t.Cleanup(func() {
 		cancel()
 		assert.NoError(t, <-running)

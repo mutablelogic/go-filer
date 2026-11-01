@@ -34,7 +34,7 @@ func runRegistry(t *testing.T, r *Registry) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- r.Run(ctx, nil) }()
-	require.NoError(t, r.WaitListening(context.Background()))
+	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
 	t.Cleanup(func() {
 		cancel()
 		assert.NoError(t, <-done)
