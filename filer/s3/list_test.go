@@ -105,6 +105,7 @@ func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		w.Header().Set("Content-Type", "application/x-fake")
 		w.Header().Set("Last-Modified", b.modTime.Format(http.TimeFormat))
 		w.Header().Set("ETag", `"`+etagOf(content)+`"`)
 		w.WriteHeader(http.StatusOK)

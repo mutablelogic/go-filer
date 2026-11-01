@@ -66,7 +66,7 @@ func (self *FS) ReadObject(ctx context.Context, req schema.GetObjectRequest) (_ 
 	// extension, never by sniffing the content, which would read the file
 	// before the function is called.
 	obj := self.objectFromInfo(name, info, objectType(name))
-	if notModified(obj, req) {
+	if obj.NotModified(req) {
 		return nil, nil, filer.ErrNotModified.Withf("%q", obj.Path)
 	}
 	return func(ctx context.Context, fn func(io.Reader) error) error {

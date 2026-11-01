@@ -148,11 +148,6 @@ func (self *S3) CreateObject(ctx context.Context, req schema.CreateObjectRequest
 	return nil, gofiler.ErrNotImplemented.With("CreateObject")
 }
 
-// GetObject returns the metadata of an object in the bucket
-func (self *S3) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
-	return nil, gofiler.ErrNotImplemented.With("GetObject")
-}
-
 // ReadObject returns an object in the bucket, and a function which reads it
 func (self *S3) ReadObject(ctx context.Context, req schema.GetObjectRequest) (gofiler.ReadObjectFunc, *schema.Object, error) {
 	return nil, nil, gofiler.ErrNotImplemented.With("ReadObject")

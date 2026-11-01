@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -164,6 +165,21 @@ func (r ObjectListRequest) Query() url.Values {
 
 // Key returns the key of the object, which is its path, or for a directory,
 // its path followed by "/", which is the order objects are listed in
+// NotModified returns true when the request's conditions say the object
+// hasn't changed: when its ETag is one of IfNoneMatch, or "*" is, or, when
+// IfNoneMatch is empty, when it hasn't been modified since IfModifiedSince.
+// As in HTTP, IfNoneMatch is used in place of IfModifiedSince when it's set,
+// and times are compared to the second. An object without a modification
+// time, such as a directory, has always been modified.
+func (o Object) NotModified(req GetObjectRequest) bool {
+	if len(req.IfNoneMatch) > 0 {
+		return slices.Contains(req.IfNoneMatch, "*") || (o.ETag != nil && slices.Contains(req.IfNoneMatch, *o.ETag))
+	} else if !req.IfModifiedSince.IsZero() && !o.ModTime.IsZero() {
+		return !o.ModTime.Truncate(time.Second).After(req.IfModifiedSince.Truncate(time.Second))
+	}
+	return false
+}
+
 func (o Object) Key() string {
 	if o.IsDir && !strings.HasSuffix(o.Path, "/") {
 		return o.Path + "/"
