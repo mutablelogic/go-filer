@@ -531,3 +531,59 @@ func TestObjectUpload(t *testing.T) {
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": true}`, nil))
 	assert.Equal(t, http.StatusForbidden, upload(t, server, "object/media/music", [][2]string{{"e.mp3", "x"}}, nil))
 }
+
+func TestObjectMeta(t *testing.T) {
+	server, dir := newServer(t)
+	meta := `[{"namespace":"photo","key":"camera","value":"X100V"}]`
+
+	// A filesystem can't store metadata, so a file with it isn't written,
+	// and metadata which isn't valid is a bad request
+	assert.Equal(t, http.StatusNotImplemented, put(t, server, "object/media/a.txt", strings.NewReader("a"), http.Header{schema.MetaHeader: {meta}}, nil))
+	for _, value := range []string{`{}`, `[{"key":"a"}]`, `nope`} {
+		assert.Equal(t, http.StatusBadRequest, put(t, server, "object/media/a.txt", strings.NewReader("a"), http.Header{schema.MetaHeader: {value}}, nil), value)
+	}
+	_, err := os.Stat(filepath.Join(dir, "a.txt"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	// An upload's files are skipped, with the request's metadata, or a
+	// part's, and the request's metadata which isn't valid is a bad request
+	post := func(header http.Header, parts ...textproto.MIMEHeader) (int, schema.ObjectUploadResponse) {
+		var body bytes.Buffer
+		form := multipart.NewWriter(&body)
+		for i, part := range parts {
+			part.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="f%d.txt"`, i))
+			w, err := form.CreatePart(part)
+			require.NoError(t, err)
+			w.Write([]byte("content"))
+		}
+		require.NoError(t, form.Close())
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/object/media/up/", &body)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", form.FormDataContentType())
+		for key, values := range header {
+			req.Header[key] = values
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		var result schema.ObjectUploadResponse
+		if resp.StatusCode < 300 {
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		}
+		return resp.StatusCode, result
+	}
+	status, result := post(http.Header{schema.MetaHeader: {meta}}, textproto.MIMEHeader{}, textproto.MIMEHeader{schema.MetaHeader: {`[{"key":"a","value":1}]`}}, textproto.MIMEHeader{schema.MetaHeader: {`bad`}})
+	require.Equal(t, http.StatusOK, status)
+	assert.Empty(t, result.Body)
+	require.Len(t, result.Skipped, 3)
+	assert.Contains(t, result.Skipped[0].Reason, "metadata")
+	assert.Contains(t, result.Skipped[1].Reason, "metadata")
+	assert.Contains(t, result.Skipped[2].Reason, schema.MetaHeader)
+	status, _ = post(http.Header{schema.MetaHeader: {`bad`}}, textproto.MIMEHeader{})
+	assert.Equal(t, http.StatusBadRequest, status)
+
+	// Without metadata, the files are written
+	status, result = post(nil, textproto.MIMEHeader{})
+	require.Equal(t, http.StatusCreated, status)
+	assert.Len(t, result.Body, 1)
+}

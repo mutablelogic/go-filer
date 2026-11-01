@@ -367,6 +367,12 @@ func objectPut(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 			req.ContentType = contentType
 		}
 	}
+	if value := r.Header.Get(schema.MetaHeader); value != "" {
+		if req.Meta, err = schema.DecodeMetaHeader(value); err != nil {
+			httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()), key.Name+key.Path)
+			return
+		}
+	}
 
 	// Whether the file exists, so it's 201 when it's created, and a file
 	// which exists, with If-None-Match: *, or doesn't, with If-Match: *, is
@@ -430,6 +436,15 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// The metadata of every file, unless a part has its own
+	var meta []schema.Meta
+	if value := r.Header.Get(schema.MetaHeader); value != "" {
+		if meta, err = schema.DecodeMetaHeader(value); err != nil {
+			httpresponse.Error(w, httpresponse.ErrBadRequest.With(err.Error()), key.Name+key.Path)
+			return
+		}
+	}
+
 	// The directory, which is created, when it doesn't exist, isn't a file
 	if dir, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: key}); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
@@ -483,12 +498,21 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 				}
 			}
 
-			// Write the file, with the part's Last-Modified, when it's set, which
-			// is skipped when it can't be stored, or it's created in the meantime
+			// Write the file, with the part's Last-Modified, when it's set, and
+			// metadata, which is the request's, unless the part has its own,
+			// which is skipped when it can't be stored, or it's created in the
+			// meantime
 			req := schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: key.Name, Path: file}, Body: part, IfNotExists: !query.Overwrite}
+			req.Meta = meta
 			if modified := part.Header.Get(types.ContentModifiedHeader); modified != "" {
 				if req.ModTime, err = http.ParseTime(modified); err != nil {
 					resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: fmt.Sprintf("invalid %s: %q", types.ContentModifiedHeader, modified)})
+					continue
+				}
+			}
+			if value := part.Header.Get(schema.MetaHeader); value != "" {
+				if req.Meta, err = schema.DecodeMetaHeader(value); err != nil {
+					resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: err.Error()})
 					continue
 				}
 			}
@@ -498,7 +522,7 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 				resp.Body = append(resp.Body, object)
 			case !query.Overwrite && errors.Is(err, gofiler.ErrConflict):
 				resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Exists: true, Reason: "the file exists"})
-			case errors.Is(err, gofiler.ErrUnprocessableContent), errors.Is(err, gofiler.ErrConflict), errors.Is(err, fs.ErrInvalid):
+			case errors.Is(err, gofiler.ErrUnprocessableContent), errors.Is(err, gofiler.ErrConflict), errors.Is(err, fs.ErrInvalid), errors.Is(err, gofiler.ErrNotImplemented), errors.Is(err, gofiler.ErrBadParameter):
 				resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: err.Error()})
 			default:
 				failed = file
