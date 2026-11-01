@@ -51,8 +51,7 @@ func (self *FS) ReadObject(ctx context.Context, req schema.GetObjectRequest) (_ 
 
 	// Check the file is an object before it's opened, as opening a named
 	// pipe blocks until it is written to
-	name := fsPath(req.Path)
-	info, err := self.stat("read", name)
+	name, info, err := self.statPath("read", req.Path)
 	if err != nil {
 		return nil, nil, err
 	} else if info.IsDir() && self.isPackage(path.Base(name)) {

@@ -251,7 +251,7 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 		if object, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: key}); err == nil && object.IsDir {
 			listing := strings.TrimSuffix(strings.TrimSuffix(r.URL.Path, r.PathValue("path")), "/")
 			if key.Path != "/" {
-				listing += "?" + url.Values{"path": {key.Path + "/"}}.Encode()
+				listing += "?" + url.Values{"path": {strings.TrimSuffix(key.Path, "/") + "/"}}.Encode()
 			}
 			http.Redirect(w, r, listing, http.StatusTemporaryRedirect)
 			return
@@ -553,6 +553,12 @@ func objectKeyFromRequest(r *http.Request) (schema.ObjectKey, error) {
 	path, err := cleanPath(r.PathValue("path"))
 	if err != nil {
 		return schema.ObjectKey{}, err
+	}
+
+	// A path which ends with "/" is a directory, when it's got, as a bucket
+	// can have a file of its name
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && path != "/" && strings.HasSuffix(r.PathValue("path"), "/") {
+		path += "/"
 	}
 	return schema.ObjectKey{Name: r.PathValue("name"), Path: path}, nil
 }

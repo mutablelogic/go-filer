@@ -39,6 +39,7 @@ type fakeBucket struct {
 	meta     map[string]map[string]string // the user's metadata of the keys
 	modTime  time.Time
 	requests int // the number of lists
+	gets     int // the number of reads of objects
 }
 
 // listResult is the response of ListObjectsV2
@@ -113,6 +114,29 @@ func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Last-Modified", b.modTime.Format(http.TimeFormat))
 		w.Header().Set("ETag", `"`+etagOf(content)+`"`)
 		w.WriteHeader(http.StatusOK)
+	case r.Method == http.MethodGet && key != "":
+		b.gets++
+		content, exists := b.keys[key]
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		} else if match := r.Header.Get("If-Match"); match != "" && match != `"`+etagOf(content)+`"` {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+		w.Header().Set("ETag", `"`+etagOf(content)+`"`)
+		if value, ok := strings.CutPrefix(r.Header.Get("Range"), "bytes="); ok {
+			start, _ := strconv.Atoi(strings.TrimSuffix(value, "-"))
+			if start >= len(content) {
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(content)-1, len(content)))
+			w.WriteHeader(http.StatusPartialContent)
+			io.WriteString(w, content[start:])
+			return
+		}
+		io.WriteString(w, content)
 	case r.Method == http.MethodGet && key == "" && r.URL.Query().Get("list-type") == "2":
 		b.requests++
 		b.list(w, r)
