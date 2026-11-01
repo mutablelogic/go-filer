@@ -37,8 +37,8 @@ var bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
 
 // New returns a filer of the objects in the bucket of the URL, which is
 // s3://<bucket>/<prefix>, beneath the prefix, with the options of its query
-// (see opt.go), which name the volume. Requests aren't made yet, so the
-// bucket isn't checked.
+// (see opt.go). The volume's name is the bucket's, or the name option.
+// Requests aren't made yet, so the bucket isn't checked.
 func New(ctx context.Context, u *url.URL) (*S3, error) {
 	self := new(S3)
 	if u == nil || u.Scheme != schema.SchemeS3 {
@@ -57,7 +57,7 @@ func New(ctx context.Context, u *url.URL) (*S3, error) {
 	// Set the options
 	if values, err := url.ParseQuery(u.RawQuery); err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("Invalid options: %v", err)
-	} else if opt, err := parseOpts(values); err != nil {
+	} else if opt, err := parseOpts(self.bucket, values); err != nil {
 		return nil, err
 	} else {
 		self.opt = opt
@@ -78,7 +78,7 @@ func (self *S3) Close() error {
 // URL returns the URL of the bucket, which the filer can be created again
 // from, with the options which are set as its query
 func (self *S3) URL() *url.URL {
-	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values().Encode()}
+	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(self.bucket).Encode()}
 }
 
 // Readonly returns true when objects can't be created or deleted, which is

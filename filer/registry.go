@@ -202,18 +202,16 @@ func (self *Registry) Volume(name string) (*schema.Volume, error) {
 }
 
 // VolumeName returns the name of the volume of a URL, which is its name
-// option, when it's set, such as s3://my-bucket/?name=photos, or for a
-// directory, its host, such as file://media/mnt/media, or empty, when it has
-// neither
+// option, when it's set, such as s3://my.bucket/?name=photos, or otherwise
+// its host, such as file://media/mnt/media or s3://photos/, or empty, when it
+// has neither
 func VolumeName(u *url.URL) string {
 	if u == nil {
 		return ""
 	} else if name := u.Query().Get("name"); name != "" {
 		return name
-	} else if u.Scheme == schema.SchemeFile {
-		return u.Host
 	}
-	return ""
+	return u.Host
 }
 
 // volumeOf returns the volume of a backend, with its URL, and whether it's

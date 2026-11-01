@@ -26,8 +26,9 @@ type opt struct {
 // GLOBALS
 
 const (
-	// optName is the volume's name, which is an identifier, and which is
-	// needed, as a bucket's name can't be one
+	// optName is the volume's name, which is an identifier. It defaults to
+	// the bucket's name, so it's needed when that isn't an identifier, such
+	// as when it has dots.
 	optName = "name"
 
 	// optRegion is the bucket's region, such as eu-west-1
@@ -50,10 +51,10 @@ const (
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// parseOpts returns the options, from the values, which are checked: an
-// unknown option, or one which is invalid, is an error, and the name is
-// needed
-func parseOpts(values url.Values) (opt, error) {
+// parseOpts returns the options of the bucket, from the values, which are
+// checked: an unknown option, or one which is invalid, is an error, as is a
+// bucket's name which isn't an identifier, without the name option
+func parseOpts(bucket string, values url.Values) (opt, error) {
 	var self opt
 
 	// Check the options are known
@@ -65,9 +66,11 @@ func parseOpts(values url.Values) (opt, error) {
 		}
 	}
 
-	// Set the volume's name
-	if name := values.Get(optName); name == "" {
-		return opt{}, filer.ErrBadParameter.Withf("The volume needs a name, with the %s option", optName)
+	// Set the volume's name, which is the bucket's, unless it's set
+	if name := values.Get(optName); name == "" && !types.IsIdentifier(bucket) {
+		return opt{}, filer.ErrBadParameter.Withf("The bucket's name %q isn't a volume's name, so the volume needs one, with the %s option", bucket, optName)
+	} else if name == "" {
+		self.name = bucket
 	} else if !types.IsIdentifier(name) {
 		return opt{}, filer.ErrBadParameter.Withf("Invalid %s option: %q", optName, name)
 	} else {
@@ -102,9 +105,13 @@ func parseOpts(values url.Values) (opt, error) {
 }
 
 // values returns the options which are set, as query parameters, so the
-// bucket can be created again with them
-func (self opt) values() url.Values {
-	values := url.Values{optName: {self.name}}
+// bucket can be created again with them, without the name when it's the
+// bucket's
+func (self opt) values(bucket string) url.Values {
+	values := url.Values{}
+	if self.name != bucket {
+		values.Set(optName, self.name)
+	}
 	if self.region != "" {
 		values.Set(optRegion, self.region)
 	}

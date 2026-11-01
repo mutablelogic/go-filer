@@ -10,14 +10,14 @@ List the volumes which are registered, in order of their names, with the `url` o
 
 ### POST /volume
 
-Create a volume with a `name`, which is an identifier, and the `url` of its backend, whose host is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/folder`, whose path is absolute, and which exists, or `file://media/C:/folder` on Windows. An `s3` URL is a bucket, and the prefix of its objects, such as `s3://my-bucket/photos?name=photos`, whose name option is the volume's name, as a bucket's name can't be one, and whose objects can't be read or written yet. Its query is the options, which are dependent on the scheme:
+Create a volume with a `name`, which is an identifier, and the `url` of its backend, whose `name` option, or otherwise its host, is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/folder`, whose path is absolute, and which exists, or `file://media/C:/folder` on Windows. An `s3` URL is a bucket, and the prefix of its objects, such as `s3://photos/2026`, whose name is the volume's, or its name option, which is needed when the bucket's name isn't an identifier, such as `s3://my.bucket/photos?name=photos`, and whose objects can't be read or written yet. Its query is the options, which are dependent on the scheme:
 
 | Scheme | Option | Value | Default |
 | ------ | ------ | ----- | ------- |
 | `file` | `readonly` | `true` or `false`, so objects can only be read, even when the directory can be written | `false` |
 | `file` | `skip` | A regular expression of the names of files and directories which aren't listed, which can be repeated, in place of the defaults | Hidden files, and files which aren't content |
 | `file` | `package` | A regular expression of the names of directories which are listed as files, which can be repeated, in place of the defaults | macOS bundles and sparse disk images |
-| `s3` | `name` | The volume's name, which is needed | |
+| `s3` | `name` | The volume's name, which is an identifier | The bucket's name |
 | `s3` | `region` | The bucket's region, such as `eu-west-1` | |
 | `s3` | `endpoint` | The `http` or `https` URL of a service which is compatible with S3, such as `http://localhost:9000` for MinIO | AWS |
 | `s3` | `anonymous` | `true` or `false`, so requests aren't signed, without credentials, which is read-only | `false` |

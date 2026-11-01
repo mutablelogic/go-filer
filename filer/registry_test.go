@@ -476,8 +476,8 @@ func Test_Registry_Schemes(t *testing.T) {
 func Test_Registry_S3(t *testing.T) {
 	r, _ := newRegistry(t)
 
-	// A bucket's volume is named by its name option, and isn't watched, as
-	// it can't be, and can be removed
+	// A bucket's volume can be named by its name option, and isn't watched,
+	// as it can't be, and can be removed
 	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly"))
 	require.NoError(t, err)
 	assert.Equal(t, "s3://bucket/photos/?name=photos&readonly=true", b.URL().String())
@@ -486,7 +486,13 @@ func Test_Registry_S3(t *testing.T) {
 	assert.Equal(t, schema.Volume{Name: "photos", URL: b.URL().String(), Readonly: true}, *volume)
 	require.NoError(t, r.Del(context.Background(), "photos"))
 
-	// The name option must be the volume's
+	// A bucket's name is the volume's, unless the name option is set
+	b, err = r.Add(context.Background(), "bucket", mustURL(t, "s3://bucket/photos"))
+	require.NoError(t, err)
+	assert.Equal(t, "s3://bucket/photos/", b.URL().String())
+	require.NoError(t, r.Del(context.Background(), "bucket"))
+
+	// The name must be the volume's
 	_, err = r.Add(context.Background(), "other", mustURL(t, "s3://bucket/photos?name=photos"))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	_, err = r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos"))
@@ -499,7 +505,8 @@ func Test_VolumeName(t *testing.T) {
 		{"file://media/mnt/media?name=other", "other"},
 		{"file:///mnt/media", ""},
 		{"s3://bucket/photos?name=photos", "photos"},
-		{"s3://bucket/photos", ""},
+		{"s3://bucket/photos", "bucket"},
+		{"s3:///photos", ""},
 	} {
 		assert.Equal(t, test.want, VolumeName(mustURL(t, test.url)), test.url)
 	}

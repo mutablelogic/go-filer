@@ -21,7 +21,7 @@ import (
 // TYPES
 
 type Flags struct {
-	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, named by the host of a file URL, such as file://media/mnt/media?readonly=true, or otherwise by its name option, such as s3://bucket/photos?name=photos, which can be repeated."`
+	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, named by its name option, such as s3://my.bucket/photos?name=photos, or its host, such as file://media/mnt/media?readonly=true, which can be repeated."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -53,8 +53,8 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 		err = errors.Join(err, registry.Close())
 	}()
 
-	// Add the volumes, whose names are the hosts of their file URLs, or the
-	// name options of the others
+	// Add the volumes, whose names are their name options, or the hosts of
+	// their URLs
 	for _, volume := range flags.Volume {
 		u, err := url.Parse(volume)
 		if err != nil {
@@ -62,7 +62,7 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 		}
 		name := filer.VolumeName(u)
 		if name == "" {
-			return gofiler.ErrBadParameter.Withf("volume %q has no name, which is the host of a file url, or the name option", volume)
+			return gofiler.ErrBadParameter.Withf("volume %q has no name, which is its name option, or the host of its url", volume)
 		} else if _, err := registry.Add(ctx.Context(), name, u); err != nil {
 			return fmt.Errorf("volume %q: %w", name, err)
 		}

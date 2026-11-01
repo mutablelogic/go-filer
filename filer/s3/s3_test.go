@@ -15,11 +15,17 @@ import (
 
 func Test_S3_New(t *testing.T) {
 	// The URL is the bucket, the prefix, which is a directory, and the
-	// options which are set, which it's created again from
+	// options which are set, which it's created again from. The name is the
+	// bucket's, unless it's set.
 	for _, test := range []struct {
 		url, want string
 		readonly  bool
 	}{
+		{"s3://photos", "s3://photos/", false},
+		{"s3://my-bucket/a?name=", "s3://my-bucket/a/", false},
+		{"s3://my-bucket/?name=my-bucket", "s3://my-bucket/", false},
+		{"s3://my-bucket/?readonly", "s3://my-bucket/?readonly=true", true},
+		{"s3://my.bucket/?name=photos", "s3://my.bucket/?name=photos", false},
 		{"s3://my-bucket?name=photos", "s3://my-bucket/?name=photos", false},
 		{"s3://my-bucket/?name=photos", "s3://my-bucket/?name=photos", false},
 		{"s3://my-bucket/a/b?name=photos", "s3://my-bucket/a/b/?name=photos", false},
@@ -46,11 +52,13 @@ func Test_S3_New(t *testing.T) {
 }
 
 func Test_S3_NewInvalid(t *testing.T) {
-	// A URL without a name, or a bucket, or with an invalid option, or
-	// another scheme, is invalid
+	// A URL without a name, when the bucket's isn't an identifier, or
+	// without a bucket, or with an invalid option, or another scheme, is
+	// invalid
 	for _, test := range []string{
-		"s3://my-bucket/",
-		"s3://my-bucket/?name=",
+		"s3://my.bucket/",
+		"s3://1bucket/",
+		"s3://1bucket/?name=",
 		"s3://my-bucket/?name=1photos",
 		"s3:///photos?name=photos",
 		"s3://ab/?name=photos",

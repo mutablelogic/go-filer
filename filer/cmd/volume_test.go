@@ -41,7 +41,8 @@ func Test_VolumeCreateCmd(t *testing.T) {
 
 	// The name of a file URL is its host, or --name, which is the host of a
 	// URL without one, and a directory is a file URL, which is absolute.
-	// Otherwise the name is the name option, or --name, which sets it.
+	// Otherwise the name is the name option, or the host, or --name, which
+	// sets the option when it isn't the host.
 	for _, test := range []struct {
 		args       []string
 		name, want string
@@ -53,6 +54,8 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{[]string{"/mnt/media?readonly=true", "--name", "media"}, "media", "file://media" + abs(filepath.FromSlash("/mnt/media")) + "?readonly=true"},
 		{[]string{"music", "--name", "media"}, "media", "file://media" + abs(filepath.Join(wd, "music"))},
 		{[]string{"s3://bucket/photos?name=media"}, "media", "s3://bucket/photos?name=media"},
+		{[]string{"s3://bucket/photos"}, "bucket", "s3://bucket/photos"},
+		{[]string{"s3://bucket/photos", "--name", "bucket"}, "bucket", "s3://bucket/photos"},
 		{[]string{"s3://bucket/photos", "--name", "media"}, "media", "s3://bucket/photos?name=media"},
 		{[]string{"s3://bucket/photos?name=media", "--name", "media"}, "media", "s3://bucket/photos?name=media"},
 		{[]string{"s3://bucket/photos", "-o", "name=media", "-o", "region=eu-west-1"}, "media", "s3://bucket/photos?name=media&region=eu-west-1"},
@@ -86,7 +89,7 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{"file:///mnt/media"},
 		{"/mnt/media"},
 		{"file://media/mnt/media", "--name", "other"},
-		{"s3://bucket/photos"},
+		{"s3:///photos"},
 		{"s3://bucket/photos?name=media", "--name", "other"},
 		{"file://media/mnt/media", "--opt", "=true"},
 		{"file://media/mnt/media?readonly=%ZZ", "--opt", "package="},
