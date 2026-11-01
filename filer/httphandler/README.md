@@ -37,7 +37,7 @@ Get the volume `name`, with the `url` of its backend, which includes the options
 
 ### PATCH /volume/{name}
 
-Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept.
+Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept. The volume's backend is cloned with the options, which are checked, so the volume isn't changed when they're invalid, and its credentials, which its `url` doesn't have, are kept.
 
 ### DELETE /volume/{name}
 

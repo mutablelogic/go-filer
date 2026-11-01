@@ -136,3 +136,37 @@ func Test_URL(t *testing.T) {
 		}
 	}
 }
+
+func Test_Clone(t *testing.T) {
+	dir := t.TempDir()
+	self, err := New("test", dir, url.Values{"skip": {"^x"}}, filer.Opts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer self.Close()
+
+	// The clone is of the directory, with the options changed, and the
+	// filesystem isn't changed
+	clone, err := self.Clone(context.Background(), url.Values{"readonly": {"true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clone.Close()
+	if got, want := clone.URL().Query(), (url.Values{"skip": {"^x"}, "readonly": {"true"}}); got.Encode() != want.Encode() {
+		t.Errorf("clone: got %q, want %q", got, want)
+	} else if clone.URL().Path != self.URL().Path {
+		t.Errorf("clone: got %q, want %q", clone.URL().Path, self.URL().Path)
+	}
+	if !clone.(*FS).Readonly() || self.Readonly() {
+		t.Error("readonly isn't the clone's")
+	}
+
+	// A filesystem which isn't a directory can't be cloned
+	fsys, err := NewFS("test", fstest.MapFS{}, nil, filer.Opts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fsys.Clone(context.Background(), nil); !errors.Is(err, filer.ErrNotImplemented) {
+		t.Errorf("clone without a directory: %v", err)
+	}
+}

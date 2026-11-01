@@ -178,11 +178,12 @@ func Test_S3_Credentials(t *testing.T) {
 	opts := "&access-key-id=${ID}&secret-access-key=${SECRET}&session-token=${TOKEN}"
 
 	// The credentials are the options', whose placeholders are expanded, and
-	// which the URL keeps
+	// which the URL with the credentials keeps, but the URL doesn't have
 	b, err := New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
-	assert.Equal(t, "${SECRET}", b.URL().Query().Get("secret-access-key"))
-	assert.NotContains(t, b.URL().String(), "AKIDTEST")
+	assert.Equal(t, "${SECRET}", b.url(true).Query().Get("secret-access-key"))
+	assert.NotContains(t, b.url(true).String(), "AKIDTEST")
+	assert.False(t, b.URL().Query().Has("secret-access-key"))
 
 	// Without a provider, or with a placeholder it doesn't have, they can't
 	// be expanded, and other credentials can't access the bucket
@@ -231,26 +232,27 @@ func Test_S3_StoreCredentials(t *testing.T) {
 	opts := "&access-key-id=AKIDTEST&secret-access-key=secret&session-token=TOKEN"
 
 	// Credentials which aren't placeholders are stored, once the bucket is
-	// checked with them, by keys of the volume's name, and the URL has their
-	// placeholders, which create it again
+	// checked with them, by keys of the volume's name, and the URL with the
+	// credentials has their placeholders, which create it again
 	provider := credentialProvider{}
 	b, err := New(ctx, bucketURL(t, endpoint, "keys", opts+"&name=photos"), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
 	assert.Equal(t, credentialProvider{"S3_PHOTOS_ACCESS_KEY_ID": "AKIDTEST", "S3_PHOTOS_SECRET_ACCESS_KEY": "secret", "S3_PHOTOS_SESSION_TOKEN": "TOKEN"}, provider)
-	query := b.URL().Query()
+	query := b.url(true).Query()
 	assert.Equal(t, "${S3_PHOTOS_ACCESS_KEY_ID}", query.Get("access-key-id"))
 	assert.Equal(t, "${S3_PHOTOS_SECRET_ACCESS_KEY}", query.Get("secret-access-key"))
 	assert.Equal(t, "${S3_PHOTOS_SESSION_TOKEN}", query.Get("session-token"))
-	assert.NotContains(t, b.URL().String(), "secret&")
-	_, err = New(ctx, b.URL(), gofiler.Opts{Credentials: provider})
+	assert.NotContains(t, b.url(true).String(), "secret&")
+	assert.Equal(t, "s3://keys/?endpoint="+url.QueryEscape(endpoint)+"&name=photos&region=us-east-1", b.URL().String())
+	_, err = New(ctx, b.url(true), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
 
 	// They can be mixed with placeholders, which are kept
 	provider = credentialProvider{"TOKEN": "TOKEN"}
 	b, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=AKIDTEST&secret-access-key=secret&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
-	assert.Equal(t, "${TOKEN}", b.URL().Query().Get("session-token"))
-	assert.Equal(t, "${S3_KEYS_SECRET_ACCESS_KEY}", b.URL().Query().Get("secret-access-key"))
+	assert.Equal(t, "${TOKEN}", b.url(true).Query().Get("session-token"))
+	assert.Equal(t, "${S3_KEYS_SECRET_ACCESS_KEY}", b.url(true).Query().Get("secret-access-key"))
 
 	// Without a provider, they can't be stored, and when the bucket can't be
 	// accessed with them, they aren't
@@ -260,4 +262,30 @@ func Test_S3_StoreCredentials(t *testing.T) {
 	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=OTHER&secret-access-key=secret"), gofiler.Opts{Credentials: provider})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 	assert.Empty(t, provider)
+}
+
+func Test_S3_Clone(t *testing.T) {
+	endpoint := fakeS3(t)
+	ctx := context.Background()
+	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN"}
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=${SECRET}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+
+	// The clone has the credentials, which its URL doesn't, with the options
+	// changed, and the filer isn't changed
+	clone, err := b.Clone(ctx, url.Values{"readonly": {"true"}})
+	require.NoError(t, err)
+	assert.True(t, clone.(*S3).Readonly())
+	assert.False(t, b.Readonly())
+	assert.Equal(t, b.url(true).Query().Get("secret-access-key"), clone.(*S3).url(true).Query().Get("secret-access-key"))
+	assert.False(t, clone.URL().Query().Has("secret-access-key"))
+
+	// A patch can change the credentials, which are stored when they aren't
+	// placeholders, or remove them, when the bucket can't be accessed
+	clone, err = b.Clone(ctx, url.Values{"name": {"photos"}, "secret-access-key": {"secret"}})
+	require.NoError(t, err)
+	assert.Equal(t, "${S3_PHOTOS_SECRET_ACCESS_KEY}", clone.(*S3).url(true).Query().Get("secret-access-key"))
+	assert.Equal(t, "secret", provider["S3_PHOTOS_SECRET_ACCESS_KEY"])
+	_, err = b.Clone(ctx, url.Values{"access-key-id": nil, "secret-access-key": nil, "session-token": nil})
+	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 }

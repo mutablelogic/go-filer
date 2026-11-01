@@ -116,6 +116,20 @@ func (self *FS) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
+// Clone returns a new filesystem of the directory, which is opened again,
+// so it's the directory which is at its path, with the options changed by
+// the patch. A filesystem which isn't of a directory can't be cloned, as it
+// owns the filesystem it's backed by.
+func (self *FS) Clone(_ context.Context, patch url.Values) (filer.Filer, error) {
+	if self.path == "" {
+		return nil, filer.ErrNotImplemented.Withf("Volume %q isn't a directory, so it can't be cloned", self.name)
+	} else if clone, err := New(self.name, self.path, filer.PatchValues(self.opt.values(), patch), self.Opts); err != nil {
+		return nil, err
+	} else {
+		return clone, nil
+	}
+}
+
 // Readonly returns true when objects can't be created or deleted, by the
 // readonly option, or as the filesystem can't be written
 func (self *FS) Readonly() bool {

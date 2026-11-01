@@ -44,14 +44,18 @@ func Test_S3_Parse(t *testing.T) {
 		require.NoError(t, err)
 		b, err := parse(u)
 		require.NoError(t, err, test.url)
-		assert.Equal(t, test.want, b.URL().String(), test.url)
+		assert.Equal(t, test.want, b.url(true).String(), test.url)
 		assert.Equal(t, test.readonly, b.Readonly(), test.url)
 		assert.NoError(t, b.Close())
 
-		// The URL creates the same filer again
-		again, err := parse(b.URL())
+		// The URL with the credentials creates the same filer again, and the
+		// URL doesn't have them
+		again, err := parse(b.url(true))
 		require.NoError(t, err, test.url)
-		assert.Equal(t, b.URL(), again.URL(), test.url)
+		assert.Equal(t, b.url(true), again.url(true), test.url)
+		for _, key := range []string{"access-key-id", "secret-access-key", "session-token"} {
+			assert.False(t, b.URL().Query().Has(key), test.url)
+		}
 	}
 }
 

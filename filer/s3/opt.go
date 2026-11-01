@@ -141,8 +141,9 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 
 // values returns the options which are set, as query parameters, so the
 // bucket can be created again with them, without the name when it's the
-// bucket's
-func (self opt) values(bucket string) url.Values {
+// bucket's, and with the credentials, which are placeholders, when they're
+// asked for
+func (self opt) values(bucket string, credentials bool) url.Values {
 	values := url.Values{}
 	if self.name != bucket {
 		values.Set(optName, self.name)
@@ -153,11 +154,11 @@ func (self opt) values(bucket string) url.Values {
 	if self.profile != "" {
 		values.Set(optProfile, self.profile)
 	}
-	if self.keyID != "" {
+	if self.keyID != "" && credentials {
 		values.Set(optAccessKeyID, self.keyID)
 		values.Set(optSecretAccessKey, self.secret)
 	}
-	if self.token != "" {
+	if self.token != "" && credentials {
 		values.Set(optSessionToken, self.token)
 	}
 	if self.endpoint != "" {

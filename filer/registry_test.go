@@ -550,7 +550,7 @@ func (credentials) Set(context.Context, string, json.RawMessage) error {
 }
 
 func Test_Registry_Credentials(t *testing.T) {
-	u := mustURL(t, "s3://bucket/?access-key-id=${ID}&secret-access-key=${SECRET}&endpoint="+url.QueryEscape(fakeS3(t)))
+	u := mustURL(t, "s3://keys/?name=bucket&access-key-id=${ID}&secret-access-key=${SECRET}&endpoint="+url.QueryEscape(fakeS3(t)))
 
 	// A bucket's credentials are expanded by the registry's provider, and
 	// can't be without one
@@ -562,6 +562,16 @@ func Test_Registry_Credentials(t *testing.T) {
 	r2, _ := newRegistry(t)
 	_, err = r2.Add(context.Background(), "bucket", u)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+
+	// The volume's URL doesn't have the credentials, which updating it keeps,
+	// as the bucket can't be accessed without them
+	volume, err := r.Volume("bucket")
+	require.NoError(t, err)
+	assert.NotContains(t, volume.URL, "access-key-id")
+	volume, err = r.Update(context.Background(), "bucket", url.Values{"readonly": {"true"}})
+	require.NoError(t, err)
+	assert.True(t, volume.Readonly)
+	assert.NotContains(t, volume.URL, "secret-access-key")
 }
 
 func Test_VolumeName(t *testing.T) {
@@ -579,7 +589,8 @@ func Test_VolumeName(t *testing.T) {
 }
 
 // fakeS3 returns the endpoint of a service which is compatible with S3, with
-// the credentials of the environment, where every bucket can be accessed
+// the credentials of the environment, where every bucket can be accessed,
+// except "keys", which needs the access key ID "ID"
 func fakeS3(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -594,6 +605,8 @@ func fakeS3(t *testing.T) string {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+		} else if r.URL.Path == "/keys" && !strings.Contains(r.Header.Get("Authorization"), "Credential=ID/") {
+			w.WriteHeader(http.StatusForbidden)
 		}
 	}))
 	t.Cleanup(server.Close)

@@ -115,10 +115,23 @@ func (self *S3) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-// URL returns the URL of the bucket, which the filer can be created again
-// from, with the options which are set as its query
+// URL returns the URL of the bucket, with the options which are set as its
+// query, but not its credentials, so it can be returned to clients
 func (self *S3) URL() *url.URL {
-	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(self.bucket).Encode()}
+	return self.url(false)
+}
+
+// Clone returns a new filer of the bucket, with the options, including the
+// placeholders of the credentials, changed by the patch, which is checked as
+// New does, and stores credentials of the patch which aren't placeholders
+func (self *S3) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
+	u := self.url(true)
+	u.RawQuery = gofiler.PatchValues(u.Query(), patch).Encode()
+	if clone, err := New(ctx, u, self.Opts); err != nil {
+		return nil, err
+	} else {
+		return clone, nil
+	}
 }
 
 // Readonly returns true when objects can't be created or deleted, which is
@@ -180,4 +193,9 @@ func isBucketName(name string) bool {
 		}
 	}
 	return true
+}
+
+// url returns the URL of the bucket, with or without its credentials
+func (self *S3) url(credentials bool) *url.URL {
+	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(self.bucket, credentials).Encode()}
 }
