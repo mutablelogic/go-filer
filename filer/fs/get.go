@@ -2,8 +2,6 @@ package fs
 
 import (
 	"context"
-	"slices"
-	"time"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -35,23 +33,8 @@ func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *
 
 	// Return the object, unless it hasn't changed
 	obj := self.objectFromInfo(name, info, objectType(name))
-	if notModified(obj, req) {
+	if obj.NotModified(req) {
 		return nil, filer.ErrNotModified.Withf("%q", obj.Path)
 	}
 	return obj, nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
-
-// notModified returns true when the request's conditions say the object
-// hasn't changed. As in HTTP, IfNoneMatch is used in place of
-// IfModifiedSince when it's set, and times are compared to the second.
-func notModified(obj *schema.Object, req schema.GetObjectRequest) bool {
-	if len(req.IfNoneMatch) > 0 {
-		return slices.Contains(req.IfNoneMatch, "*") || (obj.ETag != nil && slices.Contains(req.IfNoneMatch, *obj.ETag))
-	} else if !req.IfModifiedSince.IsZero() && !obj.ModTime.IsZero() {
-		return !obj.ModTime.Truncate(time.Second).After(req.IfModifiedSince.Truncate(time.Second))
-	}
-	return false
 }

@@ -2,9 +2,11 @@ package s3
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"mime"
 	"path"
 	"slices"
@@ -78,30 +80,15 @@ func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) 
 		iter.dir = self.prefix + rel + "/"
 	}
 
-	// The path is an object, unless it ends with "/", or is the root, when
-	// only it's returned
-	if rel != "" && !strings.HasSuffix(req.Path, "/") {
-		if object, err := self.headObject(ctx, rel); err == nil {
-			if self.prefix+rel > iter.last {
-				iter.pending = append(iter.pending, object)
-			}
-			return iter, nil
-		} else if !isNotExist(err) {
-			return nil, err
+	// The path is a file, when only it's returned, or a directory, which
+	// exists when there is a key beneath it, or the root
+	if object, err := self.stat(ctx, "list", req.Path); err != nil {
+		return nil, err
+	} else if !object.IsDir {
+		if self.prefix+rel > iter.last {
+			iter.pending = append(iter.pending, object)
 		}
-	}
-
-	// The path is a directory, which exists when there is a key beneath it
-	if rel != "" {
-		if response, err := self.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:  aws.String(self.bucket),
-			Prefix:  aws.String(iter.dir),
-			MaxKeys: aws.Int32(1),
-		}); err != nil {
-			return nil, self.objectError("list", rel, err)
-		} else if len(response.Contents) == 0 {
-			return nil, &fs.PathError{Op: "list", Path: "/" + rel, Err: fs.ErrNotExist}
-		}
+		return iter, nil
 	}
 
 	// List the keys beneath the directory, by a page at a time, which roll up
@@ -240,11 +227,7 @@ func (self *listIterator) add(page *s3.ListObjectsV2Output) {
 // returned already, or it sorts before where the listing starts
 func (self *listIterator) addDir(key string) {
 	if key > self.last {
-		self.pending = append(self.pending, &schema.Object{
-			ObjectKey:  schema.ObjectKey{Path: self.path(key)},
-			ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType},
-			ObjectAttr: schema.ObjectAttr{IsDir: true},
-		})
+		self.pending = append(self.pending, dirObject(self.path(key)))
 		self.last = key
 	}
 }
@@ -264,21 +247,48 @@ func (self *S3) object(key string, object *s3types.Object) *schema.Object {
 	}
 }
 
-// headObject returns the file of the path, which is relative to the prefix
-func (self *S3) headObject(ctx context.Context, rel string) (*schema.Object, error) {
+// headObject returns the file of the path, which is relative to the prefix,
+// for the operation
+func (self *S3) headObject(ctx context.Context, op, rel string) (*schema.Object, error) {
 	key := self.prefix + rel
 	response, err := self.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(self.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, self.objectError("get", rel, err)
+		return nil, self.objectError(op, rel, err)
 	}
-	return self.object(key, &s3types.Object{
+	object := self.object(key, &s3types.Object{
 		Size:         response.ContentLength,
 		ETag:         response.ETag,
 		LastModified: response.LastModified,
-	}), nil
+	})
+
+	// The type is the extension's, as it is in a listing, or the object's,
+	// when the extension isn't known
+	if object.ContentType == "" {
+		object.ContentType = aws.ToString(response.ContentType)
+	}
+
+	// The user's metadata, which a listing doesn't have
+	object.Meta = userMeta(response.Metadata)
+	return object, nil
+}
+
+// userMeta returns the user's metadata of an object, which are its
+// x-amz-meta-* headers, whose keys are lowercase, without the prefix, and
+// whose values are JSON strings, in the order of their keys, or nil when
+// there's none
+func userMeta(metadata map[string]string) []schema.Meta {
+	if len(metadata) == 0 {
+		return nil
+	}
+	result := make([]schema.Meta, 0, len(metadata))
+	for _, key := range slices.Sorted(maps.Keys(metadata)) {
+		value, _ := json.Marshal(metadata[key])
+		result = append(result, schema.Meta{Key: key, Value: value})
+	}
+	return result
 }
 
 // key returns the key of an object's path, which is relative to the prefix,

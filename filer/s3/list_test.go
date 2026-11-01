@@ -35,7 +35,8 @@ import (
 type fakeBucket struct {
 	sync.Mutex
 	name     string
-	keys     map[string]string // the keys, and their content
+	keys     map[string]string            // the keys, and their content
+	meta     map[string]map[string]string // the user's metadata of the keys
 	modTime  time.Time
 	requests int // the number of lists
 }
@@ -105,6 +106,10 @@ func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		w.Header().Set("Content-Type", "application/x-fake")
+		for name, value := range b.meta[key] {
+			w.Header().Set("X-Amz-Meta-"+name, value)
+		}
 		w.Header().Set("Last-Modified", b.modTime.Format(http.TimeFormat))
 		w.Header().Set("ETag", `"`+etagOf(content)+`"`)
 		w.WriteHeader(http.StatusOK)

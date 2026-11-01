@@ -116,8 +116,6 @@ func Test_S3_NotImplemented(t *testing.T) {
 
 	_, err = b.CreateObject(ctx, schema.CreateObjectRequest{})
 	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
-	_, err = b.GetObject(ctx, schema.GetObjectRequest{})
-	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 	_, _, err = b.ReadObject(ctx, schema.GetObjectRequest{})
 	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 	_, err = b.DeleteObjects(ctx, schema.DeleteObjectsRequest{})

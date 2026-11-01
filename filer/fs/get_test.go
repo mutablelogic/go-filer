@@ -120,9 +120,9 @@ func Test_GetObjectConditional(t *testing.T) {
 
 	// An object with an ETag isn't modified when it matches
 	obj := &schema.Object{ObjectAttr: schema.ObjectAttr{ETag: types.Ptr(`"abc"`)}}
-	if !notModified(obj, schema.GetObjectRequest{IfNoneMatch: []string{`"xyz"`, `"abc"`}}) {
+	if !obj.NotModified(schema.GetObjectRequest{IfNoneMatch: []string{`"xyz"`, `"abc"`}}) {
 		t.Error("matching etag")
-	} else if notModified(obj, schema.GetObjectRequest{IfNoneMatch: []string{`"xyz"`}}) {
+	} else if obj.NotModified(schema.GetObjectRequest{IfNoneMatch: []string{`"xyz"`}}) {
 		t.Error("other etag")
 	}
 }
