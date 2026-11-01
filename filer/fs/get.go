@@ -48,11 +48,7 @@ func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *
 // the operation, where a path which ends with "/" is a directory, which
 // doesn't exist when it's a file, or a package, which is one
 func (self *FS) statPath(op, p string) (string, fs.FileInfo, error) {
-	trimmed := strings.TrimSuffix(p, "/")
-	if trimmed == "" || strings.HasSuffix(trimmed, "/") {
-		trimmed = p // a path such as "//" isn't valid
-	}
-	name := fsPath(trimmed)
+	name := fsPath(trimDir(p))
 	info, err := self.stat(op, name)
 	if err != nil {
 		return "", nil, err
@@ -60,4 +56,13 @@ func (self *FS) statPath(op, p string) (string, fs.FileInfo, error) {
 		return "", nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	}
 	return name, info, nil
+}
+
+// trimDir returns the path without the "/" which ends a directory's path,
+// unless it's the root, or a path such as "//", which isn't valid
+func trimDir(p string) string {
+	if trimmed := strings.TrimSuffix(p, "/"); trimmed != "" && !strings.HasSuffix(trimmed, "/") {
+		return trimmed
+	}
+	return p
 }

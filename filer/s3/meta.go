@@ -3,12 +3,10 @@ package s3
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"maps"
 	"regexp"
 	"slices"
 	"strings"
-	"unicode/utf16"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -85,28 +83,10 @@ func s3Metadata(meta []schema.Meta) (map[string]string, error) {
 		if err := json.Compact(&value, m.Value); err != nil {
 			return nil, gofiler.ErrBadParameter.Withf("Metadata %q isn't JSON: %v", name, err)
 		}
-		result[name] = asciiJSON(value.String())
+		result[name] = schema.ASCIIJSON(value.String())
 		if size += len(name) + len(result[name]); size > metaSize {
 			return nil, gofiler.ErrBadParameter.Withf("Metadata is more than %d bytes", metaSize)
 		}
 	}
 	return result, nil
-}
-
-// asciiJSON returns the JSON, with its non-ASCII characters, which are only
-// in its strings, escaped, as \uXXXX, or a surrogate pair, and DEL, which
-// isn't a character of a header's value
-func asciiJSON(value string) string {
-	var b strings.Builder
-	for _, r := range value {
-		if r < 0x7F {
-			b.WriteRune(r)
-		} else if r > 0xFFFF {
-			r1, r2 := utf16.EncodeRune(r)
-			fmt.Fprintf(&b, `\u%04x\u%04x`, r1, r2)
-		} else {
-			fmt.Fprintf(&b, `\u%04x`, r)
-		}
-	}
-	return b.String()
 }

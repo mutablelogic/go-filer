@@ -158,12 +158,6 @@ func (self *S3) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - OBJECTS
 
-// DeleteObjects deletes an object, or the objects beneath a directory, in the
-// bucket
-func (self *S3) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	return nil, gofiler.ErrNotImplemented.With("DeleteObjects")
-}
-
 // WatchObjects sends the changes to the bucket's objects, beneath the
 // prefix, to the channel, until the context is cancelled, when the endpoint
 // is a SeaweedFS filer's, whose gRPC service is the seaweedfs-filer-grpc

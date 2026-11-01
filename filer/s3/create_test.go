@@ -313,9 +313,3 @@ func (r *cancellingReader) Read(data []byte) (int, error) {
 	}
 	return r.r.Read(data[:1])
 }
-
-func Test_S3_AsciiJSON(t *testing.T) {
-	// Characters which aren't ASCII, and DEL, are escaped
-	assert.Equal(t, `"a\u007fb\u00e9\ud83d\udcf7"`, asciiJSON("\"a\x7fbé📷\""))
-	assert.Equal(t, `{"a":[1,"b"]}`, asciiJSON(`{"a":[1,"b"]}`))
-}

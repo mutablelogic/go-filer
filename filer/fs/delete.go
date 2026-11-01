@@ -30,7 +30,7 @@ func (self *FS) DeleteObjects(ctx context.Context, req schema.DeleteObjectsReque
 	}
 
 	// The root of the volume cannot be deleted
-	name := fsPath(req.Path)
+	name := fsPath(trimDir(req.Path))
 	if name == "." {
 		return nil, filer.ErrBadParameter.Withf("Cannot delete the root of volume %q", self.name)
 	}
@@ -49,7 +49,7 @@ func (self *FS) DeleteObjects(ctx context.Context, req schema.DeleteObjectsReque
 	// Get the object, or the objects beneath the directory, which will be
 	// deleted. Content types aren't set: the objects no longer exist, and
 	// nothing in a delete response needs them.
-	info, err := self.stat("delete", name)
+	_, info, err := self.statPath("delete", req.Path)
 	if err != nil {
 		return nil, err
 	}
