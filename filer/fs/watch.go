@@ -29,6 +29,14 @@ type pathFS interface {
 // the package. Returns filer.ErrNotImplemented when the filesystem isn't a
 // directory, or can't be watched on this platform.
 func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
+	return self.WatchObjectsReady(ctx, ch, nil)
+}
+
+// WatchObjectsReady is WatchObjects, which calls ready, when it isn't nil,
+// once the directory is watched, before any change is sent, so a change
+// after it returns is sent. It isn't called when the directory can't be
+// watched.
+func (self *FS) WatchObjectsReady(ctx context.Context, ch chan<- schema.Event, ready func()) error {
 	if err := self.checkRequest(ctx); err != nil {
 		return err
 	}
@@ -51,7 +59,11 @@ func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error 
 	// Watch the directory, until the context is cancelled or watching fails
 	events, done := make(chan fsevents.Event), make(chan error, 1)
 	go func() {
-		done <- fsevents.Watch(ctx, fsys.Path(), events)
+		if ready != nil {
+			done <- fsevents.Watch(ctx, fsys.Path(), events, fsevents.WithReady(ready))
+		} else {
+			done <- fsevents.Watch(ctx, fsys.Path(), events)
+		}
 	}()
 	for {
 		select {

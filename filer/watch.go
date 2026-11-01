@@ -32,9 +32,9 @@ var (
 	// watchQueue is how many changes can wait for each call to WatchObjects
 	watchQueue = 1024
 
-	// watchRetry is how long to wait before watching a volume again, when
-	// watching it fails, which doubles each time it fails, up to
-	// watchRetryMax, and is reset when it's watched for longer than that
+	// watchRetry is how long to wait before opening a volume again, when
+	// watching it fails, which doubles each time it can't be, up to
+	// watchRetryMax
 	watchRetry    = time.Second
 	watchRetryMax = time.Minute
 )
@@ -97,42 +97,66 @@ func (self *Registry) WatchObjects(ctx context.Context, ch chan<- schema.Event) 
 // PRIVATE METHODS
 
 // watch sends the changes to the volume's objects to the calls to
-// WatchObjects until it's removed. When watching fails, it's watched again,
-// after a while, with a rescan of the volume, as changes may have been
-// missed. A backend which can't be watched isn't.
-func (self *Registry) watch(e *entry, volume string) {
-	retry := watchRetry
-	for restarted := false; ; restarted = true {
-		started := time.Now()
-		err := self.watchOnce(e, volume, restarted)
-		if e.ctx.Err() != nil || errors.Is(err, gofiler.ErrNotImplemented) {
-			return
-		}
+// WatchObjects until it's removed, with a rescan of the volume first, once
+// it's watched, when rescan is set. When watching fails, such as when the
+// volume's directory is removed, the volume is opened again, which watches
+// it again, with a rescan, as changes may have been missed, and as the
+// backend may no longer be of the directory at its path, when it's replaced.
+// A backend which can't be watched isn't.
+func (self *Registry) watch(e *entry, volume string, rescan bool) {
+	err := self.watchOnce(e, volume, rescan)
+	if e.ctx.Err() != nil || errors.Is(err, gofiler.ErrNotImplemented) {
+		return
+	}
 
-		// Wait to watch again
-		if time.Since(started) > watchRetryMax {
-			retry = watchRetry
-		}
+	// Open the volume again, from a goroutine of its own, as opening it
+	// closes the backend, which waits for this one
+	go self.reopen(e, volume)
+}
+
+// reopen opens the volume again, after a while, until it can be, which
+// doubles each time it can't, or the volume is removed, or changed
+func (self *Registry) reopen(e *entry, volume string) {
+	retry := watchRetry
+	for {
 		select {
 		case <-time.After(retry):
 		case <-e.ctx.Done():
+			return
+		}
+		_, err := self.update(context.Background(), e, volume, nil)
+		if err == nil || errors.Is(err, gofiler.ErrNotFound) || errors.Is(err, gofiler.ErrServiceUnavailable) {
 			return
 		}
 		retry = min(retry*2, watchRetryMax)
 	}
 }
 
+// readyWatcher is a backend which reports when it's watching, so the
+// changes after it are sent
+type readyWatcher interface {
+	WatchObjectsReady(context.Context, chan<- schema.Event, func()) error
+}
+
 // watchOnce watches the volume, sending each change to the calls to
-// WatchObjects, until watching fails or the volume is removed. When it's
-// watched again, a rescan of the volume is sent first.
-func (self *Registry) watchOnce(e *entry, volume string, restarted bool) error {
+// WatchObjects, until watching fails or the volume is removed. With rescan,
+// a rescan of the volume is sent first, once it's watched, or when it
+// starts, for a backend which doesn't report when it's watching.
+func (self *Registry) watchOnce(e *entry, volume string, rescan bool) error {
+	ready := func() {
+		if rescan {
+			self.broadcast(rescanEvent(volume))
+		}
+	}
 	events, done := make(chan schema.Event), make(chan error, 1)
 	go func() {
-		done <- e.WatchObjects(e.ctx, events)
+		if b, ok := e.Filer.(readyWatcher); ok {
+			done <- b.WatchObjectsReady(e.ctx, events, ready)
+		} else {
+			ready()
+			done <- e.WatchObjects(e.ctx, events)
+		}
 	}()
-	if restarted {
-		self.broadcast(rescanEvent(volume))
-	}
 	for {
 		select {
 		case err := <-done:

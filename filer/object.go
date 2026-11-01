@@ -22,6 +22,7 @@ import (
 type listIterator struct {
 	sync.Mutex
 	schema.ListObjectsIterator
+	ctx     context.Context // the volume's, which is cancelled when it's removed
 	name    string
 	release func()
 	stop    func() bool
@@ -109,7 +110,7 @@ func (self *Registry) ListObjects(ctx context.Context, req schema.ListObjectsReq
 	}
 
 	// Close the iterator when the volume is removed
-	iter := &listIterator{ListObjectsIterator: inner, name: req.Name, release: e.wg.Done}
+	iter := &listIterator{ListObjectsIterator: inner, ctx: e.ctx, name: req.Name, release: e.wg.Done}
 	iter.Lock()
 	iter.stop = context.AfterFunc(e.ctx, func() { iter.Close() })
 	iter.Unlock()
@@ -150,13 +151,19 @@ func (self *Registry) use(volume string) (*entry, error) {
 }
 
 // Next returns the next object, with the name of its volume, or io.EOF when
-// there are no more, or fs.ErrClosed once the iterator is closed
+// there are no more, or fs.ErrClosed once the iterator is closed. It's
+// cancelled when the volume is removed, as well as when ctx is, so it
+// doesn't hold up closing the iterator, which waits for it.
 func (self *listIterator) Next(ctx context.Context) (*schema.Object, error) {
 	self.Lock()
 	defer self.Unlock()
 	if self.closed {
 		return nil, fs.ErrClosed
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(self.ctx, cancel)
+	defer stop()
 	obj, err := self.ListObjectsIterator.Next(ctx)
 	if err != nil {
 		return nil, err

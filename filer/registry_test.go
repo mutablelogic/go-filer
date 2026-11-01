@@ -635,6 +635,16 @@ func Test_Registry_WatchRestart(t *testing.T) {
 	waitFor(t, events, path, func(event schema.Event) bool {
 		return event.EventType == schema.EventTypeRescan && event.Name == "restart" && event.Path == "/"
 	})
+
+	// The volume is opened again, so it's of the new directory, whose
+	// objects are got, and whose changes are sent
+	require.NoError(t, os.WriteFile(filepath.Join(path, "new.txt"), []byte("new"), 0o600))
+	obj, err := r.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "restart", Path: "/new.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), *obj.Size)
+	waitFor(t, events, path, func(event schema.Event) bool {
+		return event.Name == "restart" && event.Path == "/probe.txt"
+	})
 }
 
 func Test_Registry_Objects(t *testing.T) {
@@ -850,4 +860,94 @@ func Test_Registry_UpdateMissing(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	_, err = r.Volume("media")
 	assert.NoError(t, err, "the volume was removed when it couldn't be updated")
+}
+
+func Test_Registry_CloseWaitsForUpdate(t *testing.T) {
+	r, dir := newRegistry(t)
+	ctx := context.Background()
+	_, err := r.Add(ctx, "media", fileURL(t, dir, "media"))
+	require.NoError(t, err)
+
+	// Close waits for the backend which Update is closing, which is no longer
+	// the volume's in the registry, as Update waits for a call using it
+	entered, release := make(chan struct{}), make(chan struct{})
+	go r.With(ctx, "media", func(ctx context.Context, _ gofiler.Filer) error {
+		close(entered)
+		<-ctx.Done()
+		<-release
+		return nil
+	})
+	<-entered
+	go r.Update(ctx, "media", url.Values{"readonly": {"true"}})
+	require.Eventually(t, func() bool { return !slices.Contains(r.Keys(), "media") }, 10*time.Second, 10*time.Millisecond)
+	closed := make(chan error, 1)
+	go func() { closed <- r.Close() }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned before the backend which Update is closing was closed")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close didn't return")
+	}
+}
+
+func Test_Registry_Cancelled(t *testing.T) {
+	r, dir := newRegistry(t)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// A volume isn't added, or updated, with a context which is cancelled
+	_, err := r.Add(cancelled, "media", fileURL(t, dir, "media"))
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, r.Keys())
+	_, err = r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+	require.NoError(t, err)
+	_, err = r.Update(cancelled, "media", url.Values{"readonly": {"true"}})
+	assert.ErrorIs(t, err, context.Canceled)
+	volume, err := r.Volume("media")
+	require.NoError(t, err)
+	assert.NotContains(t, volume.URL, "readonly")
+}
+
+func Test_Registry_InvalidQuery(t *testing.T) {
+	r, dir := newRegistry(t)
+
+	// Options which can't be parsed are rejected, rather than left out, so
+	// readonly=%ZZ doesn't mount a volume which can be written
+	u := fileURL(t, dir, "media")
+	u.RawQuery = "readonly=%ZZ"
+	_, err := r.Validate(context.Background(), u)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = r.Add(context.Background(), "media", u)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.Empty(t, r.Keys())
+}
+
+func Test_Registry_UpdateRescan(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+
+	// A volume which is updated is rescanned, as its changes are missed
+	// while it's closed, and its options can change which objects it has
+	r, dir := newRegistry(t)
+	events := watchAll(t, r, 1024)
+	_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+	require.NoError(t, err)
+	_, err = r.Update(context.Background(), "media", url.Values{"skip": {""}})
+	require.NoError(t, err)
+	for deadline := time.After(10 * time.Second); ; {
+		select {
+		case event := <-events:
+			if event.EventType == schema.EventTypeRescan && event.Name == "media" && event.Path == "/" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no rescan once the volume was updated")
+		}
+	}
 }

@@ -283,6 +283,40 @@ func TestWatch(t *testing.T) {
 		w.done <- nil
 	})
 
+	t.Run("Ready", func(t *testing.T) {
+		// The function is called once the directory is watched, so a change
+		// after it's called is sent
+		if !fsevents.Supported() {
+			t.Skip(fsevents.ErrNotSupported)
+		}
+		dir := t.TempDir()
+		ready := make(chan struct{})
+		events := make(chan fsevents.Event, 1024)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- fsevents.Watch(ctx, dir, events, fsevents.WithReady(func() { close(ready) })) }()
+		t.Cleanup(func() {
+			cancel()
+			<-done
+		})
+		select {
+		case <-ready:
+		case <-time.After(timeout):
+			t.Fatal("the function wasn't called")
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), nil, 0o600))
+		for deadline := time.After(timeout); ; {
+			select {
+			case event := <-events:
+				if event.Path == "a.txt" {
+					return
+				}
+			case <-deadline:
+				t.Fatal("the change after the function was called wasn't sent")
+			}
+		}
+	})
+
 	t.Run("NotDirectory", func(t *testing.T) {
 		name := filepath.Join(t.TempDir(), "file")
 		require.NoError(t, os.WriteFile(name, nil, 0o600))

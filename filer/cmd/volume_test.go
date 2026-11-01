@@ -82,6 +82,7 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{"/mnt/media"},
 		{"file://media/mnt/media", "--name", "other"},
 		{"file://media/mnt/media", "--opt", "=true"},
+		{"file://media/mnt/media?readonly=%ZZ", "--opt", "package="},
 		{},
 	} {
 		_, _, err := volume(args...)

@@ -18,6 +18,13 @@ import (
 // Op is what happened to a file or directory
 type Op uint8
 
+// Opt is an option of Watch
+type Opt func(*opt)
+
+type opt struct {
+	ready func()
+}
+
 // Event is a change to a file or directory beneath the watched directory
 type Event struct {
 	// What happened
@@ -78,7 +85,15 @@ func Supported() bool {
 // followed, so a link is reported as a file. Changes wait until the channel
 // is ready, and it isn't closed. Returns ErrRootRemoved when the directory is
 // deleted or moved, or ErrNotSupported on a platform which can't be watched.
-func Watch(ctx context.Context, dir string, ch chan<- Event) error {
+//
+// With WithReady, its function is called once the directory is watched,
+// before any change is sent, so a change after it returns is sent.
+func Watch(ctx context.Context, dir string, ch chan<- Event, opts ...Opt) error {
+	var o opt
+	for _, fn := range opts {
+		fn(&o)
+	}
+
 	// The directory's real path, so that paths reported by the platform,
 	// which are real, are beneath it
 	root, err := filepath.Abs(dir)
@@ -96,6 +111,8 @@ func Watch(ctx context.Context, dir string, ch chan<- Event) error {
 	w, err := newWatcher(root)
 	if err != nil {
 		return err
+	} else if o.ready != nil {
+		o.ready()
 	}
 	return errors.Join(w.run(ctx, func(event Event) {
 		select {
@@ -103,6 +120,14 @@ func Watch(ctx context.Context, dir string, ch chan<- Event) error {
 		case <-ctx.Done():
 		}
 	}), w.close())
+}
+
+// WithReady calls the function once the directory is watched, before any
+// change is sent
+func WithReady(fn func()) Opt {
+	return func(o *opt) {
+		o.ready = fn
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

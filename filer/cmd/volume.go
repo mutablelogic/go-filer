@@ -48,7 +48,7 @@ type VolumeDeleteCmd struct {
 }
 
 type VolumeCreateCmd struct {
-	URL  string   `arg:"" name:"url" help:"URL of the volume's backend, such as file://media/mnt/media, whose host is the volume's name, or a directory on the server, such as /mnt/media, with --name."`
+	URL  string   `arg:"" name:"url" help:"URL of the volume's backend, such as file://media/mnt/folder, whose host is the volume's name, or a directory on the server, such as /mnt/media, with --name."`
 	Name string   `name:"name" help:"Volume name, which is an identifier, and is the URL's host when it has none. Defaults to the URL's host."`
 	Opt  []string `name:"opt" short:"o" placeholder:"KEY=VALUE" help:"Option of the volume, such as readonly=true, skip=^\\. or package=\\.bundle$, which can be repeated, and is added to those of the URL. An option without a value, such as readonly, is empty, which for readonly is true."`
 }
@@ -239,7 +239,10 @@ func (cmd *VolumeCreateCmd) volume() (schema.Volume, error) {
 	// Add the options to those of the URL, each of which is KEY=VALUE, or a
 	// key without a value
 	if len(cmd.Opt) > 0 {
-		query := u.Query()
+		query, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid options of url %q: %v", cmd.URL, err)
+		}
 		for _, opt := range cmd.Opt {
 			key, value, _ := strings.Cut(opt, "=")
 			if key = strings.TrimSpace(key); key == "" {

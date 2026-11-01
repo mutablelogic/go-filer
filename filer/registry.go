@@ -30,6 +30,11 @@ type Registry struct {
 	// every volume
 	subscribers map[*subscriber]struct{}
 
+	// The backends which are being closed, by Del, Update or Close, which
+	// Close waits for, as a backend which Update is closing is no longer the
+	// volume's in the registry
+	teardown map[*entry]struct{}
+
 	// done is closed when the registry is closed, which stops the calls to
 	// WatchObjects
 	done      chan struct{}
@@ -94,6 +99,7 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	self := &Registry{
 		backend:     make(map[string]*entry),
 		subscribers: make(map[*subscriber]struct{}),
+		teardown:    make(map[*entry]struct{}),
 		done:        make(chan struct{}),
 	}
 
@@ -120,29 +126,30 @@ func (self *Registry) Close() error {
 		close(self.done)
 	})
 
-	// Remove all the backends, and close those which Del isn't already
-	// closing, while the registry is locked, so they're each closed once.
+	// Remove all the backends, and close those which aren't already being
+	// closed, while the registry is locked, so they're each closed once.
 	// Those which are being added are closed by Add.
 	self.Lock()
-	entries := make([]*entry, 0, len(self.backend))
-	closing := make(map[*entry]bool, len(self.backend))
+	started := make(map[*entry]bool, len(self.backend))
 	for volume, e := range self.backend {
-		if !e.ready {
-			continue
-		} else if !e.closing {
+		if e.ready && !e.closing {
 			self.startClose(e, volume)
-			closing[e] = true
+			started[e] = true
 		}
+	}
+	entries := make([]*entry, 0, len(self.teardown))
+	for e := range self.teardown {
 		entries = append(entries, e)
 	}
 	self.backend = nil
 	self.Unlock()
 
-	// Wait for each backend to be closed, returning the errors of those which
-	// were closed here
+	// Wait for each backend to be closed, including those which Del or
+	// Update are closing, returning the errors of those which were closed
+	// here
 	for _, e := range entries {
 		<-e.closed
-		if closing[e] {
+		if started[e] {
 			result = errors.Join(result, e.err)
 		}
 	}
@@ -246,7 +253,7 @@ func (self *Registry) Add(ctx context.Context, volume string, url *url.URL) (gof
 
 	// Create the backend, and register it, or unregister the volume when it
 	// can't be
-	b, err := self.open(ctx, e, volume, url)
+	b, err := self.open(ctx, e, volume, url, false)
 	if err != nil {
 		self.unreserve(e, volume)
 		return nil, err
@@ -271,15 +278,26 @@ func (self *Registry) Update(ctx context.Context, volume string, patch url.Value
 	if err != nil {
 		return nil, err
 	}
-	old := e.URL()
 	e.wg.Done()
 	if ctx.Value(usingKey{e}) != nil {
 		return nil, gofiler.ErrConflict.Withf("volume %q can't be updated while it's used by the caller", volume)
 	}
+	return self.update(ctx, e, volume, patch)
+}
 
+// update changes the options of the volume, whose backend is the entry's,
+// with the patch, as Update does. Returns ErrNotFound when the volume's
+// backend isn't the entry's, as it's been removed, or changed. Once it's
+// opened again, it's watched again, with a rescan, as changes are missed
+// while it's closed, and the options can change which objects it has.
+func (self *Registry) update(ctx context.Context, e *entry, volume string, patch url.Values) (*schema.Volume, error) {
 	// The URL with the options, which is checked
+	old := e.URL()
 	u := *old
-	query := u.Query()
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("invalid options of volume %q: %v", volume, err)
+	}
 	for key, values := range patch {
 		if len(values) == 0 {
 			query.Del(key)
@@ -289,6 +307,8 @@ func (self *Registry) Update(ctx context.Context, volume string, patch url.Value
 	}
 	u.RawQuery = query.Encode()
 	if _, err := self.Validate(ctx, &u); err != nil {
+		return nil, err
+	} else if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -307,10 +327,11 @@ func (self *Registry) Update(ctx context.Context, volume string, patch url.Value
 	self.Unlock()
 	<-e.closed
 
-	// Add it again with the options, or as it was when it can't be
-	b, err := self.open(ctx, pending, volume, &u)
+	// Add it again with the options, or as it was when it can't be, which
+	// isn't cancelled, so the volume isn't lost
+	b, err := self.open(ctx, pending, volume, &u, true)
 	if err != nil {
-		if _, err2 := self.open(context.WithoutCancel(ctx), pending, volume, old); err2 != nil {
+		if _, err2 := self.open(context.WithoutCancel(ctx), pending, volume, old, true); err2 != nil {
 			self.unreserve(pending, volume)
 			return nil, errors.Join(err, err2)
 		}
@@ -384,9 +405,18 @@ func (self *Registry) With(ctx context.Context, volume string, fn func(context.C
 
 // new creates a backend from a URL, whose path must be absolute. The caller
 // must close it.
-func (self *Registry) new(_ context.Context, u *url.URL) (gofiler.Filer, error) {
-	if u == nil {
+func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	} else if u == nil {
 		return nil, gofiler.ErrBadParameter.With("url is nil")
+	}
+
+	// The options, which are rejected when they can't be parsed, rather than
+	// those which can't being left out
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("invalid options: %v", err)
 	}
 	switch u.Scheme {
 	case schemeFile:
@@ -404,7 +434,7 @@ func (self *Registry) new(_ context.Context, u *url.URL) (gofiler.Filer, error) 
 		if path == "" || !filepath.IsAbs(filepath.FromSlash(path)) {
 			return nil, gofiler.ErrBadParameter.Withf("path of volume %q isn't absolute: %q", u.Host, path)
 		}
-		if b, err := fs.New(u.Host, path, u.Query()); err != nil {
+		if b, err := fs.New(u.Host, path, query); err != nil {
 			return nil, err
 		} else {
 			return b, nil
@@ -416,10 +446,10 @@ func (self *Registry) new(_ context.Context, u *url.URL) (gofiler.Filer, error) 
 
 // open creates the backend of the volume, which is registered with the
 // entry, and checks it's for the volume, and registers it, and watches it
-// until it's removed. The volume is still registered when it can't be, so
+// until it's removed, with a rescan once it's watched, when rescan is set. The volume is still registered when it can't be, so
 // the caller can open it again, or unreserve it. Returns ErrServiceUnavailable
 // when the registry was closed meanwhile.
-func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.URL) (gofiler.Filer, error) {
+func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.URL, rescan bool) (gofiler.Filer, error) {
 	b, err := self.new(ctx, u)
 	if err == nil {
 		if name := b.URL().Host; name != volume {
@@ -444,7 +474,7 @@ func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
-		self.watch(e, volume)
+		self.watch(e, volume, rescan)
 	}()
 	return b, nil
 }
@@ -466,6 +496,7 @@ func (self *Registry) unreserve(e *entry, volume string) {
 func (self *Registry) startClose(e *entry, volume string) {
 	e.closing = true
 	e.cancel()
+	self.teardown[e] = struct{}{}
 	go func() {
 		e.wg.Wait()
 		e.err = e.Filer.Close()
@@ -473,6 +504,7 @@ func (self *Registry) startClose(e *entry, volume string) {
 		if self.backend != nil && self.backend[volume] == e {
 			delete(self.backend, volume)
 		}
+		delete(self.teardown, e)
 		self.Unlock()
 		close(e.closed)
 	}()
