@@ -367,21 +367,36 @@ func Test_S3_ListFileAndDir(t *testing.T) {
 }
 
 func Test_S3_ListTrace(t *testing.T) {
+	defer func(size int32) { listPageSize = size }(listPageSize)
+	listPageSize = 1
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	defer provider.Shutdown(context.Background())
 	_, b := newFakeBucketWith(t, gofiler.Opts{Tracer: provider.Tracer("test")}, "", listKeys...)
 
 	// Listing is a span, with the volume and the request, within which are
-	// the requests to S3, which are a directory's, so its object isn't found
+	// the requests to S3, which are a directory's, so its object isn't
+	// found, and those for its pages, which lasts until there are no more
 	req := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/c"}, Recursive: true}
 	iter, err := b.ListObjects(context.Background(), req)
 	require.NoError(t, err)
+	require.Len(t, recorder.Ended(), 3)
+	assert.Equal(t, []string{"/c/d/", "/c/d/e.txt", "/c/f.txt"}, func() []string {
+		paths := []string{}
+		for {
+			object, err := iter.Next(context.Background())
+			if errors.Is(err, io.EOF) {
+				return paths
+			}
+			require.NoError(t, err)
+			paths = append(paths, object.Key())
+		}
+	}())
 	require.NoError(t, iter.Close())
 
 	spans := recorder.Ended()
-	require.Len(t, spans, 4)
-	list := spans[3]
+	require.Greater(t, len(spans), 4)
+	list := spans[len(spans)-1]
 	assert.Equal(t, "s3.ListObjects", list.Name())
 	attrs := map[attribute.Key]attribute.Value{}
 	for _, attr := range list.Attributes() {
@@ -390,8 +405,12 @@ func Test_S3_ListTrace(t *testing.T) {
 	assert.Equal(t, "photos", attrs["filer.volume"].AsString())
 	assert.Equal(t, types.Stringify(req), attrs["arg.req"].AsString())
 	assert.Equal(t, codes.Unset, list.Status().Code)
-	for i, name := range []string{"S3.HeadObject", "S3.ListObjectsV2"} {
-		assert.Equal(t, name, spans[i+1].Name())
-		assert.Equal(t, list.SpanContext().SpanID(), spans[i+1].Parent().SpanID())
+	assert.Equal(t, "S3.HeadBucket", spans[0].Name())
+	assert.Equal(t, "S3.HeadObject", spans[1].Name())
+	for _, span := range spans[1 : len(spans)-1] {
+		assert.Equal(t, list.SpanContext().SpanID(), span.Parent().SpanID(), span.Name())
+	}
+	for _, span := range spans[2 : len(spans)-1] {
+		assert.Equal(t, "S3.ListObjectsV2", span.Name())
 	}
 }

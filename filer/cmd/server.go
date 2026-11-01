@@ -56,15 +56,16 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 	}()
 
 	// Add the volumes, whose names are their name options, or the hosts of
-	// their URLs
-	for _, volume := range flags.Volume {
+	// their URLs. A volume which can't be is named by its position, without
+	// its URL, or why it can't be parsed, as they can have credentials.
+	for i, volume := range flags.Volume {
 		u, err := url.Parse(volume)
 		if err != nil {
-			return gofiler.ErrBadParameter.Withf("invalid volume %q: %v", volume, err)
+			return gofiler.ErrBadParameter.Withf("volume %d: invalid url", i+1)
 		}
 		name := filer.VolumeName(u)
 		if name == "" {
-			return gofiler.ErrBadParameter.Withf("volume %q has no name, which is its name option, or the host of its url", volume)
+			return gofiler.ErrBadParameter.Withf("volume %d has no name, which is its name option, or the host of its url", i+1)
 		}
 
 		// The backend's URL is logged, as it has the placeholders of the

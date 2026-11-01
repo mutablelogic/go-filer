@@ -2,6 +2,8 @@ package s3
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,7 +179,7 @@ func (self optionCredentials) Retrieve(ctx context.Context) (aws.Credentials, er
 	values := make([]string, 0, 3)
 	for _, value := range []string{self.keyID, self.secret, self.token} {
 		if !isPlaceholder(value) {
-			values = append(values, value)
+			values = append(values, literal(value))
 			continue
 		} else if self.Credentials == nil {
 			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be expanded, without a provider of credentials", self.bucket)
@@ -204,9 +206,9 @@ func (self optionCredentials) Retrieve(ctx context.Context) (aws.Credentials, er
 }
 
 // storeCredentials stores the credentials of the options which aren't
-// placeholders, with the provider of credentials, by keys of the volume's
-// name, such as S3_PHOTOS_SECRET_ACCESS_KEY, as JSON strings, and replaces
-// them with their placeholders, so the URL doesn't have them
+// placeholders, with the provider of credentials, by new keys of the volume's
+// name (see credentialKey), as JSON strings, and replaces them with their
+// placeholders, so the URL doesn't have them
 func (self *S3) storeCredentials(ctx context.Context) error {
 	for _, credential := range []struct {
 		option string
@@ -220,7 +222,7 @@ func (self *S3) storeCredentials(ctx context.Context) error {
 			continue
 		}
 		key := credentialKey(self.name, credential.option)
-		data, err := json.Marshal(*credential.value)
+		data, err := json.Marshal(literal(*credential.value))
 		if err != nil {
 			return err
 		} else if err := self.Credentials.Set(ctx, key, data); err != nil {
@@ -231,8 +233,13 @@ func (self *S3) storeCredentials(ctx context.Context) error {
 	return nil
 }
 
-// credentialKey returns the key of a credential of a volume, which is the
-// option of its URL, such as S3_PHOTOS_SECRET_ACCESS_KEY
+// credentialKey returns a new key of a credential of a volume, which is the
+// option of its URL, such as S3_PHOTOS_SECRET_ACCESS_KEY_0123456789ABCDEF,
+// whose random suffix means it doesn't replace a credential which another
+// volume, or the same volume before it's changed, uses, or one of the
+// environment, so a credential is only used by the volume which stored it
 func credentialKey(name, option string) string {
-	return strings.ToUpper(strings.NewReplacer("-", "_").Replace("s3_" + name + "_" + option))
+	suffix := make([]byte, 8)
+	rand.Read(suffix)
+	return strings.ToUpper(strings.NewReplacer("-", "_").Replace("s3_" + name + "_" + option + "_" + hex.EncodeToString(suffix)))
 }

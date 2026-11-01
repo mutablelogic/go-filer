@@ -161,12 +161,25 @@ func Test_Clone(t *testing.T) {
 		t.Error("readonly isn't the clone's")
 	}
 
-	// A filesystem which isn't a directory can't be cloned
-	fsys, err := NewFS("test", fstest.MapFS{}, nil, filer.Opts{})
-	if err != nil {
-		t.Fatal(err)
+	// A filesystem which New didn't create can't be cloned, even when it
+	// has a path, as opening its path again would lose what it restricts
+	for _, fsys := range []fs.FS{fstest.MapFS{}, pathMapFS{fstest.MapFS{}, dir}} {
+		other, err := NewFS("test", fsys, nil, filer.Opts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := other.Clone(context.Background(), nil); !errors.Is(err, filer.ErrNotImplemented) {
+			t.Errorf("clone of %T: %v", fsys, err)
+		}
 	}
-	if _, err := fsys.Clone(context.Background(), nil); !errors.Is(err, filer.ErrNotImplemented) {
-		t.Errorf("clone without a directory: %v", err)
-	}
+}
+
+// pathMapFS is a filesystem of files in memory, with a path
+type pathMapFS struct {
+	fstest.MapFS
+	path string
+}
+
+func (fsys pathMapFS) Path() string {
+	return fsys.path
 }
