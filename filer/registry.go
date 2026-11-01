@@ -117,7 +117,7 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	}
 
 	// Register the metrics, with the meter
-	if metrics, err := newMetrics(self.meter); err != nil {
+	if metrics, err := newMetrics(self.meter, self.worker); err != nil {
 		return nil, err
 	} else {
 		self.metrics = metrics

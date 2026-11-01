@@ -1,6 +1,9 @@
 package filer
 
 import (
+	"os"
+	"strings"
+
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
@@ -19,6 +22,7 @@ type opt struct {
 	meter       metric.Meter
 	clientopts  []client.ClientOpt
 	credentials gofiler.CredentialProvider
+	worker      string // the name of the worker, which is in the metrics
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -39,11 +43,24 @@ func (o *opt) apply(opt []Opt) error {
 }
 
 func (o *opt) defaults() {
-	// TODO
+	o.worker = defaultWorker()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // OPTIONS
+
+// WithWorker sets the name of the worker, such as the server's, which is in
+// the metrics, so those of the workers are told apart, and which is the
+// hostname by default
+func WithWorker(name string) Opt {
+	return func(o *opt) error {
+		if name = strings.TrimSpace(name); name == "" {
+			return gofiler.ErrBadParameter.With("the worker's name can't be empty")
+		}
+		o.worker = name
+		return nil
+	}
+}
 
 // WithTracer sets the tracer used for tracing operations.
 func WithTracer(tracer trace.Tracer) Opt {
@@ -87,4 +104,16 @@ func WithClientOpts(clientopts ...client.ClientOpt) Opt {
 // tracer, and the provider of credentials
 func (o *opt) backendOpts() gofiler.Opts {
 	return gofiler.Opts{Tracer: o.tracer, Credentials: o.credentials}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// defaultWorker returns the hostname, which is the name of the worker by
+// default, or "unknown", when it can't be got
+func defaultWorker() string {
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+	return "unknown"
 }

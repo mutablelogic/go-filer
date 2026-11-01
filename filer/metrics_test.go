@@ -2,10 +2,12 @@ package filer
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -19,7 +21,7 @@ func Test_Registry_Metrics(t *testing.T) {
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer provider.Shutdown(context.Background())
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithMeter(provider.Meter("test")))
+	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.Close() })
 	runRegistry(t, r)
@@ -54,6 +56,8 @@ func Test_Registry_Metrics(t *testing.T) {
 			require.True(t, ok)
 			assert.True(t, sum.IsMonotonic)
 			for _, point := range sum.DataPoints {
+				worker, _ := point.Attributes.Value(attribute.Key(attrWorker))
+				assert.Equal(t, "worker-1", worker.AsString())
 				volume, _ := point.Attributes.Value(attribute.Key(attrVolume))
 				eventType, _ := point.Attributes.Value(attribute.Key(attrEventType))
 				counted[volume.AsString()+"/"+eventType.AsString()] += point.Value
@@ -76,4 +80,21 @@ func Test_Registry_NoMetrics(t *testing.T) {
 	defer r.Close()
 	assert.Nil(t, r.metrics)
 	r.metrics.event(context.Background(), schema.Event{})
+}
+
+func Test_Registry_Worker(t *testing.T) {
+	// The worker is the hostname by default, or the option's, which can't be
+	// empty
+	hostname, err := os.Hostname()
+	require.NoError(t, err)
+	r, err := New(context.Background())
+	require.NoError(t, err)
+	defer r.Close()
+	assert.Equal(t, hostname, r.worker)
+	r, err = New(context.Background(), WithWorker(" worker-2 "))
+	require.NoError(t, err)
+	defer r.Close()
+	assert.Equal(t, "worker-2", r.worker)
+	_, err = New(context.Background(), WithWorker(" "))
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
