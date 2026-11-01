@@ -87,8 +87,9 @@ func TestObjectListHTML(t *testing.T) {
 	assert.Contains(t, body, `<input type="file" multiple data-href="media/music/">`)
 	assert.Contains(t, body, `method: "POST"`)
 
-	// A volume which is read-only has nothing to delete with
-	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": true}`, nil))
+	// A volume which is read-only, by any boolean, has nothing to upload
+	// or delete with
+	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": "TRUE"}`, nil))
 	_, _, body = getAccept(t, server, "object/media", browser)
 	assert.Contains(t, body, "a.txt")
 	assert.NotContains(t, body, `class="delete"`)

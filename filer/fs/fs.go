@@ -112,6 +112,12 @@ func (self *FS) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
+// Readonly returns true when objects can't be created or deleted, by the
+// readonly option, or as the filesystem can't be written
+func (self *FS) Readonly() bool {
+	return self.readonly
+}
+
 // URL returns the URL of the filesystem, which a filesystem can be created
 // again from: file://<name>/<path> for a filesystem rooted at a directory,
 // or fs://<name> for one which isn't, with the options which aren't the

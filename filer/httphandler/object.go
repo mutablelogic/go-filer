@@ -237,67 +237,77 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// A directory redirects to its listing, which is the path of the request
-	// without the object's path
-	object, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: key})
+	// The file, which isn't read yet, or a directory, which can't be, which
+	// redirects to its listing, which is the path of the request without the
+	// object's path
+	read, object, err := registry.ReadObject(r.Context(), schema.GetObjectRequest{ObjectKey: key})
+	if errors.Is(err, fs.ErrInvalid) {
+		if object, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: key}); err == nil && object.IsDir {
+			listing := strings.TrimSuffix(strings.TrimSuffix(r.URL.Path, r.PathValue("path")), "/")
+			if key.Path != "/" {
+				listing += "?" + url.Values{"path": {key.Path}}.Encode()
+			}
+			http.Redirect(w, r, listing, http.StatusTemporaryRedirect)
+			return
+		}
+	}
 	if err != nil {
 		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 		return
-	} else if object.IsDir {
-		listing := strings.TrimSuffix(strings.TrimSuffix(r.URL.Path, r.PathValue("path")), "/")
-		if key.Path != "/" {
-			listing += "?" + url.Values{"path": {key.Path}}.Encode()
-		}
-		http.Redirect(w, r, listing, http.StatusTemporaryRedirect)
-		return
 	}
 
-	// The headers alone, when it isn't modified, or a precondition fails,
-	// without reading it
+	// The headers alone, when it isn't modified, without reading it
 	binary := objectBinary(object)
 	binary.Disposition = disposition(query.Download)
-	if binary.NotModified(r) || !preconditions(r, binary) {
+	if binary.NotModified(r) {
 		if err := binary.Write(w, r, nil); err != nil {
 			httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 		}
 		return
 	}
 
-	// Read the file, whose metadata is the object's, and write it, after
-	// which an error can't be responded with
-	read, object, err := registry.ReadObject(r.Context(), schema.GetObjectRequest{ObjectKey: key})
-	if err != nil {
-		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
-		return
-	}
-	binary = objectBinary(object)
-	binary.Disposition = disposition(query.Download)
-	var written bool
+	// Read the file, and write it, which evaluates the request's
+	// preconditions. An error can only be responded with until the response
+	// is written.
+	tw := &trackingWriter{ResponseWriter: w}
 	rc := http.NewResponseController(w)
 	err = read(r.Context(), func(body io.Reader) error {
 		stop := context.AfterFunc(r.Context(), func() { rc.SetWriteDeadline(time.Now()) })
 		defer stop()
-		written = true
-		return binary.Write(w, r, body)
+		return binary.Write(tw, r, body)
 	})
-	if err != nil && !written {
+	if err != nil && !tw.written {
 		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 	}
 }
 
-// readonly returns true when the volume is read-only, by its options, so its
-// objects can't be deleted, or it isn't mounted
+// trackingWriter is a response writer which records whether its response has
+// been written, after which an error can't be responded with
+type trackingWriter struct {
+	http.ResponseWriter
+	written bool
+}
+
+func (w *trackingWriter) WriteHeader(status int) {
+	w.written = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *trackingWriter) Write(data []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(data)
+}
+
+// Unwrap returns the response writer, so its deadlines can be set
+func (w *trackingWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+// readonly returns true when the volume is read-only, so its objects can't
+// be uploaded or deleted, or it isn't mounted
 func readonly(registry *filer.Registry, name string) bool {
 	volume, err := registry.Volume(name)
-	if err != nil {
-		return true
-	}
-	u, err := url.Parse(volume.URL)
-	if err != nil {
-		return true
-	}
-	value, set := u.Query()["readonly"]
-	return set && (len(value) == 0 || value[0] == "" || value[0] == "true" || value[0] == "1")
+	return err != nil || volume.Readonly
 }
 
 // objectPut writes the request's body to the file at the path, which is
@@ -478,13 +488,18 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 
 // partFileName returns the file name of a part of a multipart form, which
 // is its path, as a browser sends a directory's files, with "/", which
-// Part.FileName removes. A name with "\" is a path too, as Windows has.
+// Part.FileName removes. A name without "/", but with "\", is a path too,
+// as a Windows client sends, but otherwise "\" is a character of a name.
 func partFileName(part *multipart.Part) string {
 	_, params, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
 	if err != nil {
 		return ""
 	}
-	return strings.ReplaceAll(params["filename"], "\\", "/")
+	name := params["filename"]
+	if !strings.Contains(name, "/") {
+		name = strings.ReplaceAll(name, "\\", "/")
+	}
+	return name
 }
 
 // disposition returns how the browser presents a file: as an attachment,
@@ -494,17 +509,6 @@ func disposition(download bool) httpresponse.Disposition {
 		return httpresponse.DispositionAttachment
 	}
 	return httpresponse.DispositionInline
-}
-
-// preconditions returns false when If-Match, or without it,
-// If-Unmodified-Since, fails, as a response to which has no content
-func preconditions(r *http.Request, binary httpresponse.Binary) bool {
-	if match := r.Header.Get("If-Match"); match != "" {
-		return match == "*"
-	} else if since, err := http.ParseTime(r.Header.Get("If-Unmodified-Since")); err == nil && !binary.ModTime.IsZero() {
-		return !binary.ModTime.Truncate(time.Second).After(since)
-	}
-	return true
 }
 
 // objectKeyFromRequest returns the volume and path of an object from the

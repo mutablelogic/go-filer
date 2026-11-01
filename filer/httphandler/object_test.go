@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -268,6 +269,9 @@ func TestObjectGet(t *testing.T) {
 	assert.Equal(t, http.StatusNotModified, status)
 	status, _, _ = getObject(t, server, "object/media/music/a%20b.mp3", http.Header{"If-Match": {`"other"`}})
 	assert.Equal(t, http.StatusPreconditionFailed, status)
+	status, _, body = getObject(t, server, "object/media/music/a%20b.mp3", http.Header{"If-Match": {"*"}})
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "abc", body)
 	status, _, _ = getObject(t, server, "object/media/music/a%20b.mp3", http.Header{"If-Unmodified-Since": {modtime.Add(-time.Hour).Format(http.TimeFormat)}})
 	assert.Equal(t, http.StatusPreconditionFailed, status)
 
@@ -492,6 +496,13 @@ func TestObjectUpload(t *testing.T) {
 	assert.Equal(t, "<missing>", content("escape.txt"))
 	require.Equal(t, http.StatusCreated, upload(t, server, "object/media/music?overwrite=true", [][2]string{{"a.mp3", "new"}}, &resp))
 	assert.Equal(t, "new", content("music/a.mp3"))
+
+	// A name with "/" keeps its "\", which is a character of a name, except
+	// on Windows, whose names can't have it
+	if runtime.GOOS != "windows" {
+		require.Equal(t, http.StatusCreated, upload(t, server, "object/media/music", [][2]string{{`album/x\y.mp3`, "xy"}}, &resp))
+		assert.Equal(t, "xy", content(`music/album/x\y.mp3`))
+	}
 
 	// Every file which is skipped is 200, and the root is a directory
 	require.Equal(t, http.StatusOK, upload(t, server, "object/media/music", [][2]string{{"a.mp3", "x"}}, &resp))

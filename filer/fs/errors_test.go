@@ -3,6 +3,7 @@ package fs
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -58,4 +59,21 @@ func Test_objectErrorPermission(t *testing.T) {
 	_, err = self.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/locked/a.txt"}, Body: strings.NewReader("a")})
 	assert.EqualError(t, err, "create /locked/a.txt: permission denied")
 	assert.ErrorIs(t, err, fs.ErrPermission)
+}
+
+func Test_readError(t *testing.T) {
+	self, err := New("test", t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { self.Close() })
+	_, err = self.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.txt"}, Body: strings.NewReader("a")})
+	require.NoError(t, err)
+	read, _, err := self.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.txt"}})
+	require.NoError(t, err)
+
+	// An error of the function reading the file, such as one writing what's
+	// read to a client which went away, is returned as it is, rather than as
+	// the file's
+	writeErr := &os.SyscallError{Syscall: "write", Err: syscall.EPIPE}
+	err = read(context.Background(), func(io.Reader) error { return writeErr })
+	assert.Equal(t, writeErr, err)
 }

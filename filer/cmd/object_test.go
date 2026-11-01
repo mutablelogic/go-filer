@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,4 +163,23 @@ func Test_ObjectUploadCmd(t *testing.T) {
 	assert.Error(t, err)
 	_, err = files()
 	assert.Error(t, err)
+}
+
+func Test_createTemp(t *testing.T) {
+	dir := t.TempDir()
+
+	// The temporary file has the permissions of a file which is created,
+	// which the umask applies to
+	created, err := os.Create(filepath.Join(dir, "created.txt"))
+	require.NoError(t, err)
+	created.Close()
+	tmp, err := createTemp(filepath.Join(dir, "song.mp3"))
+	require.NoError(t, err)
+	defer tmp.Close()
+	want, err := os.Stat(created.Name())
+	require.NoError(t, err)
+	got, err := tmp.Stat()
+	require.NoError(t, err)
+	assert.Equal(t, want.Mode().Perm(), got.Mode().Perm())
+	assert.True(t, strings.HasPrefix(filepath.Base(tmp.Name()), ".song.mp3."), tmp.Name())
 }

@@ -184,7 +184,7 @@ func (self *Registry) Volumes() []schema.Volume {
 	volumes := make([]schema.Volume, 0, len(self.backend))
 	for name, e := range self.backend {
 		if e.ready && !e.closing {
-			volumes = append(volumes, schema.Volume{Name: name, URL: e.URL().String()})
+			volumes = append(volumes, volumeOf(name, e.Filer))
 		}
 	}
 	slices.SortFunc(volumes, func(a, b schema.Volume) int {
@@ -202,8 +202,18 @@ func (self *Registry) Volume(name string) (*schema.Volume, error) {
 	if e, exists := self.backend[name]; !exists || !e.ready || e.closing {
 		return nil, gofiler.ErrNotFound.Withf("volume %q is not mounted", name)
 	} else {
-		return &schema.Volume{Name: name, URL: e.URL().String()}, nil
+		return types.Ptr(volumeOf(name, e.Filer)), nil
 	}
+}
+
+// volumeOf returns the volume of a backend, with its URL, and whether it's
+// read-only, when the backend says
+func volumeOf(name string, b gofiler.Filer) schema.Volume {
+	volume := schema.Volume{Name: name, URL: b.URL().String()}
+	if b, ok := b.(interface{ Readonly() bool }); ok {
+		volume.Readonly = b.Readonly()
+	}
+	return volume
 }
 
 // Schemes returns the schemes of the URLs which backends can be created from,
@@ -339,7 +349,7 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 	}
 
 	// Return the volume
-	return &schema.Volume{Name: volume, URL: b.URL().String()}, nil
+	return types.Ptr(volumeOf(volume, b)), nil
 }
 
 // Del removes the backend for the specified volume from the registry, and

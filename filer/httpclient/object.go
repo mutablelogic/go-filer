@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -230,7 +231,7 @@ func (c *Client) UploadObjects(ctx context.Context, name, dir string, files []Up
 func writeForm(form *multipart.Writer, files []UploadFile) error {
 	for _, file := range files {
 		header := textproto.MIMEHeader{}
-		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, file.Path))
+		header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": file.Path}))
 		header.Set("Content-Type", types.ContentTypeBinary)
 		if !file.ModTime.IsZero() {
 			header.Set(types.ContentModifiedHeader, file.ModTime.UTC().Format(http.TimeFormat))

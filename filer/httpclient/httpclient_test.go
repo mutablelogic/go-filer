@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -422,4 +423,26 @@ func TestUploadObjects(t *testing.T) {
 	assert.Error(t, err)
 	_, err = client.UploadObjects(ctx, "media", "../etc", []httpclient.UploadFile{file("a.mp3", "a")}, false)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+}
+
+func TestUploadObjectsNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows names can't have these characters")
+	}
+	client, tempDir := newClient(t)
+	ctx := context.Background()
+	dir := tempDir()
+	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
+	require.NoError(t, err)
+
+	// A name with characters which are quoted, or escaped, is the name
+	for _, name := range []string{"a\tb.txt", `say "hi".txt`, "naïve café.txt", `back\slash/x.txt`} {
+		name := strings.ReplaceAll(name, "\\t", "\t")
+		resp, err := client.UploadObjects(ctx, "media", "/", []httpclient.UploadFile{{Path: name, Open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("x")), nil }}}, false)
+		require.NoError(t, err, name)
+		require.Len(t, resp.Body, 1, name)
+		assert.Equal(t, "/"+name, resp.Body[0].Path)
+		_, err = os.Stat(filepath.Join(dir, filepath.FromSlash(name)))
+		assert.NoError(t, err, name)
+	}
 }

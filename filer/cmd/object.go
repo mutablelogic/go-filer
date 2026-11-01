@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path"
@@ -159,7 +161,7 @@ func (cmd *ObjectGetCmd) Run(ctx server.Cmd) error {
 
 		// Download it to a temporary file, beside the file, which replaces it
 		// once it's downloaded, so a download which fails doesn't change it
-		tmp, err := os.CreateTemp(filepath.Dir(file), "."+filepath.Base(file)+".*")
+		tmp, err := createTemp(file)
 		if err != nil {
 			return err
 		}
@@ -421,6 +423,19 @@ func existingFiles(ctx context.Context, client *httpclient.Client, name, dir str
 			return existing, nil
 		}
 		req.StartAfter = list.Next
+	}
+}
+
+// createTemp creates a hidden temporary file beside the file, which replaces
+// it once it's written, whose permissions are those of a file which is
+// created, which the umask applies to, rather than os.CreateTemp's 0600
+func createTemp(file string) (*os.File, error) {
+	dir, base := filepath.Dir(file), filepath.Base(file)
+	for {
+		tmp, err := os.OpenFile(filepath.Join(dir, "."+base+"."+rand.Text()), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666)
+		if !errors.Is(err, fs.ErrExist) {
+			return tmp, err
+		}
 	}
 }
 

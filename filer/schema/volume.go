@@ -18,8 +18,9 @@ import (
 // Volume is a volume which is registered, with the URL of its backend, which
 // it can be added again from
 type Volume struct {
-	Name string `json:"name" help:"Volume name"`
-	URL  string `json:"url" help:"URL of the volume's backend, with the options which aren't the defaults"`
+	Name     string `json:"name" help:"Volume name"`
+	URL      string `json:"url" help:"URL of the volume's backend, with the options which aren't the defaults"`
+	Readonly bool   `json:"readonly,omitempty" readonly:"" help:"Objects can't be created or deleted, by its options, or as its backend can't be written"`
 }
 
 // VolumeList is the volumes which are registered, in order of their names,
