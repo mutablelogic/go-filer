@@ -1,0 +1,149 @@
+// Package schema is the types of the objects in a backend, which are the
+// types of the filer's objects
+package schema
+
+import (
+	"context"
+	"io"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+// DirectoryType is the type of a directory, as freedesktop.org's shared MIME
+// info has it, which has no content
+const DirectoryType = "inode/directory"
+
+// ObjectListLimit is the most objects in a page of a listing, which is the
+// number when the request doesn't set one
+const ObjectListLimit = 100
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// ObjectKey represents the unique identifier of an object, which consists of a volume and a path.
+// The name of the volume isn't used by a backend, which is a single volume,
+// but identifies the volume's backend in the registry.
+type ObjectKey struct {
+	Name string `json:"name,omitempty" help:"Volume name"`
+	Path string `json:"path,omitempty" arg:"" required:"" help:"Object path"`
+}
+
+// ObjectAttr represents the attributes of an object, which are immutable and cannot be updated.
+type ObjectAttr struct {
+	Size    *int64    `json:"size,omitempty"`
+	ETag    *string   `json:"etag,omitempty"`
+	ModTime time.Time `json:"mtime,omitzero"`
+	IsDir   bool      `json:"dir,omitempty"`
+}
+
+// ObjectMeta represents the metadata of an object, which can be updated.
+type ObjectMeta struct {
+	ContentType string `json:"type,omitempty"`
+	Meta        []Meta `json:"meta,omitempty"`
+}
+
+// Object represents a file or directory in a volume, including its key, metadata, and attributes.
+type Object struct {
+	ObjectKey
+	ObjectMeta
+	ObjectAttr
+}
+
+// Create an object in the filesystem
+type CreateObjectRequest struct {
+	ObjectKey
+	Body        io.Reader `json:"-"`
+	IfNotExists bool      // if true, fail with ErrConflict when the object already exists
+	IfExists    bool      // if true, fail with ErrPreconditionFailed when the object doesn't exist
+	ModTime     time.Time `json:"last-modified,omitzero"`
+	ObjectMeta
+}
+
+// Return an object
+type GetObjectRequest struct {
+	ObjectKey
+	IfModifiedSince time.Time `json:"-"` // if non-zero, only return the object if it has been modified since this time
+	IfNoneMatch     []string  `json:"-"` // if non-empty, only return the object if its ETag doesn't match any of these
+}
+
+// ListObjectsRequest lists the objects beneath a path in a volume
+type ListObjectsRequest struct {
+	ObjectKey
+	Recursive  bool   `json:"recursive,omitempty"`
+	StartAfter string `json:"start_after,omitempty" help:"Return objects after this path"`
+}
+
+// ObjectListRequest lists the objects beneath a path in a volume, a page at
+// a time. The next page starts after the key of the last object of the
+// previous page, which is the list's Next.
+type ObjectListRequest struct {
+	ListObjectsRequest
+	Limit *uint64 `json:"limit,omitempty" help:"Maximum number of objects to return, which defaults to and is capped at 100"`
+}
+
+// ObjectList is a page of the objects beneath a path in a volume, in the
+// same order as S3, by their keys. When there are more, Next is the key of
+// the last object, which the next page starts after.
+type ObjectList struct {
+	ObjectListRequest
+	Next string    `json:"next,omitempty" help:"Start after this key for the next page"`
+	Body []*Object `json:"body"`
+}
+
+// Iterates over the objects returned by ListObjects.
+// Caller must close the iterator when done.
+type ListObjectsIterator interface {
+	io.Closer
+
+	// Next returns the next object, or io.EOF when there are no more objects
+	Next(context.Context) (*Object, error)
+}
+
+// DeleteObjectsRequest deletes an object. A directory is only deleted when
+// Recursive is true, in which case every object beneath it is deleted too.
+type DeleteObjectsRequest struct {
+	ObjectKey
+	Recursive bool `json:"recursive,omitempty"`
+}
+
+// DeleteObjectsResponse is the objects which were deleted, which is the
+// object, or the objects beneath a directory, but not directories
+type DeleteObjectsResponse struct {
+	Body []*Object `json:"body" readonly:"" help:"Objects deleted, not including directories"`
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+// Query returns the query of the request for a page of the objects in a
+// volume, whose name is the path of the request
+func (r ObjectListRequest) Query() url.Values {
+	values := url.Values{}
+	if r.Path != "" {
+		values.Set("path", r.Path)
+	}
+	if r.Recursive {
+		values.Set("recursive", "true")
+	}
+	if r.StartAfter != "" {
+		values.Set("start_after", r.StartAfter)
+	}
+	if r.Limit != nil {
+		values.Set("limit", strconv.FormatUint(*r.Limit, 10))
+	}
+	return values
+}
+
+// Key returns the key of the object, which is its path, or for a directory,
+// its path followed by "/", which is the order objects are listed in
+func (o Object) Key() string {
+	if o.IsDir && !strings.HasSuffix(o.Path, "/") {
+		return o.Path + "/"
+	}
+	return o.Path
+}

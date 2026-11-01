@@ -12,9 +12,10 @@ Only the filesystem backend, in the `fs` package, is implemented. This document 
 | Package | Description |
 | --------- | ------------- |
 | `github.com/mutablelogic/go-filer` | The `Filer` interface, the `WriterFS` interface of a writable filesystem, and the errors |
-| `github.com/mutablelogic/go-filer/schema` | The objects, requests and events |
-| `github.com/mutablelogic/go-filer/fs` | The filesystem backend, for any `fs.FS`, and writable for a directory |
-| `github.com/mutablelogic/go-filer/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
+| `github.com/mutablelogic/go-filer/filer` | The registry of the volumes' backends, which are created from URLs, such as `file://media/mnt/media`, and watched |
+| `github.com/mutablelogic/go-filer/filer/schema` | The objects, requests and events |
+| `github.com/mutablelogic/go-filer/filer/fs` | The filesystem backend, for any `fs.FS`, and writable for a directory |
+| `github.com/mutablelogic/go-filer/filer/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
 
 ## Usage
 
@@ -27,8 +28,8 @@ import (
     "io"
     "os"
 
-    filerfs "github.com/mutablelogic/go-filer/fs"
-    schema "github.com/mutablelogic/go-filer/schema"
+    filerfs "github.com/mutablelogic/go-filer/filer/fs"
+    schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 func main() {
