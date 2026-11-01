@@ -38,6 +38,45 @@ jobs:
       - name: Vet
         run: make vet
 
+  # The code which is generated from the protocol buffers is committed, so
+  # it's generated again, with the versions of protoc and its plugins which
+  # generated it, which its headers have, and mustn't change
+  protobuf:
+    name: Protocol Buffers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # protoc's version in a header is its release with a major version
+      # before it, such as v7.36.2 for 36.2
+      - name: Install protoc and its plugins
+        run: |
+          header=filer/s3/seaweedfs/filer_pb/filer.pb.go
+          grpc_header=filer/s3/seaweedfs/filer_pb/filer_grpc.pb.go
+          protoc=$(sed -n 's|^//[[:space:]]*protoc[[:space:]]*v[0-9]*\.\([0-9][0-9.]*\)$|\1|p' $header)
+          protoc_gen_go=$(sed -n 's|^//[[:space:]]*protoc-gen-go[[:space:]]*\(v[0-9][0-9.]*\)$|\1|p' $header)
+          protoc_gen_go_grpc=$(sed -n 's|^//[[:space:]]*-[[:space:]]*protoc-gen-go-grpc[[:space:]]*\(v[0-9][0-9.]*\)$|\1|p' $grpc_header)
+          echo "protoc $protoc, protoc-gen-go $protoc_gen_go, protoc-gen-go-grpc $protoc_gen_go_grpc"
+          curl -sSfL -o "$RUNNER_TEMP/protoc.zip" "https://github.com/protocolbuffers/protobuf/releases/download/v$protoc/protoc-$protoc-linux-x86_64.zip"
+          unzip -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@$protoc_gen_go"
+          go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$protoc_gen_go_grpc"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Generate
+        run: make protobuf-generate
+
+      - name: Check the generated code is committed
+        run: |
+          git diff --exit-code || (echo "The generated code isn't the same as what's committed, so run make protobuf-generate" && exit 1)
+
   # Its name has no matrix in it, as GitHub adds the OS to it when it runs
   test:
     name: Test

@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -26,6 +27,7 @@ type opt struct {
 	endpoint  string // the endpoint of a service which is compatible with S3, when it's set
 	anonymous bool   // requests aren't signed, so they're without credentials
 	readonly  bool   // objects can't be created or deleted
+	seaweedfs string // the address of a SeaweedFS filer's gRPC service, which is watched, when it's set
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -70,6 +72,12 @@ const (
 	// optReadonly is whether objects can only be read, and not created or
 	// deleted. It's true, false, or empty, which is true.
 	optReadonly = "readonly"
+
+	// optSeaweedFS is the address of the gRPC service of the SeaweedFS filer
+	// whose S3 gateway the endpoint is, as host:port, such as
+	// 192.168.86.21:18888, which is the filer's port, plus 10000, whose
+	// changes to the bucket's objects are watched
+	optSeaweedFS = "seaweedfs-filer-grpc"
 )
 
 // placeholder is the pattern of a value which is only a placeholder
@@ -87,7 +95,7 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 	// Check the options are known
 	for key := range values {
 		switch key {
-		case optName, optRegion, optProfile, optAccessKeyID, optSecretAccessKey, optSessionToken, optEndpoint, optAnonymous, optReadonly:
+		case optName, optRegion, optProfile, optAccessKeyID, optSecretAccessKey, optSessionToken, optEndpoint, optAnonymous, optReadonly, optSeaweedFS:
 		default:
 			return opt{}, filer.ErrBadParameter.Withf("Unknown option: %q", key)
 		}
@@ -126,6 +134,15 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optProfile)
 	} else if self.keyID != "" && values.Has(optAnonymous) {
 		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optAnonymous)
+	}
+
+	// Set the address of the SeaweedFS filer, which is host:port
+	if values.Has(optSeaweedFS) {
+		value := values.Get(optSeaweedFS)
+		if host, port, err := net.SplitHostPort(value); err != nil || host == "" || port == "" {
+			return opt{}, filer.ErrBadParameter.Withf("Invalid %s option: %q, which is host:port", optSeaweedFS, value)
+		}
+		self.seaweedfs = value
 	}
 
 	// Set whether requests are anonymous, and whether objects can only be
@@ -172,6 +189,9 @@ func (self opt) values(bucket string, credentials bool) url.Values {
 	}
 	if self.anonymous {
 		values.Set(optAnonymous, "true")
+	}
+	if self.seaweedfs != "" {
+		values.Set(optSeaweedFS, self.seaweedfs)
 	}
 	if self.readonly {
 		values.Set(optReadonly, "true")

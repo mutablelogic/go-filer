@@ -1,6 +1,9 @@
 # Executables
 GO ?= $(shell which go 2>/dev/null)
 GOWORK ?= off
+PROTOC ?= $(shell which protoc 2>/dev/null)
+PROTOC_GEN_GO ?= $(shell which protoc-gen-go 2>/dev/null)
+PROTOC_GEN_GO_GRPC ?= $(shell which protoc-gen-go-grpc 2>/dev/null)
 
 # Locations
 BUILD_DIR ?= build
@@ -45,6 +48,17 @@ $(CMD_DIR): go-dep mkdir
 client: go-dep mkdir
 	@echo Build filer client GOOS=${OS} GOARCH=${ARCH}
 	@GOWORK=${GOWORK} GOOS=${OS} GOARCH=${ARCH} CGO_ENABLED=0 ${GO} build -tags client ${BUILD_FLAGS} -o ${BUILD_DIR}/filer ./cmd/filer
+
+###############################################################################
+# GENERATE
+
+# Generate the code of the protocol buffers, such as SeaweedFS's filer
+# client, with protoc, which is committed, so it's only needed when the
+# .proto files change
+.PHONY: protobuf-generate
+protobuf-generate: go-dep protoc-dep
+	@echo Generate
+	@GOWORK=${GOWORK} ${GO} generate ./...
 
 ###############################################################################
 # TEST
@@ -107,3 +121,11 @@ clean:
 .PHONY: go-dep
 go-dep:
 	@test -f "${GO}" && test -x "${GO}"  || (echo "Missing go binary" && exit 1)
+
+# protoc and its plugins for Go and gRPC, which brew installs with
+# "brew install protobuf protoc-gen-go protoc-gen-go-grpc"
+.PHONY: protoc-dep
+protoc-dep:
+	@test -f "${PROTOC}" && test -x "${PROTOC}" || (echo "Missing protoc binary: brew install protobuf" && exit 1)
+	@test -f "${PROTOC_GEN_GO}" && test -x "${PROTOC_GEN_GO}" || (echo "Missing protoc-gen-go binary: brew install protoc-gen-go" && exit 1)
+	@test -f "${PROTOC_GEN_GO_GRPC}" && test -x "${PROTOC_GEN_GO_GRPC}" || (echo "Missing protoc-gen-go-grpc binary: brew install protoc-gen-go-grpc" && exit 1)

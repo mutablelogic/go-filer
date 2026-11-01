@@ -124,12 +124,23 @@ func (self *Registry) reopen(e *entry, volume string) {
 		case <-e.ctx.Done():
 			return
 		}
-		_, err := self.update(context.Background(), e, volume, nil)
-		if err == nil || errors.Is(err, gofiler.ErrNotFound) || errors.Is(err, gofiler.ErrServiceUnavailable) {
+		// Opening it again ends when it's opened, or the volume isn't the
+		// entry's, as it's removed, or changed, or the registry is closed,
+		// but not when its backend is unavailable, such as a server which is
+		// down, which it's tried again for
+		if _, err := self.update(context.Background(), e, volume, nil); err == nil || !self.registered(e, volume) {
 			return
 		}
 		retry = min(retry*2, watchRetryMax)
 	}
+}
+
+// registered returns true when the volume is the entry's, which isn't being
+// removed, and the registry isn't closed
+func (self *Registry) registered(e *entry, volume string) bool {
+	self.RLock()
+	defer self.RUnlock()
+	return self.backend != nil && self.backend[volume] == e && !e.closing
 }
 
 // readyWatcher is a backend which reports when it's watching, so the

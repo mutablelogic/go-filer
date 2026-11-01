@@ -12,6 +12,7 @@ import (
 	// Packages
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	gofiler "github.com/mutablelogic/go-filer"
+	seaweedfs "github.com/mutablelogic/go-filer/filer/s3/seaweedfs"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
@@ -22,9 +23,10 @@ import (
 type S3 struct {
 	opt
 	gofiler.Opts
-	bucket string     // the bucket
-	prefix string     // the prefix of the objects' keys, which is empty, or ends with "/"
-	client *s3.Client // the client of the bucket, in its region
+	bucket  string             // the bucket
+	prefix  string             // the prefix of the objects' keys, which is empty, or ends with "/"
+	client  *s3.Client         // the client of the bucket, in its region
+	watcher *seaweedfs.Watcher // watches the bucket's objects, when it's a SeaweedFS filer's
 }
 
 var _ gofiler.Filer = (*S3)(nil)
@@ -75,6 +77,16 @@ func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
 	} else if err := self.storeCredentials(ctx); err != nil {
 		return nil, err
 	}
+
+	// The watcher of the bucket's objects, when the endpoint is a SeaweedFS
+	// filer's, which is checked
+	if self.seaweedfs != "" {
+		watcher, err := seaweedfs.New(ctx, self.seaweedfs, self.bucket, self.prefix)
+		if err != nil {
+			return nil, err
+		}
+		self.watcher = watcher
+	}
 	return self, nil
 }
 
@@ -89,8 +101,11 @@ func parse(u *url.URL) (*S3, error) {
 		self.bucket = u.Host
 	}
 
-	// The prefix, which ends with "/", so it's a directory
-	if prefix := strings.Trim(u.Path, "/"); prefix != "" {
+	// The prefix, which ends with "/", so it's a directory, without elements
+	// which are empty, or "." or "..", which would be another directory's
+	if prefix := strings.Trim(u.Path, "/"); prefix != "" && !isRelPath(prefix) {
+		return nil, gofiler.ErrBadParameter.Withf("Invalid prefix: %q", prefix)
+	} else if prefix != "" {
 		self.prefix = prefix + "/"
 	}
 
@@ -109,6 +124,9 @@ func parse(u *url.URL) (*S3, error) {
 
 // Close the filer
 func (self *S3) Close() error {
+	if self.watcher != nil {
+		return self.watcher.Close()
+	}
 	return nil
 }
 
@@ -143,10 +161,22 @@ func (self *S3) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - OBJECTS
 
-// WatchObjects can't watch a bucket, which needs its event notifications, and
-// a queue
+// WatchObjects sends the changes to the bucket's objects, beneath the
+// prefix, to the channel, until the context is cancelled, when the endpoint
+// is a SeaweedFS filer's, whose gRPC service is the seaweedfs-filer-grpc
+// option, and otherwise it's ErrNotImplemented, as a bucket of S3 needs its
+// event notifications, and a queue
 func (self *S3) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	return gofiler.ErrNotImplemented.With("a bucket can't be watched")
+	return self.WatchObjectsReady(ctx, ch, nil)
+}
+
+// WatchObjectsReady watches the changes, as WatchObjects does, and calls
+// ready, when it's set, once they're watched
+func (self *S3) WatchObjectsReady(ctx context.Context, ch chan<- schema.Event, ready func()) error {
+	if self.watcher == nil {
+		return gofiler.ErrNotImplemented.With("a bucket can't be watched, without the seaweedfs-filer-grpc option")
+	}
+	return self.watcher.Watch(ctx, ch, ready)
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -5,8 +5,6 @@
 
 A filer stores the objects in a volume. Each backend implements `filer.Filer`, and must behave the same way, so that a volume can be stored on a filesystem or in S3 without clients seeing a difference. The semantics follow S3, and the filesystem backend emulates S3 where they differ.
 
-Only the filesystem backend, in the `fs` package, is implemented. This document records how it behaves, how an S3 backend maps onto the interface, and where the backends cannot behave identically.
-
 ## Packages
 
 | Package | Description |
