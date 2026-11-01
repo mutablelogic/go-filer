@@ -39,7 +39,7 @@ import (
 func newClient(t *testing.T) (*httpclient.Client, func() string) {
 	t.Helper()
 	base := t.TempDir()
-	registry, err := filer.New(context.Background())
+	registry, err := filer.New(context.Background(), filer.WithDebounce(0))
 	require.NoError(t, err)
 	t.Cleanup(func() { registry.Close() })
 

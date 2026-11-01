@@ -3,6 +3,7 @@ package filer
 import (
 	"os"
 	"strings"
+	"time"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -22,7 +23,8 @@ type opt struct {
 	meter       metric.Meter
 	clientopts  []client.ClientOpt
 	credentials gofiler.CredentialProvider
-	worker      string // the name of the worker, which is in the metrics
+	worker      string        // the name of the worker, which is in the metrics
+	debounce    time.Duration // how long a change is held, until its object is quiet
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -44,6 +46,7 @@ func (o *opt) apply(opt []Opt) error {
 
 func (o *opt) defaults() {
 	o.worker = defaultWorker()
+	o.debounce = debounceDelay
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -58,6 +61,21 @@ func WithWorker(name string) Opt {
 			return gofiler.ErrBadParameter.With("the worker's name can't be empty")
 		}
 		o.worker = name
+		return nil
+	}
+}
+
+// WithDebounce sets how long a change to an object is held, until it's quiet
+// for it, when its changes are merged, so an object which changes many times,
+// such as a file which is written in parts, is one change, which is 250ms by
+// default, or zero to send the changes at once. A change is held for at most
+// two seconds, or the delay, when it's longer.
+func WithDebounce(delay time.Duration) Opt {
+	return func(o *opt) error {
+		if delay < 0 {
+			return gofiler.ErrBadParameter.Withf("the debounce can't be negative: %v", delay)
+		}
+		o.debounce = delay
 		return nil
 	}
 }

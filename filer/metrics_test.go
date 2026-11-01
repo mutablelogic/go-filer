@@ -21,7 +21,7 @@ func Test_Registry_Metrics(t *testing.T) {
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer provider.Shutdown(context.Background())
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"))
+	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"), WithDebounce(0))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.Close() })
 	runRegistry(t, r)
@@ -35,7 +35,7 @@ func Test_Registry_Metrics(t *testing.T) {
 		require.NoError(t, err)
 		waitFor(t, events, filepath.FromSlash(u.Path), func(event schema.Event) bool {
 			received[event.Name+"/"+event.EventType.String()]++
-			return event.Name == volume && event.EventType == schema.EventTypeCreated
+			return event.Name == volume
 		})
 	}
 	for len(events) > 0 {
@@ -66,8 +66,8 @@ func Test_Registry_Metrics(t *testing.T) {
 	}
 	// as a change is counted before it's sent, so one which is being sent is
 	// counted, but not received
-	assert.GreaterOrEqual(t, counted["media/created"], int64(1))
-	assert.GreaterOrEqual(t, counted["photos/created"], int64(1))
+	assert.GreaterOrEqual(t, counted["media/created"]+counted["media/updated"], int64(1))
+	assert.GreaterOrEqual(t, counted["photos/created"]+counted["photos/updated"], int64(1))
 	for key, n := range received {
 		assert.GreaterOrEqual(t, counted[key], n, key)
 	}

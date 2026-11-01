@@ -17,7 +17,7 @@ import (
 
 func Test_Registry_Run(t *testing.T) {
 	dir := t.TempDir()
-	r, err := New(context.Background())
+	r, err := New(context.Background(), WithDebounce(0))
 	require.NoError(t, err)
 	defer r.Close()
 	assert.False(t, r.Running())
@@ -72,4 +72,34 @@ func Test_Registry_Run(t *testing.T) {
 		t.Fatal("run didn't stop")
 	}
 	assert.ErrorIs(t, r.WatchObjects(context.Background(), ch), fs.ErrClosed)
+}
+
+func Test_Registry_RunDebounce(t *testing.T) {
+	dir := t.TempDir()
+	r, err := New(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { r.Close() })
+	assert.Equal(t, debounceDelay, r.debounce)
+	runRegistry(t, r)
+	u := fileURL(t, dir, "media")
+	_, err = r.Add(context.Background(), "media", u)
+	require.NoError(t, err)
+	events := watchAll(t, r, 100)
+
+	// A file which is written many times, quickly, is one change, once it's
+	// quiet
+	path := filepath.FromSlash(u.Path)
+	start := time.Now()
+	for i := range 10 {
+		require.NoError(t, os.WriteFile(filepath.Join(path, "a.txt"), []byte{byte(i)}, 0o600))
+	}
+	event := next(t, events)
+	assert.Equal(t, "/a.txt", event.Path)
+	assert.Equal(t, schema.EventTypeCreated, event.EventType)
+	assert.GreaterOrEqual(t, time.Since(start), debounceDelay)
+	time.Sleep(debounceDelay + 2*rescanInterval)
+	for len(events) > 0 {
+		event := <-events
+		assert.NotEqual(t, "/a.txt", event.Path, event)
+	}
 }

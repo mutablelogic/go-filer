@@ -58,6 +58,18 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 		logger = slog.Default()
 	}
 
+	// The changes, which are held until their objects are quiet, and are
+	// counted, and sent to the calls to WatchObjects
+	debouncer := newDebouncer(self.debounce)
+	publish := func(events []schema.Event) {
+		for _, event := range events {
+			self.metrics.event(ctx, event)
+			if dropped := self.broadcaster.publish(event); dropped > 0 {
+				logger.DebugContext(ctx, "subscribers were slow, so a change was dropped, and they'll be sent a rescan", "volume", event.Name, "subscribers", dropped)
+			}
+		}
+	}
+
 	// The watches of the volumes, which send their changes, and when they
 	// end, to Run
 	watches := make(map[*entry]context.CancelFunc)
@@ -75,6 +87,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 				delete(watches, w.e)
 			}
 		}
+		publish(debouncer.due(time.Now(), true))
 		self.broadcaster.end(false)
 	}()
 
@@ -91,10 +104,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 		case <-self.changed:
 			self.startWatches(watches, events, ended)
 		case event := <-events:
-			self.metrics.event(ctx, event)
-			if dropped := self.broadcaster.publish(event); dropped > 0 {
-				logger.DebugContext(ctx, "subscribers were slow, so a change was dropped, and they'll be sent a rescan", "volume", event.Name, "subscribers", dropped)
-			}
+			publish(debouncer.add(event, time.Now()))
 		case w := <-ended:
 			// A watch which fails, while its volume is registered, opens the
 			// volume again, which is watched again, with a rescan
@@ -104,6 +114,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 				go self.reopen(w.e, w.volume)
 			}
 		case <-ticker.C:
+			publish(debouncer.due(time.Now(), false))
 			self.broadcaster.flush()
 		}
 	}
