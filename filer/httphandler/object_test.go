@@ -188,6 +188,8 @@ func TestObjectHead(t *testing.T) {
 		assert.Equal(t, schema.DirectoryType, header.Get("Content-Type"), path)
 		assert.True(t, meta(header).IsDir, path)
 	}
+	status, _ = head(t, server, "object/media/music/a%20b.mp3/", nil)
+	assert.Equal(t, http.StatusNotFound, status)
 
 	// A file which isn't modified isn't
 	status, _ = head(t, server, "object/media/music/a%20b.mp3", http.Header{"If-Modified-Since": {modtime.Format(http.TimeFormat)}})
@@ -285,6 +287,13 @@ func TestObjectGet(t *testing.T) {
 	status, header, _ = getObject(t, server, "object/media/", nil)
 	assert.Equal(t, http.StatusTemporaryRedirect, status)
 	assert.Equal(t, "/api/object/media", header.Get("Location"))
+
+	// A path which ends with "/" is a directory, which a file isn't
+	status, header, _ = getObject(t, server, "object/media/music/", nil)
+	assert.Equal(t, http.StatusTemporaryRedirect, status)
+	assert.Equal(t, "/api/object/media?path=%2Fmusic%2F", header.Get("Location"))
+	status, _, _ = getObject(t, server, "object/media/music/a%20b.mp3/", nil)
+	assert.Equal(t, http.StatusNotFound, status)
 
 	// Errors
 	for path, want := range map[string]int{

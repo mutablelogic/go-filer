@@ -148,11 +148,6 @@ func (self *S3) CreateObject(ctx context.Context, req schema.CreateObjectRequest
 	return nil, gofiler.ErrNotImplemented.With("CreateObject")
 }
 
-// ReadObject returns an object in the bucket, and a function which reads it
-func (self *S3) ReadObject(ctx context.Context, req schema.GetObjectRequest) (gofiler.ReadObjectFunc, *schema.Object, error) {
-	return nil, nil, gofiler.ErrNotImplemented.With("ReadObject")
-}
-
 // DeleteObjects deletes an object, or the objects beneath a directory, in the
 // bucket
 func (self *S3) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {

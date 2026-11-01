@@ -2,6 +2,9 @@ package fs
 
 import (
 	"context"
+	"io/fs"
+	"path"
+	"strings"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -25,8 +28,7 @@ func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *
 	}
 
 	// Get the file information
-	name := fsPath(req.Path)
-	info, err := self.stat("stat", name)
+	name, info, err := self.statPath("stat", req.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -37,4 +39,25 @@ func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *
 		return nil, filer.ErrNotModified.Withf("%q", obj.Path)
 	}
 	return obj, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// statPath returns the name and information of the object at the path, for
+// the operation, where a path which ends with "/" is a directory, which
+// doesn't exist when it's a file, or a package, which is one
+func (self *FS) statPath(op, p string) (string, fs.FileInfo, error) {
+	trimmed := strings.TrimSuffix(p, "/")
+	if trimmed == "" || strings.HasSuffix(trimmed, "/") {
+		trimmed = p // a path such as "//" isn't valid
+	}
+	name := fsPath(trimmed)
+	info, err := self.stat(op, name)
+	if err != nil {
+		return "", nil, err
+	} else if name != "." && strings.HasSuffix(p, "/") && !(info.IsDir() && !self.isPackage(path.Base(name))) {
+		return "", nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
+	}
+	return name, info, nil
 }

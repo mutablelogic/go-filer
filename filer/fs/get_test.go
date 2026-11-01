@@ -51,6 +51,17 @@ func Test_GetObject(t *testing.T) {
 		t.Errorf("package: %+v, %v", obj, err)
 	}
 
+	// A path which ends with "/" is a directory, which a file, or a package,
+	// isn't
+	if obj, err := get("/music/"); err != nil || !obj.IsDir {
+		t.Errorf("directory with /: %+v, %v", obj, err)
+	}
+	for _, path := range []string{"/music/song.mp3/", "/Disk.sparsebundle/"} {
+		if _, err := get(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s: %v", path, err)
+		}
+	}
+
 	// Missing, skipped, and in a package, don't exist
 	for _, path := range []string{"/missing", "/.hidden/c.txt", "/.hidden", "/Disk.sparsebundle/bands/404d"} {
 		if _, err := get(path); !errors.Is(err, fs.ErrNotExist) {
@@ -59,7 +70,7 @@ func Test_GetObject(t *testing.T) {
 	}
 
 	// Paths which aren't valid are invalid, whatever the filesystem says
-	for _, path := range []string{"/../etc/passwd", "/music//song.mp3", "/music/./song.mp3", "/music/", "//"} {
+	for _, path := range []string{"/../etc/passwd", "/music//song.mp3", "/music/./song.mp3", "/music//", "//"} {
 		if _, err := get(path); !errors.Is(err, fs.ErrInvalid) {
 			t.Errorf("%s: %v", path, err)
 		}
