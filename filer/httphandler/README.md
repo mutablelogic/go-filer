@@ -2,7 +2,7 @@
 
 ## Volume Operations
 
-A volume is a backend which stores objects, which is registered with a `name`, and created from a URL, such as `file://media/mnt/media`, for a directory, whose scheme is one which the server supports.
+A volume is a backend which stores objects, which is registered with a `name`, and created from a URL, such as `file://media/mnt/folder`, for a directory, whose scheme is one which the server supports.
 
 ### GET /volume
 
@@ -10,13 +10,13 @@ List the volumes which are registered, in order of their names, with the `url` o
 
 ### POST /volume
 
-Create a volume with a `name`, which is an identifier, and the `url` of its backend, whose host is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/media`, whose path is absolute, and which exists, or `file://media/C:/media` on Windows. Its query is the options of the volume:
+Create a volume with a `name`, which is an identifier, and the `url` of its backend, whose host is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/folder`, whose path is absolute, and which exists, or `file://media/C:/folder` on Windows. Its query is the options, which are dependent on the scheme:
 
-- `readonly`, which is `true` or `false`, so objects can only be read, even when the directory can be written
-- `skip`, which can be repeated, the regular expressions of the names of files and directories which aren't listed, in place of the defaults, which skip hidden files, and files which aren't content
-- `package`, which can be repeated, the regular expressions of the names of directories which are listed as files, in place of the defaults, which are macOS bundles and sparse disk images
-
-The volume is watched for changes from when it's created. Returns the volume, with the URL of its backend, which has the options which aren't the defaults, with 201. Returns 400 if the request body, name or URL is invalid, such as when the scheme isn't supported, the host isn't the name, the path isn't absolute, or isn't a directory, or an option is unknown or invalid, 409 if a volume with the name exists, or is being added, or 503 if the registry is closed.
+| Scheme | Option | Value | Default |
+| ------ | ------ | ----- | ------- |
+| `file` | `readonly` | `true` or `false`, so objects can only be read, even when the directory can be written | `false` |
+| `file` | `skip` | A regular expression of the names of files and directories which aren't listed, which can be repeated, in place of the defaults | Hidden files, and files which aren't content |
+| `file` | `package` | A regular expression of the names of directories which are listed as files, which can be repeated, in place of the defaults | macOS bundles and sparse disk images |
 
 ### GET /volume/{name}
 
@@ -24,18 +24,38 @@ Get the volume `name`, with the `url` of its backend, which includes the options
 
 ### PATCH /volume/{name}
 
-Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values, where an empty list has none, which for `skip` and `package` is none of them, and a string, number or boolean replaces its values with the one. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept. The volume's URL, with the options, is checked first, so the volume isn't changed when they're invalid. Then the volume is closed, waiting for the requests which are using it, which are cancelled, and opened again with the options, which watches it again. Its name can't be used for another volume meanwhile. When it can't be opened with the options, it's opened as it was. Returns the volume, with the URL of its backend. Returns 400 if the request body is invalid, has no options, or an option is unknown or invalid, 404 if the volume isn't mounted, or is being added or deleted, or 503 if the registry is closed.
+Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept.
 
 ### DELETE /volume/{name}
 
-Delete the volume `name`, which stops watching it, and closes its backend, once the requests which are using it, which are cancelled, have finished, which it waits for, and releases what it used, such as its directory, whose files aren't deleted. The volume can't be used once it's being deleted, and its name can't be used for another volume until it's deleted. Returns the deleted volume, with the URL of its backend, which it can be created again from. Returns 404 if the volume isn't mounted, or is being deleted.
+Delete the volume `name`, which stops watching it, and closes its backend, once the requests which are using it, which are cancelled, have finished, which it waits for, and releases what it used, such as its directory, whose files aren't deleted. The volume can't be used once it's being deleted, and its name can't be used for another volume until it's deleted.
 
 ## Object Operations
 
-An object is a file or a directory in a volume, which is identified by the volume's `name` and its `path`, which starts with `/`, the root of the volume. The key of a file is its path, and the key of a directory is its path followed by `/`.
+An object is a file in a volume, or a directory under which the file is located.
 
 ### GET /object/{name}
 
-List the objects in a directory of the volume `name`, a page at a time. The `path` query parameter is the directory to list, which defaults to the root of the volume, and can be a file, when only it is returned. Only the objects immediately within the directory are returned, including directories, unless `recursive=true`, when every object beneath the directory is returned, including directories. Hidden files, and files which aren't content, such as Microsoft Office owner files (`~$*`), editor backups (`*~`), `Thumbs.db` and `desktop.ini`, aren't listed, and a package, such as a macOS sparse disk image, is listed as a file, without the files in it.
+List the objects in a directory of the volume `name`, a page at a time. The `path` query parameter is the directory to list, which defaults to the root of the volume, and can be a file, when only it is returned. Only the objects immediately within the directory are returned, including directories, unless `recursive=true`, when every object beneath the directory is returned, including directories.
 
-Objects are returned in the same order as S3, by the byte order of their keys. A page has at most `limit` objects, which defaults to and is capped at 100. When there are more objects, `next` is the key of the last object, and the next page is returned by passing it as `start_after`. The total number of objects isn't returned. Returns 400 if the path is outside the volume, or the query is invalid, or 404 if the volume isn't mounted, or the path doesn't exist.
+Objects are returned in the same order as S3, by the byte order of their keys. A page has at most `limit` objects, which defaults to and is capped at 100. When there are more objects, `next` is the key of the last object, and the next page is returned by passing it as `start_after`. The total number of objects isn't returned. When `text/html` is accepted before JSON, as a browser does, the page is HTML: a table of the objects, whose names are relative to the directory, with links to the contents of the files, the listings of the directories, and of the directories of the path, and to the next page, which keep the query. Unless the volume is read-only, an object can be deleted, and files uploaded into the directory, from the page, which asks to confirm deleting, and replacing files which exist. Returns 400 if the path is outside the volume, or the query is invalid, or 404 if the volume isn't mounted, or the path doesn't exist.
+
+### GET /object/{name}/{path...}
+
+Get the content of the file at `path` in the volume `name`, with the headers `HEAD` has, and its metadata as JSON in the `X-Meta` header. The file is shown in the browser, or with `download=true`, downloaded, as an attachment, with its name. Its content isn't sniffed as another type, and HTML, SVG and other XML is sandboxed, so it can't run scripts with access to the API. A file which can seek, such as a file on disk, can be requested in ranges, with `Range`, which is 206, or 416 when the range isn't satisfiable, so a browser can seek in audio and video. A directory, or the root of the volume, redirects to its listing, with 307. Returns 304 when the file isn't modified since `If-Modified-Since`, or `If-None-Match` is `*`, without reading it, and 412 when `If-Match` isn't `*`, or `If-Unmodified-Since` fails, or the file changed while it was opened. Returns 400 if the path is outside the volume, or has `%2F`, or the query is invalid, 404 if the volume isn't mounted, or the file doesn't exist, such as a hidden file, or a file in a package, or 501 if the file is a package, such as a macOS sparse disk image, which can't be read.
+
+### HEAD /object/{name}/{path...}
+
+Get the metadata of the object at `path` in the volume `name`, which is a file, a directory, or the root of the volume, when it's empty, with its headers, and no body. Its metadata is JSON in the `X-Meta` header, and its type, size and modification time are its `Content-Type`, `Content-Length` and `Last-Modified`. A directory's type is `inode/directory`, and it has no size. A path is resolved, so `.` and `..` elements are removed, but its elements are separated with `/`, not `%2F`. Returns 304 when the object isn't modified since `If-Modified-Since`, or `If-None-Match` is `*`, and 412 when `If-Unmodified-Since` fails, as for a file. Returns 400 if the path is outside the volume, or has `%2F`, or 404 if the volume isn't mounted, or the object doesn't exist, such as a hidden file, or a file in a package.
+
+### PUT /object/{name}/{path...}
+
+Upload the request's body to the file at `path` in the volume `name`, which is created, with 201, or replaced, with 200, with the directories it's in. The file is replaced atomically, so it's either the file which was, or the whole of the body, and when the body ends before its `Content-Length`, it's 400, and the file isn't changed. With `If-None-Match: *`, a file which exists isn't replaced, and with `If-Match: *`, a file which doesn't exist isn't created, which are 412. The file's modification time is the request's `Last-Modified`, when it's set. Its type is from its extension, so a `Content-Type`, other than `application/octet-stream`, which isn't the type of its extension, is 501. Returns the file. Returns 400 if the path is outside the volume, has `%2F`, or is the root of the volume, or `If-None-Match` or `If-Match` isn't `*`, or both are set, 403 if the volume is read-only, 404 if the volume isn't mounted, 409 if a directory is at the path, 412 as above, or 422 if the file's name is skipped, such as a hidden file, or it's in a package.
+
+### POST /object/{name}/{path...}
+
+Upload files into the directory at `path` in the volume `name`, or its root, when it's empty, with a `multipart/form-data` body of `file` parts, whose file names are their paths in the directory, which can have directories, as a browser sends a directory's files, but not be outside it. The directory, and those of the files, are created. A file's modification time is its part's `Last-Modified` header, when it's set, which a browser doesn't set. Each file is read from the form as it's written, so they aren't buffered, and replaced atomically. A file which exists is skipped, unless `overwrite=true`, when it's replaced, as is a file which can't be stored, such as a hidden file, or one in a package, or one at a directory's path. Returns the files which were written, in `body`, and those which were skipped, and why, in `skipped`, where a file which exists has `exists`, with 201 when a file was written, and otherwise 200. An error which isn't a file's stops the upload, when the files written are kept. Returns 400 if the path is outside the volume, or has `%2F`, or the query is invalid, or the body isn't a multipart form, or ends before it should, 403 if the volume is read-only, 404 if the volume isn't mounted, or 409 if the path is a file.
+
+### DELETE /object/{name}/{path...}
+
+Delete the file at `path` in the volume `name`, or a directory, with `recursive=true`, and every object beneath it, including hidden files, which aren't listed. A package, such as a macOS sparse disk image, is deleted as a file, with the files in it, without `recursive`. The directories which are left empty are removed, as a directory exists while an object is beneath it. Returns the objects deleted, which are files, not directories. Returns 400 if the path is outside the volume, has `%2F`, is hidden, or is the root of the volume, or the query is invalid, 403 if the volume is read-only, 404 if the volume isn't mounted, or the object doesn't exist, or 409 if the object is a directory, and the request isn't recursive.

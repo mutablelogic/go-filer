@@ -18,9 +18,18 @@ import (
 // reader reads a file, returning an error once the context is cancelled, or
 // the filesystem is closed, before each read
 type reader struct {
-	ctx context.Context
-	fs  *FS
-	r   io.Reader
+	ctx  context.Context
+	fs   *FS
+	r    io.Reader
+	name string // the file's name, which is empty for a request's body
+}
+
+// seekReader is a reader of a file which can seek, such as a file on disk,
+// so its content can be read in ranges, which also returns an error once the
+// context is cancelled, or the filesystem is closed, before each seek
+type seekReader struct {
+	reader
+	s io.Seeker
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -66,32 +75,53 @@ func (self *FS) ReadObject(ctx context.Context, req schema.GetObjectRequest) (fi
 // PRIVATE METHODS
 
 // read opens the named file, checks it's the file which was returned, calls
-// the function with a reader of it, and closes it
+// the function with a reader of it, and closes it. The errors opening,
+// reading and closing the file are of its object, but not the function's,
+// such as an error writing what's read, which are returned as they are.
 func (self *FS) read(ctx context.Context, name string, want fs.FileInfo, fn func(io.Reader) error) (err error) {
-	if err := self.checkRequest(ctx); err != nil {
-		return err
-	}
-
-	// Open the file, and close it when the function returns
-	f, err := self.fs.Open(name)
+	f, err := self.open(ctx, name, want)
 	if err != nil {
-		return err
+		return objectError("read", name, err)
 	}
 	defer func() {
-		err = errors.Join(err, f.Close())
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, objectError("read", name, closeErr))
+		}
 	}()
 
-	// Check the open file is the one which was returned
-	if info, err := f.Stat(); err != nil {
-		return err
-	} else if !info.Mode().IsRegular() {
-		return &fs.PathError{Op: "read", Path: objectPath(name), Err: fs.ErrInvalid}
-	} else if info.Size() != want.Size() || !info.ModTime().Equal(want.ModTime()) {
-		return filer.ErrPreconditionFailed.Withf("%q changed since it was returned", objectPath(name))
-	}
-
 	// Read the file within the function
-	return fn(&reader{ctx: ctx, fs: self, r: f})
+	return fn(newReader(ctx, self, f, name))
+}
+
+// open opens the named file, and checks it's the file which was returned
+func (self *FS) open(ctx context.Context, name string, want fs.FileInfo) (fs.File, error) {
+	if err := self.checkRequest(ctx); err != nil {
+		return nil, err
+	}
+	f, err := self.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err != nil {
+		return nil, errors.Join(err, f.Close())
+	} else if !info.Mode().IsRegular() {
+		return nil, errors.Join(&fs.PathError{Op: "read", Path: objectPath(name), Err: fs.ErrInvalid}, f.Close())
+	} else if info.Size() != want.Size() || !info.ModTime().Equal(want.ModTime()) {
+		return nil, errors.Join(filer.ErrPreconditionFailed.Withf("%q changed since it was returned", objectPath(name)), f.Close())
+	}
+	return f, nil
+}
+
+// newReader returns a reader of the file, by its name, which can seek when
+// the file can, so the function reading it can check if it's an
+// io.ReadSeeker. Its errors are of the file's object, unless the name is
+// empty, such as a request's body, which isn't a file.
+func newReader(ctx context.Context, fs *FS, f io.Reader, name string) io.Reader {
+	r := reader{ctx: ctx, fs: fs, r: f, name: name}
+	if s, ok := f.(io.Seeker); ok {
+		return &seekReader{reader: r, s: s}
+	}
+	return &r
 }
 
 // Read returns an error once the context is cancelled, or the filesystem is
@@ -107,6 +137,21 @@ func (r *reader) Read(data []byte) (int, error) {
 		if err := r.fs.checkRequest(r.ctx); err != nil {
 			return n, err
 		}
+	} else if err != nil && r.name != "" {
+		err = objectError("read", r.name, err)
+	}
+	return n, err
+}
+
+// Seek returns an error once the context is cancelled, or the filesystem is
+// closed, rather than seeking
+func (r *seekReader) Seek(offset int64, whence int) (int64, error) {
+	if err := r.fs.checkRequest(r.ctx); err != nil {
+		return 0, err
+	}
+	n, err := r.s.Seek(offset, whence)
+	if err != nil && r.name != "" {
+		err = objectError("seek", r.name, err)
 	}
 	return n, err
 }

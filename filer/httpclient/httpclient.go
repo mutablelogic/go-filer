@@ -12,6 +12,7 @@ import (
 // and provides typed methods for interacting with the filer API.
 type Client struct {
 	*client.Client
+	endpoint string
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -25,5 +26,5 @@ func New(url string, opts ...client.ClientOpt) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{c}, nil
+	return &Client{c, url}, nil
 }

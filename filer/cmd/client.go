@@ -15,6 +15,7 @@ import (
 // ClientCommands are the commands which call the filer API of a server
 type ClientCommands struct {
 	VolumeCommands
+	ObjectCommands
 }
 
 ///////////////////////////////////////////////////////////////////////////////

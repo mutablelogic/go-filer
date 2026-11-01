@@ -141,3 +141,40 @@ func Test_ReadObjectConditional(t *testing.T) {
 		t.Errorf("modified: %v", err)
 	}
 }
+
+func Test_ReadObjectSeek(t *testing.T) {
+	self, err := NewFS("test", fstest.MapFS{"song.mp3": {Data: []byte("abcdef")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	read, _, err := self.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/song.mp3"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The reader of a file which can seek can seek, so it can be read in
+	// ranges, until the filesystem is closed
+	if err := read(ctx, func(r io.Reader) error {
+		seeker, ok := r.(io.ReadSeeker)
+		if !ok {
+			t.Fatal("the reader can't seek")
+		}
+		if _, err := seeker.Seek(2, io.SeekStart); err != nil {
+			return err
+		}
+		data := make([]byte, 2)
+		if _, err := io.ReadFull(seeker, data); err != nil {
+			return err
+		} else if string(data) != "cd" {
+			t.Errorf("read %q, want %q", data, "cd")
+		}
+		self.Close()
+		if _, err := seeker.Seek(0, io.SeekStart); !errors.Is(err, fs.ErrClosed) {
+			t.Errorf("seek once closed: %v", err)
+		}
+		return nil
+	}); err != nil && !errors.Is(err, fs.ErrClosed) {
+		t.Fatal(err)
+	}
+}

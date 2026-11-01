@@ -18,7 +18,9 @@ import (
 // every object beneath it, including hidden files, is deleted too, and a
 // package is deleted as a file, with the files in it. Any parent directories
 // left empty are removed. The root of the volume cannot be deleted.
-func (self *FS) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
+func (self *FS) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (_ *schema.DeleteObjectsResponse, err error) {
+	defer func() { err = objectError("delete", req.Path, err) }()
+
 	if self.readonly {
 		return nil, filer.ErrForbidden.Withf("Volume %q is read-only", self.name)
 	} else if err := self.checkRequest(ctx); err != nil {

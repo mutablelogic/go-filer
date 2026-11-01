@@ -4,8 +4,11 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
+	"net/url"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
 	server "github.com/mutablelogic/go-server"
@@ -16,14 +19,17 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-type Flags struct{}
+type Flags struct {
+	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, whose host is its name, such as file://media/mnt/media?readonly=true, which can be repeated."`
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
 // WithRegistry creates a registry of volumes, with the server's tracer and
-// meter, and then the options, registers its HTTP handlers with the server,
-// when there is one, and then calls the function with the registry. The
+// meter, and then the options, adds the volumes of the flags, registers its
+// HTTP handlers with the server, when there is one, and then calls the
+// function with the registry. A volume which can't be added is an error. The
 // registry, and its volumes, are closed when the function returns. Returns
 // any error.
 func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn func(*filer.Registry) error, opts ...filer.Opt) (err error) {
@@ -35,6 +41,19 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 	defer func() {
 		err = errors.Join(err, registry.Close())
 	}()
+
+	// Add the volumes, whose names are the hosts of their URLs
+	for _, volume := range flags.Volume {
+		u, err := url.Parse(volume)
+		if err != nil {
+			return gofiler.ErrBadParameter.Withf("invalid volume %q: %v", volume, err)
+		} else if u.Host == "" {
+			return gofiler.ErrBadParameter.Withf("volume %q has no name, which is the host of its url", volume)
+		} else if _, err := registry.Add(ctx.Context(), u.Host, u); err != nil {
+			return fmt.Errorf("volume %q: %w", u.Host, err)
+		}
+		ctx.Logger().InfoContext(ctx.Context(), "added volume", "name", u.Host, "url", u.String())
+	}
 
 	// Register the HTTP handlers
 	if srv != nil {

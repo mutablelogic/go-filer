@@ -24,7 +24,7 @@ type ServerCommands struct {
 }
 
 type RunServer struct {
-	Filer filercmd.Flags `embed:"" prefix:"filer."`
+	Filer filercmd.Flags `embed:""`
 	servercmd.RunServer
 }
 

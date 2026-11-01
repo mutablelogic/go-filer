@@ -39,8 +39,8 @@ type VolumeGetCmd struct {
 
 type VolumeUpdateCmd struct {
 	VolumeGetCmd
-	Opt   []string `name:"opt" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
-	Unset []string `name:"unset" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
+	Opt   []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
+	Unset []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
 }
 
 type VolumeDeleteCmd struct {
@@ -50,7 +50,7 @@ type VolumeDeleteCmd struct {
 type VolumeCreateCmd struct {
 	URL  string   `arg:"" name:"url" help:"URL of the volume's backend, such as file://media/mnt/folder, whose host is the volume's name, or a directory on the server, such as /mnt/media, with --name."`
 	Name string   `name:"name" help:"Volume name, which is an identifier, and is the URL's host when it has none. Defaults to the URL's host."`
-	Opt  []string `name:"opt" short:"o" placeholder:"KEY=VALUE" help:"Option of the volume, such as readonly=true, skip=^\\. or package=\\.bundle$, which can be repeated, and is added to those of the URL. An option without a value, such as readonly, is empty, which for readonly is true."`
+	Opt  []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option of the volume, such as readonly=true, skip=^\\. or package=\\.bundle$, which can be repeated, and is added to those of the URL. An option without a value, such as readonly, is empty, which for readonly is true."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////

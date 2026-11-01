@@ -9,6 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	// Packages
+	tui "github.com/mutablelogic/go-server/pkg/tui"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -95,6 +99,22 @@ type ObjectList struct {
 	Body []*Object `json:"body"`
 }
 
+// ObjectUploadResponse is the files which were uploaded into a directory, in
+// the order they were, and those which were skipped, and why
+type ObjectUploadResponse struct {
+	Body    []*Object       `json:"body" help:"Files which were written"`
+	Skipped []ObjectSkipped `json:"skipped,omitempty" help:"Files which weren't written, and why"`
+}
+
+// ObjectSkipped is a file which wasn't uploaded, by its path in the volume,
+// and why, such as it exists, and the upload doesn't overwrite it, or its
+// name isn't stored, such as a hidden file
+type ObjectSkipped struct {
+	Path   string `json:"path" help:"Path of the file in the volume"`
+	Exists bool   `json:"exists,omitempty" help:"The file exists, and the upload doesn't overwrite it"`
+	Reason string `json:"reason" help:"Why the file was skipped"`
+}
+
 // Iterates over the objects returned by ListObjects.
 // Caller must close the iterator when done.
 type ListObjectsIterator interface {
@@ -146,4 +166,67 @@ func (o Object) Key() string {
 		return o.Path + "/"
 	}
 	return o.Path
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// STRINGIFY
+
+func (o Object) String() string {
+	return types.Stringify(o)
+}
+
+func (l ObjectList) String() string {
+	return types.Stringify(l)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// TABLE
+
+func (o Object) Header() []string {
+	return []string{"Key", "Type", "Size", "Modified"}
+}
+
+func (o Object) Width(col int) int {
+	return 0
+}
+
+func (o Object) Cell(col int) tui.CellText {
+	switch col {
+	case 0:
+		return o.Key()
+	case 1:
+		if o.IsDir {
+			return ""
+		}
+		return o.ContentType
+	case 2:
+		if o.Size == nil {
+			return ""
+		}
+		return FormatSize(*o.Size)
+	case 3:
+		if o.ModTime.IsZero() {
+			return ""
+		}
+		return o.ModTime.Local().Format(time.DateTime)
+	default:
+		return ""
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// FormatSize returns a size in bytes, or in KiB, MiB, GiB or TiB, with one
+// decimal place, when it's larger
+func FormatSize(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return strconv.FormatInt(size, 10) + " B"
+	}
+	value, prefix := float64(size)/unit, 0
+	for value >= unit && prefix < 3 {
+		value, prefix = value/unit, prefix+1
+	}
+	return strconv.FormatFloat(value, 'f', 1, 64) + " " + string("KMGT"[prefix]) + "iB"
 }

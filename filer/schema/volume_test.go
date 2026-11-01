@@ -44,3 +44,20 @@ func Test_VolumePatch(t *testing.T) {
 		}
 	}
 }
+
+func Test_FormatSize(t *testing.T) {
+	for size, want := range map[int64]string{
+		0:          "0 B",
+		1023:       "1023 B",
+		1024:       "1.0 KiB",
+		1536:       "1.5 KiB",
+		5 << 20:    "5.0 MiB",
+		3 << 30:    "3.0 GiB",
+		2 << 40:    "2.0 TiB",
+		2048 << 40: "2048.0 TiB",
+	} {
+		if got := FormatSize(size); got != want {
+			t.Errorf("FormatSize(%d) = %q, want %q", size, got, want)
+		}
+	}
+}

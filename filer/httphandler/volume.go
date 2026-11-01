@@ -113,10 +113,12 @@ func volumeListHandlers(registry *filer.Registry, router *httprouter.Router, doc
 				httpresponse.Error(w, err)
 			} else if u, err := url.Parse(req.URL); err != nil || req.URL == "" {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("invalid url: %q", req.URL))
-			} else if b, err := registry.Add(r.Context(), req.Name, u); err != nil {
+			} else if _, err := registry.Add(r.Context(), req.Name, u); err != nil {
+				httpresponse.Error(w, gofiler.HTTPErr(err), req.Name)
+			} else if volume, err := registry.Volume(req.Name); err != nil {
 				httpresponse.Error(w, gofiler.HTTPErr(err), req.Name)
 			} else {
-				httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), schema.Volume{Name: req.Name, URL: b.URL().String()})
+				httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), volume)
 			}
 		}, func(op httprequest.PathOperation) {
 			op.Summary("Create Volume")

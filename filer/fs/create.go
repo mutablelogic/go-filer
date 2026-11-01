@@ -23,7 +23,9 @@ import (
 // object is left unchanged. When ModTime is set, it is used as the
 // modification time of the object. Metadata is not yet supported, and
 // returns an error.
-func (self *FS) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
+func (self *FS) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (_ *schema.Object, err error) {
+	defer func() { err = objectError("create", req.Path, err) }()
+
 	if self.readonly {
 		return nil, filer.ErrForbidden.Withf("Volume %q is read-only", self.name)
 	} else if err := self.checkRequest(ctx); err != nil {

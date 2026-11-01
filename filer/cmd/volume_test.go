@@ -129,3 +129,16 @@ func Test_VolumeUpdateCmd(t *testing.T) {
 		assert.Error(t, err, args)
 	}
 }
+
+func Test_VolumeOptComma(t *testing.T) {
+	var cli struct {
+		VolumeCreate VolumeCreateCmd `cmd:"" name:"volume-create"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+
+	// An option with a comma, such as a regular expression, isn't split
+	_, err = parser.Parse([]string{"volume-create", "file://media/mnt/media", "-o", `skip=^(a,b)$`})
+	require.NoError(t, err)
+	assert.Equal(t, []string{`skip=^(a,b)$`}, cli.VolumeCreate.Opt)
+}
