@@ -2,8 +2,11 @@ package s3
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
@@ -151,15 +154,15 @@ func (self *S3) ping(ctx context.Context, client *s3.Client) (string, error) {
 }
 
 // staticCredentials returns the credentials of the options, whose
-// placeholders are expanded by the provider of credentials
+// placeholders are expanded by the provider of credentials, or which are the
+// credentials, which are stored once the bucket is checked
 func (self *S3) staticCredentials(ctx context.Context) (aws.CredentialsProvider, error) {
-	if self.Credentials == nil {
-		return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be expanded, without a provider of credentials", self.bucket)
-	}
 	values := make([]string, 0, 3)
 	for _, value := range []string{self.keyID, self.secret, self.token} {
-		if value == "" {
-			values = append(values, "")
+		if !isPlaceholder(value) {
+			values = append(values, value)
+		} else if self.Credentials == nil {
+			return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be expanded, without a provider of credentials", self.bucket)
 		} else if expanded, err := self.Credentials.Expand(ctx, value); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
@@ -170,4 +173,38 @@ func (self *S3) staticCredentials(ctx context.Context) (aws.CredentialsProvider,
 		}
 	}
 	return credentials.NewStaticCredentialsProvider(values[0], values[1], values[2]), nil
+}
+
+// storeCredentials stores the credentials of the options which aren't
+// placeholders, with the provider of credentials, by keys of the volume's
+// name, such as S3_PHOTOS_SECRET_ACCESS_KEY, as JSON strings, and replaces
+// them with their placeholders, so the URL doesn't have them
+func (self *S3) storeCredentials(ctx context.Context) error {
+	for _, credential := range []struct {
+		option string
+		value  *string
+	}{
+		{optAccessKeyID, &self.keyID},
+		{optSecretAccessKey, &self.secret},
+		{optSessionToken, &self.token},
+	} {
+		if *credential.value == "" || isPlaceholder(*credential.value) {
+			continue
+		}
+		key := credentialKey(self.name, credential.option)
+		data, err := json.Marshal(*credential.value)
+		if err != nil {
+			return err
+		} else if err := self.Credentials.Set(ctx, key, data); err != nil {
+			return fmt.Errorf("Bucket %q: storing the %s option: %w", self.bucket, credential.option, err)
+		}
+		*credential.value = "${" + key + "}"
+	}
+	return nil
+}
+
+// credentialKey returns the key of a credential of a volume, which is the
+// option of its URL, such as S3_PHOTOS_SECRET_ACCESS_KEY
+func credentialKey(name, option string) string {
+	return strings.ToUpper(strings.NewReplacer("-", "_").Replace("s3_" + name + "_" + option))
 }

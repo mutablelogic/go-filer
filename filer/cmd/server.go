@@ -63,10 +63,15 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 		name := filer.VolumeName(u)
 		if name == "" {
 			return gofiler.ErrBadParameter.Withf("volume %q has no name, which is its name option, or the host of its url", volume)
-		} else if _, err := registry.Add(ctx.Context(), name, u); err != nil {
+		}
+
+		// The backend's URL is logged, as it has the placeholders of the
+		// credentials, which are stored, not the credentials
+		b, err := registry.Add(ctx.Context(), name, u)
+		if err != nil {
 			return fmt.Errorf("volume %q: %w", name, err)
 		}
-		ctx.Logger().InfoContext(ctx.Context(), "added volume", "name", name, "url", u.String())
+		ctx.Logger().InfoContext(ctx.Context(), "added volume", "name", name, "url", b.URL().String())
 	}
 
 	// Register the HTTP handlers

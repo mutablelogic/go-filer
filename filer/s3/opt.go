@@ -47,9 +47,10 @@ const (
 	// optAccessKeyID, optSecretAccessKey and optSessionToken are the
 	// credentials, in place of the profile's, or the default ones, whose
 	// placeholders, such as ${S3_SECRET}, are expanded by the provider of
-	// credentials, when the bucket is checked, so the URL doesn't have them.
-	// The secret access key and session token must have placeholders, and
-	// the session token is optional.
+	// credentials, when the bucket is checked. A value which isn't a
+	// placeholder is stored by the provider, once the bucket is checked, and
+	// the URL has its placeholder, so it never has the credentials. The
+	// session token is optional.
 	optAccessKeyID     = "access-key-id"
 	optSecretAccessKey = "secret-access-key"
 	optSessionToken    = "session-token"
@@ -114,11 +115,6 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 	self.keyID, self.secret, self.token = values.Get(optAccessKeyID), values.Get(optSecretAccessKey), values.Get(optSessionToken)
 	if (self.keyID == "") != (self.secret == "") || (self.token != "" && self.keyID == "") {
 		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options are both needed, with the %s option", optAccessKeyID, optSecretAccessKey, optSessionToken)
-	}
-	for key, value := range map[string]string{optSecretAccessKey: self.secret, optSessionToken: self.token} {
-		if value != "" && !strings.Contains(value, "$") {
-			return opt{}, filer.ErrBadParameter.Withf("The %s option must be a placeholder, such as ${S3_SECRET}, so the url doesn't have it", key)
-		}
 	}
 	if self.keyID != "" && values.Has(optProfile) {
 		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optProfile)
@@ -188,4 +184,11 @@ func parseBool(values url.Values, key string) (bool, error) {
 	} else {
 		return b, nil
 	}
+}
+
+// isPlaceholder returns true when the value of a credential has a
+// placeholder, such as ${S3_SECRET}, which the provider of credentials
+// expands, rather than being the credential
+func isPlaceholder(value string) bool {
+	return strings.Contains(value, "$")
 }

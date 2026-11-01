@@ -64,7 +64,15 @@ func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
 	} else {
 		self.Opts = opts
 	}
+
+	// Credentials which aren't placeholders are stored, so there must be a
+	// provider of credentials, which stores them once the bucket is checked
+	if self.Credentials == nil && ((self.keyID != "" && !isPlaceholder(self.keyID)) || (self.secret != "" && !isPlaceholder(self.secret)) || (self.token != "" && !isPlaceholder(self.token))) {
+		return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be stored, without a provider of credentials", self.bucket)
+	}
 	if err := self.connect(ctx); err != nil {
+		return nil, err
+	} else if err := self.storeCredentials(ctx); err != nil {
 		return nil, err
 	}
 	return self, nil

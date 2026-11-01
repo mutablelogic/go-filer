@@ -161,8 +161,14 @@ func (p credentialProvider) Get(context.Context, string) (json.RawMessage, error
 	return nil, gofiler.ErrNotImplemented
 }
 
-func (p credentialProvider) Set(context.Context, string, json.RawMessage) error {
-	return gofiler.ErrNotImplemented
+// Set stores the credential, which is a JSON string, as its value
+func (p credentialProvider) Set(_ context.Context, key string, value json.RawMessage) error {
+	var credential string
+	if err := json.Unmarshal(value, &credential); err != nil {
+		return err
+	}
+	p[key] = credential
+	return nil
 }
 
 func Test_S3_Credentials(t *testing.T) {
@@ -217,4 +223,41 @@ func Test_S3_Trace(t *testing.T) {
 	}
 	assert.Equal(t, codes.Unset, spans[0].Status().Code)
 	assert.Equal(t, codes.Error, spans[1].Status().Code)
+}
+
+func Test_S3_StoreCredentials(t *testing.T) {
+	endpoint := fakeS3(t)
+	ctx := context.Background()
+	opts := "&access-key-id=AKIDTEST&secret-access-key=secret&session-token=TOKEN"
+
+	// Credentials which aren't placeholders are stored, once the bucket is
+	// checked with them, by keys of the volume's name, and the URL has their
+	// placeholders, which create it again
+	provider := credentialProvider{}
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", opts+"&name=photos"), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+	assert.Equal(t, credentialProvider{"S3_PHOTOS_ACCESS_KEY_ID": "AKIDTEST", "S3_PHOTOS_SECRET_ACCESS_KEY": "secret", "S3_PHOTOS_SESSION_TOKEN": "TOKEN"}, provider)
+	query := b.URL().Query()
+	assert.Equal(t, "${S3_PHOTOS_ACCESS_KEY_ID}", query.Get("access-key-id"))
+	assert.Equal(t, "${S3_PHOTOS_SECRET_ACCESS_KEY}", query.Get("secret-access-key"))
+	assert.Equal(t, "${S3_PHOTOS_SESSION_TOKEN}", query.Get("session-token"))
+	assert.NotContains(t, b.URL().String(), "secret&")
+	_, err = New(ctx, b.URL(), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+
+	// They can be mixed with placeholders, which are kept
+	provider = credentialProvider{"TOKEN": "TOKEN"}
+	b, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=AKIDTEST&secret-access-key=secret&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+	assert.Equal(t, "${TOKEN}", b.URL().Query().Get("session-token"))
+	assert.Equal(t, "${S3_KEYS_SECRET_ACCESS_KEY}", b.URL().Query().Get("secret-access-key"))
+
+	// Without a provider, they can't be stored, and when the bucket can't be
+	// accessed with them, they aren't
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	provider = credentialProvider{}
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=OTHER&secret-access-key=secret"), gofiler.Opts{Credentials: provider})
+	assert.ErrorIs(t, err, gofiler.ErrForbidden)
+	assert.Empty(t, provider)
 }
