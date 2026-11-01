@@ -193,6 +193,11 @@ func objectListHandlers(registry *filer.Registry, router *httprouter.Router, doc
 			} else if key, err := cleanPath(query.Path); err != nil {
 				httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("name")+"/"+query.Path)
 			} else {
+				// A path which ends with "/" is a directory, which is kept, as a
+				// bucket can have an object of the directory's name
+				if key != "/" && strings.HasSuffix(query.Path, "/") {
+					key += "/"
+				}
 				req := schema.ObjectListRequest{Limit: query.Limit}
 				req.Name, req.Path = r.PathValue("name"), key
 				req.Recursive, req.StartAfter = query.Recursive, query.StartAfter
@@ -239,13 +244,14 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 
 	// The file, which isn't read yet, or a directory, which can't be, which
 	// redirects to its listing, which is the path of the request without the
-	// object's path
+	// object's path, with the directory's, which ends with "/", as a bucket
+	// can have an object of its name
 	read, object, err := registry.ReadObject(r.Context(), schema.GetObjectRequest{ObjectKey: key})
 	if errors.Is(err, fs.ErrInvalid) {
 		if object, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: key}); err == nil && object.IsDir {
 			listing := strings.TrimSuffix(strings.TrimSuffix(r.URL.Path, r.PathValue("path")), "/")
 			if key.Path != "/" {
-				listing += "?" + url.Values{"path": {key.Path}}.Encode()
+				listing += "?" + url.Values{"path": {key.Path + "/"}}.Encode()
 			}
 			http.Redirect(w, r, listing, http.StatusTemporaryRedirect)
 			return

@@ -22,17 +22,7 @@ import (
 // access "photos".
 func fakeS3(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("AWS_CONFIG_FILE", filepath.Join(dir, "config"))
-	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
-	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
-	t.Setenv("AWS_PROFILE", "")
-	t.Setenv("AWS_REGION", "")
-	t.Setenv("AWS_DEFAULT_REGION", "")
-	t.Setenv("AWS_ACCESS_KEY_ID", "key")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
-	t.Setenv("AWS_SESSION_TOKEN", "")
-
+	fakeCredentials(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		switch {
@@ -55,6 +45,22 @@ func fakeS3(t *testing.T) string {
 	}))
 	t.Cleanup(server.Close)
 	return server.URL
+}
+
+// fakeCredentials sets the credentials of the environment, without the
+// configuration of the user, such as their profile and region
+func fakeCredentials(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(dir, "config"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("AWS_SESSION_TOKEN", "")
 }
 
 // bucketURL returns the URL of the bucket, at the endpoint, with the options

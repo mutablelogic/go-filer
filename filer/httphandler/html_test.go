@@ -47,7 +47,7 @@ func TestObjectListHTML(t *testing.T) {
 	assert.Contains(t, body, "a.txt")
 	assert.Contains(t, body, "a&amp;b&#39;c.txt")
 	assert.NotContains(t, body, "a&b'c.txt")
-	assert.Contains(t, body, `<a href="?path=%2Fmusic">music/</a>`)
+	assert.Contains(t, body, `<a href="?path=%2Fmusic%2F">music/</a>`)
 	assert.Contains(t, body, `<a href="?">media</a>`)
 	assert.Contains(t, body, `<a href="media/a.txt">a.txt</a>`)
 	assert.Contains(t, body, `<a href="media/a&amp;b%27c.txt">a&amp;b&#39;c.txt</a>`)
@@ -63,10 +63,19 @@ func TestObjectListHTML(t *testing.T) {
 	assert.Contains(t, body, `data-href="media/music?recursive=true" data-name="music/"`)
 	assert.Contains(t, body, `method: "DELETE"`)
 
-	// A directory's names are relative to it, and the path links back
+	// A directory's names are relative to it, and the path links back, to
+	// the path as it's requested, with or without "/"
 	_, _, body = getAccept(t, server, "object/media?path=/music", browser)
 	assert.Contains(t, body, ">b.mp3<")
 	assert.Contains(t, body, `<a href="?path=%2Fmusic">music</a>`)
+	_, _, body = getAccept(t, server, "object/media?path=/music/", browser)
+	assert.Contains(t, body, ">b.mp3<")
+	assert.Contains(t, body, `<a href="?path=%2Fmusic%2F">music</a>`)
+
+	// A file's directories link to their listings, with "/", and the file
+	// links to its own, without it
+	_, _, body = getAccept(t, server, "object/media?path=/music/b.mp3", browser)
+	assert.Contains(t, body, `<a href="?path=%2Fmusic%2F">music</a> / <a href="?path=%2Fmusic%2Fb.mp3">b.mp3</a>`)
 
 	// A page with more objects links to the next, keeping the query
 	_, _, body = getAccept(t, server, "object/media?limit=1&recursive=true", browser)
@@ -92,6 +101,7 @@ func TestObjectListHTML(t *testing.T) {
 	_, _, body = getAccept(t, server, "object/media?path=/a.txt", browser)
 	assert.Contains(t, body, ">a.txt<")
 	assert.NotContains(t, body, `type="file"`)
+	assert.Contains(t, body, `<a href="?path=%2Fa.txt">a.txt</a>`)
 
 	// A volume which is read-only, by any boolean, has nothing to upload
 	// or delete with

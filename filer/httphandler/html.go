@@ -100,14 +100,23 @@ func writeListHTML(w http.ResponseWriter, r *http.Request, list *schema.ObjectLi
 	if !readonly && !(len(list.Body) == 1 && !list.Body[0].IsDir && list.Body[0].Path == list.Path) {
 		page.Upload = dirHref(list.Name, list.Path)
 	}
+	// The directories of the path link to their listings, with "/", as a
+	// bucket can have an object of a directory's name, and the last element
+	// links to the path which is listed, which is a file, or a directory with
+	// or without "/", as it was requested
 	page.Crumb = append(page.Crumb, listLink{Name: list.Name, Href: href("/")})
 	dir := "/"
-	for _, elem := range strings.Split(strings.Trim(list.Path, "/"), "/") {
+	elems := strings.Split(strings.Trim(list.Path, "/"), "/")
+	for i, elem := range elems {
 		if elem == "" {
 			continue
 		}
 		dir = path.Join(dir, elem)
-		page.Crumb = append(page.Crumb, listLink{Name: elem, Href: href(dir)})
+		if i == len(elems)-1 {
+			page.Crumb = append(page.Crumb, listLink{Name: elem, Href: href(list.Path)})
+		} else {
+			page.Crumb = append(page.Crumb, listLink{Name: elem, Href: href(dir + "/")})
+		}
 	}
 
 	// The objects, whose names are relative to the directory
@@ -123,7 +132,7 @@ func writeListHTML(w http.ResponseWriter, r *http.Request, list *schema.ObjectLi
 			row.Name = object.Key()
 		}
 		if object.IsDir {
-			row.Href = href(object.Path)
+			row.Href = href(object.Key())
 			row.Delete = fileHref(list.Name, object.Path) + "?recursive=true"
 		} else {
 			row.Href = fileHref(list.Name, object.Path)

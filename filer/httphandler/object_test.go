@@ -86,11 +86,14 @@ func TestObjectList(t *testing.T) {
 	})
 
 	t.Run("Path", func(t *testing.T) {
-		for _, path := range []string{"/b", "b", "b/", "/x/../b"} {
+		for _, path := range []string{"/b", "b", "b/", "/x/../b", "/x/../b/"} {
 			var list schema.ObjectList
 			require.Equal(t, http.StatusOK, get(t, server, "object/media?path="+url.QueryEscape(path), &list), path)
 			assert.Equal(t, []string{"/b/c.txt", "/b/d.txt"}, keys(list), path)
 		}
+
+		// A path which ends with "/" is a directory, which a file isn't
+		assert.Equal(t, http.StatusNotFound, get(t, server, "object/media?path="+url.QueryEscape("/a.txt/"), nil))
 	})
 
 	t.Run("Recursive", func(t *testing.T) {
@@ -278,7 +281,7 @@ func TestObjectGet(t *testing.T) {
 	// A directory, or the root, redirects to its listing
 	status, header, _ = getObject(t, server, "object/media/music", nil)
 	assert.Equal(t, http.StatusTemporaryRedirect, status)
-	assert.Equal(t, "/api/object/media?path=%2Fmusic", header.Get("Location"))
+	assert.Equal(t, "/api/object/media?path=%2Fmusic%2F", header.Get("Location"))
 	status, header, _ = getObject(t, server, "object/media/", nil)
 	assert.Equal(t, http.StatusTemporaryRedirect, status)
 	assert.Equal(t, "/api/object/media", header.Get("Location"))

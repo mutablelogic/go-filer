@@ -131,11 +131,6 @@ func (self *S3) ReadObject(ctx context.Context, req schema.GetObjectRequest) (go
 	return nil, nil, gofiler.ErrNotImplemented.With("ReadObject")
 }
 
-// ListObjects lists the objects in the bucket, beneath a path
-func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
-	return nil, gofiler.ErrNotImplemented.With("ListObjects")
-}
-
 // DeleteObjects deletes an object, or the objects beneath a directory, in the
 // bucket
 func (self *S3) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
