@@ -5,11 +5,11 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	// Packages
-	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
@@ -118,19 +118,13 @@ func watchHandler(registry *filer.Registry) http.HandlerFunc {
 		// ends before the handler returns, as the writer can't be used after.
 		ctx, cancel := context.WithCancel(r.Context())
 		ch, done, watched := make(chan schema.Event, watchBuffer), make(chan error, 1), make(chan struct{})
-		subscribed, err := registry.Subscribe(ctx, schema.EventFilter{Name: query.Name}, ch)
-		if err != nil {
-			cancel()
-			httpresponse.Error(w, gofiler.HTTPErr(err))
-			return
-		}
 		defer func() {
 			cancel()
 			<-watched
 		}()
 		go func() {
 			defer close(watched)
-			err := <-subscribed
+			err := registry.WatchObjects(ctx, ch)
 			if errors.Is(err, fs.ErrClosed) {
 				dw.stop()
 			}
@@ -165,7 +159,9 @@ func watchHandler(registry *filer.Registry) http.HandlerFunc {
 				}
 				return
 			case event := <-ch:
-				stream.Write(event.EventType.String(), event.ObjectKey)
+				if len(query.Name) == 0 || slices.Contains(query.Name, event.Name) {
+					stream.Write(event.EventType.String(), event.ObjectKey)
+				}
 			}
 		}
 	}

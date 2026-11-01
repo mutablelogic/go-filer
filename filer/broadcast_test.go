@@ -46,25 +46,25 @@ func Test_Broadcaster_Subscribe(t *testing.T) {
 	b := newBroadcaster()
 
 	// A channel is needed, which is subscribed once at a time
-	_, err := b.subscribe(context.Background(), schema.EventFilter{}, nil)
+	_, err := b.subscribe(context.Background(), nil)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	all, other := make(chan schema.Event, 10), make(chan schema.Event, 10)
 	ctx, cancel := context.WithCancel(context.Background())
-	done, err := b.subscribe(ctx, schema.EventFilter{}, all)
+	done, err := b.subscribe(ctx, all)
 	require.NoError(t, err)
-	_, err = b.subscribe(context.Background(), schema.EventFilter{}, all)
+	_, err = b.subscribe(context.Background(), all)
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 
-	// The changes of the filter's volumes are sent, or every volume's
-	otherDone, err := b.subscribe(context.Background(), schema.EventFilter{Name: []string{"other"}}, other)
+	// The changes are sent to each subscription
+	otherDone, err := b.subscribe(context.Background(), other)
 	require.NoError(t, err)
 	assert.Equal(t, 2, b.len())
 	assert.Zero(t, b.publish(change("media", "/a.txt")))
 	assert.Zero(t, b.publish(change("other", "/b.txt")))
-	assert.Equal(t, change("media", "/a.txt"), next(t, all))
-	assert.Equal(t, change("other", "/b.txt"), next(t, all))
-	assert.Equal(t, change("other", "/b.txt"), next(t, other))
-	assert.Empty(t, other)
+	for _, ch := range []chan schema.Event{all, other} {
+		assert.Equal(t, change("media", "/a.txt"), next(t, ch))
+		assert.Equal(t, change("other", "/b.txt"), next(t, ch))
+	}
 
 	// A subscription which is cancelled ends, without an error
 	cancel()
@@ -75,11 +75,11 @@ func Test_Broadcaster_Subscribe(t *testing.T) {
 	// are made, unless it's final
 	b.end(false)
 	assert.ErrorIs(t, ended(t, otherDone), fs.ErrClosed)
-	done, err = b.subscribe(context.Background(), schema.EventFilter{}, all)
+	done, err = b.subscribe(context.Background(), all)
 	require.NoError(t, err)
 	b.end(true)
 	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
-	_, err = b.subscribe(context.Background(), schema.EventFilter{}, all)
+	_, err = b.subscribe(context.Background(), all)
 	assert.ErrorIs(t, err, fs.ErrClosed)
 }
 
@@ -91,7 +91,7 @@ func Test_Broadcaster_Slow(t *testing.T) {
 	// of the volume, once there's room, when it's flushed, or with another
 	// change
 	ch := make(chan schema.Event, 1)
-	_, err := b.subscribe(context.Background(), schema.EventFilter{}, ch)
+	_, err := b.subscribe(context.Background(), ch)
 	require.NoError(t, err)
 	assert.Zero(t, b.publish(change("media", "/a.txt")))
 	assert.Equal(t, 1, b.publish(change("media", "/b.txt")))

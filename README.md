@@ -122,7 +122,7 @@ Directories are watched with the `fsevents` package, using the efficient mechani
 
 On other platforms, and on macOS without cgo, and for a filer of a filesystem which isn't a directory, `WatchObjects` returns `filer.ErrNotImplemented`.
 
-The registry of volumes is watched by its `Run`, which watches each volume when it's added, or updated, until it's removed, and sends their changes, with the names of their volumes, to its subscriptions, until its context is cancelled, or the registry is closed, so it should be run while the registry is used, as the server does. Without it, the volumes aren't watched. `Subscribe` sends the changes of the volumes of a filter, or every volume, to a channel, from when it returns, until its context is cancelled, or `Run` stops, which ends every subscription. A change isn't waited for a subscriber to receive, so when its channel is full, it, and the volume's other changes, are dropped, and it's sent a rescan of the volume, once there's room, so its channel should be buffered. The registry's `WatchObjects` subscribes to every volume, and waits for its channel to receive each change.
+The registry of volumes is watched by its `Run`, which watches each volume when it's added, or updated, until it's removed, and sends their changes, with the names of their volumes, to the calls to its `WatchObjects`, until its context is cancelled, or the registry is closed, which ends them, so it should be run while the registry is used, as the server does. Without it, the volumes aren't watched. A call to `WatchObjects` isn't held up by the others, so when it's slow to receive the changes, a volume's changes are dropped, and it's sent a rescan of the volume, once it can receive it.
 
 ## Modification Time
 

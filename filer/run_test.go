@@ -22,15 +22,14 @@ func Test_Registry_Run(t *testing.T) {
 	defer r.Close()
 	assert.False(t, r.Running())
 
-	// A volume added before it runs, and a subscription made before it runs,
-	// which lasts until it stops
+	// A volume added before it runs, and a watch made before it runs, which
+	// lasts until it stops
 	before := fileURL(t, dir, "before")
 	_, err = r.Add(context.Background(), "before", before)
 	require.NoError(t, err)
-	ch := make(chan schema.Event, 100)
-	done, err := r.Subscribe(context.Background(), schema.EventFilter{}, ch)
-	require.NoError(t, err)
-	assert.Equal(t, 1, r.Subscribers())
+	ch, done := make(chan schema.Event, 100), make(chan error, 1)
+	go func() { done <- r.WatchObjects(context.Background(), ch) }()
+	require.Eventually(t, func() bool { return r.Subscribers() == 1 }, 5*time.Second, time.Millisecond)
 
 	// It runs once at a time, and is listening once it's running
 	ctx, cancel := context.WithCancel(context.Background())
@@ -56,7 +55,7 @@ func Test_Registry_Run(t *testing.T) {
 		assert.NotEqual(t, "/gone.txt", (<-ch).Path)
 	}
 
-	// When it stops, every subscription ends, and it isn't listening
+	// When it stops, every watch ends, and it isn't listening
 	cancel()
 	assert.NoError(t, <-running)
 	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
@@ -76,6 +75,5 @@ func Test_Registry_Run(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("run didn't stop")
 	}
-	_, err = r.Subscribe(context.Background(), schema.EventFilter{}, ch)
-	assert.ErrorIs(t, err, fs.ErrClosed)
+	assert.ErrorIs(t, r.WatchObjects(context.Background(), ch), fs.ErrClosed)
 }

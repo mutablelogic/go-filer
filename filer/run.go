@@ -54,14 +54,7 @@ var (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Run watches the volumes, which are watched when they're added, or updated,
-// and not once they're removed, and sends their changes, with the names of
-// their volumes, to the subscriptions (see Subscribe), logging with the
-// logger, until the context is cancelled, or the registry is closed, when
-// it stops watching, and every subscription ends. A volume which is updated,
-// or whose watching fails, and is opened again, is sent a rescan of, as its
-// changes may have been missed. A backend which can't be watched isn't.
-// Only one can run at a time, which is otherwise ErrConflict.
+// Run processes events on the runloop, until the context is cancelled
 func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 	if !self.running.CompareAndSwap(false, true) {
 		return gofiler.ErrConflict.With("registry is already running")
@@ -124,28 +117,8 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
-// Subscribe sends the changes to the objects of the volumes which match the
-// filter, or every volume, when it has none, to ch, from when it returns,
-// until the context is cancelled, or Run stops, or the registry is closed. It
-// returns a channel which is sent nil when the context is cancelled, or
-// fs.ErrClosed when Run stops, or the registry is closed, once the
-// subscription has ended, after which no more changes are sent to ch, so it
-// can be closed. A subscription made before Run runs lasts until it stops,
-// and one made once the registry is closed isn't made, which is fs.ErrClosed.
-// A channel is subscribed once at a time, so subscribing it while it's
-// subscribed is ErrConflict. A change isn't waited for ch to receive, so
-// when it's full, a rescan of the volume is sent in place of the changes it
-// misses, once there's room, so ch should be buffered.
-func (self *Registry) Subscribe(ctx context.Context, filter schema.EventFilter, ch chan<- schema.Event) (<-chan error, error) {
-	return self.broadcaster.subscribe(ctx, filter, ch)
-}
-
 // WatchObjects sends each change to the objects of every volume to the
-// channel, with the name of its volume, waiting for it to receive each,
-// until the context is cancelled, or Run stops, or the registry is closed,
-// when fs.ErrClosed is returned. When changes may have been missed, such as
-// when watching a volume fails, and it's watched again, or the channel isn't
-// read fast enough, a rescan of the volume is sent in their place.
+// channel
 func (self *Registry) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	return self.broadcaster.watch(ctx, ch, watchQueue)
 }

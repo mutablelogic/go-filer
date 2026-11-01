@@ -15,7 +15,7 @@ import (
 // TYPES
 
 // broadcaster sends the changes which are published to it to its
-// subscriptions, whose filters they match, without waiting, so a subscriber
+// subscriptions, without waiting, so a subscriber
 // whose channel is full misses the changes of a volume, and is sent a rescan
 // of the volume, once there's room
 type broadcaster struct {
@@ -24,12 +24,11 @@ type broadcaster struct {
 	closed      bool
 }
 
-// subscriber is a subscription's filter, and its channel, and the volumes
+// subscriber is a subscription's channel, and the volumes
 // whose changes were dropped, as its channel was full, which it's sent a
 // rescan of, once there's room, and the channel which is closed when it
 // ends, with fs.ErrClosed
 type subscriber struct {
-	filter schema.EventFilter
 	ch     chan<- schema.Event
 	rescan map[string]bool
 	stop   chan struct{}
@@ -46,18 +45,18 @@ func newBroadcaster() *broadcaster {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// subscribe sends the changes which match the filter to ch, from when it
+// subscribe sends the changes to ch, from when it
 // returns, until the context is cancelled, or the subscriptions end (see
 // end). It returns a channel which is sent nil when the context is
 // cancelled, or fs.ErrClosed when the subscriptions end, once it's ended,
 // after which no more changes are sent to ch. A channel is subscribed once
 // at a time, which is otherwise ErrConflict, and once the broadcaster is
 // closed, a subscription isn't made, which is fs.ErrClosed.
-func (self *broadcaster) subscribe(ctx context.Context, filter schema.EventFilter, ch chan<- schema.Event) (<-chan error, error) {
+func (self *broadcaster) subscribe(ctx context.Context, ch chan<- schema.Event) (<-chan error, error) {
 	if ch == nil {
 		return nil, gofiler.ErrBadParameter.With("missing channel")
 	}
-	s := &subscriber{filter: filter, ch: ch, rescan: make(map[string]bool), stop: make(chan struct{})}
+	s := &subscriber{ch: ch, rescan: make(map[string]bool), stop: make(chan struct{})}
 	self.Lock()
 	if self.closed {
 		self.Unlock()
@@ -97,7 +96,7 @@ func (self *broadcaster) watch(ctx context.Context, ch chan<- schema.Event, buff
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	queue := make(chan schema.Event, buffer)
-	done, err := self.subscribe(ctx, schema.EventFilter{}, queue)
+	done, err := self.subscribe(ctx, queue)
 	if err != nil {
 		return err
 	}
@@ -115,15 +114,15 @@ func (self *broadcaster) watch(ctx context.Context, ch chan<- schema.Event, buff
 	}
 }
 
-// publish sends the change to each subscriber whose filter it matches,
-// without waiting, and returns how many it was dropped for, as their
-// channels were full, which they're owed a rescan of its volume for
+// publish sends the change to each subscriber, without waiting, and returns
+// how many it was dropped for, as their channels were full, which they're
+// owed a rescan of its volume for
 func (self *broadcaster) publish(event schema.Event) int {
 	self.Lock()
 	defer self.Unlock()
 	dropped := 0
 	for _, s := range self.subscribers {
-		if s.filter.Match(event) && !s.send(event) {
+		if !s.send(event) {
 			dropped++
 		}
 	}
