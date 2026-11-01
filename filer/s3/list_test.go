@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -37,9 +38,23 @@ type fakeBucket struct {
 	name     string
 	keys     map[string]string            // the keys, and their content
 	meta     map[string]map[string]string // the user's metadata of the keys
+	types    map[string]string            // the types of the keys, when they're written
 	modTime  time.Time
 	requests int // the number of lists
 	gets     int // the number of reads of objects
+
+	// uploads are the multipart uploads in progress, by their ids, and the
+	// counts of the requests which write
+	uploads                  map[string]*fakeUpload
+	puts, parts, completes   int
+	aborts, createMultiparts int
+}
+
+// fakeUpload is a multipart upload in progress
+type fakeUpload struct {
+	key, contentType string
+	meta             map[string]string
+	parts            map[int]string
 }
 
 // listResult is the response of ListObjectsV2
@@ -107,7 +122,11 @@ func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
-		w.Header().Set("Content-Type", "application/x-fake")
+		if contentType, exists := b.types[key]; exists {
+			w.Header().Set("Content-Type", contentType)
+		} else {
+			w.Header().Set("Content-Type", "application/x-fake")
+		}
 		for name, value := range b.meta[key] {
 			w.Header().Set("X-Amz-Meta-"+name, value)
 		}
@@ -137,12 +156,109 @@ func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		io.WriteString(w, content)
+	case r.Method == http.MethodPut && key != "" && r.URL.Query().Has("uploadId"):
+		upload, exists := b.uploads[r.URL.Query().Get("uploadId")]
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		data, _ := io.ReadAll(r.Body)
+		number, _ := strconv.Atoi(r.URL.Query().Get("partNumber"))
+		upload.parts[number] = string(data)
+		b.parts++
+		w.Header().Set("ETag", `"`+etagOf(string(data))+`"`)
+	case r.Method == http.MethodPut && key != "":
+		b.puts++
+		if !b.conditions(w, r, key) {
+			return
+		}
+		data, _ := io.ReadAll(r.Body)
+		b.write(key, string(data), r.Header.Get("Content-Type"), fakeMeta(r.Header))
+		w.Header().Set("ETag", `"`+etagOf(string(data))+`"`)
+	case r.Method == http.MethodPost && key != "" && r.URL.Query().Has("uploads"):
+		b.createMultiparts++
+		id := fmt.Sprint("upload-", len(b.uploads)+1)
+		if b.uploads == nil {
+			b.uploads = map[string]*fakeUpload{}
+		}
+		b.uploads[id] = &fakeUpload{key: key, contentType: r.Header.Get("Content-Type"), meta: fakeMeta(r.Header), parts: map[int]string{}}
+		fmt.Fprintf(w, `<InitiateMultipartUploadResult><Bucket>%s</Bucket><Key>%s</Key><UploadId>%s</UploadId></InitiateMultipartUploadResult>`, b.name, key, id)
+	case r.Method == http.MethodPost && key != "" && r.URL.Query().Has("uploadId"):
+		b.completes++
+		id := r.URL.Query().Get("uploadId")
+		upload, exists := b.uploads[id]
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		} else if !b.conditions(w, r, key) {
+			return
+		}
+		var complete struct {
+			Parts []struct {
+				PartNumber int
+			} `xml:"Part"`
+		}
+		xml.NewDecoder(r.Body).Decode(&complete)
+		var content strings.Builder
+		for _, part := range complete.Parts {
+			content.WriteString(upload.parts[part.PartNumber])
+		}
+		delete(b.uploads, id)
+		b.write(key, content.String(), upload.contentType, upload.meta)
+		fmt.Fprintf(w, `<CompleteMultipartUploadResult><Bucket>%s</Bucket><Key>%s</Key><ETag>"%s"</ETag></CompleteMultipartUploadResult>`, b.name, key, etagOf(content.String()))
+	case r.Method == http.MethodDelete && key != "" && r.URL.Query().Has("uploadId"):
+		b.aborts++
+		delete(b.uploads, r.URL.Query().Get("uploadId"))
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && key == "" && r.URL.Query().Get("list-type") == "2":
 		b.requests++
 		b.list(w, r)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// conditions returns true when the conditions of a request which writes the
+// key are met, and otherwise responds with 412
+func (b *fakeBucket) conditions(w http.ResponseWriter, r *http.Request, key string) bool {
+	content, exists := b.keys[key]
+	if r.Header.Get("If-None-Match") == "*" && exists {
+		w.WriteHeader(http.StatusPreconditionFailed)
+		return false
+	} else if match := r.Header.Get("If-Match"); match != "" && (!exists || match != `"`+etagOf(content)+`"`) {
+		w.WriteHeader(http.StatusPreconditionFailed)
+		return false
+	}
+	return true
+}
+
+// write stores the key, with its content, type and metadata
+func (b *fakeBucket) write(key, content, contentType string, meta map[string]string) {
+	if b.types == nil {
+		b.types = map[string]string{}
+	}
+	if b.meta == nil {
+		b.meta = map[string]map[string]string{}
+	}
+	b.keys[key] = content
+	b.meta[key] = meta
+	if contentType != "" {
+		b.types[key] = contentType
+	} else {
+		delete(b.types, key)
+	}
+}
+
+// fakeMeta returns the user's metadata of a request, by their names, which
+// are lowercase, without x-amz-meta-
+func fakeMeta(header http.Header) map[string]string {
+	meta := map[string]string{}
+	for name, values := range header {
+		if key, ok := strings.CutPrefix(strings.ToLower(name), "x-amz-meta-"); ok {
+			meta[key] = values[0]
+		}
+	}
+	return meta
 }
 
 // list answers ListObjectsV2: the keys with the prefix, after where it
@@ -206,7 +322,7 @@ func (b *fakeBucket) list(w http.ResponseWriter, r *http.Request) {
 
 // etagOf returns the entity tag of the content
 func etagOf(content string) string {
-	return fmt.Sprintf("%x", len(content))
+	return fmt.Sprintf("%x", md5.Sum([]byte(content)))
 }
 
 // listPaths returns the paths of the objects which are listed, with "/" at

@@ -2,11 +2,9 @@ package s3
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
-	"maps"
 	"mime"
 	"path"
 	"slices"
@@ -273,22 +271,6 @@ func (self *S3) headObject(ctx context.Context, op, rel string) (*schema.Object,
 	// The user's metadata, which a listing doesn't have
 	object.Meta = userMeta(response.Metadata)
 	return object, nil
-}
-
-// userMeta returns the user's metadata of an object, which are its
-// x-amz-meta-* headers, whose keys are lowercase, without the prefix, and
-// whose values are JSON strings, in the order of their keys, or nil when
-// there's none
-func userMeta(metadata map[string]string) []schema.Meta {
-	if len(metadata) == 0 {
-		return nil
-	}
-	result := make([]schema.Meta, 0, len(metadata))
-	for _, key := range slices.Sorted(maps.Keys(metadata)) {
-		value, _ := json.Marshal(metadata[key])
-		result = append(result, schema.Meta{Key: key, Value: value})
-	}
-	return result
 }
 
 // key returns the key of an object's path, which is relative to the prefix,
