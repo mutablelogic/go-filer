@@ -30,12 +30,16 @@ type watchQuery struct {
 
 // deadlineWriter is a writer of a stream to a client, with a deadline for
 // each write, which closes failed when a write fails, as the client stopped
-// reading, or went away
+// reading, or went away. Once it's stopping, the deadline is soon, which
+// interrupts a write which is blocked, and isn't extended.
 type deadlineWriter struct {
 	http.ResponseWriter
 	rc     *http.ResponseController
 	once   sync.Once
 	failed chan struct{}
+
+	sync.Mutex
+	until time.Time // the deadline of every write, once it's stopping
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -47,6 +51,10 @@ const (
 
 	// watchWriteTimeout is how long a write to a client can take
 	watchWriteTimeout = 30 * time.Second
+
+	// watchStopTimeout is how long the writes to a client can take, once the
+	// stream is ending, including the shutdown event
+	watchStopTimeout = time.Second
 
 	// EventShutdown is the event which is sent when the server is stopping,
 	// before the stream ends
@@ -95,27 +103,45 @@ func watchHandler(registry *filer.Registry) http.HandlerFunc {
 			return
 		}
 
-		// Watch the volumes, until the client goes away, or the registry is
-		// closed, as the server is stopping
-		ctx, cancel := context.WithCancel(r.Context())
-		defer cancel()
-		ch, done := make(chan schema.Event, watchBuffer), make(chan error, 1)
-		go func() { done <- registry.WatchObjects(ctx, ch) }()
-
 		// The stream lasts as long as the client watches, so it isn't cut off
 		// by the server's write timeout, but each write has its own deadline.
-		// A proxy, such as nginx, doesn't buffer it.
 		dw := &deadlineWriter{ResponseWriter: w, rc: http.NewResponseController(w), failed: make(chan struct{})}
 		if err := dw.rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 			httpresponse.Error(w, httpresponse.ErrInternalError.With(err.Error()))
 			return
 		}
+
+		// Watch the volumes, until the client goes away, or the registry is
+		// closed, as the server is stopping, when a write to a client which
+		// stopped reading is interrupted, as the stream is written from
+		// another goroutine, which isn't waiting for the registry. The watch
+		// ends before the handler returns, as the writer can't be used after.
+		ctx, cancel := context.WithCancel(r.Context())
+		ch, done, watched := make(chan schema.Event, watchBuffer), make(chan error, 1), make(chan struct{})
+		defer func() {
+			cancel()
+			<-watched
+		}()
+		go func() {
+			defer close(watched)
+			err := registry.WatchObjects(ctx, ch)
+			if errors.Is(err, fs.ErrClosed) {
+				dw.stop()
+			}
+			done <- err
+		}()
+
+		// A proxy, such as nginx, doesn't buffer the stream, which ends soon
+		// once the handler returns, even when the client stopped reading
 		stream := httpresponse.NewTextStream(dw, "X-Accel-Buffering", "no")
 		if stream == nil {
 			httpresponse.Error(w, httpresponse.ErrInternalError.With("streaming isn't supported"))
 			return
 		}
-		defer stream.Close()
+		defer func() {
+			dw.stop()
+			stream.Close()
+		}()
 
 		// Stream the changes, of the volumes which are watched
 		for {
@@ -164,9 +190,32 @@ func (w *deadlineWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-// deadline sets the deadline of the next write
+// deadline sets the deadline of the next write, which is no later than when
+// it's stopping
 func (w *deadlineWriter) deadline() {
-	if err := w.rc.SetWriteDeadline(time.Now().Add(watchWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+	w.Lock()
+	defer w.Unlock()
+	deadline := time.Now().Add(watchWriteTimeout)
+	if !w.until.IsZero() && w.until.Before(deadline) {
+		deadline = w.until
+	}
+	w.setDeadline(deadline)
+}
+
+// stop sets the deadline of the writes, including one which is blocked, to
+// soon, once, as the stream is ending
+func (w *deadlineWriter) stop() {
+	w.Lock()
+	defer w.Unlock()
+	if w.until.IsZero() {
+		w.until = time.Now().Add(watchStopTimeout)
+		w.setDeadline(w.until)
+	}
+}
+
+// setDeadline sets the deadline of the writes, which must be locked
+func (w *deadlineWriter) setDeadline(deadline time.Time) {
+	if err := w.rc.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		w.fail()
 	}
 }
