@@ -71,11 +71,11 @@ Upload files into the directory at `path` in the volume `name`, or its root, whe
 
 ### DELETE /object/{name}/{path...}
 
-Delete the file at `path` in the volume `name`, or a directory, with `recursive=true`, and every object beneath it, including hidden files, which aren't listed. A package, such as a macOS sparse disk image, is deleted as a file, with the files in it, without `recursive`. The directories which are left empty are removed, as a directory exists while an object is beneath it. Returns the objects deleted, which are files, not directories. Returns 400 if the path is outside the volume, has `%2F`, is hidden, or is the root of the volume, or the query is invalid, 403 if the volume is read-only, 404 if the volume isn't mounted, or the object doesn't exist, or 409 if the object is a directory, and the request isn't recursive.
+Delete the file at `path` in the volume `name`, or a directory, with `recursive=true`, and every object beneath it, including hidden files, which aren't listed. A package, such as a macOS sparse disk image, is deleted as a file, with the files in it, without `recursive`. The directories which are left empty are removed, as a directory exists while an object is beneath it. Returns the objects deleted, which are files, not directories. Returns 400 if the path is outside the volume, has `%2F`, is hidden, or is the root of the volume, or the query is invalid, 403 if the volume is read-only, 404 if the volume isn't mounted, or the object doesn't exist, or 409 if the object is a directory, and the request isn't recursive. A path which ends with `/` is a directory, even when a file has its name, as it can in a bucket, and isn't found when it's a file. In a bucket, a directory's keys are deleted a page of up to 1,000 at a time, so when one can't be, those before it, and the others of its page, are deleted, and a directory which is a key of its own, ending with `/`, isn't removed when the last file beneath it is.
 
 ## Watch Operations
 
-The changes to the objects of the volumes are streamed as they happen, as server-sent events. A path which ends with `/` is a directory, even when a file has its name, as it can in a bucket, and isn't found when it's a file. In a bucket, a directory's keys are deleted a page of up to 1,000 at a time, so when one can't be, those before it, and the others of its page, are deleted, and a directory which is a key of its own, ending with `/`, isn't removed when the last file beneath it is.
+The changes to the objects of the volumes are streamed as they happen, as server-sent events.
 
 ### GET /watch
 
