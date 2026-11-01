@@ -342,6 +342,15 @@ func TestObjectDelete(t *testing.T) {
 	assert.False(t, exists("music"))
 	assert.True(t, exists("keep/d.txt"))
 
+	// A path which ends with "/" is a directory, which a file isn't
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "other"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "other", "e.txt"), []byte("e"), 0o644))
+	assert.Equal(t, http.StatusNotFound, del(t, server, "object/media/other/e.txt/", nil))
+	assert.Equal(t, http.StatusConflict, del(t, server, "object/media/other/", nil))
+	require.Equal(t, http.StatusOK, del(t, server, "object/media/other/?recursive=true", &resp))
+	assert.Equal(t, []string{"/other/e.txt"}, paths(resp))
+	assert.False(t, exists("other"))
+
 	// Errors
 	for path, want := range map[string]int{
 		"object/media/missing.txt":          http.StatusNotFound,

@@ -10,7 +10,7 @@ List the volumes which are registered, in order of their names, with the `url` o
 
 ### POST /volume
 
-Create a volume with a `name`, which is an identifier, and the `url` of its backend, whose `name` option, or otherwise its host, is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/folder`, whose path is absolute, and which exists, or `file://media/C:/folder` on Windows. An `s3` URL is a bucket, and the prefix of its objects, such as `s3://photos/2026`, whose name is the volume's, or its name option, which is needed when the bucket's name isn't an identifier, such as `s3://my.bucket/photos?name=photos`, and whose objects can be listed, got, read and written, but not deleted yet. A bucket's directories are the prefixes of its keys, before a `/`, and keys which aren't paths, such as `a//b` or `../c`, aren't listed. Its query is the options, which are dependent on the scheme:
+Create a volume with a `name`, which is an identifier, and the `url` of its backend, whose `name` option, or otherwise its host, is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/folder`, whose path is absolute, and which exists, or `file://media/C:/folder` on Windows. An `s3` URL is a bucket, and the prefix of its objects, such as `s3://photos/2026`, whose name is the volume's, or its name option, which is needed when the bucket's name isn't an identifier, such as `s3://my.bucket/photos?name=photos`, and whose objects can be listed, got, read, written and deleted. A bucket's directories are the prefixes of its keys, before a `/`, and keys which aren't paths, such as `a//b` or `../c`, aren't listed. Its query is the options, which are dependent on the scheme:
 
 | Scheme | Option | Value | Default |
 | ------ | ------ | ----- | ------- |
@@ -75,7 +75,7 @@ Delete the file at `path` in the volume `name`, or a directory, with `recursive=
 
 ## Watch Operations
 
-The changes to the objects of the volumes are streamed as they happen, as server-sent events.
+The changes to the objects of the volumes are streamed as they happen, as server-sent events. A path which ends with `/` is a directory, even when a file has its name, as it can in a bucket, and isn't found when it's a file. In a bucket, a directory's keys are deleted a page of up to 1,000 at a time, so when one can't be, those before it, and the others of its page, are deleted, and a directory which is a key of its own, ending with `/`, isn't removed when the last file beneath it is.
 
 ### GET /watch
 

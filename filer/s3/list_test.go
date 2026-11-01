@@ -48,6 +48,11 @@ type fakeBucket struct {
 	uploads                  map[string]*fakeUpload
 	puts, parts, completes   int
 	aborts, createMultiparts int
+
+	// denied are the keys which can't be deleted, and the counts of the
+	// requests which delete
+	denied           map[string]bool
+	deletes, batches int
 }
 
 // fakeUpload is a multipart upload in progress
@@ -210,6 +215,31 @@ func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.aborts++
 		delete(b.uploads, r.URL.Query().Get("uploadId"))
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodDelete && key != "":
+		b.deletes++
+		if b.denied[key] {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		delete(b.keys, key)
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && key == "" && r.URL.Query().Has("delete"):
+		b.batches++
+		var request struct {
+			Objects []struct {
+				Key string
+			} `xml:"Object"`
+		}
+		xml.NewDecoder(r.Body).Decode(&request)
+		var errs strings.Builder
+		for _, object := range request.Objects {
+			if b.denied[object.Key] {
+				fmt.Fprintf(&errs, `<Error><Key>%s</Key><Code>AccessDenied</Code><Message>Access Denied</Message></Error>`, object.Key)
+			} else {
+				delete(b.keys, object.Key)
+			}
+		}
+		fmt.Fprintf(w, `<DeleteResult>%s</DeleteResult>`, errs.String())
 	case r.Method == http.MethodGet && key == "" && r.URL.Query().Get("list-type") == "2":
 		b.requests++
 		b.list(w, r)

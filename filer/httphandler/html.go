@@ -133,7 +133,7 @@ func writeListHTML(w http.ResponseWriter, r *http.Request, list *schema.ObjectLi
 		}
 		if object.IsDir {
 			row.Href = href(object.Key())
-			row.Delete = fileHref(list.Name, object.Path) + "?recursive=true"
+			row.Delete = dirHref(list.Name, object.Path) + "?recursive=true"
 		} else {
 			row.Href = fileHref(list.Name, object.Path)
 			row.Download = row.Href + "?download=true"
