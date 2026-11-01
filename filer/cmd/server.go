@@ -28,13 +28,15 @@ type Flags struct {
 // PUBLIC METHODS
 
 // WithRegistry creates a registry of volumes, with the server's tracer and
-// meter, and then the options, adds the volumes of the flags, registers its
+// meter, and credentials from its environment, such as S3_SECRET, which are
+// the placeholders of a volume's credentials, such as ${S3_SECRET}, and
+// those which are stored while it runs, and then the options, adds the volumes of the flags, registers its
 // HTTP handlers with the server, when there is one, and then calls the
 // function with the registry. A volume which can't be added is an error. The
 // registry, and its volumes, are closed when the function returns. Returns
 // any error.
 func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn func(*filer.Registry) error, opts ...filer.Opt) (err error) {
-	opts = append([]filer.Opt{filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter())}, opts...)
+	opts = append([]filer.Opt{filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter()), filer.WithCredentials(newEnvCredentials())}, opts...)
 	registry, err := filer.New(ctx.Context(), opts...)
 	if err != nil {
 		return err
