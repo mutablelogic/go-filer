@@ -9,6 +9,7 @@ import (
 	"mime"
 	"path"
 	"strings"
+	"time"
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
@@ -24,6 +25,9 @@ import (
 const (
 	// maxParts is the most parts of an object which S3 accepts
 	maxParts = 10000
+
+	// abortTimeout is how long an upload which fails is aborted for
+	abortTimeout = 30 * time.Second
 )
 
 // partSize is the size of each part of an object which is uploaded, which is
@@ -117,19 +121,28 @@ type upload struct {
 
 // write writes the file with the body, which is uploaded in one request,
 // when it's no larger than a part, or otherwise in parts, as it's read,
-// which are aborted when the body can't be read, or the upload fails
+// which are aborted when the body can't be read, or the upload fails. A
+// byte is read beyond a part, so a body which is a part isn't uploaded in
+// parts.
 func (self *upload) write(ctx context.Context, body io.Reader) error {
 	if body == nil {
 		body = bytes.NewReader(nil)
 	}
 	part := make([]byte, partSize)
-	n, eof, err := readPart(body, part)
+	n, eof, err := readPart(ctx, body, part)
 	if err != nil {
 		return err
 	} else if eof {
 		return self.put(ctx, part[:n])
 	}
-	return self.multipart(ctx, body, part, n)
+	next := make([]byte, 1)
+	m, eof, err := readPart(ctx, body, next)
+	if err != nil {
+		return err
+	} else if eof && m == 0 {
+		return self.put(ctx, part[:n])
+	}
+	return self.multipart(ctx, body, part, n, next[:m], eof)
 }
 
 // put writes the file in one request
@@ -147,9 +160,10 @@ func (self *upload) put(ctx context.Context, data []byte) error {
 	return self.uploadError(err)
 }
 
-// multipart writes the file in parts, the first of which is read, and is
+// multipart writes the file in parts, the first of which is read, with the
+// first byte of the next, and whether that's the end of the body, and is
 // completed with the conditions, or aborted when it fails
-func (self *upload) multipart(ctx context.Context, body io.Reader, part []byte, n int) (err error) {
+func (self *upload) multipart(ctx context.Context, body io.Reader, part []byte, n int, next []byte, eof bool) (err error) {
 	response, err := self.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket:      aws.String(self.bucket),
 		Key:         aws.String(self.key),
@@ -162,10 +176,13 @@ func (self *upload) multipart(ctx context.Context, body io.Reader, part []byte, 
 	uploadId := response.UploadId
 
 	// Abort the upload when it fails, which isn't cancelled with it, so its
-	// parts aren't kept
+	// parts aren't kept, but which has its own deadline, so it doesn't wait
+	// for S3 for long
 	defer func() {
 		if err != nil {
-			_, abortErr := self.client.AbortMultipartUpload(context.WithoutCancel(ctx), &s3.AbortMultipartUploadInput{
+			abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), abortTimeout)
+			defer cancel()
+			_, abortErr := self.client.AbortMultipartUpload(abortCtx, &s3.AbortMultipartUploadInput{
 				Bucket:   aws.String(self.bucket),
 				Key:      aws.String(self.key),
 				UploadId: uploadId,
@@ -193,14 +210,22 @@ func (self *upload) multipart(ctx context.Context, body io.Reader, part []byte, 
 		}
 		parts = append(parts, s3types.CompletedPart{ETag: response.ETag, PartNumber: aws.Int32(number)})
 
-		// Read the next part, unless it's the end of the body
-		var eof bool
-		if n, eof, err = readPart(body, part); err != nil {
-			return err
-		} else if eof && n == 0 {
+		// Read the next part, which starts with the byte which is read beyond
+		// the first, unless it's the end of the body, which isn't read again
+		if eof && len(next) == 0 {
 			break
-		} else if eof {
-			part = part[:n]
+		}
+		n = copy(part, next)
+		next = nil
+		if !eof {
+			var m int
+			if m, eof, err = readPart(ctx, body, part[n:]); err != nil {
+				return err
+			}
+			n += m
+		}
+		if n == 0 {
+			break
 		}
 	}
 
@@ -223,9 +248,13 @@ func (self *upload) uploadError(err error) error {
 
 // readPart reads the body into the part, until it's full, or the body ends,
 // when eof is true. An error reading the body, such as one which ends before
-// it should, is returned, rather than ending it.
-func readPart(body io.Reader, part []byte) (n int, eof bool, err error) {
+// it should, is returned, rather than ending it, and so is the context's,
+// which is checked before each read.
+func readPart(ctx context.Context, body io.Reader, part []byte) (n int, eof bool, err error) {
 	for n < len(part) {
+		if err := ctx.Err(); err != nil {
+			return n, false, err
+		}
 		m, err := body.Read(part[n:])
 		n += m
 		if errors.Is(err, io.EOF) {

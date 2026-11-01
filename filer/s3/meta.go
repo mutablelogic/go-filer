@@ -94,11 +94,12 @@ func s3Metadata(meta []schema.Meta) (map[string]string, error) {
 }
 
 // asciiJSON returns the JSON, with its non-ASCII characters, which are only
-// in its strings, escaped, as \uXXXX, or a surrogate pair
+// in its strings, escaped, as \uXXXX, or a surrogate pair, and DEL, which
+// isn't a character of a header's value
 func asciiJSON(value string) string {
 	var b strings.Builder
 	for _, r := range value {
-		if r < 0x80 {
+		if r < 0x7F {
 			b.WriteRune(r)
 		} else if r > 0xFFFF {
 			r1, r2 := utf16.EncodeRune(r)

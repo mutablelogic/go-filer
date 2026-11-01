@@ -89,18 +89,20 @@ func Test_S3_CreateMultipart(t *testing.T) {
 		return bucket.puts, bucket.createMultiparts, bucket.parts, bucket.completes, bucket.aborts
 	}
 
-	// A file which is smaller than a part is written in one request
-	_, err := create(b, "/small.bin", "012", schema.CreateObjectRequest{})
-	require.NoError(t, err)
+	// A file which is no larger than a part is written in one request
+	for _, content := range []string{"012", "0123"} {
+		_, err := create(b, "/small.bin", content, schema.CreateObjectRequest{})
+		require.NoError(t, err)
+	}
 	puts, creates, parts, completes, _ := counts()
-	assert.Equal(t, []int{1, 0, 0, 0}, []int{puts, creates, parts, completes})
+	assert.Equal(t, []int{2, 0, 0, 0}, []int{puts, creates, parts, completes})
 
 	// A larger one is written in parts, the last of which is smaller, or
 	// isn't empty, when the file is a number of parts
 	for _, test := range []struct {
 		content string
 		parts   int
-	}{{"0123456789", 3}, {"01234567", 2}} {
+	}{{"0123456789", 3}, {"01234567", 2}, {"01234", 2}} {
 		bucket.Lock()
 		bucket.parts = 0
 		bucket.Unlock()
@@ -249,4 +251,71 @@ func Test_S3_CreateAndRead(t *testing.T) {
 		assert.Equal(t, content, string(data))
 		return err
 	}))
+}
+
+// closedReader returns its content, and then io.EOF, and then an error, as
+// a pipe which is closed at its end does
+type closedReader struct {
+	r   io.Reader
+	eof bool
+}
+
+func (r *closedReader) Read(data []byte) (int, error) {
+	if r.eof {
+		return 0, io.ErrClosedPipe
+	}
+	n, err := r.r.Read(data)
+	if errors.Is(err, io.EOF) {
+		r.eof = true
+	}
+	return n, err
+}
+
+func Test_S3_CreateReads(t *testing.T) {
+	defer func(size int) { partSize = size }(partSize)
+	partSize = 4
+	bucket, b := newFakeBucket(t, "")
+
+	// The body isn't read again, once it ends, in one request, or in parts
+	for _, content := range []string{"012", "0123", "0123456789", "01234567"} {
+		_, err := b.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.bin"}, Body: &closedReader{r: strings.NewReader(content)}})
+		require.NoError(t, err, content)
+		bucket.Lock()
+		assert.Equal(t, content, bucket.keys["a.bin"])
+		bucket.Unlock()
+	}
+
+	// A cancelled request doesn't read the body, and one which is cancelled
+	// while it's read stops reading it
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := b.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/b.bin"}, Body: strings.NewReader("0123456789")})
+	assert.ErrorIs(t, err, context.Canceled)
+	ctx, cancel = context.WithCancel(context.Background())
+	_, err = b.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/b.bin"}, Body: &cancellingReader{r: strings.NewReader("0123456789"), cancel: cancel}})
+	assert.ErrorIs(t, err, context.Canceled)
+	bucket.Lock()
+	_, exists := bucket.keys["b.bin"]
+	assert.False(t, exists)
+	bucket.Unlock()
+}
+
+// cancellingReader reads a byte at a time, and cancels after the first
+type cancellingReader struct {
+	r      io.Reader
+	cancel context.CancelFunc
+	reads  int
+}
+
+func (r *cancellingReader) Read(data []byte) (int, error) {
+	if r.reads++; r.reads == 2 {
+		r.cancel()
+	}
+	return r.r.Read(data[:1])
+}
+
+func Test_S3_AsciiJSON(t *testing.T) {
+	// Characters which aren't ASCII, and DEL, are escaped
+	assert.Equal(t, `"a\u007fb\u00e9\ud83d\udcf7"`, asciiJSON("\"a\x7fbé📷\""))
+	assert.Equal(t, `{"a":[1,"b"]}`, asciiJSON(`{"a":[1,"b"]}`))
 }
