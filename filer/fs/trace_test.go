@@ -47,10 +47,10 @@ func Test_Trace(t *testing.T) {
 			attrs[attr.Key] = attr.Value
 		}
 		assert.Equal(t, "test", attrs["filer.volume"].AsString())
-		assert.Equal(t, test.path, attrs["filer.path"].AsString())
+		assert.Equal(t, test.path, attrs["arg.path"].AsString())
 		assert.Equal(t, test.status, spans[i].Status().Code)
 		if i == 0 {
-			assert.True(t, attrs["filer.recursive"].AsBool())
+			assert.True(t, attrs["arg.recursive"].AsBool())
 		}
 	}
 	assert.Contains(t, spans[1].Status().Description, "/missing.txt")
