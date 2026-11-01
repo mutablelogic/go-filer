@@ -59,3 +59,11 @@ Upload files into the directory at `path` in the volume `name`, or its root, whe
 ### DELETE /object/{name}/{path...}
 
 Delete the file at `path` in the volume `name`, or a directory, with `recursive=true`, and every object beneath it, including hidden files, which aren't listed. A package, such as a macOS sparse disk image, is deleted as a file, with the files in it, without `recursive`. The directories which are left empty are removed, as a directory exists while an object is beneath it. Returns the objects deleted, which are files, not directories. Returns 400 if the path is outside the volume, has `%2F`, is hidden, or is the root of the volume, or the query is invalid, 403 if the volume is read-only, 404 if the volume isn't mounted, or the object doesn't exist, or 409 if the object is a directory, and the request isn't recursive.
+
+## Watch Operations
+
+The changes to the objects of the volumes are streamed as they happen, as server-sent events.
+
+### GET /watch
+
+Stream the changes to the objects of every volume, or of the volumes of `name`, which can be repeated, as `text/event-stream`, including the volumes which are created while it's streamed. An event's name is the change, which is `created`, `updated` or `deleted`, of a file or directory, or `rescan`, of a directory whose changes may have been missed, such as when the client fell behind, or the volume was updated, so everything beneath it should be compared with what's known about it. Its data is the object's key, as JSON, such as `{"name":"media","path":"/music/a.mp3"}`. A `ping` event is sent when there are no changes, every ten seconds, so the connection is kept open. When the server is stopping, a `shutdown` event is sent, and the stream ends, within a second, even when the client stopped reading, when the event isn't sent. Returns 400 if the query is invalid, or 406 if the response can't be any of the accepted types.

@@ -23,9 +23,10 @@ var readme []byte
 // with the router
 func RegisterHandlers(registry *filer.Registry, router *httprouter.Router) error {
 	var documentation = openapi.ParseMarkdown(readme)
-	router.Spec().AddTagGroup("Filer", "Volumes", "Objects")
+	router.Spec().AddTagGroup("Filer", "Volumes", "Objects", "Watch")
 	return errors.Join(
 		volumeHandlers(registry, router, documentation),
 		objectHandlers(registry, router, documentation),
+		watchHandlers(registry, router, documentation),
 	)
 }

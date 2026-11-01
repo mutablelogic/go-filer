@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -38,7 +39,17 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 	if err != nil {
 		return err
 	}
+
+	// Close the registry as soon as the server is stopping, which ends the
+	// streams of changes, and interrupts transfers to clients which are slow,
+	// so the server isn't kept waiting for them. Its error is returned, as
+	// it's only returned by the call which closes the volumes.
+	closed := make(chan error, 1)
+	stop := context.AfterFunc(ctx.Context(), func() { closed <- registry.Close() })
 	defer func() {
+		if !stop() {
+			err = errors.Join(err, <-closed)
+		}
 		err = errors.Join(err, registry.Close())
 	}()
 
