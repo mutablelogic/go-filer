@@ -19,9 +19,8 @@ import (
 // TYPES
 
 type FS struct {
-	name     string
-	readonly bool
-	fs       fs.FS
+	name string
+	fs   fs.FS
 	opt
 
 	// done is closed when the filesystem is closed, which requests, and
@@ -79,10 +78,9 @@ func NewFS(name string, fsys fs.FS, opts url.Values) (*FS, error) {
 		self.opt = opt
 	}
 
-	// If the filesystem implements the WriterFS interface, set readonly to false
-	if _, ok := fsys.(filer.WriterFS); ok {
-		self.readonly = false
-	} else {
+	// A filesystem which doesn't implement the WriterFS interface is
+	// read-only, whatever the readonly option is
+	if _, ok := fsys.(filer.WriterFS); !ok {
 		self.readonly = true
 	}
 
@@ -112,12 +110,9 @@ func (self *FS) URL() *url.URL {
 		Host:   self.name,
 	}
 
-	// Set additional parameters, and the options which were set
-	params := self.opt.values()
-	if self.readonly {
-		params.Set("readonly", "true")
-	}
-	url.RawQuery = params.Encode()
+	// Set the options which aren't the defaults, including whether it's
+	// read-only
+	url.RawQuery = self.opt.values().Encode()
 
 	// Return the URL
 	return url

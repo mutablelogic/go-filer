@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -17,6 +18,7 @@ import (
 type opt struct {
 	skip     []*regexp.Regexp // the names of files and directories which aren't listed
 	packages []*regexp.Regexp // the names of directories which are packages
+	readonly bool             // objects can't be created or deleted
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -36,6 +38,12 @@ const (
 	// the default expressions (see defaultPackage). An empty expression is
 	// ignored, so "package=" has no packages.
 	optPackage = "package"
+
+	// optReadonly is whether objects can only be read, and not created or
+	// deleted, even when the filesystem is writable. It's true, false, or
+	// empty, which is true. A filesystem which isn't writable is read-only
+	// whatever it's set to.
+	optReadonly = "readonly"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -49,7 +57,7 @@ func parseOpts(values url.Values) (opt, error) {
 	// Check the options are known
 	for key := range values {
 		switch key {
-		case optSkip, optPackage:
+		case optSkip, optPackage, optReadonly:
 		default:
 			return opt{}, filer.ErrBadParameter.Withf("Unknown option: %q", key)
 		}
@@ -68,6 +76,17 @@ func parseOpts(values url.Values) (opt, error) {
 		self.packages = packages
 	}
 
+	// Set whether objects can only be read
+	if values.Has(optReadonly) {
+		if value := values.Get(optReadonly); value == "" {
+			self.readonly = true
+		} else if readonly, err := strconv.ParseBool(value); err != nil {
+			return opt{}, filer.ErrBadParameter.Withf("Invalid %s option: %q", optReadonly, value)
+		} else {
+			self.readonly = readonly
+		}
+	}
+
 	// Return success
 	return self, nil
 }
@@ -78,6 +97,9 @@ func (self opt) values() url.Values {
 	values := url.Values{}
 	setExprs(values, optSkip, self.skip, defaultSkip)
 	setExprs(values, optPackage, self.packages, defaultPackage)
+	if self.readonly {
+		values.Set(optReadonly, "true")
+	}
 	return values
 }
 
