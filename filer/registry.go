@@ -28,11 +28,11 @@ type Registry struct {
 	opt
 	backend map[string]*entry
 
-	// The subscriptions, by their channels, which Run sends the changes to
-	// the volumes to, which are queued in events, whether Run is running, and
-	// the channel which is closed once it is
-	subscribers map[chan<- schema.Event]*subscriber
-	events      chan schema.Event
+	// The subscriptions, which Run sends the changes to the volumes to, the
+	// channel which tells Run a volume is added or updated, whether Run is
+	// running, and the channel which is closed once it is
+	broadcaster *broadcaster
+	changed     chan struct{}
 	running     atomic.Bool
 	listening   chan struct{}
 
@@ -62,6 +62,10 @@ type entry struct {
 	// it's being added, so it can't be added twice, but can't be used until
 	// then. It's only read or set with the registry locked.
 	ready bool
+
+	// Set when the volume is updated, or opened again, so it's sent a rescan
+	// once Run watches it, as its changes may have been missed
+	rescan bool
 
 	// Set while the backend is being removed, when it can't be used, but is
 	// still registered until it's closed, so its volume can't be added again
@@ -98,8 +102,8 @@ var schemes = []string{schema.SchemeFile, schema.SchemeS3}
 func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	self := &Registry{
 		backend:     make(map[string]*entry),
-		subscribers: make(map[chan<- schema.Event]*subscriber),
-		events:      make(chan schema.Event, eventQueue),
+		broadcaster: newBroadcaster(),
+		changed:     make(chan struct{}, 1),
 		listening:   make(chan struct{}),
 		teardown:    make(map[*entry]struct{}),
 		done:        make(chan struct{}),
@@ -123,9 +127,10 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 func (self *Registry) Close() error {
 	var result error
 
-	// Stop the calls to WatchObjects
+	// Stop Run, and end the subscriptions, and those made later
 	self.closeOnce.Do(func() {
 		close(self.done)
+		self.broadcaster.end(true)
 	})
 
 	// Remove all the backends, and close those which aren't already being
@@ -487,13 +492,9 @@ func (self *Registry) register(e *entry, volume string, b gofiler.Filer, rescan 
 	if self.backend == nil {
 		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), b.Close())
 	}
-	e.Filer, e.ready = b, true
+	e.Filer, e.ready, e.rescan = b, true, rescan
 	e.ctx, e.cancel = context.WithCancel(context.Background())
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
-		self.watch(e, volume, rescan)
-	}()
+	self.changedVolumes()
 	return b, nil
 }
 
