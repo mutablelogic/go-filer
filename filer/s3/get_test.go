@@ -113,3 +113,36 @@ func Test_S3_GetPrefix(t *testing.T) {
 		assert.ErrorIs(t, err, fs.ErrNotExist, path)
 	}
 }
+
+func Test_S3_GetMeta(t *testing.T) {
+	bucket, b := newFakeBucket(t, "", "a.txt", "b.txt", "c/d.txt")
+	bucket.Lock()
+	bucket.meta = map[string]map[string]string{"a.txt": {"rating": "5", "Camera": "X100V", "note": `"quoted"`}}
+	bucket.Unlock()
+
+	// The user's metadata, with lowercase keys, in their order, and values
+	// which are strings
+	object, err := getObject(b, "/a.txt", schema.GetObjectRequest{})
+	require.NoError(t, err)
+	require.Len(t, object.Meta, 3)
+	for i, want := range []struct{ key, value string }{{"camera", `"X100V"`}, {"note", `"\"quoted\""`}, {"rating", `"5"`}} {
+		assert.Empty(t, object.Meta[i].Namespace)
+		assert.Equal(t, want.key, object.Meta[i].Key)
+		assert.JSONEq(t, want.value, string(object.Meta[i].Value))
+	}
+
+	// An object without metadata, a directory, and a listing, have none
+	object, err = getObject(b, "/b.txt", schema.GetObjectRequest{})
+	require.NoError(t, err)
+	assert.Nil(t, object.Meta)
+	object, err = getObject(b, "/c", schema.GetObjectRequest{})
+	require.NoError(t, err)
+	assert.Nil(t, object.Meta)
+	iter, err := b.ListObjects(context.Background(), schema.ListObjectsRequest{})
+	require.NoError(t, err)
+	defer iter.Close()
+	object, err = iter.Next(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/a.txt", object.Path)
+	assert.Nil(t, object.Meta)
+}
