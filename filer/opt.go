@@ -3,6 +3,7 @@ package filer
 import (
 	// Packages
 	client "github.com/mutablelogic/go-client"
+	gofiler "github.com/mutablelogic/go-filer"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
 )
@@ -14,9 +15,10 @@ import (
 type Opt func(*opt) error
 
 type opt struct {
-	tracer     trace.Tracer
-	meter      metric.Meter
-	clientopts []client.ClientOpt
+	tracer      trace.Tracer
+	meter       metric.Meter
+	clientopts  []client.ClientOpt
+	credentials gofiler.CredentialProvider
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -59,6 +61,16 @@ func WithMeter(meter metric.Meter) Opt {
 	}
 }
 
+// WithCredentials sets the provider of the credentials of the backends,
+// which expands the placeholders of the credentials in their URLs, such as
+// ${S3_SECRET}, so the URLs don't have the credentials
+func WithCredentials(credentials gofiler.CredentialProvider) Opt {
+	return func(o *opt) error {
+		o.credentials = credentials
+		return nil
+	}
+}
+
 // WithClientOpts sets the client options of the backends which call other
 // services over HTTP
 func WithClientOpts(clientopts ...client.ClientOpt) Opt {
@@ -66,4 +78,13 @@ func WithClientOpts(clientopts ...client.ClientOpt) Opt {
 		o.clientopts = clientopts
 		return nil
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// backendOpts returns the options of a backend, which are the registry's
+// tracer, and the provider of credentials
+func (o *opt) backendOpts() gofiler.Opts {
+	return gofiler.Opts{Tracer: o.tracer, Credentials: o.credentials}
 }

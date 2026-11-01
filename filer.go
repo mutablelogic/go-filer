@@ -28,6 +28,15 @@ type Filer interface {
 	// parameters carry useful non-credential details: region, endpoint, anonymous, readonly, etc.
 	URL() *url.URL
 
+	// Clone returns a new filer of the same storage, with the options of the
+	// filer, changed by the patch (see PatchValues), which is nil to keep
+	// them, from what the filer has, rather than its URL, which doesn't have
+	// its credentials. The filer isn't changed, and the clone is checked as a
+	// new filer is, such as a bucket being accessible. The registry clones a
+	// volume's filer to change its options, and to open it again when
+	// watching it fails.
+	Clone(context.Context, url.Values) (Filer, error)
+
 	// Create object in the filer
 	CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error)
 
@@ -52,4 +61,25 @@ type Filer interface {
 	// context is cancelled. The channel isn't closed. It will return
 	// filer.ErrNotImplemented if the filer backend does not support watching objects.
 	WatchObjects(context.Context, chan<- schema.Event) error
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC FUNCTIONS
+
+// PatchValues returns a copy of the options, changed by the patch: each key
+// of the patch replaces the option's values with its own, or, when it has
+// none, removes the option, so it's the default
+func PatchValues(values, patch url.Values) url.Values {
+	result := make(url.Values, len(values)+len(patch))
+	for key, value := range values {
+		result[key] = append([]string(nil), value...)
+	}
+	for key, value := range patch {
+		if len(value) == 0 {
+			delete(result, key)
+		} else {
+			result[key] = append([]string(nil), value...)
+		}
+	}
+	return result
 }

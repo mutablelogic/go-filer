@@ -40,6 +40,12 @@ func (self *Registry) URL() *url.URL {
 	return &url.URL{Scheme: "filer"}
 }
 
+// Clone returns ErrNotImplemented, as a registry can't be cloned: its
+// volumes are cloned to change their options, with Update
+func (self *Registry) Clone(context.Context, url.Values) (gofiler.Filer, error) {
+	return nil, gofiler.ErrNotImplemented.With("a registry can't be cloned")
+}
+
 // CreateObject creates an object in the volume named by the request
 func (self *Registry) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	var obj *schema.Object

@@ -282,13 +282,13 @@ func (self *Registry) Add(ctx context.Context, volume string, url *url.URL) (gof
 // Update changes the options of a volume, which are the query of the
 // URL of its backend, and returns it. Each key of the patch replaces the
 // option's values with its own, or, when it has none, removes the option, so
-// it's the default. The URL with the options is checked first, by creating a
-// backend from it, which is closed, so a volume isn't changed when they're
-// invalid. Then the volume's backend is closed, as Del closes it, waiting for
-// the calls to With which are using it, and the volume is added again, with
-// the options. Its name is kept while it's closed, so it isn't added by
-// another call. When the volume can't be added with the options, it's added
-// again as it was. Returns ErrNotFound when the volume isn't registered, or
+// it's the default (see gofiler.PatchValues). The backend is cloned with the
+// options first, which checks them, so a volume isn't changed when they're
+// invalid, or would rename it. Then the volume's backend is closed, as Del
+// closes it, waiting for the calls to With which are using it, and the clone
+// is registered in its place. Its name is kept while it's closed, so it isn't
+// added by another call. Returns ErrNotImplemented when the backend can't be
+// cloned, such as a filesystem which isn't a directory, ErrNotFound when the volume isn't registered, or
 // is being added or removed, and ErrConflict when it's called from a
 // function passed to With which is using the volume, which it would wait for.
 func (self *Registry) Update(ctx context.Context, volume string, patch url.Values) (*schema.Volume, error) {
@@ -304,34 +304,21 @@ func (self *Registry) Update(ctx context.Context, volume string, patch url.Value
 }
 
 // update changes the options of the volume, whose backend is the entry's,
-// with the patch, as Update does. Returns ErrNotFound when the volume's
-// backend isn't the entry's, as it's been removed, or changed. Once it's
-// opened again, it's watched again, with a rescan, as changes are missed
-// while it's closed, and the options can change which objects it has.
+// with the patch, as Update does, or opens it again, with a nil patch, when
+// watching it fails. Returns ErrNotFound when the volume's backend isn't the
+// entry's, as it's been removed, or changed. Once the clone is registered,
+// it's watched, with a rescan, as changes are missed while the backend is
+// closed, and the options can change which objects it has.
 func (self *Registry) update(ctx context.Context, e *entry, volume string, patch url.Values) (*schema.Volume, error) {
-	// The URL with the options, which is checked
-	old := e.URL()
-	u := *old
-	query, err := url.ParseQuery(u.RawQuery)
+	// Clone the backend with the options, which checks them, while it's still
+	// used, so it isn't changed when they're invalid, or would rename it
+	clone, err := e.Clone(ctx, patch)
 	if err != nil {
-		return nil, gofiler.ErrBadParameter.Withf("invalid options of volume %q: %v", volume, err)
-	}
-	for key, values := range patch {
-		if len(values) == 0 {
-			query.Del(key)
-		} else {
-			query[key] = values
-		}
-	}
-	u.RawQuery = query.Encode()
-	if v, err := self.Validate(ctx, &u); err != nil {
 		return nil, err
-	} else if name := VolumeName(v); name != volume {
-		// The options can't rename the volume, which is checked before it's
-		// closed, so it isn't interrupted
-		return nil, gofiler.ErrBadParameter.Withf("url %q is not for volume %q", v.Redacted(), volume)
+	} else if name := VolumeName(clone.URL()); name != volume {
+		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", clone.URL(), volume), clone.Close())
 	} else if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, errors.Join(err, clone.Close())
 	}
 
 	// Close the backend, keeping its name, unless it's changed meanwhile
@@ -339,24 +326,21 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 	self.Lock()
 	if self.backend == nil {
 		self.Unlock()
-		return nil, gofiler.ErrServiceUnavailable.With("registry is closed")
+		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), clone.Close())
 	} else if current, exists := self.backend[volume]; !exists || current != e || e.closing {
 		self.Unlock()
-		return nil, gofiler.ErrNotFound.Withf("volume %q is not mounted", volume)
+		return nil, errors.Join(gofiler.ErrNotFound.Withf("volume %q is not mounted", volume), clone.Close())
 	}
 	self.startClose(e, volume)
 	self.backend[volume] = pending
 	self.Unlock()
 	<-e.closed
 
-	// Add it again with the options, or as it was when it can't be, which
-	// isn't cancelled, so the volume isn't lost
-	b, err := self.open(ctx, pending, volume, &u, true)
+	// Register the clone in its place, which only fails when the registry is
+	// closed in the meantime
+	b, err := self.register(pending, volume, clone, true)
 	if err != nil {
-		if _, err2 := self.open(context.WithoutCancel(ctx), pending, volume, old, true); err2 != nil {
-			self.unreserve(pending, volume)
-			return nil, errors.Join(err, err2)
-		}
+		self.unreserve(pending, volume)
 		return nil, err
 	}
 
@@ -456,13 +440,13 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 		if path == "" || !filepath.IsAbs(filepath.FromSlash(path)) {
 			return nil, gofiler.ErrBadParameter.Withf("path of volume %q isn't absolute: %q", u.Host, path)
 		}
-		if b, err := fs.New(u.Host, path, query); err != nil {
+		if b, err := fs.New(u.Host, path, query, self.backendOpts()); err != nil {
 			return nil, err
 		} else {
 			return b, nil
 		}
 	case schema.SchemeS3:
-		if b, err := s3.New(ctx, u); err != nil {
+		if b, err := s3.New(ctx, u, self.backendOpts()); err != nil {
 			return nil, err
 		} else {
 			return b, nil
@@ -479,23 +463,22 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 // when the registry was closed meanwhile.
 func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.URL, rescan bool) (gofiler.Filer, error) {
 	b, err := self.new(ctx, u)
-	if err == nil {
-		if name := VolumeName(b.URL()); name != volume {
-			err = errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", u, volume), b.Close())
-		}
+	if err != nil {
+		return nil, err
+	} else if name := VolumeName(b.URL()); name != volume {
+		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", b.URL(), volume), b.Close())
 	}
+	return self.register(e, volume, b, rescan)
+}
 
-	// Register the backend, unless it couldn't be created, or the registry
-	// was closed in the meantime, and watch it until it's removed
+// register registers the backend with the entry of the volume, unless the
+// registry was closed in the meantime, when it's closed, and watches it until
+// it's removed, with a rescan first, when rescan is set
+func (self *Registry) register(e *entry, volume string, b gofiler.Filer, rescan bool) (gofiler.Filer, error) {
 	self.Lock()
 	defer self.Unlock()
 	if self.backend == nil {
-		if err == nil {
-			err = errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), b.Close())
-		}
-		return nil, err
-	} else if err != nil {
-		return nil, err
+		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), b.Close())
 	}
 	e.Filer, e.ready = b, true
 	e.ctx, e.cancel = context.WithCancel(context.Background())

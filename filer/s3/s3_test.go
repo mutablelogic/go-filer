@@ -35,6 +35,8 @@ func Test_S3_Parse(t *testing.T) {
 		{"s3://my-bucket/?name=photos&endpoint=http://localhost:9000", "s3://my-bucket/?endpoint=http%3A%2F%2Flocalhost%3A9000&name=photos", false},
 		{"s3://my-bucket/?name=photos&readonly", "s3://my-bucket/?name=photos&readonly=true", true},
 		{"s3://my-bucket/?profile=work", "s3://my-bucket/?profile=work", false},
+		{"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}", "s3://my-bucket/?access-key-id=AKID&secret-access-key=%24%7BSECRET%7D", false},
+		{"s3://my-bucket/?access-key-id=${ID}&secret-access-key=$SECRET&session-token=${TOKEN}", "s3://my-bucket/?access-key-id=%24%7BID%7D&secret-access-key=%24SECRET&session-token=%24%7BTOKEN%7D", false},
 		{"s3://my-bucket/?name=photos&readonly=false", "s3://my-bucket/?name=photos", false},
 		{"s3://my-bucket/?name=photos&anonymous=true", "s3://my-bucket/?anonymous=true&name=photos", true},
 	} {
@@ -42,14 +44,18 @@ func Test_S3_Parse(t *testing.T) {
 		require.NoError(t, err)
 		b, err := parse(u)
 		require.NoError(t, err, test.url)
-		assert.Equal(t, test.want, b.URL().String(), test.url)
+		assert.Equal(t, test.want, b.url(true).String(), test.url)
 		assert.Equal(t, test.readonly, b.Readonly(), test.url)
 		assert.NoError(t, b.Close())
 
-		// The URL creates the same filer again
-		again, err := parse(b.URL())
+		// The URL with the credentials creates the same filer again, and the
+		// URL doesn't have them
+		again, err := parse(b.url(true))
 		require.NoError(t, err, test.url)
-		assert.Equal(t, b.URL(), again.URL(), test.url)
+		assert.Equal(t, b.url(true), again.url(true), test.url)
+		for _, key := range []string{"access-key-id", "secret-access-key", "session-token"} {
+			assert.False(t, b.URL().Query().Has(key), test.url)
+		}
 	}
 }
 
@@ -83,6 +89,11 @@ func Test_S3_ParseInvalid(t *testing.T) {
 		"s3://my-bucket/?name=photos&endpoint=localhost:9000",
 		"s3://my-bucket/?name=photos&endpoint=ftp://localhost",
 		"s3://my-bucket/?name=photos&skip=x",
+		"s3://my-bucket/?access-key-id=AKID",
+		"s3://my-bucket/?secret-access-key=${SECRET}",
+		"s3://my-bucket/?session-token=${TOKEN}",
+		"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}&profile=work",
+		"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}&anonymous",
 		"s3://my-bucket/?name=photos&x=%ZZ",
 		"file://my-bucket/?name=photos",
 	} {

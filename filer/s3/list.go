@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"mime"
@@ -16,6 +17,7 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -35,6 +37,8 @@ type listIterator struct {
 	last    string                     // the key of the last object returned, or where it starts
 	pending []*schema.Object           // the objects of the page which aren't returned yet
 	closed  bool
+	span    trace.Span  // the span of the listing, which the requests for pages are within
+	end     func(error) // ends the span, once there are no more objects, or an error, or it's closed
 }
 
 // listEntry is a key of a page, which is an object, or a common prefix
@@ -59,9 +63,17 @@ var listPageSize int32 = 1000
 // descended into when it's recursive, in the order of their keys. The
 // objects which sort before or at StartAfter aren't returned. A directory
 // which doesn't exist is fs.ErrNotExist, except the root, which is empty.
-func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (_ schema.ListObjectsIterator, err error) {
+	// The span lasts as long as the iterator, unless it can't be returned
+	ctx, end := self.span(ctx, "ListObjects", req)
+	defer func() {
+		if err != nil {
+			end(err)
+		}
+	}()
+
 	rel := strings.Trim(path.Clean("/"+req.Path), "/")
-	iter := &listIterator{S3: self, dir: self.prefix, last: self.key(req.StartAfter)}
+	iter := &listIterator{S3: self, dir: self.prefix, last: self.key(req.StartAfter), span: trace.SpanFromContext(ctx), end: end}
 	if rel != "" {
 		iter.dir = self.prefix + rel + "/"
 	}
@@ -111,11 +123,27 @@ func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) 
 	return iter, nil
 }
 
-// Next returns the next object, or io.EOF when there are no more objects
+// Next returns the next object, or io.EOF when there are no more objects.
+// The requests for pages are within the listing's span, which ends once
+// there are no more objects, or there's an error.
 func (self *listIterator) Next(ctx context.Context) (*schema.Object, error) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
+	if self.Tracer != nil {
+		ctx = trace.ContextWithSpan(ctx, self.span)
+	}
+	object, err := self.next(ctx)
+	if errors.Is(err, io.EOF) {
+		self.finish(nil)
+	} else if err != nil && !errors.Is(err, fs.ErrClosed) {
+		self.finish(err)
+	}
+	return object, err
+}
+
+// next returns the next object, or io.EOF, which must be locked
+func (self *listIterator) next(ctx context.Context) (*schema.Object, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -143,7 +171,16 @@ func (self *listIterator) Close() error {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	self.pages, self.pending, self.closed = nil, nil, true
+	self.finish(nil)
 	return nil
+}
+
+// finish ends the listing's span, with the error, once, which must be locked
+func (self *listIterator) finish(err error) {
+	if self.end != nil {
+		self.end(err)
+		self.end = nil
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////

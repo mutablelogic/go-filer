@@ -25,7 +25,7 @@ func watchVolume(t *testing.T) (string, chan schema.Event) {
 		t.Skip(fsevents.ErrNotSupported)
 	}
 	dir := t.TempDir()
-	backend, err := New("test", dir, nil)
+	backend, err := New("test", dir, nil, filer.Opts{})
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
@@ -151,7 +151,7 @@ func Test_WatchObjects(t *testing.T) {
 
 	t.Run("NotDirectory", func(t *testing.T) {
 		// A filesystem which isn't a directory can't be watched
-		backend, err := NewFS("test", fstest.MapFS{}, nil)
+		backend, err := NewFS("test", fstest.MapFS{}, nil, filer.Opts{})
 		require.NoError(t, err)
 		assert.ErrorIs(t, backend.WatchObjects(context.Background(), make(chan schema.Event)), filer.ErrNotImplemented)
 	})
@@ -161,7 +161,7 @@ func Test_WatchObjectsClosed(t *testing.T) {
 	if !fsevents.Supported() {
 		t.Skip(fsevents.ErrNotSupported)
 	}
-	self, err := New("test", t.TempDir(), nil)
+	self, err := New("test", t.TempDir(), nil, filer.Opts{})
 	require.NoError(t, err)
 
 	// Closing the filesystem stops watching, with fs.ErrClosed

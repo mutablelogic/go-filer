@@ -20,11 +20,14 @@ Create a volume with a `name`, which is an identifier, and the `url` of its back
 | `s3` | `name` | The volume's name, which is an identifier | The bucket's name |
 | `s3` | `region` | The bucket's region, such as `eu-west-1`, which it must be in, and which is in the volume's `url` | The bucket's region |
 | `s3` | `profile` | The profile of the credentials and configuration, in `~/.aws/config` and `~/.aws/credentials` | `AWS_PROFILE`, or `default` |
+| `s3` | `access-key-id` | The access key ID, or a placeholder of it, such as `${S3_KEY}`, which the server's provider of credentials expands | The `profile`'s, or the default |
+| `s3` | `secret-access-key` | The secret access key, or a placeholder of it | |
+| `s3` | `session-token` | The session token, or a placeholder of it, with the access key ID and secret access key | |
 | `s3` | `endpoint` | The `http` or `https` URL of a service which is compatible with S3, such as `http://localhost:9000` for MinIO | AWS |
 | `s3` | `anonymous` | `true` or `false`, so requests aren't signed, without credentials, which is read-only | `false` |
 | `s3` | `readonly` | `true` or `false`, so objects can only be read | `false` |
 
-A bucket is checked when its volume is created, with its credentials, which are those of the `profile`, or the default ones, such as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the server's environment, a role, or none, when it's `anonymous`. When the bucket is in another region, and `region` isn't set, it's the bucket's region. The volume's `url` has the region, so it isn't redirected again.
+A bucket is checked when its volume is created, with its credentials, which are those of the options, whose placeholders the server's provider of credentials expands, and which can't be used with `profile` or `anonymous`. A credential which isn't a placeholder is stored by the provider, once the bucket is checked with it, by a key of the volume's name and the option, with a random suffix, such as `S3_PHOTOS_SECRET_ACCESS_KEY_3F9A…`, so it doesn't replace another credential, and the volume uses its placeholder, so its `url` never has the credentials. A credential which starts with `$` is given with `$$`, such as `$$word` for `$word`, as otherwise it's a placeholder. A placeholder can be of any credential of the server, such as a variable of its environment, which is sent to the volume's `endpoint`, so creating a volume is only for trusted users. Otherwise its credentials are those of the `profile`, or the default ones, such as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the server's environment, a role, or none, when it's `anonymous`. When the bucket is in another region, and `region` isn't set, it's the bucket's region. The volume's `url` has the region, so it isn't redirected again.
 
 Returns 400 if the name or URL is invalid, or an option is unknown or invalid, or the bucket isn't in its `region`, 403 if the bucket can't be accessed, with the credentials, or there are none, 404 if the bucket doesn't exist, or 409 if a volume with the name exists, or is being added.
 
@@ -34,7 +37,7 @@ Get the volume `name`, with the `url` of its backend, which includes the options
 
 ### PATCH /volume/{name}
 
-Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept.
+Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept. The volume's backend is cloned with the options, which are checked, so the volume isn't changed when they're invalid, and its credentials, which its `url` doesn't have, are kept.
 
 ### DELETE /volume/{name}
 

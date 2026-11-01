@@ -21,6 +21,7 @@ import (
 // S3 is a filer of the objects in a bucket, beneath a prefix
 type S3 struct {
 	opt
+	gofiler.Opts
 	bucket string     // the bucket
 	prefix string     // the prefix of the objects' keys, which is empty, or ends with "/"
 	client *s3.Client // the client of the bucket, in its region
@@ -49,16 +50,29 @@ var (
 // New returns a filer of the objects in the bucket of the URL, which is
 // s3://<bucket>/<prefix>, beneath the prefix, with the options of its query
 // (see opt.go). The volume's name is the bucket's, or the name option. The
-// bucket is checked, with the credentials, which are the profile's, or the
+// bucket is checked, with the credentials, which are the options', whose
+// placeholders the provider of credentials expands, or the profile's, or the
 // default ones, such as from the environment, or none, when it's anonymous,
 // which is ErrForbidden when they're missing, or can't access it, and
 // ErrNotFound when it doesn't exist. When the bucket is in another region,
-// and the region isn't set, it's the bucket's.
-func New(ctx context.Context, u *url.URL) (*S3, error) {
+// and the region isn't set, it's the bucket's. The requests are traced
+// with the tracer, when it's set.
+func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
 	self, err := parse(u)
 	if err != nil {
 		return nil, err
-	} else if err := self.connect(ctx); err != nil {
+	} else {
+		self.Opts = opts
+	}
+
+	// Credentials which aren't placeholders are stored, so there must be a
+	// provider of credentials, which stores them once the bucket is checked
+	if self.Credentials == nil && ((self.keyID != "" && !isPlaceholder(self.keyID)) || (self.secret != "" && !isPlaceholder(self.secret)) || (self.token != "" && !isPlaceholder(self.token))) {
+		return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be stored, without a provider of credentials", self.bucket)
+	}
+	if err := self.connect(ctx); err != nil {
+		return nil, err
+	} else if err := self.storeCredentials(ctx); err != nil {
 		return nil, err
 	}
 	return self, nil
@@ -101,10 +115,23 @@ func (self *S3) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-// URL returns the URL of the bucket, which the filer can be created again
-// from, with the options which are set as its query
+// URL returns the URL of the bucket, with the options which are set as its
+// query, but not its credentials, so it can be returned to clients
 func (self *S3) URL() *url.URL {
-	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(self.bucket).Encode()}
+	return self.url(false)
+}
+
+// Clone returns a new filer of the bucket, with the options, including the
+// placeholders of the credentials, changed by the patch, which is checked as
+// New does, and stores credentials of the patch which aren't placeholders
+func (self *S3) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
+	u := self.url(true)
+	u.RawQuery = gofiler.PatchValues(u.Query(), patch).Encode()
+	if clone, err := New(ctx, u, self.Opts); err != nil {
+		return nil, err
+	} else {
+		return clone, nil
+	}
 }
 
 // Readonly returns true when objects can't be created or deleted, which is
@@ -166,4 +193,9 @@ func isBucketName(name string) bool {
 		}
 	}
 	return true
+}
+
+// url returns the URL of the bucket, with or without its credentials
+func (self *S3) url(credentials bool) *url.URL {
+	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(self.bucket, credentials).Encode()}
 }
