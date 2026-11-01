@@ -23,6 +23,14 @@ type reader struct {
 	r   io.Reader
 }
 
+// seekReader is a reader of a file which can seek, such as a file on disk,
+// so its content can be read in ranges, which also returns an error once the
+// context is cancelled, or the filesystem is closed, before each seek
+type seekReader struct {
+	reader
+	s io.Seeker
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
@@ -68,6 +76,8 @@ func (self *FS) ReadObject(ctx context.Context, req schema.GetObjectRequest) (fi
 // read opens the named file, checks it's the file which was returned, calls
 // the function with a reader of it, and closes it
 func (self *FS) read(ctx context.Context, name string, want fs.FileInfo, fn func(io.Reader) error) (err error) {
+	defer func() { err = objectError("read", name, err) }()
+
 	if err := self.checkRequest(ctx); err != nil {
 		return err
 	}
@@ -91,13 +101,23 @@ func (self *FS) read(ctx context.Context, name string, want fs.FileInfo, fn func
 	}
 
 	// Read the file within the function
-	return fn(&reader{ctx: ctx, fs: self, r: f})
+	return fn(newReader(ctx, self, f))
 }
 
 // Read returns an error once the context is cancelled, or the filesystem is
 // closed, rather than reading. The end of the content is checked too, as a
 // read which returns the last of it, with io.EOF, isn't followed by another,
 // so the error is returned with the data, in place of io.EOF.
+// newReader returns a reader of the file, which can seek when the file can,
+// so the function reading it can check if it's an io.ReadSeeker
+func newReader(ctx context.Context, fs *FS, f io.Reader) io.Reader {
+	r := reader{ctx: ctx, fs: fs, r: f}
+	if s, ok := f.(io.Seeker); ok {
+		return &seekReader{reader: r, s: s}
+	}
+	return &r
+}
+
 func (r *reader) Read(data []byte) (int, error) {
 	if err := r.fs.checkRequest(r.ctx); err != nil {
 		return 0, err
@@ -109,4 +129,13 @@ func (r *reader) Read(data []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// Seek returns an error once the context is cancelled, or the filesystem is
+// closed, rather than seeking
+func (r *seekReader) Seek(offset int64, whence int) (int64, error) {
+	if err := r.fs.checkRequest(r.ctx); err != nil {
+		return 0, err
+	}
+	return r.s.Seek(offset, whence)
 }

@@ -224,6 +224,22 @@ func Test_WriterFS_Create(t *testing.T) {
 		assert.ErrorIs(t, err, fs.ErrNotExist)
 	})
 
+	t.Run("FailedCreateKeepsDirectories", func(t *testing.T) {
+		// A directory which existed isn't removed when a file isn't created
+		// in it, even when it's empty, but those which were created are
+		require.NoError(t, os.Mkdir(filepath.Join(dir, "existing"), 0o755))
+		bodyErr := errors.New("body failed")
+		_, err := wfs.Create("existing/file.txt", iotest.ErrReader(bodyErr), filer.CreateOrReplace, time.Time{})
+		assert.ErrorIs(t, err, bodyErr)
+		_, err = wfs.Create("existing/new/deeper/file.txt", iotest.ErrReader(bodyErr), filer.CreateOrReplace, time.Time{})
+		assert.ErrorIs(t, err, bodyErr)
+		_, err = os.Stat(filepath.Join(dir, "existing", "new"))
+		assert.ErrorIs(t, err, fs.ErrNotExist)
+		info, err := os.Stat(filepath.Join(dir, "existing"))
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+	})
+
 	t.Run("Exclusive", func(t *testing.T) {
 		_, err := wfs.Create("exclusive.txt", strings.NewReader("first"), filer.CreateOnly, time.Time{})
 		require.NoError(t, err)

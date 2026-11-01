@@ -141,11 +141,13 @@ func (self *writerfs) Create(path string, body io.Reader, mode filer.CreateMode,
 		return nil, &fs.PathError{Op: "create", Path: path, Err: fs.ErrInvalid}
 	}
 
-	// Create intermediate directories
+	// Create intermediate directories, which are removed when the file
+	// isn't created, but not those which existed, even when they're empty
 	name := filepath.FromSlash(path)
+	created := self.missingDirs(filepath.Dir(name))
 	if dir := filepath.Dir(name); dir != "." {
 		if err := self.root.MkdirAll(dir, 0o755); err != nil {
-			self.removeEmptyParents(name)
+			self.removeDirs(created)
 			return nil, err
 		}
 	}
@@ -161,7 +163,7 @@ func (self *writerfs) Create(path string, body io.Reader, mode filer.CreateMode,
 	}
 	if err != nil {
 		self.root.Remove(tmp)
-		self.removeEmptyParents(name)
+		self.removeDirs(created)
 		return nil, err
 	}
 
@@ -296,6 +298,31 @@ func isWritablePath(path string) bool {
 		}
 	}
 	return true
+}
+
+// missingDirs returns the directories of the path, from the deepest, which
+// don't exist, so they're created, and can be removed when the file in them
+// isn't
+func (self *writerfs) missingDirs(dir string) []string {
+	var missing []string
+	for ; dir != "."; dir = filepath.Dir(dir) {
+		if _, err := self.root.Lstat(dir); err == nil {
+			break
+		}
+		missing = append(missing, dir)
+	}
+	return missing
+}
+
+// removeDirs removes the directories, from the deepest, which were created,
+// while they're empty, and stops at one which isn't, as another file was
+// created in it in the meantime. Errors are ignored, as it's a tidy up.
+func (self *writerfs) removeDirs(dirs []string) {
+	for _, dir := range dirs {
+		if err := self.root.Remove(dir); err != nil {
+			return
+		}
+	}
 }
 
 // removeEmptyParents removes the parent directories of the named file,

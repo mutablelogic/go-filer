@@ -1,17 +1,22 @@
 package httpclient_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
@@ -211,4 +216,210 @@ func TestUpdateVolume(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, status(err), err)
 	_, err = client.UpdateVolume(ctx, "missing", schema.VolumePatch{"readonly": json.RawMessage(`true`)})
 	assert.Equal(t, http.StatusNotFound, status(err), err)
+}
+
+func TestHeadObject(t *testing.T) {
+	client, tempDir := newClient(t)
+	ctx := context.Background()
+	dir := tempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "music"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "music", "a b.mp3"), []byte("abc"), 0o644))
+	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
+	require.NoError(t, err)
+
+	// A file, with a name which is escaped, a directory, and the root
+	object, err := client.HeadObject(ctx, "media", "/music/a b.mp3")
+	require.NoError(t, err)
+	assert.Equal(t, schema.ObjectKey{Name: "media", Path: "/music/a b.mp3"}, object.ObjectKey)
+	assert.Equal(t, int64(3), *object.Size)
+	assert.Equal(t, "audio/mpeg", object.ContentType)
+	for _, path := range []string{"music", "/music/", "", "/"} {
+		object, err := client.HeadObject(ctx, "media", path)
+		require.NoError(t, err, path)
+		assert.True(t, object.IsDir, path)
+	}
+
+	// Errors are returned with their status, and a path outside the volume
+	// isn't requested
+	_, err = client.HeadObject(ctx, "media", "/missing.txt")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
+	assert.EqualError(t, err, "not found: media/missing.txt")
+	_, err = client.HeadObject(ctx, "media", "../etc")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+}
+
+// statusCode returns the HTTP status of an error of a response, which has no
+// body, such as a HEAD's, or 0
+func statusCode(err error) int {
+	var code httpresponse.Err
+	if errors.As(err, &code) {
+		return int(code)
+	}
+	return status(err)
+}
+
+func TestGetObject(t *testing.T) {
+	client, tempDir := newClient(t)
+	ctx := context.Background()
+	dir := tempDir()
+	modtime := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "music"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "music", "a b.mp3"), []byte("abc"), 0o644))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "music", "a b.mp3"), modtime, modtime))
+	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
+	require.NoError(t, err)
+	key := func(path string) schema.GetObjectRequest {
+		return schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: path}}
+	}
+
+	// The content is written, and the metadata returned
+	var buf bytes.Buffer
+	object, err := client.GetObject(ctx, key("/music/a b.mp3"), &buf)
+	require.NoError(t, err)
+	assert.Equal(t, "abc", buf.String())
+	assert.Equal(t, "/music/a b.mp3", object.Path)
+	assert.True(t, modtime.Equal(object.ModTime))
+
+	// A file which isn't modified isn't written
+	buf.Reset()
+	req := key("/music/a b.mp3")
+	req.IfModifiedSince = modtime
+	_, err = client.GetObject(ctx, req, &buf)
+	assert.ErrorIs(t, err, gofiler.ErrNotModified)
+	assert.Empty(t, buf.String())
+
+	// A directory can't be got, nor a file which doesn't exist
+	for _, path := range []string{"/music", "/"} {
+		_, err := client.GetObject(ctx, key(path), &buf)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, path)
+	}
+	_, err = client.GetObject(ctx, key("/missing.txt"), &buf)
+	assert.Equal(t, http.StatusNotFound, status(err), err)
+}
+
+func TestDeleteObjects(t *testing.T) {
+	client, tempDir := newClient(t)
+	ctx := context.Background()
+	dir := tempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "music", "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "music", "a b.mp3"), []byte("abc"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "music", "sub", "c.txt"), []byte("c"), 0o644))
+	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
+	require.NoError(t, err)
+	req := func(path string, recursive bool) schema.DeleteObjectsRequest {
+		return schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: path}, Recursive: recursive}
+	}
+
+	// A file, with a name which is escaped, and a directory, when it's
+	// recursive
+	deleted, err := client.DeleteObjects(ctx, req("/music/a b.mp3", false))
+	require.NoError(t, err)
+	require.Len(t, deleted.Body, 1)
+	assert.Equal(t, schema.ObjectKey{Name: "media", Path: "/music/a b.mp3"}, deleted.Body[0].ObjectKey)
+	_, err = client.DeleteObjects(ctx, req("/music", false))
+	assert.Equal(t, http.StatusConflict, status(err), err)
+	deleted, err = client.DeleteObjects(ctx, req("/music", true))
+	require.NoError(t, err)
+	require.Len(t, deleted.Body, 1)
+	assert.Equal(t, "/music/sub/c.txt", deleted.Body[0].Path)
+
+	// The root, and a path outside the volume, aren't requested
+	for _, path := range []string{"", "/", "../etc"} {
+		_, err := client.DeleteObjects(ctx, req(path, true))
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, path)
+	}
+	_, err = client.DeleteObjects(ctx, req("/missing.txt", false))
+	assert.Equal(t, http.StatusNotFound, status(err), err)
+}
+
+func TestPutObject(t *testing.T) {
+	client, tempDir := newClient(t)
+	ctx := context.Background()
+	dir := tempDir()
+	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
+	require.NoError(t, err)
+	modtime := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	req := func(path, body string) schema.CreateObjectRequest {
+		return schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: path}, Body: strings.NewReader(body)}
+	}
+
+	// A file is created, with its modification time, and replaced
+	r := req("/music/a b.mp3", "abc")
+	r.ModTime = modtime
+	object, err := client.PutObject(ctx, r)
+	require.NoError(t, err)
+	assert.Equal(t, schema.ObjectKey{Name: "media", Path: "/music/a b.mp3"}, object.ObjectKey)
+	assert.True(t, modtime.Equal(object.ModTime))
+	_, err = client.PutObject(ctx, req("/music/a b.mp3", "new"))
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(dir, "music", "a b.mp3"))
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(data))
+
+	// A nil body is an empty file
+	object, err = client.PutObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: "/empty.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), *object.Size)
+
+	// Conditions which fail are gofiler.ErrPreconditionFailed
+	r = req("/music/a b.mp3", "x")
+	r.IfNotExists = true
+	_, err = client.PutObject(ctx, r)
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+	r = req("/missing.txt", "x")
+	r.IfExists = true
+	_, err = client.PutObject(ctx, r)
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+
+	// The root, and a path outside the volume, aren't requested
+	for _, path := range []string{"", "/", "../etc"} {
+		_, err := client.PutObject(ctx, req(path, "x"))
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, path)
+	}
+	_, err = client.PutObject(ctx, req("/music", "x"))
+	assert.Equal(t, http.StatusConflict, status(err), err)
+}
+
+func TestUploadObjects(t *testing.T) {
+	client, tempDir := newClient(t)
+	ctx := context.Background()
+	dir := tempDir()
+	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
+	require.NoError(t, err)
+	file := func(path, content string) httpclient.UploadFile {
+		return httpclient.UploadFile{Path: path, Open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(content)), nil }}
+	}
+
+	// Files are uploaded into the directory, with their directories, and
+	// those which exist are skipped, unless they're overwritten
+	resp, err := client.UploadObjects(ctx, "media", "/music", []httpclient.UploadFile{file("a.mp3", "a"), file("album/b.mp3", "b")}, false)
+	require.NoError(t, err)
+	require.Len(t, resp.Body, 2)
+	assert.Equal(t, "/music/album/b.mp3", resp.Body[1].Path)
+	resp, err = client.UploadObjects(ctx, "media", "/music", []httpclient.UploadFile{file("a.mp3", "new"), file(".hidden", "h")}, false)
+	require.NoError(t, err)
+	assert.Empty(t, resp.Body)
+	require.Len(t, resp.Skipped, 2)
+	assert.True(t, resp.Skipped[0].Exists)
+	resp, err = client.UploadObjects(ctx, "media", "", []httpclient.UploadFile{file("music/a.mp3", "new")}, true)
+	require.NoError(t, err)
+	require.Len(t, resp.Body, 1)
+	data, err := os.ReadFile(filepath.Join(dir, "music", "a.mp3"))
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(data))
+
+	// A file's modification time is kept
+	modtime := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	timed := file("timed.mp3", "t")
+	timed.ModTime = modtime
+	resp, err = client.UploadObjects(ctx, "media", "/music", []httpclient.UploadFile{timed}, false)
+	require.NoError(t, err)
+	require.Len(t, resp.Body, 1)
+	assert.True(t, modtime.Equal(resp.Body[0].ModTime), resp.Body[0].ModTime)
+
+	// A file which can't be opened stops the upload
+	_, err = client.UploadObjects(ctx, "media", "/music", []httpclient.UploadFile{{Path: "x.mp3", Open: func() (io.ReadCloser, error) { return nil, os.ErrNotExist }}}, false)
+	assert.Error(t, err)
+	_, err = client.UploadObjects(ctx, "media", "../etc", []httpclient.UploadFile{file("a.mp3", "a")}, false)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }

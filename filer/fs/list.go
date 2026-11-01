@@ -42,7 +42,9 @@ var _ schema.ListObjectsIterator = (*listIterator)(nil)
 // PUBLIC METHODS
 
 // List objects in the filesystem
-func (self *FS) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+func (self *FS) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (_ schema.ListObjectsIterator, err error) {
+	defer func() { err = objectError("list", req.Path, err) }()
+
 	if err := self.checkRequest(ctx); err != nil {
 		return nil, err
 	} else {
@@ -275,8 +277,17 @@ func (self *FS) stat(op, name string) (fs.FileInfo, error) {
 	} else if self.skipPath(name) || self.inPackage(name) {
 		return nil, &fs.PathError{Op: op, Path: objectPath(name), Err: fs.ErrNotExist}
 	}
+	// A file which doesn't exist, or can't be read, is reported by its object
+	// path, rather than the filesystem's, whose errors are of its own
+	// operations, such as statat
 	info, err := fs.Stat(self.fs, name)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr.Err
+		}
+		return nil, &fs.PathError{Op: op, Path: objectPath(name), Err: err}
+	} else if err != nil {
 		return nil, err
 	} else if !isObject(info.Mode()) {
 		return nil, &fs.PathError{Op: op, Path: objectPath(name), Err: fs.ErrNotExist}

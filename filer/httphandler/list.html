@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Name }}{{ .Path }}</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; }
+  nav { margin-bottom: 1rem; font-size: 1.1rem; }
+  nav a { text-decoration: none; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 0.3rem 0.8rem; border-bottom: 1px solid #ddd; }
+  th { font-weight: 600; }
+  td.size, th.size { text-align: right; white-space: nowrap; }
+  td.modified { white-space: nowrap; color: #555; }
+  td.type { color: #555; }
+  a.download { display: inline-block; margin-left: 0.4rem; color: #888; vertical-align: -0.15em; }
+  a.download:hover { color: inherit; }
+  a.download svg { width: 1em; height: 1em; }
+  button.delete { background: none; border: none; padding: 0; cursor: pointer; color: #888; vertical-align: -0.15em; }
+  button.delete:hover { color: #c62828; }
+  button.delete svg { width: 1em; height: 1em; }
+  td.actions { width: 1%; white-space: nowrap; text-align: right; }
+  .next { margin-top: 1rem; }
+  .upload { margin-top: 1rem; }
+  .upload label { cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid #bbb; border-radius: 4px; padding: 0.3rem 0.7rem; }
+  .upload label:hover { border-color: #666; }
+  .upload svg { width: 1em; height: 1em; }
+  .upload input { display: none; }
+  .upload .status { margin-left: 0.6rem; color: #555; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1b; color: #ddd; }
+    a { color: #8ab4f8; }
+    th, td { border-bottom-color: #333; }
+    td.modified, td.type { color: #aaa; }
+  }
+</style>
+</head>
+<body>
+<nav>{{ range $i, $crumb := .Crumb }}{{ if $i }} / {{ end }}<a href="{{ $crumb.Href }}">{{ $crumb.Name }}</a>{{ end }}</nav>
+<table>
+<thead>
+<tr><th>Name</th><th>Type</th><th class="size">Size</th><th>Modified</th>{{ if not .Readonly }}<th></th>{{ end }}</tr>
+</thead>
+<tbody>
+{{ range .Rows }}<tr>
+<td>{{ if .Href }}<a href="{{ .Href }}">{{ .Name }}</a>{{ else }}{{ .Name }}{{ end }}{{ if .Download }}<a class="download" href="{{ .Download }}" title="Download {{ .Name }}" aria-label="Download {{ .Name }}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13h10"/></svg></a>{{ end }}</td>
+<td class="type">{{ .Type }}</td>
+<td class="size">{{ .Size }}</td>
+<td class="modified">{{ .Modified }}</td>
+{{ if .Delete }}<td class="actions"><button class="delete" type="button" data-href="{{ .Delete }}" data-name="{{ .Name }}" title="Delete {{ .Name }}" aria-label="Delete {{ .Name }}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 6.5v4.5M9.5 6.5v4.5"/></svg></button></td>{{ end }}
+</tr>
+{{ else }}<tr><td colspan="5">No objects</td></tr>
+{{ end }}</tbody>
+</table>
+{{ if .Next }}<p class="next"><a href="{{ .Next }}">Next page</a></p>{{ end }}
+{{ if .Upload }}<p class="upload"><label title="Upload files into this directory"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10"/></svg>Upload files<input type="file" multiple data-href="{{ .Upload }}"></label><span class="status" role="status"></span></p>{{ end }}
+{{ if not .Readonly }}<script>
+// Delete an object, once it's confirmed, and show the page again, or why it
+// couldn't be deleted. A directory is deleted with every object beneath it.
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button.delete");
+  if (!button) return;
+  const name = button.dataset.name;
+  const what = name.endsWith("/") ? "Delete " + name + " and everything in it?" : "Delete " + name + "?";
+  if (!confirm(what)) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(button.dataset.href, { method: "DELETE" });
+    if (response.ok) {
+      location.reload();
+      return;
+    }
+    let reason = response.statusText;
+    try { reason = (await response.json()).reason || reason; } catch {}
+    alert("Can't delete " + name + ": " + reason);
+  } catch (err) {
+    alert("Can't delete " + name + ": " + err);
+  }
+  button.disabled = false;
+});
+
+// Upload the files into the directory, in one request, which doesn't
+// replace the files which exist, unless it's confirmed, and show the page
+// again, or why they couldn't be uploaded, or which were skipped
+const input = document.querySelector(".upload input");
+if (input) {
+  input.addEventListener("change", async () => {
+    const files = Array.from(input.files);
+    if (files.length === 0) return;
+    const status = document.querySelector(".upload .status");
+    const post = async (files, overwrite) => {
+      const form = new FormData();
+      for (const file of files) form.append("file", file, file.name);
+      const response = await fetch(input.dataset.href + (overwrite ? "?overwrite=true" : ""), { method: "POST", body: form });
+      if (!response.ok) {
+        let reason = response.statusText;
+        try { reason = (await response.json()).reason || reason; } catch {}
+        throw new Error(reason);
+      }
+      return response.json();
+    };
+    input.disabled = true;
+    status.textContent = files.length === 1 ? "Uploading " + files[0].name + "…" : "Uploading " + files.length + " files…";
+    try {
+      let result = await post(files, false);
+      const skipped = result.skipped || [];
+      const exists = skipped.filter((skip) => skip.exists);
+      if (exists.length > 0) {
+        const names = exists.map((skip) => skip.path.split("/").pop());
+        if (confirm((names.length === 1 ? names[0] + " exists" : names.length + " files exist: " + names.join(", ")) + ". Replace them?")) {
+          await post(files.filter((file) => names.includes(file.name)), true);
+        }
+      }
+      const others = skipped.filter((skip) => !skip.exists);
+      if (others.length > 0) {
+        alert("Skipped " + others.map((skip) => skip.path + ": " + skip.reason).join("\n"));
+      }
+      location.reload();
+      return;
+    } catch (err) {
+      alert("Can't upload: " + err.message);
+    }
+    status.textContent = "";
+    input.disabled = false;
+    input.value = "";
+  });
+}
+</script>{{ end }}
+</body>
+</html>
