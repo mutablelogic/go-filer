@@ -22,6 +22,7 @@ import (
 
 type Flags struct {
 	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, named by its name option, such as s3://my.bucket/photos?name=photos, or its host, such as file://media/mnt/media?readonly=true, which can be repeated."`
+	Worker string   `name:"worker" env:"FILER_WORKER,WORKER" placeholder:"NAME" help:"Name of the worker, which is in the metrics, so those of the servers are told apart. Defaults to the hostname."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -30,14 +31,19 @@ type Flags struct {
 // WithRegistry creates a registry of volumes, with the server's tracer and
 // meter, and credentials from its environment, such as S3_SECRET, which are
 // the placeholders of a volume's credentials, such as ${S3_SECRET}, and
-// those which are stored while it runs, and then the options, runs it, so
-// the changes to its volumes are sent to its subscriptions, adds the volumes
-// of the flags, registers its HTTP handlers with the server, when there is
-// one, and then calls the function with the registry. A volume which can't be added is an error. The
-// registry, and its volumes, are closed when the function returns. Returns
-// any error.
+// those which are stored while it runs, and the flags' worker, when it's
+// set, and then the options, runs it, so the changes to its volumes are sent
+// to the calls to WatchObjects, adds the volumes of the flags, registers its
+// HTTP handlers with the server, when there is one, and then calls the
+// function with the registry. A volume which can't be added is an error.
+// The registry, and its volumes, are closed when the function returns.
+// Returns any error.
 func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn func(*filer.Registry) error, opts ...filer.Opt) (err error) {
-	opts = append([]filer.Opt{filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter()), filer.WithCredentials(newEnvCredentials())}, opts...)
+	defaults := []filer.Opt{filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter()), filer.WithCredentials(newEnvCredentials())}
+	if flags.Worker != "" {
+		defaults = append(defaults, filer.WithWorker(flags.Worker))
+	}
+	opts = append(defaults, opts...)
 	registry, err := filer.New(ctx.Context(), opts...)
 	if err != nil {
 		return err
