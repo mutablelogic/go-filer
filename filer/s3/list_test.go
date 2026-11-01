@@ -20,8 +20,13 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	types "github.com/mutablelogic/go-server/pkg/types"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
+	attribute "go.opentelemetry.io/otel/attribute"
+	codes "go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	tracetest "go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // fakeBucket is a bucket of a service which is compatible with S3, which
@@ -62,6 +67,13 @@ type commonPrefix struct {
 // newFakeBucket returns the bucket, and a filer of it, beneath the prefix
 func newFakeBucket(t *testing.T, prefix string, keys ...string) (*fakeBucket, *S3) {
 	t.Helper()
+	return newFakeBucketWith(t, gofiler.Opts{}, prefix, keys...)
+}
+
+// newFakeBucketWith returns the bucket, and a filer of it, beneath the
+// prefix, with the options
+func newFakeBucketWith(t *testing.T, opts gofiler.Opts, prefix string, keys ...string) (*fakeBucket, *S3) {
+	t.Helper()
 	fakeCredentials(t)
 	bucket := &fakeBucket{name: "photos", keys: map[string]string{}, modTime: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}
 	for _, key := range keys {
@@ -69,7 +81,7 @@ func newFakeBucket(t *testing.T, prefix string, keys ...string) (*fakeBucket, *S
 	}
 	server := httptest.NewServer(bucket)
 	t.Cleanup(server.Close)
-	b, err := New(context.Background(), bucketURL(t, server.URL, "photos/"+prefix, ""), gofiler.Opts{})
+	b, err := New(context.Background(), bucketURL(t, server.URL, "photos/"+prefix, ""), opts)
 	require.NoError(t, err)
 	return bucket, b
 }
@@ -347,4 +359,34 @@ func Test_S3_ListFileAndDir(t *testing.T) {
 	assert.Equal(t, []string{"/a/b.txt"}, list("/a/"))
 	_, err := b.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/b.txt/"}})
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func Test_S3_ListTrace(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer provider.Shutdown(context.Background())
+	_, b := newFakeBucketWith(t, gofiler.Opts{Tracer: provider.Tracer("test")}, "", listKeys...)
+
+	// Listing is a span, with the volume and the request, within which are
+	// the requests to S3, which are a directory's, so its object isn't found
+	req := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/c"}, Recursive: true}
+	iter, err := b.ListObjects(context.Background(), req)
+	require.NoError(t, err)
+	require.NoError(t, iter.Close())
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 4)
+	list := spans[3]
+	assert.Equal(t, "s3.ListObjects", list.Name())
+	attrs := map[attribute.Key]attribute.Value{}
+	for _, attr := range list.Attributes() {
+		attrs[attr.Key] = attr.Value
+	}
+	assert.Equal(t, "photos", attrs["filer.volume"].AsString())
+	assert.Equal(t, types.Stringify(req), attrs["arg.req"].AsString())
+	assert.Equal(t, codes.Unset, list.Status().Code)
+	for i, name := range []string{"S3.HeadObject", "S3.ListObjectsV2"} {
+		assert.Equal(t, name, spans[i+1].Name())
+		assert.Equal(t, list.SpanContext().SpanID(), spans[i+1].Parent().SpanID())
+	}
 }

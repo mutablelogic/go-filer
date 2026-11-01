@@ -59,7 +59,10 @@ var listPageSize int32 = 1000
 // descended into when it's recursive, in the order of their keys. The
 // objects which sort before or at StartAfter aren't returned. A directory
 // which doesn't exist is fs.ErrNotExist, except the root, which is empty.
-func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+func (self *S3) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (_ schema.ListObjectsIterator, err error) {
+	ctx, end := self.span(ctx, "ListObjects", req)
+	defer func() { end(err) }()
+
 	rel := strings.Trim(path.Clean("/"+req.Path), "/")
 	iter := &listIterator{S3: self, dir: self.prefix, last: self.key(req.StartAfter)}
 	if rel != "" {
