@@ -104,7 +104,7 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 | `DeleteObjects` of a file | `remove` | `HeadObject` for the metadata, and to return 404 as `DeleteObject` succeeds for missing keys, then `DeleteObject` |
 | `DeleteObjects` of a directory | `RemoveAll`. Returns the files deleted, including hidden files | List the prefix, then `DeleteObjects` in batches of 1000. Returns the keys deleted |
 | Remove empty parent directories | After each delete | Not needed, as empty prefixes do not exist |
-| `WatchObjects` | Watch the directory (see Watching) | Not supported, so `filer.ErrNotImplemented`. S3 event notifications need a queue |
+| `WatchObjects` | Watch the directory (see Watching) | Subscribe to the changes to a SeaweedFS filer's metadata, with the `seaweedfs-filer-grpc` option, and otherwise `filer.ErrNotImplemented`, as S3's event notifications need a queue |
 
 Object metadata isn't stored yet, so `CreateObject` with metadata is `filer.ErrNotImplemented`.
 
@@ -121,6 +121,8 @@ Directories are watched with the `fsevents` package, using the efficient mechani
 | Windows | `ReadDirectoryChangesW` |
 
 On other platforms, and on macOS without cgo, and for a filer of a filesystem which isn't a directory, `WatchObjects` returns `filer.ErrNotImplemented`.
+
+The registry of volumes is watched by its `Run`, which watches each volume when it's added, or updated, until it's removed, and sends their changes, with the names of their volumes, to the calls to its `WatchObjects`, until its context is cancelled, or the registry is closed, which ends them, so it should be run while the registry is used, as the server does. Without it, the volumes aren't watched. It holds a change to an object until the object is quiet for 250ms (`filer.WithDebounce`), or at most two seconds, and merges its changes, so an object which changes many times, such as a file which is written in parts, is one change, one which is created and deleted isn't one, and one which is deleted and created again is updated. A call to `WatchObjects` isn't held up by the others, so when it's slow to receive the changes, a volume's changes are dropped, and it's sent a rescan of the volume, once it can receive it. With a meter (`filer.WithMeter`), `Run` counts the changes in `filer.events`, a counter whose attributes are the worker, `filer.worker`, which is the hostname, or `filer.WithWorker`'s name, the volume, `filer.volume`, and the change, `filer.event.type`, such as `created`, which the meter's provider pushes to the metrics server.
 
 ## Modification Time
 

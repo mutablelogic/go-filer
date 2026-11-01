@@ -27,6 +27,20 @@ import (
 	require "github.com/stretchr/testify/require"
 )
 
+// runRegistry runs the registry, so the changes to its volumes are sent to
+// its subscriptions, until the test ends, once it's running
+func runRegistry(t *testing.T, r *Registry) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx, nil) }()
+	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
+	t.Cleanup(func() {
+		cancel()
+		assert.NoError(t, <-done)
+	})
+}
+
 // fileURL returns a file URL for a volume backed by a new directory in dir
 func fileURL(t *testing.T, dir, volume string) *url.URL {
 	t.Helper()
@@ -63,9 +77,10 @@ func get(r *Registry, volume string) gofiler.Filer {
 func newRegistry(t *testing.T) (*Registry, string) {
 	t.Helper()
 	dir := t.TempDir()
-	r, err := New(context.Background())
+	r, err := New(context.Background(), WithDebounce(0))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.Close() })
+	runRegistry(t, r)
 	return r, dir
 }
 
