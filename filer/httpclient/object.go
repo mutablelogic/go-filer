@@ -76,9 +76,10 @@ func (c *Client) GetObject(ctx context.Context, req schema.GetObjectRequest, w i
 		opts = append(opts, client.OptReqHeader("If-Modified-Since", req.IfModifiedSince.UTC().Format(http.TimeFormat)))
 	}
 	if len(req.IfNoneMatch) > 0 {
+		// An etag is quoted, unless it's *, or quoted already, or weak
 		etags := make([]string, 0, len(req.IfNoneMatch))
 		for _, etag := range req.IfNoneMatch {
-			if etag != "*" {
+			if etag != "*" && !strings.HasPrefix(etag, `"`) && !strings.HasPrefix(etag, `W/"`) {
 				etag = `"` + etag + `"`
 			}
 			etags = append(etags, etag)

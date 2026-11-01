@@ -240,6 +240,18 @@ func Test_WriterFS_Create(t *testing.T) {
 		assert.True(t, info.IsDir())
 	})
 
+	t.Run("FailedCreateKeepsFiles", func(t *testing.T) {
+		// A file which is created at the path of a directory which this
+		// create records as missing, by another, isn't removed by its tidy up
+		wfs := wfs.(*writerfs)
+		created := wfs.missingDirs(filepath.Join("race", "dir"))
+		require.Equal(t, []string{filepath.Join("race", "dir"), "race"}, created)
+		require.NoError(t, os.Mkdir(filepath.Join(dir, "race"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "race", "dir"), []byte("another"), 0o644))
+		wfs.removeDirs(created)
+		assert.Equal(t, "another", readFile(t, "race/dir"))
+	})
+
 	t.Run("Exclusive", func(t *testing.T) {
 		_, err := wfs.Create("exclusive.txt", strings.NewReader("first"), filer.CreateOnly, time.Time{})
 		require.NoError(t, err)

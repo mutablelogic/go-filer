@@ -73,8 +73,9 @@ func TestObjectListHTML(t *testing.T) {
 	assert.Contains(t, body, "Next page")
 	assert.Contains(t, body, `limit=1&amp;recursive=true&amp;start_after=%2Fa%26b%27c.txt`)
 
-	// JSON is sent otherwise, and when it's accepted before HTML
-	for _, accept := range []string{"", "application/json", "*/*", "application/json, text/html"} {
+	// JSON is sent otherwise, and when it's accepted before HTML, or HTML
+	// isn't accepted, with a quality of 0
+	for _, accept := range []string{"", "application/json", "*/*", "application/json, text/html", "text/html;q=0, application/json"} {
 		status, contentType, body := getAccept(t, server, "object/media", accept)
 		require.Equal(t, http.StatusOK, status, accept)
 		assert.True(t, strings.HasPrefix(contentType, "application/json"), accept)
@@ -82,10 +83,15 @@ func TestObjectListHTML(t *testing.T) {
 	}
 
 	// Files can be uploaded into the directory, or the root
-	assert.Contains(t, body, `<input type="file" multiple data-href="media/">`)
+	assert.Contains(t, body, `data-href="media/">`)
 	_, _, body = getAccept(t, server, "object/media?path=/music", browser)
-	assert.Contains(t, body, `<input type="file" multiple data-href="media/music/">`)
+	assert.Contains(t, body, `data-href="media/music/">`)
 	assert.Contains(t, body, `method: "POST"`)
+
+	// A listing of a file can't be uploaded into
+	_, _, body = getAccept(t, server, "object/media?path=/a.txt", browser)
+	assert.Contains(t, body, ">a.txt<")
+	assert.NotContains(t, body, `type="file"`)
 
 	// A volume which is read-only, by any boolean, has nothing to upload
 	// or delete with

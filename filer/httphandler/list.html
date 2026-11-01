@@ -26,7 +26,8 @@
   .upload label { cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid #bbb; border-radius: 4px; padding: 0.3rem 0.7rem; }
   .upload label:hover { border-color: #666; }
   .upload svg { width: 1em; height: 1em; }
-  .upload input { display: none; }
+  .upload input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  .upload label:focus-within { outline: 2px solid #4a90d9; outline-offset: 2px; }
   .upload .status { margin-left: 0.6rem; color: #555; }
   @media (prefers-color-scheme: dark) {
     body { background: #1b1b1b; color: #ddd; }
@@ -54,7 +55,7 @@
 {{ end }}</tbody>
 </table>
 {{ if .Next }}<p class="next"><a href="{{ .Next }}">Next page</a></p>{{ end }}
-{{ if .Upload }}<p class="upload"><label title="Upload files into this directory"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10"/></svg>Upload files<input type="file" multiple data-href="{{ .Upload }}"></label><span class="status" role="status"></span></p>{{ end }}
+{{ if .Upload }}<p class="upload"><label title="Upload files into this directory" style="position: relative"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10"/></svg>Upload files<input type="file" multiple aria-label="Upload files into this directory" data-href="{{ .Upload }}"></label><span class="status" role="status"></span></p>{{ end }}
 {{ if not .Readonly }}<script>
 // Delete an object, once it's confirmed, and show the page again, or why it
 // couldn't be deleted. A directory is deleted with every object beneath it.

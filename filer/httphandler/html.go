@@ -55,10 +55,13 @@ var listTemplate = template.Must(template.New("list").Parse(listHTML))
 // PRIVATE METHODS
 
 // acceptsHTML returns true when the request accepts text/html before JSON,
-// as a browser does, by the order of their media ranges, ignoring quality
+// as a browser does, by the order of their media ranges, which aren't
+// accepted when their quality is 0, and otherwise ignoring it
 func acceptsHTML(r *http.Request) bool {
 	for _, value := range strings.Split(r.Header.Get("Accept"), ",") {
-		if mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value)); err != nil {
+		if mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(value)); err != nil {
+			continue
+		} else if q, err := strconv.ParseFloat(params["q"], 64); err == nil && q <= 0 {
 			continue
 		} else if mediaType == "text/html" || mediaType == "application/xhtml+xml" {
 			return true
@@ -92,7 +95,9 @@ func writeListHTML(w http.ResponseWriter, r *http.Request, list *schema.ObjectLi
 
 	// The directories of the path, from the root
 	page := listPage{Name: list.Name, Path: list.Path, Readonly: readonly}
-	if !readonly {
+	// Files are uploaded into the directory which is listed, but not when
+	// the listing is of a file
+	if !readonly && !(len(list.Body) == 1 && !list.Body[0].IsDir && list.Body[0].Path == list.Path) {
 		page.Upload = dirHref(list.Name, list.Path)
 	}
 	page.Crumb = append(page.Crumb, listLink{Name: list.Name, Href: href("/")})

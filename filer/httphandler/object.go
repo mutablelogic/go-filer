@@ -270,15 +270,32 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 	// preconditions. An error can only be responded with until the response
 	// is written.
 	tw := &trackingWriter{ResponseWriter: w}
-	rc := http.NewResponseController(w)
-	err = read(r.Context(), func(body io.Reader) error {
-		stop := context.AfterFunc(r.Context(), func() { rc.SetWriteDeadline(time.Now()) })
-		defer stop()
-		return binary.Write(tw, r, body)
+	err = interruptible(registry, w, r.Context(), key.Name, func(ctx context.Context) error {
+		return read(ctx, func(body io.Reader) error {
+			return binary.Write(tw, r, body)
+		})
 	})
 	if err != nil && !tw.written {
 		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 	}
+}
+
+// interruptible calls the function with the volume's context, from
+// Registry.With, which is cancelled when the volume is removed, or updated,
+// or the registry is closed. Then a read of the request's body, or a write
+// of the response, which is blocked, as the client is slow, is interrupted,
+// by setting the connection's deadlines to now, so the volume isn't held up.
+func interruptible(registry *filer.Registry, w http.ResponseWriter, ctx context.Context, name string, fn func(context.Context) error) error {
+	rc := http.NewResponseController(w)
+	return registry.With(ctx, name, func(ctx context.Context, _ gofiler.Filer) error {
+		stop := context.AfterFunc(ctx, func() {
+			now := time.Now()
+			rc.SetReadDeadline(now)
+			rc.SetWriteDeadline(now)
+		})
+		defer stop()
+		return fn(ctx)
+	})
 }
 
 // trackingWriter is a response writer which records whether its response has
@@ -369,7 +386,11 @@ func objectPut(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 		httpresponse.Error(w, httpresponse.ErrInternalError.Withf("%v", err), key.Name+key.Path)
 		return
 	}
-	object, err := registry.CreateObject(r.Context(), req)
+	var object *schema.Object
+	err = interruptible(registry, w, r.Context(), key.Name, func(ctx context.Context) (err error) {
+		object, err = registry.CreateObject(ctx, req)
+		return err
+	})
 	switch {
 	case ifNotExists && errors.Is(err, gofiler.ErrConflict), errors.Is(err, gofiler.ErrPreconditionFailed):
 		httpresponse.Error(w, httpresponse.Err(http.StatusPreconditionFailed), key.Name+key.Path)
@@ -423,59 +444,64 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	resp := schema.ObjectUploadResponse{Body: []*schema.Object{}}
-	for {
-		part, err := reader.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%v", err), key.Name+key.Path)
-			return
-		} else if part.FormName() != "file" {
-			continue
-		}
-
-		// The file's path, which is its name in the directory, which isn't
-		// outside it
-		name := partFileName(part)
-		file := path.Join(key.Path, name)
-		if name == "" || !strings.HasPrefix(file, strings.TrimSuffix(key.Path, "/")+"/") {
-			resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: path.Join(key.Path, name), Reason: "the file's name isn't a path in the directory"})
-			continue
-		}
-
-		// A file which exists isn't overwritten, unless the upload does, and
-		// isn't read, and a directory isn't
-		if object, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: key.Name, Path: file}}); err == nil {
-			if object.IsDir {
-				resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: "a directory is at the path"})
+	failed := key.Path
+	if err := interruptible(registry, w, r.Context(), key.Name, func(ctx context.Context) error {
+		for {
+			part, err := reader.NextPart()
+			if errors.Is(err, io.EOF) {
+				return nil
+			} else if err != nil {
+				return httpresponse.ErrBadRequest.Withf("%v", err)
+			} else if part.FormName() != "file" {
 				continue
-			} else if !query.Overwrite {
+			}
+
+			// The file's path, which is its name in the directory, which isn't
+			// outside it
+			name := partFileName(part)
+			file := path.Join(key.Path, name)
+			if name == "" || !strings.HasPrefix(file, strings.TrimSuffix(key.Path, "/")+"/") {
+				resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: path.Join(key.Path, name), Reason: "the file's name isn't a path in the directory"})
+				continue
+			}
+
+			// A file which exists isn't overwritten, unless the upload does, and
+			// isn't read, and a directory isn't
+			if object, err := registry.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: key.Name, Path: file}}); err == nil {
+				if object.IsDir {
+					resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: "a directory is at the path"})
+					continue
+				} else if !query.Overwrite {
+					resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Exists: true, Reason: "the file exists"})
+					continue
+				}
+			}
+
+			// Write the file, with the part's Last-Modified, when it's set, which
+			// is skipped when it can't be stored, or it's created in the meantime
+			req := schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: key.Name, Path: file}, Body: part, IfNotExists: !query.Overwrite}
+			if modified := part.Header.Get(types.ContentModifiedHeader); modified != "" {
+				if req.ModTime, err = http.ParseTime(modified); err != nil {
+					resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: fmt.Sprintf("invalid %s: %q", types.ContentModifiedHeader, modified)})
+					continue
+				}
+			}
+			object, err := registry.CreateObject(ctx, req)
+			switch {
+			case err == nil:
+				resp.Body = append(resp.Body, object)
+			case !query.Overwrite && errors.Is(err, gofiler.ErrConflict):
 				resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Exists: true, Reason: "the file exists"})
-				continue
+			case errors.Is(err, gofiler.ErrUnprocessableContent), errors.Is(err, gofiler.ErrConflict), errors.Is(err, fs.ErrInvalid):
+				resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: err.Error()})
+			default:
+				failed = file
+				return err
 			}
 		}
-
-		// Write the file, with the part's Last-Modified, when it's set, which
-		// is skipped when it can't be stored, or it's created in the meantime
-		req := schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: key.Name, Path: file}, Body: part, IfNotExists: !query.Overwrite}
-		if modified := part.Header.Get(types.ContentModifiedHeader); modified != "" {
-			if req.ModTime, err = http.ParseTime(modified); err != nil {
-				resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: fmt.Sprintf("invalid %s: %q", types.ContentModifiedHeader, modified)})
-				continue
-			}
-		}
-		object, err := registry.CreateObject(r.Context(), req)
-		switch {
-		case err == nil:
-			resp.Body = append(resp.Body, object)
-		case !query.Overwrite && errors.Is(err, gofiler.ErrConflict):
-			resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Exists: true, Reason: "the file exists"})
-		case errors.Is(err, gofiler.ErrUnprocessableContent), errors.Is(err, gofiler.ErrConflict), errors.Is(err, fs.ErrInvalid):
-			resp.Skipped = append(resp.Skipped, schema.ObjectSkipped{Path: file, Reason: err.Error()})
-		default:
-			httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+file)
-			return
-		}
+	}); err != nil {
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+failed)
+		return
 	}
 
 	// Return the files, which is 201 when a file was written

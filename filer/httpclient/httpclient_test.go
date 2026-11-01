@@ -281,6 +281,17 @@ func TestGetObject(t *testing.T) {
 	assert.Equal(t, "/music/a b.mp3", object.Path)
 	assert.True(t, modtime.Equal(object.ModTime))
 
+	// An etag which is quoted, or weak, isn't quoted again, which doesn't
+	// match, as the filesystem has none, so the file is written
+	for _, etag := range []string{`"abc"`, `W/"abc"`, "abc"} {
+		buf.Reset()
+		req := key("/music/a b.mp3")
+		req.IfNoneMatch = []string{etag}
+		_, err := client.GetObject(ctx, req, &buf)
+		require.NoError(t, err, etag)
+		assert.Equal(t, "abc", buf.String(), etag)
+	}
+
 	// A file which isn't modified isn't written
 	buf.Reset()
 	req := key("/music/a b.mp3")

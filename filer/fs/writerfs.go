@@ -316,10 +316,14 @@ func (self *writerfs) missingDirs(dir string) []string {
 
 // removeDirs removes the directories, from the deepest, which were created,
 // while they're empty, and stops at one which isn't, as another file was
-// created in it in the meantime. Errors are ignored, as it's a tidy up.
+// created in it in the meantime, or isn't a directory, as another file was
+// created at its path, which isn't removed. Errors are ignored, as it's a
+// tidy up.
 func (self *writerfs) removeDirs(dirs []string) {
 	for _, dir := range dirs {
-		if err := self.root.Remove(dir); err != nil {
+		if info, err := self.root.Lstat(dir); err != nil || !info.IsDir() {
+			return
+		} else if err := self.root.Remove(dir); err != nil {
 			return
 		}
 	}
