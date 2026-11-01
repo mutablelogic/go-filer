@@ -130,3 +130,25 @@ func Test_Broadcaster_Watch(t *testing.T) {
 	b.end(true)
 	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
 }
+
+func Test_Broadcaster_Fair(t *testing.T) {
+	b := newBroadcaster()
+
+	// The rescans which are owed are sent in the order they were owed, so a
+	// volume whose changes keep being dropped doesn't hold up the others
+	ch := make(chan schema.Event, 1)
+	_, err := b.subscribe(context.Background(), ch)
+	require.NoError(t, err)
+	b.publish(change("other", "/x.txt"))
+	b.publish(change("b", "/1.txt"))
+	b.publish(change("a", "/1.txt"))
+	assert.Equal(t, change("other", "/x.txt"), next(t, ch))
+	for range 3 {
+		b.publish(change("a", "/2.txt"))
+		if event := next(t, ch); event == rescanEvent("b") {
+			assert.Equal(t, rescanEvent("b"), event)
+			return
+		}
+	}
+	t.Fatal("the rescan of b wasn't sent")
+}

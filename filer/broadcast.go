@@ -3,7 +3,6 @@ package filer
 import (
 	"context"
 	"io/fs"
-	"slices"
 	"sync"
 
 	// Packages
@@ -30,7 +29,8 @@ type broadcaster struct {
 // ends, with fs.ErrClosed
 type subscriber struct {
 	ch     chan<- schema.Event
-	rescan map[string]bool
+	rescan map[string]bool // the volumes which are owed a rescan
+	owed   []string        // the volumes which are owed a rescan, in the order they were
 	stop   chan struct{}
 }
 
@@ -171,25 +171,20 @@ func (s *subscriber) send(event schema.Event) bool {
 		return true
 	default:
 		s.rescan[event.Name] = true
+		s.owed = append(s.owed, event.Name)
 		return false
 	}
 }
 
 // flush sends the rescans of the volumes whose changes were dropped, while
-// there's room, in the order of their names. The broadcaster must be locked.
+// there's room, in the order they were owed, so each is sent in its turn. The
+// broadcaster must be locked.
 func (s *subscriber) flush() {
-	if len(s.rescan) == 0 {
-		return
-	}
-	names := make([]string, 0, len(s.rescan))
-	for name := range s.rescan {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
+	for len(s.owed) > 0 {
 		select {
-		case s.ch <- rescanEvent(name):
-			delete(s.rescan, name)
+		case s.ch <- rescanEvent(s.owed[0]):
+			delete(s.rescan, s.owed[0])
+			s.owed = s.owed[1:]
 		default:
 			return
 		}

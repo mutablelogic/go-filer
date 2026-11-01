@@ -69,8 +69,7 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 		running <- registry.Run(ctx.Context(), ctx.Logger())
 	}()
 	defer func() {
-		registry.Close()
-		err = errors.Join(err, <-running)
+		err = errors.Join(err, registry.Close(), <-running)
 	}()
 
 	// Add the volumes, whose names are their name options, or the hosts of
