@@ -73,6 +73,7 @@ func Test_S3_Connect(t *testing.T) {
 	b, err := New(ctx, bucketURL(t, endpoint, "photos", ""))
 	require.NoError(t, err)
 	assert.Equal(t, defaultRegion, b.client.Options().Region)
+	assert.Equal(t, defaultRegion, b.URL().Query().Get("region"))
 	assert.NoError(t, b.Close())
 
 	// Anonymously
@@ -82,12 +83,17 @@ func Test_S3_Connect(t *testing.T) {
 	_, err = New(ctx, bucketURL(t, endpoint, "private", "&anonymous"))
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 
-	// A bucket in another region is in its region, which isn't in its URL,
+	// A bucket in another region is in its region, which is in its URL,
 	// unless the region is set, when it's an error
 	b, err = New(ctx, bucketURL(t, endpoint, "moved", ""))
 	require.NoError(t, err)
 	assert.Equal(t, "eu-west-1", b.client.Options().Region)
-	assert.NotContains(t, b.URL().RawQuery, "region")
+	assert.Equal(t, "eu-west-1", b.URL().Query().Get("region"))
+
+	// Its URL creates it again, in its region
+	b, err = New(ctx, b.URL())
+	require.NoError(t, err)
+	assert.Equal(t, "eu-west-1", b.client.Options().Region)
 	_, err = New(ctx, bucketURL(t, endpoint, "moved", "&region=us-west-2"))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	b, err = New(ctx, bucketURL(t, endpoint, "moved", "&region=eu-west-1"))

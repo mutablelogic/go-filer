@@ -32,7 +32,8 @@ const (
 // connect creates the client of the bucket, in the region, and checks the
 // bucket can be accessed, with the credentials. When the bucket is in
 // another region, and the region isn't set, the client is of the bucket's
-// region.
+// region. The region is set to the client's, so it's in the URL, and the
+// bucket isn't redirected again.
 func (self *S3) connect(ctx context.Context) error {
 	client, err := self.newClient(ctx, self.region)
 	if err != nil {
@@ -51,6 +52,7 @@ func (self *S3) connect(ctx context.Context) error {
 
 	// Return success
 	self.client = client
+	self.region = client.Options().Region
 	return nil
 }
 

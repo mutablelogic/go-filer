@@ -483,7 +483,7 @@ func Test_Registry_S3(t *testing.T) {
 	// as it can't be, and can be removed
 	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly&"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/?"+endpoint+"&name=photos&readonly=true", b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?"+endpoint+"&name=photos&readonly=true&region=us-east-1", b.URL().String())
 	volume, err := r.Volume("photos")
 	require.NoError(t, err)
 	assert.Equal(t, schema.Volume{Name: "photos", URL: b.URL().String(), Readonly: true}, *volume)
@@ -492,7 +492,7 @@ func Test_Registry_S3(t *testing.T) {
 	// A bucket's name is the volume's, unless the name option is set
 	b, err = r.Add(context.Background(), "bucket", mustURL(t, "s3://bucket/photos?"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/?"+endpoint, b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?"+endpoint+"&region=us-east-1", b.URL().String())
 	require.NoError(t, r.Del(context.Background(), "bucket"))
 
 	// The name must be the volume's
@@ -526,6 +526,7 @@ func fakeS3(t *testing.T) string {
 	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	t.Setenv("AWS_PROFILE", "")
 	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
 	t.Setenv("AWS_ACCESS_KEY_ID", "key")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
