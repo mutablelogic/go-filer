@@ -462,7 +462,7 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 			return b, nil
 		}
 	case schema.SchemeS3:
-		if b, err := s3.New(ctx, u); err != nil {
+		if b, err := s3.New(ctx, u, self.backendOpts()); err != nil {
 			return nil, err
 		} else {
 			return b, nil

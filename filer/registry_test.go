@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -530,6 +531,37 @@ func Test_Registry_UpdateRename(t *testing.T) {
 	volume, err := r.Volume("photos")
 	require.NoError(t, err)
 	assert.Equal(t, b.URL().String(), volume.URL)
+}
+
+// credentials expands a placeholder of a credential, such as ${ID}, to its
+// name, ID
+type credentials struct{}
+
+func (credentials) Expand(_ context.Context, value string) (string, error) {
+	return strings.Trim(value, "${}"), nil
+}
+
+func (credentials) Get(context.Context, string) (json.RawMessage, error) {
+	return nil, gofiler.ErrNotImplemented
+}
+
+func (credentials) Set(context.Context, string, json.RawMessage) error {
+	return gofiler.ErrNotImplemented
+}
+
+func Test_Registry_Credentials(t *testing.T) {
+	u := mustURL(t, "s3://bucket/?access-key-id=${ID}&secret-access-key=${SECRET}&endpoint="+url.QueryEscape(fakeS3(t)))
+
+	// A bucket's credentials are expanded by the registry's provider, and
+	// can't be without one
+	r, err := New(context.Background(), WithCredentials(credentials{}))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.Close() })
+	_, err = r.Add(context.Background(), "bucket", u)
+	require.NoError(t, err)
+	r2, _ := newRegistry(t)
+	_, err = r2.Add(context.Background(), "bucket", u)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
 func Test_VolumeName(t *testing.T) {

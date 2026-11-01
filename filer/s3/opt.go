@@ -3,6 +3,7 @@ package s3
 import (
 	"net/url"
 	"strconv"
+	"strings"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -18,6 +19,9 @@ type opt struct {
 	name      string // the volume's name
 	region    string // the bucket's region, when it's set
 	profile   string // the profile of the credentials, when it's set
+	keyID     string // the access key ID, which can have placeholders, when it's set
+	secret    string // the secret access key, which has placeholders, when it's set
+	token     string // the session token, which has placeholders, when it's set
 	endpoint  string // the endpoint of a service which is compatible with S3, when it's set
 	anonymous bool   // requests aren't signed, so they're without credentials
 	readonly  bool   // objects can't be created or deleted
@@ -39,6 +43,16 @@ const (
 	// in the shared files, such as ~/.aws/credentials, in place of the
 	// default one, or of AWS_PROFILE
 	optProfile = "profile"
+
+	// optAccessKeyID, optSecretAccessKey and optSessionToken are the
+	// credentials, in place of the profile's, or the default ones, whose
+	// placeholders, such as ${S3_SECRET}, are expanded by the provider of
+	// credentials, when the bucket is checked, so the URL doesn't have them.
+	// The secret access key and session token must have placeholders, and
+	// the session token is optional.
+	optAccessKeyID     = "access-key-id"
+	optSecretAccessKey = "secret-access-key"
+	optSessionToken    = "session-token"
 
 	// optEndpoint is the http or https URL of a service which is compatible
 	// with S3, such as http://localhost:9000 for MinIO
@@ -66,7 +80,7 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 	// Check the options are known
 	for key := range values {
 		switch key {
-		case optName, optRegion, optProfile, optEndpoint, optAnonymous, optReadonly:
+		case optName, optRegion, optProfile, optAccessKeyID, optSecretAccessKey, optSessionToken, optEndpoint, optAnonymous, optReadonly:
 		default:
 			return opt{}, filer.ErrBadParameter.Withf("Unknown option: %q", key)
 		}
@@ -92,6 +106,24 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 			return opt{}, filer.ErrBadParameter.Withf("Invalid %s option: %q", optEndpoint, value)
 		}
 		self.endpoint = value
+	}
+
+	// Set the credentials, which are an access key ID and secret access key,
+	// with an optional session token, whose secrets are placeholders, which
+	// aren't with the profile, or anonymous
+	self.keyID, self.secret, self.token = values.Get(optAccessKeyID), values.Get(optSecretAccessKey), values.Get(optSessionToken)
+	if (self.keyID == "") != (self.secret == "") || (self.token != "" && self.keyID == "") {
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options are both needed, with the %s option", optAccessKeyID, optSecretAccessKey, optSessionToken)
+	}
+	for key, value := range map[string]string{optSecretAccessKey: self.secret, optSessionToken: self.token} {
+		if value != "" && !strings.Contains(value, "$") {
+			return opt{}, filer.ErrBadParameter.Withf("The %s option must be a placeholder, such as ${S3_SECRET}, so the url doesn't have it", key)
+		}
+	}
+	if self.keyID != "" && values.Has(optProfile) {
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optProfile)
+	} else if self.keyID != "" && values.Has(optAnonymous) {
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optAnonymous)
 	}
 
 	// Set whether requests are anonymous, and whether objects can only be
@@ -124,6 +156,13 @@ func (self opt) values(bucket string) url.Values {
 	}
 	if self.profile != "" {
 		values.Set(optProfile, self.profile)
+	}
+	if self.keyID != "" {
+		values.Set(optAccessKeyID, self.keyID)
+		values.Set(optSecretAccessKey, self.secret)
+	}
+	if self.token != "" {
+		values.Set(optSessionToken, self.token)
 	}
 	if self.endpoint != "" {
 		values.Set(optEndpoint, self.endpoint)

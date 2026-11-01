@@ -7,10 +7,16 @@ import (
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	credentials "github.com/aws/aws-sdk-go-v2/credentials"
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	middleware "github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	otel "github.com/mutablelogic/go-client/pkg/otel"
 	gofiler "github.com/mutablelogic/go-filer"
+	attribute "go.opentelemetry.io/otel/attribute"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -70,6 +76,12 @@ func (self *S3) newClient(ctx context.Context, region string) (*s3.Client, error
 	}
 	if self.anonymous {
 		opts = append(opts, awsconfig.WithCredentialsProvider(aws.AnonymousCredentials{}))
+	} else if self.keyID != "" {
+		provider, err := self.staticCredentials(ctx)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, awsconfig.WithCredentialsProvider(provider))
 	}
 	config, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
@@ -77,6 +89,11 @@ func (self *S3) newClient(ctx context.Context, region string) (*s3.Client, error
 	}
 	if config.Region == "" {
 		config.Region = defaultRegion
+	}
+
+	// Trace the requests
+	if self.Tracer != nil {
+		config.APIOptions = append(config.APIOptions, self.traceRequests(config.Region))
 	}
 
 	// Get the credentials, which are cached, so it's known when there are
@@ -135,5 +152,51 @@ func (self *S3) ping(ctx context.Context, client *s3.Client) (string, error) {
 		return "", gofiler.ErrNotFound.Withf("Bucket %q not found", self.bucket)
 	default:
 		return "", gofiler.ErrServiceUnavailable.Withf("Bucket %q: %s", self.bucket, http.StatusText(status))
+	}
+}
+
+// staticCredentials returns the credentials of the options, whose
+// placeholders are expanded by the provider of credentials
+func (self *S3) staticCredentials(ctx context.Context) (aws.CredentialsProvider, error) {
+	if self.Credentials == nil {
+		return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be expanded, without a provider of credentials", self.bucket)
+	}
+	values := make([]string, 0, 3)
+	for _, value := range []string{self.keyID, self.secret, self.token} {
+		if value == "" {
+			values = append(values, "")
+		} else if expanded, err := self.Credentials.Expand(ctx, value); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			return nil, gofiler.ErrBadParameter.Withf("Bucket %q: credentials: %v", self.bucket, err)
+		} else {
+			values = append(values, expanded)
+		}
+	}
+	return credentials.NewStaticCredentialsProvider(values[0], values[1], values[2]), nil
+}
+
+// traceRequests returns the option of a client which traces each request,
+// with a span which is named by its operation, such as S3.ListObjectsV2,
+// with the bucket, region, and status of its response
+func (self *S3) traceRequests(region string) func(*middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("filer.trace", func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
+			service, operation := awsmiddleware.GetServiceID(ctx), awsmiddleware.GetOperationName(ctx)
+			ctx, end := otel.StartSpan(self.Tracer, ctx, service+"."+operation,
+				attribute.String("rpc.system", "aws-api"),
+				attribute.String("rpc.service", service),
+				attribute.String("rpc.method", operation),
+				attribute.String("cloud.region", region),
+				attribute.String("aws.s3.bucket", self.bucket),
+			)
+			out, metadata, err := next.HandleInitialize(ctx, in)
+			if response, ok := awsmiddleware.GetRawResponse(metadata).(*smithyhttp.Response); ok {
+				trace.SpanFromContext(ctx).SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+			}
+			end(err)
+			return out, metadata, err
+		}), middleware.After)
 	}
 }

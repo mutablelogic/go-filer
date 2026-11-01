@@ -21,6 +21,7 @@ import (
 // S3 is a filer of the objects in a bucket, beneath a prefix
 type S3 struct {
 	opt
+	gofiler.Opts
 	bucket string     // the bucket
 	prefix string     // the prefix of the objects' keys, which is empty, or ends with "/"
 	client *s3.Client // the client of the bucket, in its region
@@ -49,16 +50,21 @@ var (
 // New returns a filer of the objects in the bucket of the URL, which is
 // s3://<bucket>/<prefix>, beneath the prefix, with the options of its query
 // (see opt.go). The volume's name is the bucket's, or the name option. The
-// bucket is checked, with the credentials, which are the profile's, or the
+// bucket is checked, with the credentials, which are the options', whose
+// placeholders the provider of credentials expands, or the profile's, or the
 // default ones, such as from the environment, or none, when it's anonymous,
 // which is ErrForbidden when they're missing, or can't access it, and
 // ErrNotFound when it doesn't exist. When the bucket is in another region,
-// and the region isn't set, it's the bucket's.
-func New(ctx context.Context, u *url.URL) (*S3, error) {
+// and the region isn't set, it's the bucket's. The requests are traced
+// with the tracer, when it's set.
+func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
 	self, err := parse(u)
 	if err != nil {
 		return nil, err
-	} else if err := self.connect(ctx); err != nil {
+	} else {
+		self.Opts = opts
+	}
+	if err := self.connect(ctx); err != nil {
 		return nil, err
 	}
 	return self, nil

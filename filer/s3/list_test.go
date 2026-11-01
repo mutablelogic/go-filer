@@ -69,7 +69,7 @@ func newFakeBucket(t *testing.T, prefix string, keys ...string) (*fakeBucket, *S
 	}
 	server := httptest.NewServer(bucket)
 	t.Cleanup(server.Close)
-	b, err := New(context.Background(), bucketURL(t, server.URL, "photos/"+prefix, ""))
+	b, err := New(context.Background(), bucketURL(t, server.URL, "photos/"+prefix, ""), gofiler.Opts{})
 	require.NoError(t, err)
 	return bucket, b
 }

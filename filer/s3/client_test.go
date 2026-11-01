@@ -2,9 +2,12 @@ package s3
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +16,10 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
+	attribute "go.opentelemetry.io/otel/attribute"
+	codes "go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	tracetest "go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // fakeS3 returns the endpoint of a service which is compatible with S3, with
@@ -30,6 +37,10 @@ func fakeS3(t *testing.T) string {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		case r.URL.Path == "/photos":
 			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/keys" && strings.Contains(auth, "Credential=AKIDTEST/") && r.Header.Get("X-Amz-Security-Token") == "TOKEN":
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/keys":
+			w.WriteHeader(http.StatusForbidden)
 		case auth == "":
 			w.WriteHeader(http.StatusForbidden)
 		case r.URL.Path == "/private":
@@ -76,44 +87,44 @@ func Test_S3_Connect(t *testing.T) {
 	ctx := context.Background()
 
 	// A bucket which can be accessed
-	b, err := New(ctx, bucketURL(t, endpoint, "photos", ""))
+	b, err := New(ctx, bucketURL(t, endpoint, "photos", ""), gofiler.Opts{})
 	require.NoError(t, err)
 	assert.Equal(t, defaultRegion, b.client.Options().Region)
 	assert.Equal(t, defaultRegion, b.URL().Query().Get("region"))
 	assert.NoError(t, b.Close())
 
 	// Anonymously
-	b, err = New(ctx, bucketURL(t, endpoint, "photos", "&anonymous"))
+	b, err = New(ctx, bucketURL(t, endpoint, "photos", "&anonymous"), gofiler.Opts{})
 	require.NoError(t, err)
 	assert.True(t, b.Readonly())
-	_, err = New(ctx, bucketURL(t, endpoint, "private", "&anonymous"))
+	_, err = New(ctx, bucketURL(t, endpoint, "private", "&anonymous"), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 
 	// A bucket in another region is in its region, which is in its URL,
 	// unless the region is set, when it's an error
-	b, err = New(ctx, bucketURL(t, endpoint, "moved", ""))
+	b, err = New(ctx, bucketURL(t, endpoint, "moved", ""), gofiler.Opts{})
 	require.NoError(t, err)
 	assert.Equal(t, "eu-west-1", b.client.Options().Region)
 	assert.Equal(t, "eu-west-1", b.URL().Query().Get("region"))
 
 	// Its URL creates it again, in its region
-	b, err = New(ctx, b.URL())
+	b, err = New(ctx, b.URL(), gofiler.Opts{})
 	require.NoError(t, err)
 	assert.Equal(t, "eu-west-1", b.client.Options().Region)
-	_, err = New(ctx, bucketURL(t, endpoint, "moved", "&region=us-west-2"))
+	_, err = New(ctx, bucketURL(t, endpoint, "moved", "&region=us-west-2"), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	b, err = New(ctx, bucketURL(t, endpoint, "moved", "&region=eu-west-1"))
+	b, err = New(ctx, bucketURL(t, endpoint, "moved", "&region=eu-west-1"), gofiler.Opts{})
 	require.NoError(t, err)
 	assert.Equal(t, "eu-west-1", b.client.Options().Region)
 
 	// A bucket which can't be accessed, or doesn't exist
-	_, err = New(ctx, bucketURL(t, endpoint, "private", ""))
+	_, err = New(ctx, bucketURL(t, endpoint, "private", ""), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
-	_, err = New(ctx, bucketURL(t, endpoint, "missing", ""))
+	_, err = New(ctx, bucketURL(t, endpoint, "missing", ""), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 
 	// A profile which doesn't exist
-	_, err = New(ctx, bucketURL(t, endpoint, "photos", "&profile=missing"))
+	_, err = New(ctx, bucketURL(t, endpoint, "photos", "&profile=missing"), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
@@ -123,9 +134,87 @@ func Test_S3_NoCredentials(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 
 	// Without credentials, a bucket can't be accessed, unless it's anonymous
-	_, err := New(context.Background(), bucketURL(t, endpoint, "photos", ""))
+	_, err := New(context.Background(), bucketURL(t, endpoint, "photos", ""), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 	assert.ErrorContains(t, err, "no credentials")
-	_, err = New(context.Background(), bucketURL(t, endpoint, "photos", "&anonymous"))
+	_, err = New(context.Background(), bucketURL(t, endpoint, "photos", "&anonymous"), gofiler.Opts{})
 	assert.NoError(t, err)
+}
+
+// credentialProvider expands the placeholders of credentials with its
+// values, and a placeholder which it doesn't have is an error
+type credentialProvider map[string]string
+
+func (p credentialProvider) Expand(_ context.Context, value string) (string, error) {
+	var err error
+	result := os.Expand(value, func(key string) string {
+		if value, exists := p[key]; exists {
+			return value
+		}
+		err = fmt.Errorf("no credential %q", key)
+		return ""
+	})
+	return result, err
+}
+
+func (p credentialProvider) Get(context.Context, string) (json.RawMessage, error) {
+	return nil, gofiler.ErrNotImplemented
+}
+
+func (p credentialProvider) Set(context.Context, string, json.RawMessage) error {
+	return gofiler.ErrNotImplemented
+}
+
+func Test_S3_Credentials(t *testing.T) {
+	endpoint := fakeS3(t)
+	ctx := context.Background()
+	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN"}
+	opts := "&access-key-id=${ID}&secret-access-key=${SECRET}&session-token=${TOKEN}"
+
+	// The credentials are the options', whose placeholders are expanded, and
+	// which the URL keeps
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+	assert.Equal(t, "${SECRET}", b.URL().Query().Get("secret-access-key"))
+	assert.NotContains(t, b.URL().String(), "AKIDTEST")
+
+	// Without a provider, or with a placeholder it doesn't have, they can't
+	// be expanded, and other credentials can't access the bucket
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{Credentials: credentialProvider{"ID": "AKIDTEST"}})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=OTHER&secret-access-key=${SECRET}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	assert.ErrorIs(t, err, gofiler.ErrForbidden)
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", ""), gofiler.Opts{Credentials: provider})
+	assert.ErrorIs(t, err, gofiler.ErrForbidden)
+}
+
+func Test_S3_Trace(t *testing.T) {
+	endpoint := fakeS3(t)
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer provider.Shutdown(context.Background())
+
+	// Each request is a span, of its operation, with the bucket, region and
+	// status of its response
+	_, err := New(context.Background(), bucketURL(t, endpoint, "photos", ""), gofiler.Opts{Tracer: provider.Tracer("test")})
+	require.NoError(t, err)
+	_, err = New(context.Background(), bucketURL(t, endpoint, "missing", ""), gofiler.Opts{Tracer: provider.Tracer("test")})
+	require.ErrorIs(t, err, gofiler.ErrNotFound)
+	spans := recorder.Ended()
+	require.Len(t, spans, 2)
+	for i, status := range []int{http.StatusOK, http.StatusNotFound} {
+		assert.Equal(t, "S3.HeadBucket", spans[i].Name())
+		attrs := map[attribute.Key]attribute.Value{}
+		for _, attr := range spans[i].Attributes() {
+			attrs[attr.Key] = attr.Value
+		}
+		assert.Equal(t, int64(status), attrs["http.response.status_code"].AsInt64())
+		assert.Equal(t, "us-east-1", attrs["cloud.region"].AsString())
+		assert.Equal(t, "HeadBucket", attrs["rpc.method"].AsString())
+		assert.NotEmpty(t, attrs["aws.s3.bucket"].AsString())
+	}
+	assert.Equal(t, codes.Unset, spans[0].Status().Code)
+	assert.Equal(t, codes.Error, spans[1].Status().Code)
 }
