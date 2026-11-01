@@ -75,7 +75,10 @@ func (self *FS) DeleteObjects(ctx context.Context, req schema.DeleteObjectsReque
 // filesBeneath returns the objects beneath a directory, including hidden
 // files. Directories, and files which are not objects, are not returned,
 // although they are deleted with the directory. A package is returned as
-// one object, as it's listed, without the files in it.
+// one object, as it's listed, without the files in it. A symbolic link is
+// returned as the object it's listed as, when it's resolved to a file, or a
+// package, but isn't descended into, and the link, not what it leads to, is
+// deleted.
 func (self *FS) filesBeneath(fsys fs.FS, dir string) ([]*schema.Object, error) {
 	objects := []*schema.Object{}
 	err := fs.WalkDir(fsys, dir, func(name string, entry fs.DirEntry, err error) error {
@@ -88,6 +91,13 @@ func (self *FS) filesBeneath(fsys fs.FS, dir string) ([]*schema.Object, error) {
 			}
 			objects = append(objects, self.objectFromInfo(name, info, ""))
 			return fs.SkipDir
+		} else if entry.Type()&fs.ModeSymlink != 0 {
+			// Skip links which are broken, lead out of the filesystem, or
+			// to a directory, which isn't returned, as listing does
+			if info, err := fs.Stat(fsys, name); err == nil && (info.Mode().IsRegular() || (info.IsDir() && self.isPackage(entry.Name()))) {
+				objects = append(objects, self.objectFromInfo(name, info, ""))
+			}
+			return nil
 		} else if !entry.Type().IsRegular() {
 			return nil
 		}

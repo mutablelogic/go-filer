@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	// Packages
@@ -217,6 +218,51 @@ func Test_DeleteObjects(t *testing.T) {
 		_, err = remove("Other.sparsebundle/bands/404d", false)
 		assert.ErrorIs(t, err, fs.ErrNotExist)
 		assert.True(t, exists("Other.sparsebundle/bands/404d"))
+	})
+
+	t.Run("Links", func(t *testing.T) {
+		// A link to a file is returned as the file it's listed as, and links
+		// to directories, broken links, and links out of the filesystem
+		// aren't, and only the links are deleted, not what they lead to. Links
+		// within the filesystem are relative, as absolute links can't be
+		// resolved within its root.
+		outside := t.TempDir()
+		create(t, "targets/file.txt", "linked/a.txt")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "targets", "dir"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
+		symlink(t, filepath.Join("..", "targets", "file.txt"), filepath.Join(dir, "linked", "file.txt"))
+		symlink(t, filepath.Join("..", "targets", "dir"), filepath.Join(dir, "linked", "dir"))
+		symlink(t, filepath.Join("..", "missing.txt"), filepath.Join(dir, "linked", "broken.txt"))
+		symlink(t, filepath.Join(outside, "secret.txt"), filepath.Join(dir, "linked", "outside.txt"))
+
+		// The objects deleted are the objects which are listed
+		iter, err := backend.ListObjects(ctx, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/linked"}, Recursive: true})
+		require.NoError(t, err)
+		listed := []string{}
+		for _, path := range collect(t, iter) {
+			if !strings.HasSuffix(path, "/") {
+				listed = append(listed, path)
+			}
+		}
+		iter.Close()
+
+		deleted, err := remove("linked", true)
+		require.NoError(t, err)
+		var paths []string
+		for _, object := range deleted.Body {
+			paths = append(paths, object.Path)
+			if object.Path == "/linked/file.txt" {
+				require.NotNil(t, object.Size)
+				assert.Equal(t, int64(len("data")), *object.Size)
+			}
+		}
+		assert.ElementsMatch(t, []string{"/linked/a.txt", "/linked/file.txt"}, paths)
+		assert.ElementsMatch(t, listed, paths)
+		assert.False(t, exists("linked"))
+		assert.True(t, exists("targets/file.txt"))
+		assert.True(t, exists("targets/dir"))
+		_, err = os.Stat(filepath.Join(outside, "secret.txt"))
+		assert.NoError(t, err)
 	})
 
 	t.Run("CancelledContext", func(t *testing.T) {

@@ -49,10 +49,14 @@ func (self *FS) ReadObject(ctx context.Context, req schema.GetObjectRequest) (fi
 		return nil, nil, &fs.PathError{Op: "read", Path: req.Path, Err: fs.ErrInvalid}
 	}
 
-	// Return the function which reads the file, and the object. The content
-	// type is from the extension, never by sniffing the content, which would
-	// read the file before the function is called.
+	// Return the function which reads the file, and the object, unless it
+	// hasn't changed, as GetObject does. The content type is from the
+	// extension, never by sniffing the content, which would read the file
+	// before the function is called.
 	obj := self.objectFromInfo(name, info, objectType(name))
+	if notModified(obj, req) {
+		return nil, nil, filer.ErrNotModified.Withf("%q", obj.Path)
+	}
 	return func(ctx context.Context, fn func(io.Reader) error) error {
 		return self.read(ctx, name, info, fn)
 	}, obj, nil
@@ -91,10 +95,18 @@ func (self *FS) read(ctx context.Context, name string, want fs.FileInfo, fn func
 }
 
 // Read returns an error once the context is cancelled, or the filesystem is
-// closed, rather than reading
+// closed, rather than reading. The end of the content is checked too, as a
+// read which returns the last of it, with io.EOF, isn't followed by another,
+// so the error is returned with the data, in place of io.EOF.
 func (r *reader) Read(data []byte) (int, error) {
 	if err := r.fs.checkRequest(r.ctx); err != nil {
 		return 0, err
 	}
-	return r.r.Read(data)
+	n, err := r.r.Read(data)
+	if errors.Is(err, io.EOF) {
+		if err := r.fs.checkRequest(r.ctx); err != nil {
+			return n, err
+		}
+	}
+	return n, err
 }

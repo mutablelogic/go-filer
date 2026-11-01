@@ -181,3 +181,50 @@ type readerFunc func([]byte) (int, error)
 func (fn readerFunc) Read(data []byte) (int, error) {
 	return fn(data)
 }
+
+func Test_CreateObjectContentType(t *testing.T) {
+	files := &memFS{MapFS: fstest.MapFS{"old.txt": {Data: []byte("old")}}}
+	self, err := NewFS("test", files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// A content type is the type of the extension, ignoring parameters and
+	// case, or it isn't supported, as it wouldn't be returned
+	for path, types := range map[string]map[string]bool{
+		"/a.txt":    {"": true, "text/plain": true, "text/plain; charset=utf-8": true, "TEXT/PLAIN": true, "image/png": false, "not a type": false},
+		"/README":   {"": true, "text/plain": false},
+		"/song.mp3": {"audio/mpeg": true, "audio/mp4": false},
+	} {
+		for contentType, ok := range types {
+			_, err := self.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: path}, ObjectMeta: schema.ObjectMeta{ContentType: contentType}})
+			if ok && err != nil {
+				t.Errorf("%s %q: %v", path, contentType, err)
+			} else if !ok && !errors.Is(err, filer.ErrNotImplemented) {
+				t.Errorf("%s %q: %v, want not implemented", path, contentType, err)
+			}
+		}
+	}
+}
+
+func Test_CreateObjectCancelledAtEnd(t *testing.T) {
+	files := &memFS{MapFS: fstest.MapFS{"old.txt": {Data: []byte("old")}}}
+	self, err := NewFS("test", files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A context which is cancelled during the read which returns the last of
+	// the body, with io.EOF, leaves the object unchanged
+	ctx, cancel := context.WithCancel(context.Background())
+	body := readerFunc(func(data []byte) (int, error) {
+		cancel()
+		return copy(data, "new"), io.EOF
+	})
+	if _, err := self.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/old.txt"}, Body: body}); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled: %v", err)
+	} else if got := string(files.MapFS["old.txt"].Data); got != "old" {
+		t.Errorf("content: %q", got)
+	}
+}

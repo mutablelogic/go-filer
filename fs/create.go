@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"mime"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -30,9 +31,12 @@ func (self *FS) CreateObject(ctx context.Context, req schema.CreateObjectRequest
 	}
 
 	// TODO: Store metadata. Until then, reject it rather than silently
-	// discarding it
+	// discarding it. The content type of an object is from its extension, so
+	// one which is another type is rejected, as it wouldn't be returned.
 	if len(req.Meta) > 0 {
 		return nil, filer.ErrNotImplemented.With("Object metadata is not supported")
+	} else if !sameType(req.ContentType, objectType(fsPath(req.Path))) {
+		return nil, filer.ErrNotImplemented.Withf("Content type %q isn't supported, as the type of %q is from its extension", req.ContentType, req.Path)
 	}
 
 	// Get the writable filesystem
@@ -97,4 +101,22 @@ func (self *FS) CreateObject(ctx context.Context, req schema.CreateObjectRequest
 	// Return the object. The content type is from the extension, as the body
 	// has been written, so sniffing it would mean reading the file again.
 	return self.objectFromInfo(name, info, objectType(name)), nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// sameType returns true when the content type of a request is empty, or the
+// same media type as the type of the object, ignoring parameters, such as
+// the charset, and case
+func sameType(contentType, objectType string) bool {
+	if contentType == "" {
+		return true
+	}
+	want, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	got, _, err := mime.ParseMediaType(objectType)
+	return err == nil && got == want
 }

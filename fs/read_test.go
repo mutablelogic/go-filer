@@ -116,3 +116,28 @@ func Test_ReadObject(t *testing.T) {
 		t.Errorf("close twice: %v", err)
 	}
 }
+
+func Test_ReadObjectConditional(t *testing.T) {
+	modtime := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	self, err := NewFS("test", fstest.MapFS{"song.mp3": {Data: []byte("abc"), ModTime: modtime}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	key := schema.ObjectKey{Path: "/song.mp3"}
+
+	// An object which hasn't changed isn't read, as GetObject doesn't return it
+	for _, req := range []schema.GetObjectRequest{
+		{ObjectKey: key, IfNoneMatch: []string{"*"}},
+		{ObjectKey: key, IfModifiedSince: modtime},
+	} {
+		if read, _, err := self.ReadObject(ctx, req); !errors.Is(err, filer.ErrNotModified) || read != nil {
+			t.Errorf("%+v: %v", req, err)
+		}
+	}
+
+	// An object which has changed is read
+	if read, _, err := self.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: key, IfModifiedSince: modtime.Add(-time.Hour)}); err != nil || read == nil {
+		t.Errorf("modified: %v", err)
+	}
+}
