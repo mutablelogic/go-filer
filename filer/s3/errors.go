@@ -18,7 +18,8 @@ import (
 // whose path is relative to the prefix, by its path: one which doesn't exist
 // is fs.ErrNotExist, as for a filesystem, one which can't be accessed is
 // ErrForbidden, one whose condition fails, as it changed, is
-// ErrPreconditionFailed, and one which fails otherwise is ErrServiceUnavailable. A
+// ErrPreconditionFailed, one which conflicts with another change is
+// ErrConflict, and one which fails otherwise is ErrServiceUnavailable. A
 // request which is cancelled is its context's error.
 func (self *S3) objectError(op, rel string, err error) error {
 	var responseErr *smithyhttp.ResponseError
@@ -34,6 +35,8 @@ func (self *S3) objectError(op, rel string, err error) error {
 		return &fs.PathError{Op: op, Path: "/" + rel, Err: fs.ErrNotExist}
 	case http.StatusPreconditionFailed:
 		return gofiler.ErrPreconditionFailed.Withf("%s /%s: it changed since it was returned", op, rel)
+	case http.StatusConflict:
+		return gofiler.ErrConflict.Withf("%s /%s: it was changed at the same time", op, rel)
 	case http.StatusForbidden, http.StatusUnauthorized:
 		return gofiler.ErrForbidden.Withf("%s /%s: access denied", op, rel)
 	default:

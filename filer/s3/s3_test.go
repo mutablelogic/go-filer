@@ -114,8 +114,6 @@ func Test_S3_NotImplemented(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	_, err = b.CreateObject(ctx, schema.CreateObjectRequest{})
-	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 	_, err = b.DeleteObjects(ctx, schema.DeleteObjectsRequest{})
 	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 	assert.ErrorIs(t, b.WatchObjects(ctx, make(chan schema.Event)), gofiler.ErrNotImplemented)

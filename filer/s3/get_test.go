@@ -117,16 +117,19 @@ func Test_S3_GetPrefix(t *testing.T) {
 func Test_S3_GetMeta(t *testing.T) {
 	bucket, b := newFakeBucket(t, "", "a.txt", "b.txt", "c/d.txt")
 	bucket.Lock()
-	bucket.meta = map[string]map[string]string{"a.txt": {"rating": "5", "Camera": "X100V", "note": `"quoted"`}}
+	bucket.meta = map[string]map[string]string{"a.txt": {"rating": "5", "Camera": "X100V", "note": `"quoted"`, "photo.lens": `{"mm":35}`}}
 	bucket.Unlock()
 
-	// The user's metadata, with lowercase keys, in their order, and values
-	// which are strings
+	// The user's metadata, with lowercase names, in their order, which are
+	// the namespace and key, separated by a ".", or the key, and values which
+	// are JSON, or strings, when they aren't, as another client wrote them
 	object, err := getObject(b, "/a.txt", schema.GetObjectRequest{})
 	require.NoError(t, err)
-	require.Len(t, object.Meta, 3)
-	for i, want := range []struct{ key, value string }{{"camera", `"X100V"`}, {"note", `"\"quoted\""`}, {"rating", `"5"`}} {
-		assert.Empty(t, object.Meta[i].Namespace)
+	require.Len(t, object.Meta, 4)
+	for i, want := range []struct{ namespace, key, value string }{
+		{"", "camera", `"X100V"`}, {"", "note", `"quoted"`}, {"photo", "lens", `{"mm":35}`}, {"", "rating", `5`},
+	} {
+		assert.Equal(t, want.namespace, object.Meta[i].Namespace)
 		assert.Equal(t, want.key, object.Meta[i].Key)
 		assert.JSONEq(t, want.value, string(object.Meta[i].Value))
 	}

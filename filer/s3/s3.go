@@ -143,11 +143,6 @@ func (self *S3) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - OBJECTS
 
-// CreateObject creates an object in the bucket
-func (self *S3) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
-	return nil, gofiler.ErrNotImplemented.With("CreateObject")
-}
-
 // DeleteObjects deletes an object, or the objects beneath a directory, in the
 // bucket
 func (self *S3) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
