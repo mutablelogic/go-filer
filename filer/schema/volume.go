@@ -13,6 +13,24 @@ import (
 )
 
 ////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+// The schemes of the URLs of volumes' backends
+const (
+	// SchemeFile is the scheme of a volume which is a directory, such as
+	// file://media/mnt/media
+	SchemeFile = "file"
+
+	// SchemeFS is the scheme of a volume which is a filesystem, but not a
+	// directory, such as fs://media, which a volume can't be added from
+	SchemeFS = "fs"
+
+	// SchemeS3 is the scheme of a volume which is a bucket, and the prefix of
+	// its objects, such as s3://my-bucket/photos?name=photos
+	SchemeS3 = "s3"
+)
+
+////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
 // Volume is a volume which is registered, with the URL of its backend, which

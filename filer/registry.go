@@ -14,6 +14,7 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	fs "github.com/mutablelogic/go-filer/filer/fs"
+	s3 "github.com/mutablelogic/go-filer/filer/s3"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -82,14 +83,8 @@ var _ gofiler.Filer = (*Registry)(nil)
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
-const (
-	// schemeFile is the scheme of a volume which is a directory, such as
-	// file://media/mnt/media
-	schemeFile = "file"
-)
-
 // schemes are the schemes of the URLs which backends are created from
-var schemes = []string{schemeFile}
+var schemes = []string{schema.SchemeFile, schema.SchemeS3}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -206,6 +201,19 @@ func (self *Registry) Volume(name string) (*schema.Volume, error) {
 	}
 }
 
+// VolumeName returns the name of the volume of a URL, which is its name
+// option, when it's set, such as s3://my.bucket/?name=photos, or otherwise
+// its host, such as file://media/mnt/media or s3://photos/, or empty, when it
+// has neither
+func VolumeName(u *url.URL) string {
+	if u == nil {
+		return ""
+	} else if name := u.Query().Get("name"); name != "" {
+		return name
+	}
+	return u.Host
+}
+
 // volumeOf returns the volume of a backend, with its URL, and whether it's
 // read-only, when the backend says
 func volumeOf(name string, b gofiler.Filer) schema.Volume {
@@ -316,8 +324,12 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 		}
 	}
 	u.RawQuery = query.Encode()
-	if _, err := self.Validate(ctx, &u); err != nil {
+	if v, err := self.Validate(ctx, &u); err != nil {
 		return nil, err
+	} else if name := VolumeName(v); name != volume {
+		// The options can't rename the volume, which is checked before it's
+		// closed, so it isn't interrupted
+		return nil, gofiler.ErrBadParameter.Withf("url %q is not for volume %q", v.Redacted(), volume)
 	} else if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -429,7 +441,7 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 		return nil, gofiler.ErrBadParameter.Withf("invalid options: %v", err)
 	}
 	switch u.Scheme {
-	case schemeFile:
+	case schema.SchemeFile:
 		if types.IsIdentifier(u.Host) == false {
 			return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", u.Host)
 		}
@@ -439,12 +451,18 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 		// converted to C:/media.
 		path := u.Path
 		if runtime.GOOS == "windows" {
-			path = types.FilePath(&url.URL{Scheme: schemeFile, Path: u.Path})
+			path = types.FilePath(&url.URL{Scheme: schema.SchemeFile, Path: u.Path})
 		}
 		if path == "" || !filepath.IsAbs(filepath.FromSlash(path)) {
 			return nil, gofiler.ErrBadParameter.Withf("path of volume %q isn't absolute: %q", u.Host, path)
 		}
 		if b, err := fs.New(u.Host, path, query); err != nil {
+			return nil, err
+		} else {
+			return b, nil
+		}
+	case schema.SchemeS3:
+		if b, err := s3.New(ctx, u); err != nil {
 			return nil, err
 		} else {
 			return b, nil
@@ -462,7 +480,7 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.URL, rescan bool) (gofiler.Filer, error) {
 	b, err := self.new(ctx, u)
 	if err == nil {
-		if name := b.URL().Host; name != volume {
+		if name := VolumeName(b.URL()); name != volume {
 			err = errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", u, volume), b.Close())
 		}
 	}

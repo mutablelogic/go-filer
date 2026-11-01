@@ -39,8 +39,10 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		return volume.Name, volume.URL, err
 	}
 
-	// The name is the URL's host, or --name, which is the host of a URL
-	// without one, and a directory is a file URL, which is absolute
+	// The name of a file URL is its host, or --name, which is the host of a
+	// URL without one, and a directory is a file URL, which is absolute.
+	// Otherwise the name is the name option, or the host, or --name, which
+	// sets the option when it isn't the host.
 	for _, test := range []struct {
 		args       []string
 		name, want string
@@ -51,7 +53,12 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{[]string{"/mnt/media", "--name", "media"}, "media", "file://media" + abs(filepath.FromSlash("/mnt/media"))},
 		{[]string{"/mnt/media?readonly=true", "--name", "media"}, "media", "file://media" + abs(filepath.FromSlash("/mnt/media")) + "?readonly=true"},
 		{[]string{"music", "--name", "media"}, "media", "file://media" + abs(filepath.Join(wd, "music"))},
-		{[]string{"ftp://media/data"}, "media", "ftp://media/data"},
+		{[]string{"s3://bucket/photos?name=media"}, "media", "s3://bucket/photos?name=media"},
+		{[]string{"s3://bucket/photos"}, "bucket", "s3://bucket/photos"},
+		{[]string{"s3://bucket/photos", "--name", "bucket"}, "bucket", "s3://bucket/photos"},
+		{[]string{"s3://bucket/photos", "--name", "media"}, "media", "s3://bucket/photos?name=media"},
+		{[]string{"s3://bucket/photos?name=media", "--name", "media"}, "media", "s3://bucket/photos?name=media"},
+		{[]string{"s3://bucket/photos", "-o", "name=media", "-o", "region=eu-west-1"}, "media", "s3://bucket/photos?name=media&region=eu-west-1"},
 	} {
 		name, url, err := volume(test.args...)
 		require.NoError(t, err, test.args)
@@ -75,12 +82,15 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		assert.Equal(t, "file://media/mnt/media?"+test.want, url, test.args)
 	}
 
-	// A volume without a name, or whose name isn't the URL's host, or with
+	// A volume without a name, or whose name isn't the URL's host, or its
+	// name option, or with
 	// an option without a key, isn't created, and the URL is needed
 	for _, args := range [][]string{
 		{"file:///mnt/media"},
 		{"/mnt/media"},
 		{"file://media/mnt/media", "--name", "other"},
+		{"s3:///photos"},
+		{"s3://bucket/photos?name=media", "--name", "other"},
 		{"file://media/mnt/media", "--opt", "=true"},
 		{"file://media/mnt/media?readonly=%ZZ", "--opt", "package="},
 		{},
