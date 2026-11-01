@@ -43,6 +43,16 @@ func newClient(t *testing.T) (*httpclient.Client, func() string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { registry.Close() })
 
+	// Run the registry, so the changes to its volumes are watched
+	ctx, cancel := context.WithCancel(context.Background())
+	running := make(chan error, 1)
+	go func() { running <- registry.Run(ctx, nil) }()
+	require.NoError(t, registry.WaitListening(context.Background()))
+	t.Cleanup(func() {
+		cancel()
+		assert.NoError(t, <-running)
+	})
+
 	mux := http.NewServeMux()
 	router, err := httprouter.NewRouter(context.Background(), mux, "/api", "", "test", "0.0.0")
 	require.NoError(t, err)

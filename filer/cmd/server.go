@@ -30,9 +30,10 @@ type Flags struct {
 // WithRegistry creates a registry of volumes, with the server's tracer and
 // meter, and credentials from its environment, such as S3_SECRET, which are
 // the placeholders of a volume's credentials, such as ${S3_SECRET}, and
-// those which are stored while it runs, and then the options, adds the volumes of the flags, registers its
-// HTTP handlers with the server, when there is one, and then calls the
-// function with the registry. A volume which can't be added is an error. The
+// those which are stored while it runs, and then the options, runs it, so
+// the changes to its volumes are sent to its subscriptions, adds the volumes
+// of the flags, registers its HTTP handlers with the server, when there is
+// one, and then calls the function with the registry. A volume which can't be added is an error. The
 // registry, and its volumes, are closed when the function returns. Returns
 // any error.
 func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn func(*filer.Registry) error, opts ...filer.Opt) (err error) {
@@ -53,6 +54,17 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 			err = errors.Join(err, <-closed)
 		}
 		err = errors.Join(err, registry.Close())
+	}()
+
+	// Run the registry, which sends the changes to the volumes to the
+	// subscriptions, until it's closed, which is waited for
+	running := make(chan error, 1)
+	go func() {
+		running <- registry.Run(ctx.Context(), ctx.Logger())
+	}()
+	defer func() {
+		registry.Close()
+		err = errors.Join(err, <-running)
 	}()
 
 	// Add the volumes, whose names are their name options, or the hosts of

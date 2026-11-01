@@ -1,5 +1,7 @@
 package schema
 
+import "slices"
+
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
@@ -10,6 +12,12 @@ type EventType int
 type Event struct {
 	EventType `json:"type"`
 	ObjectKey `json:"key"`
+}
+
+// EventFilter is the changes which a subscription is sent, which are those
+// of the volumes, or every volume, when there are none
+type EventFilter struct {
+	Name []string `json:"name,omitempty" help:"Volumes, which is every volume when there are none"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -48,4 +56,13 @@ func (t EventType) String() string {
 	default:
 		return "none"
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+// Match returns true when the change is of one of the filter's volumes, or
+// the filter has none
+func (f EventFilter) Match(event Event) bool {
+	return len(f.Name) == 0 || slices.Contains(f.Name, event.Name)
 }

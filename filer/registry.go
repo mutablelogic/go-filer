@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -27,17 +28,21 @@ type Registry struct {
 	opt
 	backend map[string]*entry
 
-	// The calls to WatchObjects in progress, which are sent the changes to
-	// every volume
-	subscribers map[*subscriber]struct{}
+	// The subscriptions, by their channels, which Run sends the changes to
+	// the volumes to, which are queued in events, whether Run is running, and
+	// the channel which is closed once it is
+	subscribers map[chan<- schema.Event]*subscriber
+	events      chan schema.Event
+	running     atomic.Bool
+	listening   chan struct{}
 
 	// The backends which are being closed, by Del, Update or Close, which
 	// Close waits for, as a backend which Update is closing is no longer the
 	// volume's in the registry
 	teardown map[*entry]struct{}
 
-	// done is closed when the registry is closed, which stops the calls to
-	// WatchObjects
+	// done is closed when the registry is closed, which stops Run, and ends
+	// the subscriptions
 	done      chan struct{}
 	closeOnce sync.Once
 }
@@ -93,7 +98,9 @@ var schemes = []string{schema.SchemeFile, schema.SchemeS3}
 func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	self := &Registry{
 		backend:     make(map[string]*entry),
-		subscribers: make(map[*subscriber]struct{}),
+		subscribers: make(map[chan<- schema.Event]*subscriber),
+		events:      make(chan schema.Event, eventQueue),
+		listening:   make(chan struct{}),
 		teardown:    make(map[*entry]struct{}),
 		done:        make(chan struct{}),
 	}

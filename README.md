@@ -104,7 +104,7 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 | `DeleteObjects` of a file | `remove` | `HeadObject` for the metadata, and to return 404 as `DeleteObject` succeeds for missing keys, then `DeleteObject` |
 | `DeleteObjects` of a directory | `RemoveAll`. Returns the files deleted, including hidden files | List the prefix, then `DeleteObjects` in batches of 1000. Returns the keys deleted |
 | Remove empty parent directories | After each delete | Not needed, as empty prefixes do not exist |
-| `WatchObjects` | Watch the directory (see Watching) | Not supported, so `filer.ErrNotImplemented`. S3 event notifications need a queue |
+| `WatchObjects` | Watch the directory (see Watching) | Subscribe to the changes to a SeaweedFS filer's metadata, with the `seaweedfs-filer-grpc` option, and otherwise `filer.ErrNotImplemented`, as S3's event notifications need a queue |
 
 Object metadata isn't stored yet, so `CreateObject` with metadata is `filer.ErrNotImplemented`.
 
@@ -121,6 +121,8 @@ Directories are watched with the `fsevents` package, using the efficient mechani
 | Windows | `ReadDirectoryChangesW` |
 
 On other platforms, and on macOS without cgo, and for a filer of a filesystem which isn't a directory, `WatchObjects` returns `filer.ErrNotImplemented`.
+
+The registry of volumes watches each of its volumes, and its `Run` sends their changes, with the names of their volumes, to its subscriptions, until its context is cancelled, or the registry is closed, so it should be run while the registry is used, as the server does. `Subscribe` sends the changes of the volumes of a filter, or every volume, to a channel, from when it returns, until its context is cancelled, or `Run` stops, which ends every subscription. A change isn't waited for a subscriber to receive, so when its channel is full, it, and the volume's other changes, are dropped, and it's sent a rescan of the volume, once there's room, so its channel should be buffered. The registry's `WatchObjects` subscribes to every volume, and waits for its channel to receive each change.
 
 ## Modification Time
 
