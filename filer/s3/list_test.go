@@ -333,3 +333,18 @@ func statusOf(err error) int {
 	}
 	return 0
 }
+
+func Test_S3_ListFileAndDir(t *testing.T) {
+	_, b := newFakeBucket(t, "", "a", "a/b.txt")
+	list := func(path string) []string {
+		return listPaths(t, b, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: path}})
+	}
+
+	// A bucket can have an object, and a directory, of the same name, which
+	// are both listed, and a path which ends with "/" is the directory
+	assert.Equal(t, []string{"/a", "/a/"}, list("/"))
+	assert.Equal(t, []string{"/a"}, list("/a"))
+	assert.Equal(t, []string{"/a/b.txt"}, list("/a/"))
+	_, err := b.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/b.txt/"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+}

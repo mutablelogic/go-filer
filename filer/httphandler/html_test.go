@@ -47,7 +47,7 @@ func TestObjectListHTML(t *testing.T) {
 	assert.Contains(t, body, "a.txt")
 	assert.Contains(t, body, "a&amp;b&#39;c.txt")
 	assert.NotContains(t, body, "a&b'c.txt")
-	assert.Contains(t, body, `<a href="?path=%2Fmusic">music/</a>`)
+	assert.Contains(t, body, `<a href="?path=%2Fmusic%2F">music/</a>`)
 	assert.Contains(t, body, `<a href="?">media</a>`)
 	assert.Contains(t, body, `<a href="media/a.txt">a.txt</a>`)
 	assert.Contains(t, body, `<a href="media/a&amp;b%27c.txt">a&amp;b&#39;c.txt</a>`)
@@ -66,7 +66,7 @@ func TestObjectListHTML(t *testing.T) {
 	// A directory's names are relative to it, and the path links back
 	_, _, body = getAccept(t, server, "object/media?path=/music", browser)
 	assert.Contains(t, body, ">b.mp3<")
-	assert.Contains(t, body, `<a href="?path=%2Fmusic">music</a>`)
+	assert.Contains(t, body, `<a href="?path=%2Fmusic%2F">music</a>`)
 
 	// A page with more objects links to the next, keeping the query
 	_, _, body = getAccept(t, server, "object/media?limit=1&recursive=true", browser)

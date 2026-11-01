@@ -67,6 +67,12 @@ func Test_ListObjects(t *testing.T) {
 	equal("start", list(schema.ListObjectsRequest{Recursive: true, StartAfter: "/a/"}), []string{"/a/b.txt", "/a0.txt"})
 	equal("start within", list(schema.ListObjectsRequest{Recursive: true, StartAfter: "/a.txt"}), []string{"/a", "/a/b.txt", "/a0.txt"})
 
+	// A path which ends with "/" is a directory, which a file isn't
+	equal("dir", list(schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}}), []string{"/a/b.txt"})
+	if _, err := self.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a.txt/"}}); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("/a.txt/: %v", err)
+	}
+
 	// Listing a file, or a package, returns just it
 	equal("file", list(schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/b.txt"}}), []string{"/a/b.txt"})
 	equal("package", list(schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/Disk.sparsebundle"}, Recursive: true}), []string{"/Disk.sparsebundle"})

@@ -75,7 +75,10 @@ type GetObjectRequest struct {
 	IfNoneMatch     []string  `json:"-"` // if non-empty, only return the object if its ETag doesn't match any of these
 }
 
-// ListObjectsRequest lists the objects beneath a path in a volume
+// ListObjectsRequest lists the objects beneath a path in a volume, which is
+// a directory, or an object, when only it's listed. A path which ends with
+// "/" is a directory, which is listed, even when an object has its name, as
+// it can in a bucket, and which doesn't exist when it's an object.
 type ListObjectsRequest struct {
 	ObjectKey
 	Recursive  bool   `json:"recursive,omitempty"`

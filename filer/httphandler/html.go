@@ -107,7 +107,7 @@ func writeListHTML(w http.ResponseWriter, r *http.Request, list *schema.ObjectLi
 			continue
 		}
 		dir = path.Join(dir, elem)
-		page.Crumb = append(page.Crumb, listLink{Name: elem, Href: href(dir)})
+		page.Crumb = append(page.Crumb, listLink{Name: elem, Href: href(dir + "/")})
 	}
 
 	// The objects, whose names are relative to the directory
@@ -123,7 +123,7 @@ func writeListHTML(w http.ResponseWriter, r *http.Request, list *schema.ObjectLi
 			row.Name = object.Key()
 		}
 		if object.IsDir {
-			row.Href = href(object.Path)
+			row.Href = href(object.Key())
 			row.Delete = fileHref(list.Name, object.Path) + "?recursive=true"
 		} else {
 			row.Href = fileHref(list.Name, object.Path)

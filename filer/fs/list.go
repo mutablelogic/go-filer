@@ -146,14 +146,18 @@ func newListIterator(fsys *FS, req schema.ListObjectsRequest) (*listIterator, er
 		recursive: req.Recursive,
 	}
 
-	// An empty path, or "/", lists from the root
-	name := fsPath(req.Path)
+	// An empty path, or "/", lists from the root, and a path which ends with
+	// "/" is a directory
+	name := fsPath(strings.TrimSuffix(req.Path, "/"))
+	dir := name != "." && strings.HasSuffix(req.Path, "/")
 
 	// Stat the path, and either list the directory or return the single file,
-	// which a package is
+	// which a package is, unless it must be a directory
 	if info, err := fsys.stat("list", name); err != nil {
 		return nil, err
-	} else if info.IsDir() && !self.isPackage(path.Base(name)) {
+	} else if isDir := info.IsDir() && !self.isPackage(path.Base(name)); dir && !isDir {
+		return nil, &fs.PathError{Op: "list", Path: req.Path, Err: fs.ErrNotExist}
+	} else if isDir {
 		if err := self.push(name); err != nil {
 			return nil, err
 		}
