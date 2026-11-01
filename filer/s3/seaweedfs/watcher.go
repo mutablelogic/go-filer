@@ -55,6 +55,10 @@ const (
 	// a versioned bucket, whose entries are the versions, and not objects
 	versionsSuffix = ".versions"
 
+	// tempPrefix is the prefix of the name of an entry which a client of the
+	// filer writes, before it's renamed to its own, which isn't an object
+	tempPrefix = ".::TMPNAME:"
+
 	// configTimeout is how long the filer's configuration is waited for
 	configTimeout = 10 * time.Second
 
@@ -250,9 +254,13 @@ func (self *Watcher) events(response *filer_pb.SubscribeMetadataResponse) []sche
 		return events
 	}
 
-	// The changes, of the paths which are objects
+	// The changes, of the paths which are objects, but not the updates of
+	// directories, such as their times, as the changes beneath them are their
+	// own
 	var events []schema.Event
 	switch {
+	case oldPath != "" && newPath != "" && oldPath == newPath && new.IsDirectory:
+		return nil
 	case oldPath != "" && newPath != "" && oldPath == newPath:
 		events = append(events, event(schema.EventTypeUpdated, newPath))
 	default:
@@ -320,10 +328,11 @@ func versionedDir(p string) (string, bool) {
 }
 
 // isPath returns true when the path has no elements which are empty, or "."
-// or "..", so it's a path of an object, beneath its directory
+// or "..", or the names of entries which are being written, so it's a path of
+// an object, beneath its directory
 func isPath(p string) bool {
 	for _, elem := range strings.Split(p, "/") {
-		if elem == "" || elem == "." || elem == ".." {
+		if elem == "" || elem == "." || elem == ".." || strings.HasPrefix(elem, tempPrefix) {
 			return false
 		}
 	}
