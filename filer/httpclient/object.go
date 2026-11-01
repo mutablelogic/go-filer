@@ -131,8 +131,8 @@ func (c *Client) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequ
 // volume, creating it, and the directories it's in, or replacing it. With
 // IfNotExists, a file which exists isn't replaced, and with IfExists, a file
 // which doesn't exist isn't created, which are gofiler.ErrPreconditionFailed.
-// The file's modified time is ModTime, when it's set, and a nil body is an
-// empty file. Returns the file. The request isn't timed out, as a file can
+// The file's modified time is ModTime, when it's set, its metadata is Meta,
+// and a nil body is an empty file. Returns the file. The request isn't timed out, as a file can
 // be large, so it's cancelled with ctx.
 func (c *Client) PutObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	if clean := strings.Trim(path.Clean("/"+req.Path), "/"); clean == "" {
@@ -151,6 +151,13 @@ func (c *Client) PutObject(ctx context.Context, req schema.CreateObjectRequest) 
 	}
 	if !req.ModTime.IsZero() {
 		opts = append(opts, client.OptReqHeader(types.ContentModifiedHeader, req.ModTime.UTC().Format(http.TimeFormat)))
+	}
+	if len(req.Meta) > 0 {
+		if value, err := schema.EncodeMetaHeader(req.Meta); err != nil {
+			return nil, gofiler.ErrBadParameter.Withf("%s%s: %v", req.Name, req.Path, err)
+		} else {
+			opts = append(opts, client.OptReqHeader(schema.MetaHeader, value))
+		}
 	}
 	contentType := req.ContentType
 	if contentType == "" {
@@ -183,7 +190,8 @@ func (c *Client) PutObject(ctx context.Context, req schema.CreateObjectRequest) 
 // can have directories, which is opened as it's uploaded
 type UploadFile struct {
 	Path    string
-	ModTime time.Time // the file's modification time, when it isn't zero
+	ModTime time.Time     // the file's modification time, when it isn't zero
+	Meta    []schema.Meta // the file's metadata, when it has any
 	Open    func() (io.ReadCloser, error)
 }
 
@@ -228,7 +236,8 @@ func (c *Client) UploadObjects(ctx context.Context, name, dir string, files []Up
 // PRIVATE METHODS
 
 // writeForm writes each file to the form, as a "file" part, whose file name
-// is its path, and then closes the form
+// is its path, with its modification time and metadata, and then closes the
+// form
 func writeForm(form *multipart.Writer, files []UploadFile) error {
 	for _, file := range files {
 		header := textproto.MIMEHeader{}
@@ -236,6 +245,13 @@ func writeForm(form *multipart.Writer, files []UploadFile) error {
 		header.Set("Content-Type", types.ContentTypeBinary)
 		if !file.ModTime.IsZero() {
 			header.Set(types.ContentModifiedHeader, file.ModTime.UTC().Format(http.TimeFormat))
+		}
+		if len(file.Meta) > 0 {
+			value, err := schema.EncodeMetaHeader(file.Meta)
+			if err != nil {
+				return err
+			}
+			header.Set(schema.MetaHeader, value)
 		}
 		w, err := form.CreatePart(header)
 		if err != nil {

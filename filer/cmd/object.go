@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,11 +38,12 @@ type ObjectCommands struct {
 }
 
 type ObjectPutCmd struct {
-	Name        string `arg:"" name:"name" help:"Volume name."`
-	Path        string `arg:"" name:"path" help:"Path of the file in the volume, or of the directory, ending with /, to upload it to with its name."`
-	File        string `arg:"" name:"file" help:"File to upload, or - for standard input."`
-	IfNotExists bool   `name:"no-replace" help:"Don't replace a file which exists."`
-	IfExists    bool   `name:"replace-only" help:"Don't create a file which doesn't exist."`
+	Name        string   `arg:"" name:"name" help:"Volume name."`
+	Path        string   `arg:"" name:"path" help:"Path of the file in the volume, or of the directory, ending with /, to upload it to with its name."`
+	File        string   `arg:"" name:"file" help:"File to upload, or - for standard input."`
+	IfNotExists bool     `name:"no-replace" help:"Don't replace a file which exists."`
+	IfExists    bool     `name:"replace-only" help:"Don't create a file which doesn't exist."`
+	Meta        []string `name:"meta" sep:"none" placeholder:"[NAMESPACE.]KEY=VALUE" help:"Metadata of the file, such as photo.camera=X100V, or rating=5, which can be repeated. A value which is JSON, such as 5 or true, is kept, and otherwise it's a string."`
 }
 
 type ObjectUploadCmd struct {
@@ -49,6 +51,7 @@ type ObjectUploadCmd struct {
 	Path      string   `arg:"" name:"path" help:"Directory in the volume to upload into, which is created, or / for its root."`
 	Files     []string `arg:"" name:"file" help:"Files, and directories, to upload, where a directory is uploaded with every file beneath it, into a directory of its name, or, when it ends with /, such as dir/, into the directory itself."`
 	Overwrite bool     `name:"overwrite" short:"y" help:"Replace files which exist, rather than skipping them."`
+	Meta      []string `name:"meta" sep:"none" placeholder:"[NAMESPACE.]KEY=VALUE" help:"Metadata of each file, such as photo.camera=X100V, or rating=5, which can be repeated. A value which is JSON, such as 5 or true, is kept, and otherwise it's a string."`
 }
 
 type ObjectDeleteCmd struct {
@@ -233,6 +236,11 @@ func (cmd *ObjectPutCmd) request() (schema.CreateObjectRequest, io.Closer, error
 	if cmd.IfNotExists && cmd.IfExists {
 		return req, nil, gofiler.ErrBadParameter.With("--no-replace and --replace-only can't both be set")
 	}
+	meta, err := parseMeta(cmd.Meta)
+	if err != nil {
+		return req, nil, err
+	}
+	req.Meta = meta
 	if cmd.File == "-" {
 		if strings.HasSuffix(cmd.Path, "/") {
 			return req, nil, gofiler.ErrBadParameter.Withf("standard input has no name: set the path of the file in the volume, not a directory")
@@ -259,6 +267,10 @@ func (cmd *ObjectPutCmd) request() (schema.CreateObjectRequest, io.Closer, error
 
 func (cmd *ObjectUploadCmd) Run(ctx server.Cmd) error {
 	local, err := cmd.files()
+	if err != nil {
+		return err
+	}
+	meta, err := parseMeta(cmd.Meta)
 	if err != nil {
 		return err
 	}
@@ -296,7 +308,7 @@ func (cmd *ObjectUploadCmd) Run(ctx server.Cmd) error {
 		progress := newTransfer(width, total)
 		files := make([]httpclient.UploadFile, 0, len(local))
 		for _, file := range local {
-			files = append(files, httpclient.UploadFile{Path: file.path, ModTime: file.modtime, Open: func() (io.ReadCloser, error) {
+			files = append(files, httpclient.UploadFile{Path: file.path, ModTime: file.modtime, Meta: meta, Open: func() (io.ReadCloser, error) {
 				f, err := os.Open(file.name)
 				if err != nil {
 					return nil, err
@@ -488,4 +500,31 @@ func (cmd *ObjectListCmd) request() schema.ObjectListRequest {
 	req.Name, req.Path = cmd.Name, cmd.Path
 	req.Recursive, req.StartAfter, req.Limit = cmd.Recursive, cmd.StartAfter, cmd.Limit
 	return req
+}
+
+// parseMeta returns the metadata of the flags, each of which is
+// [NAMESPACE.]KEY=VALUE, whose value is JSON, when it is, and otherwise a
+// string, or nil when there are none
+func parseMeta(flags []string) ([]schema.Meta, error) {
+	var result []schema.Meta
+	for _, flag := range flags {
+		name, value, ok := strings.Cut(flag, "=")
+		if !ok || name == "" {
+			return nil, gofiler.ErrBadParameter.Withf("invalid metadata %q, which is [NAMESPACE.]KEY=VALUE", flag)
+		}
+		meta := schema.Meta{Key: name}
+		if namespace, key, ok := strings.Cut(name, "."); ok {
+			meta.Namespace, meta.Key = namespace, key
+			if namespace == "" || key == "" {
+				return nil, gofiler.ErrBadParameter.Withf("invalid metadata %q, whose namespace and key can't be empty", flag)
+			}
+		}
+		if json.Valid([]byte(value)) {
+			meta.Value = json.RawMessage(value)
+		} else {
+			meta.Value, _ = json.Marshal(value)
+		}
+		result = append(result, meta)
+	}
+	return result, nil
 }

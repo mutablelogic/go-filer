@@ -183,3 +183,24 @@ func Test_createTemp(t *testing.T) {
 	assert.Equal(t, want.Mode().Perm(), got.Mode().Perm())
 	assert.True(t, strings.HasPrefix(filepath.Base(tmp.Name()), ".song.mp3."), tmp.Name())
 }
+
+func Test_ParseMeta(t *testing.T) {
+	// The metadata is [NAMESPACE.]KEY=VALUE, whose value is JSON, when it is
+	meta, err := parseMeta([]string{"photo.camera=X100V", "rating=5", "flag=true", `title="quoted"`, "empty=", "a.b.c=1=2"})
+	require.NoError(t, err)
+	require.Len(t, meta, 6)
+	for i, want := range []struct{ namespace, key, value string }{
+		{"photo", "camera", `"X100V"`}, {"", "rating", `5`}, {"", "flag", `true`}, {"", "title", `"quoted"`}, {"", "empty", `""`}, {"a", "b.c", `"1=2"`},
+	} {
+		assert.Equal(t, want.namespace, meta[i].Namespace)
+		assert.Equal(t, want.key, meta[i].Key)
+		assert.JSONEq(t, want.value, string(meta[i].Value))
+	}
+	meta, err = parseMeta(nil)
+	require.NoError(t, err)
+	assert.Nil(t, meta)
+	for _, flag := range []string{"rating", "=5", "photo.=5", ".rating=5", ".=5"} {
+		_, err := parseMeta([]string{flag})
+		assert.Error(t, err, flag)
+	}
+}
