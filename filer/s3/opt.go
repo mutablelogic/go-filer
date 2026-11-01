@@ -2,8 +2,8 @@ package s3
 
 import (
 	"net/url"
+	"regexp"
 	"strconv"
-	"strings"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -68,6 +68,9 @@ const (
 	// deleted. It's true, false, or empty, which is true.
 	optReadonly = "readonly"
 )
+
+// placeholder is the pattern of a value which is only a placeholder
+var placeholder = regexp.MustCompile(`^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$`)
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
@@ -187,9 +190,11 @@ func parseBool(values url.Values, key string) (bool, error) {
 	}
 }
 
-// isPlaceholder returns true when the value of a credential has a
-// placeholder, such as ${S3_SECRET}, which the provider of credentials
-// expands, rather than being the credential
+// isPlaceholder returns true when the value of a credential is a
+// placeholder, such as ${S3_SECRET} or $S3_SECRET, which the provider of
+// credentials expands, rather than being the credential. A value which has a
+// placeholder, and other text, is a credential, which is stored, so its text
+// isn't kept.
 func isPlaceholder(value string) bool {
-	return strings.Contains(value, "$")
+	return placeholder.MatchString(value)
 }

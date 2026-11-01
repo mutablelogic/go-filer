@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	credentials "github.com/aws/aws-sdk-go-v2/credentials"
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	gofiler "github.com/mutablelogic/go-filer"
@@ -29,6 +29,21 @@ const (
 	// returns when it's requested in another
 	headerBucketRegion = "X-Amz-Bucket-Region"
 )
+
+// credentialRefresh is how long the credentials of the options are used,
+// before they're expanded again, so rotated credentials are used
+var credentialRefresh = 5 * time.Minute
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// optionCredentials are the credentials of the options of a bucket, which
+// are expanded when they're retrieved
+type optionCredentials struct {
+	*S3
+}
+
+var _ aws.CredentialsProvider = optionCredentials{}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
@@ -75,11 +90,7 @@ func (self *S3) newClient(ctx context.Context, region string) (*s3.Client, error
 	if self.anonymous {
 		opts = append(opts, awsconfig.WithCredentialsProvider(aws.AnonymousCredentials{}))
 	} else if self.keyID != "" {
-		provider, err := self.staticCredentials(ctx)
-		if err != nil {
-			return nil, err
-		}
-		opts = append(opts, awsconfig.WithCredentialsProvider(provider))
+		opts = append(opts, awsconfig.WithCredentialsProvider(optionCredentials{self}))
 	}
 	config, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
@@ -98,8 +109,12 @@ func (self *S3) newClient(ctx context.Context, region string) (*s3.Client, error
 	// none, rather than the request failing
 	if !self.anonymous {
 		if _, err := config.Credentials.Retrieve(ctx); err != nil {
+			var filerErr gofiler.Err
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
+			} else if errors.As(err, &filerErr) {
+				// The options' credentials can't be expanded
+				return nil, err
 			}
 			return nil, gofiler.ErrForbidden.Withf("Bucket %q: no credentials: %v", self.bucket, err)
 		}
@@ -153,26 +168,39 @@ func (self *S3) ping(ctx context.Context, client *s3.Client) (string, error) {
 	}
 }
 
-// staticCredentials returns the credentials of the options, whose
-// placeholders are expanded by the provider of credentials, or which are the
-// credentials, which are stored once the bucket is checked
-func (self *S3) staticCredentials(ctx context.Context) (aws.CredentialsProvider, error) {
+// Retrieve returns the credentials of the options, whose placeholders are
+// expanded by the provider of credentials each time, so credentials which
+// are rotated, such as session tokens, are used once the SDK's cache of
+// them expires, which is credentialRefresh. A credential which can't be
+// expanded, or is empty, is ErrBadParameter.
+func (self optionCredentials) Retrieve(ctx context.Context) (aws.Credentials, error) {
 	values := make([]string, 0, 3)
 	for _, value := range []string{self.keyID, self.secret, self.token} {
 		if !isPlaceholder(value) {
 			values = append(values, value)
+			continue
 		} else if self.Credentials == nil {
-			return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be expanded, without a provider of credentials", self.bucket)
-		} else if expanded, err := self.Credentials.Expand(ctx, value); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
-			}
-			return nil, gofiler.ErrBadParameter.Withf("Bucket %q: credentials: %v", self.bucket, err)
-		} else {
-			values = append(values, expanded)
+			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be expanded, without a provider of credentials", self.bucket)
 		}
+		expanded, err := self.Credentials.Expand(ctx, value)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return aws.Credentials{}, ctxErr
+			}
+			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: credentials: %v", self.bucket, err)
+		} else if expanded == "" {
+			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: credentials: %s is empty", self.bucket, value)
+		}
+		values = append(values, expanded)
 	}
-	return credentials.NewStaticCredentialsProvider(values[0], values[1], values[2]), nil
+	return aws.Credentials{
+		AccessKeyID:     values[0],
+		SecretAccessKey: values[1],
+		SessionToken:    values[2],
+		Source:          "filer",
+		CanExpire:       true,
+		Expires:         time.Now().Add(credentialRefresh),
+	}, nil
 }
 
 // storeCredentials stores the credentials of the options which aren't

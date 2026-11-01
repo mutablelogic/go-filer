@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -288,4 +289,52 @@ func Test_S3_Clone(t *testing.T) {
 	assert.Equal(t, "secret", provider["S3_PHOTOS_SECRET_ACCESS_KEY"])
 	_, err = b.Clone(ctx, url.Values{"access-key-id": nil, "secret-access-key": nil, "session-token": nil})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
+}
+
+func Test_S3_Placeholder(t *testing.T) {
+	// A value is a placeholder when it's only a placeholder, and otherwise a
+	// credential, which is stored
+	for value, want := range map[string]bool{
+		"${S3_SECRET}": true, "$S3_SECRET": true, "${_x1}": true,
+		"secret": false, "secret${SUFFIX}": false, "${PREFIX}secret": false, "${A}${B}": false,
+		"$": false, "${}": false, "$1": false, "${S3-SECRET}": false, "${S3_SECRET": false,
+	} {
+		assert.Equal(t, want, isPlaceholder(value), value)
+	}
+}
+
+func Test_S3_MixedCredentials(t *testing.T) {
+	endpoint := fakeS3(t)
+	ctx := context.Background()
+
+	// A credential with a placeholder, and other text, is stored whole, as it
+	// isn't a placeholder
+	provider := credentialProvider{"ID": "AKIDTEST", "TOKEN": "TOKEN"}
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=actual${SUFFIX}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+	assert.Equal(t, "actual${SUFFIX}", provider["S3_KEYS_SECRET_ACCESS_KEY"])
+	assert.Equal(t, "${S3_KEYS_SECRET_ACCESS_KEY}", b.url(true).Query().Get("secret-access-key"))
+
+	// A credential which is expanded to nothing isn't used
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=${EMPTY}"), gofiler.Opts{Credentials: credentialProvider{"ID": "AKIDTEST", "EMPTY": ""}})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+}
+
+func Test_S3_RotateCredentials(t *testing.T) {
+	defer func(refresh time.Duration) { credentialRefresh = refresh }(credentialRefresh)
+	credentialRefresh = 0
+	endpoint := fakeS3(t)
+	ctx := context.Background()
+
+	// The credentials are expanded again, once they expire, so those which
+	// are rotated are used by the client
+	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN"}
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=${SECRET}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+	provider["TOKEN"] = "ROTATED"
+	_, err = b.ping(ctx, b.client)
+	assert.ErrorIs(t, err, gofiler.ErrForbidden)
+	provider["TOKEN"] = "TOKEN"
+	_, err = b.ping(ctx, b.client)
+	assert.NoError(t, err)
 }
