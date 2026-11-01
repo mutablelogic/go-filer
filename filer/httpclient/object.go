@@ -256,7 +256,8 @@ func writeForm(form *multipart.Writer, files []UploadFile) error {
 // objectOpt returns the option of the path of the object at the path in the
 // volume, whose elements are each escaped. The root of the volume is
 // object/<name>/, with a "/", which object/<name> without it, the listing of
-// the volume, isn't.
+// the volume, isn't, and a path which ends with "/", which is a directory,
+// keeps it.
 func (c *Client) objectOpt(name, key string) (client.RequestOpt, error) {
 	clean := path.Clean(strings.TrimLeft(key, "/"))
 	if clean == ".." || strings.HasPrefix(clean, "../") {
@@ -271,6 +272,16 @@ func (c *Client) objectOpt(name, key string) (client.RequestOpt, error) {
 	elems := []any{"object", name}
 	for _, elem := range strings.Split(clean, "/") {
 		elems = append(elems, elem)
+	}
+
+	// A path which ends with "/" is a directory, which keeps it, as a bucket
+	// can have a file of its name, which the path's elements would be
+	if strings.HasSuffix(key, "/") {
+		escaped := make([]string, 0, len(elems))
+		for _, elem := range elems {
+			escaped = append(escaped, url.PathEscape(fmt.Sprint(elem)))
+		}
+		return client.OptReqEndpoint(strings.TrimSuffix(c.endpoint, "/") + "/" + strings.Join(escaped, "/") + "/"), nil
 	}
 	return client.OptPath(elems...), nil
 }

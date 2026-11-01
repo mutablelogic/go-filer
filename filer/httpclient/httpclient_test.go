@@ -457,3 +457,34 @@ func TestUploadObjectsNames(t *testing.T) {
 		assert.NoError(t, err, name)
 	}
 }
+
+func TestObjectDirPath(t *testing.T) {
+	// The paths of the requests
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Meta", `{"path":"/x"}`)
+		w.Write([]byte(`{"body":[]}`))
+	}))
+	defer server.Close()
+	client, err := httpclient.New(server.URL + "/api")
+	require.NoError(t, err)
+
+	// A path which ends with "/" is a directory, which keeps it, as a bucket
+	// can have a file of its name, and its elements are escaped, and one
+	// which doesn't, doesn't
+	_, err = client.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: "/x/"}, Recursive: true})
+	require.NoError(t, err)
+	_, err = client.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: "/x"}})
+	require.NoError(t, err)
+	_, err = client.HeadObject(context.Background(), "media", "/a b/c d/")
+	require.NoError(t, err)
+	client.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: "/x/"}}, io.Discard)
+	assert.Equal(t, []string{
+		"DELETE /api/object/media/x/",
+		"DELETE /api/object/media/x",
+		"HEAD /api/object/media/a%20b/c%20d/",
+		"GET /api/object/media/x/",
+	}, paths)
+}
