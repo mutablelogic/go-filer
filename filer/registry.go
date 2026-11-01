@@ -35,6 +35,10 @@ type Registry struct {
 	changed     chan struct{}
 	running     atomic.Bool
 
+	// The metrics, which Run counts the changes with, or nil, without a
+	// meter
+	metrics *metrics
+
 	// The backends which are being closed, by Del, Update or Close, which
 	// Close waits for, as a backend which Update is closing is no longer the
 	// volume's in the registry
@@ -110,6 +114,13 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	// Apply options
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
+	}
+
+	// Register the metrics, with the meter
+	if metrics, err := newMetrics(self.meter); err != nil {
+		return nil, err
+	} else {
+		self.metrics = metrics
 	}
 
 	// Return success

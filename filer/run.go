@@ -91,6 +91,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 		case <-self.changed:
 			self.startWatches(watches, events, ended)
 		case event := <-events:
+			self.metrics.event(ctx, event)
 			if dropped := self.broadcaster.publish(event); dropped > 0 {
 				logger.DebugContext(ctx, "subscribers were slow, so a change was dropped, and they'll be sent a rescan", "volume", event.Name, "subscribers", dropped)
 			}
