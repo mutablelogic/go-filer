@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -15,6 +16,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -27,6 +29,7 @@ type VolumeCommands struct {
 	VolumeCreate  VolumeCreateCmd  `cmd:"" name:"volume-create" help:"Create a volume from the URL of its backend, or a directory." group:"VOLUME"`
 	VolumeUpdate  VolumeUpdateCmd  `cmd:"" name:"volume-update" help:"Change the options of a volume by its name." group:"VOLUME"`
 	VolumeDelete  VolumeDeleteCmd  `cmd:"" name:"volume-delete" help:"Delete a volume by its name, without deleting its files." group:"VOLUME"`
+	VolumeWatch   VolumeWatchCmd   `cmd:"" name:"volume-watch" help:"Show the changes to the objects of volumes, as they happen, until it's interrupted." group:"VOLUME"`
 }
 
 type VolumeListCmd struct{}
@@ -41,6 +44,10 @@ type VolumeUpdateCmd struct {
 	VolumeGetCmd
 	Opt   []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
 	Unset []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
+}
+
+type VolumeWatchCmd struct {
+	Name []string `arg:"" name:"name" optional:"" help:"Volumes to watch, which is every volume without any."`
 }
 
 type VolumeDeleteCmd struct {
@@ -145,6 +152,20 @@ func (cmd *VolumeUpdateCmd) Run(ctx server.Cmd) error {
 
 		fmt.Println(volume)
 		return nil
+	})
+}
+
+func (cmd *VolumeWatchCmd) Run(ctx server.Cmd) error {
+	debug := ctx.IsDebug()
+	return withClient(ctx, "filer.VolumeWatchCmd", func(ctx context.Context, client *httpclient.Client) error {
+		return client.WatchObjects(ctx, cmd.Name, func(event schema.Event) error {
+			if debug {
+				fmt.Println(types.Stringify(event))
+			} else {
+				fmt.Printf("%s %-8s filer://%s%s\n", time.Now().Format(time.TimeOnly), event.EventType, event.Name, event.Path)
+			}
+			return nil
+		})
 	})
 }
 

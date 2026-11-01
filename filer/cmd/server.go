@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -41,6 +42,12 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 	defer func() {
 		err = errors.Join(err, registry.Close())
 	}()
+
+	// Close the registry as soon as the server is stopping, which ends the
+	// streams of changes, and interrupts transfers to clients which are slow,
+	// so the server isn't kept waiting for them
+	stop := context.AfterFunc(ctx.Context(), func() { registry.Close() })
+	defer stop()
 
 	// Add the volumes, whose names are the hosts of their URLs
 	for _, volume := range flags.Volume {
