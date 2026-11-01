@@ -28,6 +28,7 @@ import (
     "io"
     "os"
 
+    gofiler "github.com/mutablelogic/go-filer"
     filerfs "github.com/mutablelogic/go-filer/filer/fs"
     schema "github.com/mutablelogic/go-filer/filer/schema"
 )
@@ -36,7 +37,7 @@ func main() {
     ctx := context.Background()
 
     // A writable filer for the directory, named "media"
-    filer, err := filerfs.New("media", "/mnt/media", nil)
+    filer, err := filerfs.New("media", "/mnt/media", nil, gofiler.Opts{})
     if err != nil {
         panic(err)
     }
@@ -65,7 +66,7 @@ Closing the filer stops listings, reads, writes and watches which are in progres
 
 ### Options
 
-The options of the filesystem backend are passed to `New` and `NewFS` as `url.Values`, and are the query parameters of the filer's URL, `fs://<name>`, when they aren't the defaults. Each option can be repeated, and setting one replaces its defaults, so an empty value, such as `skip=`, sets none.
+The options of the filesystem backend are passed to `New` and `NewFS` as `url.Values`, and are the query parameters of the filer's URL, `fs://<name>`, when they aren't the defaults. They're followed by the options of a backend, `gofiler.Opts`, whose `Tracer` traces each operation, such as `fs.ListObjects`, with the volume and path, when it's set. Each option can be repeated, and setting one replaces its defaults, so an empty value, such as `skip=`, sets none.
 
 | Option | Description | Default |
 | -------- | ------------- | --------- |

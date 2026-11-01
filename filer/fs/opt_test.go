@@ -70,7 +70,7 @@ func Test_optReadonly(t *testing.T) {
 	// A writable filesystem is read-only with the option, and its URL says so
 	ctx := context.Background()
 	for value, readonly := range map[string]bool{"true": true, "false": false} {
-		self, err := NewFS("test", &memFS{MapFS: fstest.MapFS{"a.txt": {Data: []byte("a")}}}, url.Values{"readonly": {value}})
+		self, err := NewFS("test", &memFS{MapFS: fstest.MapFS{"a.txt": {Data: []byte("a")}}}, url.Values{"readonly": {value}}, filer.Opts{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func Test_optReadonly(t *testing.T) {
 	}
 
 	// A filesystem which isn't writable is read-only, whatever the option is
-	self, err := NewFS("test", fstest.MapFS{}, url.Values{"readonly": {"false"}})
+	self, err := NewFS("test", fstest.MapFS{}, url.Values{"readonly": {"false"}}, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	} else if _, err := self.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/b.txt"}}); !errors.Is(err, filer.ErrForbidden) {
@@ -102,7 +102,7 @@ func Test_optReadonly(t *testing.T) {
 	}
 
 	// The URL creates the same filesystem again
-	again, err := NewFS("test", &memFS{MapFS: fstest.MapFS{}}, self.URL().Query())
+	again, err := NewFS("test", &memFS{MapFS: fstest.MapFS{}}, self.URL().Query(), filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	} else if !again.readonly {

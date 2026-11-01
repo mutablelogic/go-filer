@@ -20,7 +20,7 @@ func Test_GetObject(t *testing.T) {
 		"music/song.mp3":               {Data: []byte("abc"), ModTime: modtime},
 		".hidden/c.txt":                {Data: []byte("c")},
 		"Disk.sparsebundle/bands/404d": {Data: []byte("d")},
-	}, nil)
+	}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func Test_GetObjectConditional(t *testing.T) {
 	self, err := NewFS("test", fstest.MapFS{
 		"song.mp3": {Data: []byte("abc"), ModTime: modtime},
 		"music":    {Mode: fs.ModeDir},
-	}, nil)
+	}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}

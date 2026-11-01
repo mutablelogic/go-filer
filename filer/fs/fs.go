@@ -25,6 +25,7 @@ type FS struct {
 	fs   fs.FS
 	path string // the directory of the filesystem, when it has one
 	opt
+	filer.Opts
 
 	// done is closed when the filesystem is closed, which requests, and
 	// reads in progress, check, so they stop
@@ -39,14 +40,15 @@ var _ filer.Filer = (*FS)(nil)
 // LIFECYCLE
 
 // Create a new writable filesystem backend for the named volume, rooted at
-// the directory path, with the options (see opt.go). Files can't be read or
-// written outside the directory.
-func New(name, path string, opts url.Values) (*FS, error) {
+// the directory path, with the options (see opt.go), and the options of a
+// backend, whose tracer traces the operations, when it's set. Files can't be
+// read or written outside the directory.
+func New(name, path string, values url.Values, opts filer.Opts) (*FS, error) {
 	wfs, err := newWriterFS(path)
 	if err != nil {
 		return nil, err
 	}
-	self, err := NewFS(name, wfs, opts)
+	self, err := NewFS(name, wfs, values, opts)
 	if err != nil {
 		return nil, errors.Join(err, wfs.Close())
 	}
@@ -54,11 +56,12 @@ func New(name, path string, opts url.Values) (*FS, error) {
 }
 
 // Create a new filesystem backend for the named volume, with the options
-// (see opt.go). The backend takes ownership of fsys: when it implements
+// (see opt.go), and the options of a backend, whose tracer traces the
+// operations, when it's set. The backend takes ownership of fsys: when it implements
 // io.Closer, it's closed when the backend is closed, so the caller shouldn't
 // close or reuse it afterwards.
-func NewFS(name string, fsys fs.FS, opts url.Values) (*FS, error) {
-	self := &FS{done: make(chan struct{})}
+func NewFS(name string, fsys fs.FS, values url.Values, opts filer.Opts) (*FS, error) {
+	self := &FS{done: make(chan struct{}), Opts: opts}
 
 	// Check parameters
 	if types.IsIdentifier(name) == false {
@@ -81,7 +84,7 @@ func NewFS(name string, fsys fs.FS, opts url.Values) (*FS, error) {
 	}
 
 	// Set the options
-	if opt, err := parseOpts(opts); err != nil {
+	if opt, err := parseOpts(values); err != nil {
 		return nil, err
 	} else {
 		self.opt = opt

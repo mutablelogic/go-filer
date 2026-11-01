@@ -30,9 +30,9 @@ func newDeleteTestFS(t *testing.T, writable bool) (*FS, string) {
 	var self *FS
 	var err error
 	if writable {
-		self, err = New("test", dir, nil)
+		self, err = New("test", dir, nil, filer.Opts{})
 	} else {
-		self, err = NewFS("test", os.DirFS(dir), nil)
+		self, err = NewFS("test", os.DirFS(dir), nil, filer.Opts{})
 	}
 	require.NoError(t, err)
 	t.Cleanup(func() { self.Close() })

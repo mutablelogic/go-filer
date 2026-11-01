@@ -84,7 +84,7 @@ func Test_CreateObject(t *testing.T) {
 		"old.txt":                      {Data: []byte("old")},
 		"Disk.sparsebundle/bands/404d": {Data: []byte("d")},
 	}}
-	self, err := NewFS("test", files, nil)
+	self, err := NewFS("test", files, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func Test_CreateObject(t *testing.T) {
 	}
 
 	// A filesystem which isn't writable is read-only, and a closed one is closed
-	readonly, err := NewFS("test", fstest.MapFS{}, nil)
+	readonly, err := NewFS("test", fstest.MapFS{}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	} else if _, err := readonly.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: key("/x.txt")}); !errors.Is(err, filer.ErrForbidden) {
@@ -184,7 +184,7 @@ func (fn readerFunc) Read(data []byte) (int, error) {
 
 func Test_CreateObjectContentType(t *testing.T) {
 	files := &memFS{MapFS: fstest.MapFS{"old.txt": {Data: []byte("old")}}}
-	self, err := NewFS("test", files, nil)
+	self, err := NewFS("test", files, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func Test_CreateObjectContentType(t *testing.T) {
 
 func Test_CreateObjectCancelledAtEnd(t *testing.T) {
 	files := &memFS{MapFS: fstest.MapFS{"old.txt": {Data: []byte("old")}}}
-	self, err := NewFS("test", files, nil)
+	self, err := NewFS("test", files, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}

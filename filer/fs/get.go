@@ -18,7 +18,10 @@ import (
 // of IfNoneMatch, or "*" is, or, when IfNoneMatch is empty, when it hasn't
 // been modified since IfModifiedSince, to the second. A directory, which has
 // no modification time, is always returned.
-func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *schema.Object, err error) {
+	ctx, end := self.span(ctx, "GetObject", req.Path)
+	defer func() { end(err) }()
+
 	if err := self.checkRequest(ctx); err != nil {
 		return nil, err
 	}

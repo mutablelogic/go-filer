@@ -41,7 +41,10 @@ type seekReader struct {
 // file is checked when it's opened, as it could have changed since the
 // object was returned: when it isn't the same size, or wasn't modified at the
 // same time, it isn't read, and ErrPreconditionFailed is returned.
-func (self *FS) ReadObject(ctx context.Context, req schema.GetObjectRequest) (filer.ReadObjectFunc, *schema.Object, error) {
+func (self *FS) ReadObject(ctx context.Context, req schema.GetObjectRequest) (_ filer.ReadObjectFunc, _ *schema.Object, err error) {
+	ctx, end := self.span(ctx, "ReadObject", req.Path)
+	defer func() { end(err) }()
+
 	if err := self.checkRequest(ctx); err != nil {
 		return nil, nil, err
 	}

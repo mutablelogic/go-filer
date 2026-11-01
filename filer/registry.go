@@ -456,7 +456,7 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 		if path == "" || !filepath.IsAbs(filepath.FromSlash(path)) {
 			return nil, gofiler.ErrBadParameter.Withf("path of volume %q isn't absolute: %q", u.Host, path)
 		}
-		if b, err := fs.New(u.Host, path, query); err != nil {
+		if b, err := fs.New(u.Host, path, query, self.backendOpts()); err != nil {
 			return nil, err
 		} else {
 			return b, nil

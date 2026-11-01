@@ -50,7 +50,7 @@ func Test_objectErrorPermission(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "locked"), 0o555))
 	t.Cleanup(func() { os.Chmod(filepath.Join(dir, "locked"), 0o755) })
-	self, err := New("test", dir, nil)
+	self, err := New("test", dir, nil, filer.Opts{})
 	require.NoError(t, err)
 	t.Cleanup(func() { self.Close() })
 
@@ -62,7 +62,7 @@ func Test_objectErrorPermission(t *testing.T) {
 }
 
 func Test_readError(t *testing.T) {
-	self, err := New("test", t.TempDir(), nil)
+	self, err := New("test", t.TempDir(), nil, filer.Opts{})
 	require.NoError(t, err)
 	t.Cleanup(func() { self.Close() })
 	_, err = self.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.txt"}, Body: strings.NewReader("a")})

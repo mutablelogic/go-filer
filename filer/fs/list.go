@@ -13,6 +13,7 @@ import (
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -43,6 +44,8 @@ var _ schema.ListObjectsIterator = (*listIterator)(nil)
 
 // List objects in the filesystem
 func (self *FS) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (_ schema.ListObjectsIterator, err error) {
+	ctx, end := self.span(ctx, "ListObjects", req.Path, attribute.Bool("filer.recursive", req.Recursive))
+	defer func() { end(err) }()
 	defer func() { err = objectError("list", req.Path, err) }()
 
 	if err := self.checkRequest(ctx); err != nil {

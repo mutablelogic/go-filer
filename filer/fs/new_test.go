@@ -15,12 +15,13 @@ import (
 	"testing/fstest"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 func Test_New(t *testing.T) {
 	dir := t.TempDir()
-	self, err := New("test", dir, nil)
+	self, err := New("test", dir, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	} else if self.URL().Query().Get("readonly") != "" {
@@ -65,9 +66,9 @@ func Test_New(t *testing.T) {
 	}
 
 	// A path which isn't a directory can't be the root
-	if _, err := New("test", filepath.Join(dir, "music", "song.mp3"), nil); err == nil {
+	if _, err := New("test", filepath.Join(dir, "music", "song.mp3"), nil, filer.Opts{}); err == nil {
 		t.Error("file as root")
-	} else if _, err := New("test", filepath.Join(dir, "missing"), nil); err == nil {
+	} else if _, err := New("test", filepath.Join(dir, "missing"), nil, filer.Opts{}); err == nil {
 		t.Error("missing root")
 	}
 
@@ -104,7 +105,7 @@ func Test_URL(t *testing.T) {
 
 	// A filesystem rooted at a directory has its path, and the options which
 	// aren't the defaults, even once it's closed
-	self, err := New("media", dir, url.Values{"readonly": {"true"}, "skip": {`\.tmp$`}})
+	self, err := New("media", dir, url.Values{"readonly": {"true"}, "skip": {`\.tmp$`}}, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func Test_URL(t *testing.T) {
 	}
 
 	// A filesystem which isn't rooted at a directory has no path
-	self, err = NewFS("media", fstest.MapFS{}, nil)
+	self, err = NewFS("media", fstest.MapFS{}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	} else if got := self.URL().String(); got != "fs://media?readonly=true" {

@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
@@ -23,7 +24,7 @@ func Test_ListObjects(t *testing.T) {
 		".hidden/c.txt":                {Data: []byte("c")},
 		"Thumbs.db":                    {Data: []byte("t")},
 		"Disk.sparsebundle/bands/404d": {Data: []byte("d")},
-	}, nil)
+	}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func Test_ListObjectsConcurrent(t *testing.T) {
 	for i := range 100 {
 		files[fmt.Sprintf("dir%d/file%d.txt", i%10, i)] = &fstest.MapFile{Data: []byte("x")}
 	}
-	self, err := NewFS("test", files, nil)
+	self, err := NewFS("test", files, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}

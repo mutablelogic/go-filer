@@ -22,7 +22,7 @@ func Test_ReadObject(t *testing.T) {
 		"music":                        {Mode: fs.ModeDir},
 		"Disk.sparsebundle/bands/404d": {Data: []byte("d")},
 	}
-	self, err := NewFS("test", files, nil)
+	self, err := NewFS("test", files, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func Test_ReadObject(t *testing.T) {
 
 func Test_ReadObjectConditional(t *testing.T) {
 	modtime := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	self, err := NewFS("test", fstest.MapFS{"song.mp3": {Data: []byte("abc"), ModTime: modtime}}, nil)
+	self, err := NewFS("test", fstest.MapFS{"song.mp3": {Data: []byte("abc"), ModTime: modtime}}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func Test_ReadObjectConditional(t *testing.T) {
 }
 
 func Test_ReadObjectSeek(t *testing.T) {
-	self, err := NewFS("test", fstest.MapFS{"song.mp3": {Data: []byte("abcdef")}}, nil)
+	self, err := NewFS("test", fstest.MapFS{"song.mp3": {Data: []byte("abcdef")}}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
 	}
