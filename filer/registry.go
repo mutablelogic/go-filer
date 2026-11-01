@@ -324,8 +324,12 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 		}
 	}
 	u.RawQuery = query.Encode()
-	if _, err := self.Validate(ctx, &u); err != nil {
+	if v, err := self.Validate(ctx, &u); err != nil {
 		return nil, err
+	} else if name := VolumeName(v); name != volume {
+		// The options can't rename the volume, which is checked before it's
+		// closed, so it isn't interrupted
+		return nil, gofiler.ErrBadParameter.Withf("url %q is not for volume %q", v.Redacted(), volume)
 	} else if err := ctx.Err(); err != nil {
 		return nil, err
 	}

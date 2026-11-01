@@ -502,6 +502,36 @@ func Test_Registry_S3(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
+func Test_Registry_UpdateRename(t *testing.T) {
+	r, _ := newRegistry(t)
+	endpoint := "endpoint=" + url.QueryEscape(fakeS3(t))
+	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&"+endpoint))
+	require.NoError(t, err)
+
+	// While the volume is used, the options can't rename it, which doesn't
+	// interrupt it, or change it
+	using, release, used := make(chan context.Context), make(chan struct{}), make(chan error, 1)
+	go func() {
+		used <- r.With(context.Background(), "photos", func(ctx context.Context, _ gofiler.Filer) error {
+			using <- ctx
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return ctx.Err()
+		})
+	}()
+	ctx := <-using
+	_, err = r.Update(context.Background(), "photos", url.Values{"name": {"other"}})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.NoError(t, ctx.Err())
+	close(release)
+	assert.NoError(t, <-used)
+	volume, err := r.Volume("photos")
+	require.NoError(t, err)
+	assert.Equal(t, b.URL().String(), volume.URL)
+}
+
 func Test_VolumeName(t *testing.T) {
 	for _, test := range []struct{ url, want string }{
 		{"file://media/mnt/media", "media"},

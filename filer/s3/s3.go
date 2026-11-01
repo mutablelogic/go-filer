@@ -4,6 +4,7 @@ package s3
 
 import (
 	"context"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -30,9 +31,17 @@ var _ gofiler.Filer = (*S3)(nil)
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
-// bucketName is the pattern of a bucket's name: 3 to 63 lowercase letters,
-// numbers, dots and hyphens, which starts and ends with a letter or number
-var bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+var (
+	// bucketName is the pattern of a bucket's name: 3 to 63 lowercase
+	// letters, numbers, dots and hyphens, which starts and ends with a letter
+	// or number
+	bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+
+	// bucketPrefixes and bucketSuffixes are those which S3 reserves, so a
+	// bucket's name can't have them
+	bucketPrefixes = []string{"xn--", "sthree-", "amzn-s3-demo-"}
+	bucketSuffixes = []string{"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3"}
+)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -60,7 +69,7 @@ func parse(u *url.URL) (*S3, error) {
 	self := new(S3)
 	if u == nil || u.Scheme != schema.SchemeS3 {
 		return nil, gofiler.ErrBadParameter.Withf("Not an %s url: %v", schema.SchemeS3, u)
-	} else if !bucketName.MatchString(u.Host) {
+	} else if !isBucketName(u.Host) {
 		return nil, gofiler.ErrBadParameter.Withf("Invalid bucket: %q", u.Host)
 	} else {
 		self.bucket = u.Host
@@ -137,4 +146,29 @@ func (self *S3) DeleteObjects(ctx context.Context, req schema.DeleteObjectsReque
 // a queue
 func (self *S3) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	return gofiler.ErrNotImplemented.With("a bucket can't be watched")
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// isBucketName returns true when the name is one which S3 allows for a
+// bucket: of the pattern, without adjacent dots, which isn't an IP address,
+// and without the prefixes and suffixes which are reserved
+func isBucketName(name string) bool {
+	if !bucketName.MatchString(name) || strings.Contains(name, "..") {
+		return false
+	} else if ip := net.ParseIP(name); ip != nil {
+		return false
+	}
+	for _, prefix := range bucketPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	for _, suffix := range bucketSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return false
+		}
+	}
+	return true
 }
