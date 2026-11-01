@@ -26,9 +26,21 @@ func Test_MetaHeader(t *testing.T) {
 	assert.JSONEq(t, `"Zoë"`, string(decoded[0].Value))
 	assert.JSONEq(t, `5`, string(decoded[1].Value))
 
+	// No metadata is an empty array, which is decoded, as is a value which is
+	// null
+	value, err = schema.EncodeMetaHeader(nil)
+	require.NoError(t, err)
+	assert.Equal(t, `[]`, value)
+	decoded, err = schema.DecodeMetaHeader(value)
+	require.NoError(t, err)
+	assert.Empty(t, decoded)
+	decoded, err = schema.DecodeMetaHeader(`[{"key":"a","value":null}]`)
+	require.NoError(t, err)
+	assert.JSONEq(t, `null`, string(decoded[0].Value))
+
 	// A value which isn't a JSON array of metadata, each with a key and a
 	// value, isn't decoded
-	for _, value := range []string{``, `{}`, `[{"key":"a"}]`, `[{"value":1}]`, `[{"key":"a","value":five}]`, `[1]`} {
+	for _, value := range []string{``, `{}`, `null`, ` null `, `[{"key":"a"}]`, `[{"value":1}]`, `[{"key":"a","value":five}]`, `[1]`} {
 		_, err := schema.DecodeMetaHeader(value)
 		assert.Error(t, err, value)
 	}

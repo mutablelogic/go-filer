@@ -515,6 +515,9 @@ func parseMeta(flags []string) ([]schema.Meta, error) {
 		meta := schema.Meta{Key: name}
 		if namespace, key, ok := strings.Cut(name, "."); ok {
 			meta.Namespace, meta.Key = namespace, key
+			if namespace == "" || key == "" {
+				return nil, gofiler.ErrBadParameter.Withf("invalid metadata %q, whose namespace and key can't be empty", flag)
+			}
 		}
 		if json.Valid([]byte(value)) {
 			meta.Value = json.RawMessage(value)

@@ -199,7 +199,7 @@ func Test_ParseMeta(t *testing.T) {
 	meta, err = parseMeta(nil)
 	require.NoError(t, err)
 	assert.Nil(t, meta)
-	for _, flag := range []string{"rating", "=5"} {
+	for _, flag := range []string{"rating", "=5", "photo.=5", ".rating=5", ".=5"} {
 		_, err := parseMeta([]string{flag})
 		assert.Error(t, err, flag)
 	}

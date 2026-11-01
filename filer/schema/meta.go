@@ -30,9 +30,12 @@ const MetaHeader = "X-Meta-Data"
 // PUBLIC FUNCTIONS
 
 // EncodeMetaHeader returns the user's metadata as the value of MetaHeader,
-// which is a JSON array, whose characters which aren't ASCII are escaped, so
-// it's a header's value
+// which is a JSON array, which is empty without metadata, whose characters
+// which aren't ASCII are escaped, so it's a header's value
 func EncodeMetaHeader(meta []Meta) (string, error) {
+	if meta == nil {
+		meta = []Meta{}
+	}
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return "", err
@@ -41,10 +44,13 @@ func EncodeMetaHeader(meta []Meta) (string, error) {
 }
 
 // DecodeMetaHeader returns the user's metadata of the value of MetaHeader,
-// which is a JSON array, each of which has a key and a value, which is JSON
+// which is a JSON array, which can be empty, but not null, each of which has
+// a key and a value, which is JSON, which can be null
 func DecodeMetaHeader(value string) ([]Meta, error) {
 	var meta []Meta
-	if err := json.Unmarshal([]byte(value), &meta); err != nil {
+	if strings.TrimSpace(value) == "null" {
+		return nil, fmt.Errorf("invalid %s: null, rather than an array", MetaHeader)
+	} else if err := json.Unmarshal([]byte(value), &meta); err != nil {
 		return nil, fmt.Errorf("invalid %s: %w", MetaHeader, err)
 	}
 	for _, m := range meta {
