@@ -60,7 +60,7 @@ func TestObjectListHTML(t *testing.T) {
 	// Each file, and directory, can be deleted, a directory with every
 	// object beneath it, with a script which asks to confirm
 	assert.Contains(t, body, `<button class="delete" type="button" data-href="media/a.txt" data-name="a.txt"`)
-	assert.Contains(t, body, `data-href="media/music?recursive=true" data-name="music/"`)
+	assert.Contains(t, body, `data-href="media/music/?recursive=true" data-name="music/"`)
 	assert.Contains(t, body, `method: "DELETE"`)
 
 	// A directory's names are relative to it, and the path links back, to

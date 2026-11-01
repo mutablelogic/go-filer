@@ -579,9 +579,9 @@ func objectKeyFromRequest(r *http.Request) (schema.ObjectKey, error) {
 		return schema.ObjectKey{}, err
 	}
 
-	// A path which ends with "/" is a directory, when it's got, as a bucket
-	// can have a file of its name
-	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && path != "/" && strings.HasSuffix(r.PathValue("path"), "/") {
+	// A path which ends with "/" is a directory, when it's got, or deleted,
+	// as a bucket can have a file of its name
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodDelete) && path != "/" && strings.HasSuffix(r.PathValue("path"), "/") {
 		path += "/"
 	}
 	return schema.ObjectKey{Name: r.PathValue("name"), Path: path}, nil

@@ -143,12 +143,6 @@ func (self *S3) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - OBJECTS
 
-// DeleteObjects deletes an object, or the objects beneath a directory, in the
-// bucket
-func (self *S3) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	return nil, gofiler.ErrNotImplemented.With("DeleteObjects")
-}
-
 // WatchObjects can't watch a bucket, which needs its event notifications, and
 // a queue
 func (self *S3) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
