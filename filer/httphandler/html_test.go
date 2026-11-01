@@ -32,7 +32,8 @@ func getAccept(t *testing.T, server *httptest.Server, path, accept string) (int,
 
 func TestObjectListHTML(t *testing.T) {
 	server, dir := newServer(t)
-	for _, name := range []string{"a.txt", "music/b.mp3", "<script>.txt"} {
+	// A name with characters which are escaped in HTML, which Windows allows
+	for _, name := range []string{"a.txt", "music/b.mp3", "a&b'c.txt"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(name)), 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644))
 	}
@@ -44,16 +45,16 @@ func TestObjectListHTML(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, "text/html; charset=utf-8", contentType)
 	assert.Contains(t, body, "a.txt")
-	assert.Contains(t, body, "&lt;script&gt;.txt")
-	assert.NotContains(t, body, "<script>.txt")
+	assert.Contains(t, body, "a&amp;b&#39;c.txt")
+	assert.NotContains(t, body, "a&b'c.txt")
 	assert.Contains(t, body, `<a href="?path=%2Fmusic">music/</a>`)
 	assert.Contains(t, body, `<a href="?">media</a>`)
 	assert.Contains(t, body, `<a href="media/a.txt">a.txt</a>`)
-	assert.Contains(t, body, `<a href="media/%3Cscript%3E.txt">&lt;script&gt;.txt</a>`)
+	assert.Contains(t, body, `<a href="media/a&amp;b%27c.txt">a&amp;b&#39;c.txt</a>`)
 
 	// Each file has a link which downloads it, and a directory doesn't
 	assert.Contains(t, body, `<a class="download" href="media/a.txt?download=true" title="Download a.txt"`)
-	assert.Contains(t, body, `href="media/%3Cscript%3E.txt?download=true" title="Download &lt;script&gt;.txt"`)
+	assert.Contains(t, body, `href="media/a&amp;b%27c.txt?download=true" title="Download a&amp;b&#39;c.txt"`)
 	assert.NotContains(t, body, `music?download=true`)
 
 	// Each file, and directory, can be deleted, a directory with every
@@ -70,7 +71,7 @@ func TestObjectListHTML(t *testing.T) {
 	// A page with more objects links to the next, keeping the query
 	_, _, body = getAccept(t, server, "object/media?limit=1&recursive=true", browser)
 	assert.Contains(t, body, "Next page")
-	assert.Contains(t, body, `limit=1&amp;recursive=true&amp;start_after=%2F%3Cscript%3E.txt`)
+	assert.Contains(t, body, `limit=1&amp;recursive=true&amp;start_after=%2Fa%26b%27c.txt`)
 
 	// JSON is sent otherwise, and when it's accepted before HTML
 	for _, accept := range []string{"", "application/json", "*/*", "application/json, text/html"} {
