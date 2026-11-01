@@ -17,6 +17,7 @@ import (
 type opt struct {
 	name      string // the volume's name
 	region    string // the bucket's region, when it's set
+	profile   string // the profile of the credentials, when it's set
 	endpoint  string // the endpoint of a service which is compatible with S3, when it's set
 	anonymous bool   // requests aren't signed, so they're without credentials
 	readonly  bool   // objects can't be created or deleted
@@ -33,6 +34,11 @@ const (
 
 	// optRegion is the bucket's region, such as eu-west-1
 	optRegion = "region"
+
+	// optProfile is the profile of the credentials, and the configuration,
+	// in the shared files, such as ~/.aws/credentials, in place of the
+	// default one, or of AWS_PROFILE
+	optProfile = "profile"
 
 	// optEndpoint is the http or https URL of a service which is compatible
 	// with S3, such as http://localhost:9000 for MinIO
@@ -60,7 +66,7 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 	// Check the options are known
 	for key := range values {
 		switch key {
-		case optName, optRegion, optEndpoint, optAnonymous, optReadonly:
+		case optName, optRegion, optProfile, optEndpoint, optAnonymous, optReadonly:
 		default:
 			return opt{}, filer.ErrBadParameter.Withf("Unknown option: %q", key)
 		}
@@ -77,8 +83,9 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 		self.name = name
 	}
 
-	// Set the region and endpoint
+	// Set the region, profile and endpoint
 	self.region = values.Get(optRegion)
+	self.profile = values.Get(optProfile)
 	if values.Has(optEndpoint) {
 		value := values.Get(optEndpoint)
 		if endpoint, err := url.Parse(value); err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" {
@@ -114,6 +121,9 @@ func (self opt) values(bucket string) url.Values {
 	}
 	if self.region != "" {
 		values.Set(optRegion, self.region)
+	}
+	if self.profile != "" {
+		values.Set(optProfile, self.profile)
 	}
 	if self.endpoint != "" {
 		values.Set(optEndpoint, self.endpoint)

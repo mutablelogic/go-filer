@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -459,7 +461,7 @@ func Test_Registry_Schemes(t *testing.T) {
 	assert.Equal(t, []string{"file", "s3"}, r.Schemes())
 
 	// Each scheme can be validated, and an unsupported one can't
-	for _, u := range []*url.URL{fileURL(t, dir, "media"), mustURL(t, "s3://bucket/photos?name=media")} {
+	for _, u := range []*url.URL{fileURL(t, dir, "media"), mustURL(t, "s3://bucket/photos?name=media&endpoint="+url.QueryEscape(fakeS3(t)))} {
 		_, err := r.Validate(context.Background(), u)
 		assert.NoError(t, err, u)
 	}
@@ -475,27 +477,28 @@ func Test_Registry_Schemes(t *testing.T) {
 
 func Test_Registry_S3(t *testing.T) {
 	r, _ := newRegistry(t)
+	endpoint := "endpoint=" + url.QueryEscape(fakeS3(t))
 
 	// A bucket's volume can be named by its name option, and isn't watched,
 	// as it can't be, and can be removed
-	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly"))
+	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly&"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/?name=photos&readonly=true", b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?"+endpoint+"&name=photos&readonly=true", b.URL().String())
 	volume, err := r.Volume("photos")
 	require.NoError(t, err)
 	assert.Equal(t, schema.Volume{Name: "photos", URL: b.URL().String(), Readonly: true}, *volume)
 	require.NoError(t, r.Del(context.Background(), "photos"))
 
 	// A bucket's name is the volume's, unless the name option is set
-	b, err = r.Add(context.Background(), "bucket", mustURL(t, "s3://bucket/photos"))
+	b, err = r.Add(context.Background(), "bucket", mustURL(t, "s3://bucket/photos?"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/", b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?"+endpoint, b.URL().String())
 	require.NoError(t, r.Del(context.Background(), "bucket"))
 
 	// The name must be the volume's
-	_, err = r.Add(context.Background(), "other", mustURL(t, "s3://bucket/photos?name=photos"))
+	_, err = r.Add(context.Background(), "other", mustURL(t, "s3://bucket/photos?name=photos&"+endpoint))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	_, err = r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos"))
+	_, err = r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?"+endpoint))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
@@ -511,6 +514,27 @@ func Test_VolumeName(t *testing.T) {
 		assert.Equal(t, test.want, VolumeName(mustURL(t, test.url)), test.url)
 	}
 	assert.Equal(t, "", VolumeName(nil))
+}
+
+// fakeS3 returns the endpoint of a service which is compatible with S3, with
+// the credentials of the environment, where every bucket can be accessed
+func fakeS3(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(dir, "config"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
 }
 
 // mustURL parses the URL, or fails the test

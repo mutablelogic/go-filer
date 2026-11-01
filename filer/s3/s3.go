@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	// Packages
+	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
@@ -19,8 +20,9 @@ import (
 // S3 is a filer of the objects in a bucket, beneath a prefix
 type S3 struct {
 	opt
-	bucket string // the bucket
-	prefix string // the prefix of the objects' keys, which is empty, or ends with "/"
+	bucket string     // the bucket
+	prefix string     // the prefix of the objects' keys, which is empty, or ends with "/"
+	client *s3.Client // the client of the bucket, in its region
 }
 
 var _ gofiler.Filer = (*S3)(nil)
@@ -37,9 +39,24 @@ var bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
 
 // New returns a filer of the objects in the bucket of the URL, which is
 // s3://<bucket>/<prefix>, beneath the prefix, with the options of its query
-// (see opt.go). The volume's name is the bucket's, or the name option.
-// Requests aren't made yet, so the bucket isn't checked.
+// (see opt.go). The volume's name is the bucket's, or the name option. The
+// bucket is checked, with the credentials, which are the profile's, or the
+// default ones, such as from the environment, or none, when it's anonymous,
+// which is ErrForbidden when they're missing, or can't access it, and
+// ErrNotFound when it doesn't exist. When the bucket is in another region,
+// and the region isn't set, it's the bucket's.
 func New(ctx context.Context, u *url.URL) (*S3, error) {
+	self, err := parse(u)
+	if err != nil {
+		return nil, err
+	} else if err := self.connect(ctx); err != nil {
+		return nil, err
+	}
+	return self, nil
+}
+
+// parse returns the filer of the URL, without a client
+func parse(u *url.URL) (*S3, error) {
 	self := new(S3)
 	if u == nil || u.Scheme != schema.SchemeS3 {
 		return nil, gofiler.ErrBadParameter.Withf("Not an %s url: %v", schema.SchemeS3, u)

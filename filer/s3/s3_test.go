@@ -1,4 +1,4 @@
-package s3_test
+package s3
 
 import (
 	"context"
@@ -7,13 +7,12 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	s3 "github.com/mutablelogic/go-filer/filer/s3"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
 
-func Test_S3_New(t *testing.T) {
+func Test_S3_Parse(t *testing.T) {
 	// The URL is the bucket, the prefix, which is a directory, and the
 	// options which are set, which it's created again from. The name is the
 	// bucket's, unless it's set.
@@ -33,25 +32,26 @@ func Test_S3_New(t *testing.T) {
 		{"s3://my.bucket-1/?name=photos&region=eu-west-1", "s3://my.bucket-1/?name=photos&region=eu-west-1", false},
 		{"s3://my-bucket/?name=photos&endpoint=http://localhost:9000", "s3://my-bucket/?endpoint=http%3A%2F%2Flocalhost%3A9000&name=photos", false},
 		{"s3://my-bucket/?name=photos&readonly", "s3://my-bucket/?name=photos&readonly=true", true},
+		{"s3://my-bucket/?profile=work", "s3://my-bucket/?profile=work", false},
 		{"s3://my-bucket/?name=photos&readonly=false", "s3://my-bucket/?name=photos", false},
 		{"s3://my-bucket/?name=photos&anonymous=true", "s3://my-bucket/?anonymous=true&name=photos", true},
 	} {
 		u, err := url.Parse(test.url)
 		require.NoError(t, err)
-		b, err := s3.New(context.Background(), u)
+		b, err := parse(u)
 		require.NoError(t, err, test.url)
 		assert.Equal(t, test.want, b.URL().String(), test.url)
 		assert.Equal(t, test.readonly, b.Readonly(), test.url)
 		assert.NoError(t, b.Close())
 
 		// The URL creates the same filer again
-		again, err := s3.New(context.Background(), b.URL())
+		again, err := parse(b.URL())
 		require.NoError(t, err, test.url)
 		assert.Equal(t, b.URL(), again.URL(), test.url)
 	}
 }
 
-func Test_S3_NewInvalid(t *testing.T) {
+func Test_S3_ParseInvalid(t *testing.T) {
 	// A URL without a name, when the bucket's isn't an identifier, or
 	// without a bucket, or with an invalid option, or another scheme, is
 	// invalid
@@ -76,10 +76,10 @@ func Test_S3_NewInvalid(t *testing.T) {
 	} {
 		u, err := url.Parse(test)
 		require.NoError(t, err)
-		_, err = s3.New(context.Background(), u)
+		_, err = parse(u)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, test)
 	}
-	_, err := s3.New(context.Background(), nil)
+	_, err := parse(nil)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
@@ -87,7 +87,7 @@ func Test_S3_NotImplemented(t *testing.T) {
 	// The objects aren't implemented yet
 	u, err := url.Parse("s3://my-bucket/?name=photos")
 	require.NoError(t, err)
-	b, err := s3.New(context.Background(), u)
+	b, err := parse(u)
 	require.NoError(t, err)
 	ctx := context.Background()
 

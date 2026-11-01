@@ -18,10 +18,15 @@ Create a volume with a `name`, which is an identifier, and the `url` of its back
 | `file` | `skip` | A regular expression of the names of files and directories which aren't listed, which can be repeated, in place of the defaults | Hidden files, and files which aren't content |
 | `file` | `package` | A regular expression of the names of directories which are listed as files, which can be repeated, in place of the defaults | macOS bundles and sparse disk images |
 | `s3` | `name` | The volume's name, which is an identifier | The bucket's name |
-| `s3` | `region` | The bucket's region, such as `eu-west-1` | |
+| `s3` | `region` | The bucket's region, such as `eu-west-1`, which it must be in | The bucket's region |
+| `s3` | `profile` | The profile of the credentials and configuration, in `~/.aws/config` and `~/.aws/credentials` | `AWS_PROFILE`, or `default` |
 | `s3` | `endpoint` | The `http` or `https` URL of a service which is compatible with S3, such as `http://localhost:9000` for MinIO | AWS |
 | `s3` | `anonymous` | `true` or `false`, so requests aren't signed, without credentials, which is read-only | `false` |
 | `s3` | `readonly` | `true` or `false`, so objects can only be read | `false` |
+
+A bucket is checked when its volume is created, with its credentials, which are those of the `profile`, or the default ones, such as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the server's environment, a role, or none, when it's `anonymous`. When the bucket is in another region, and `region` isn't set, it's the bucket's region.
+
+Returns 400 if the name or URL is invalid, or an option is unknown or invalid, or the bucket isn't in its `region`, 403 if the bucket can't be accessed, with the credentials, or there are none, 404 if the bucket doesn't exist, or 409 if a volume with the name exists, or is being added.
 
 ### GET /volume/{name}
 
