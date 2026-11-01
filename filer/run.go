@@ -14,17 +14,11 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// watching is a volume which Run watches, whose changes it publishes, until
-// cancel is called, or the volume is removed
-type watching struct {
-	volume string
-	cancel context.CancelFunc
-}
-
 // watched is a volume's watch which has ended, with why
 type watched struct {
-	e   *entry
-	err error
+	e      *entry
+	volume string
+	err    error
 }
 
 // readyWatcher is a backend which reports when it's watching, so the
@@ -66,13 +60,13 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 
 	// The watches of the volumes, which send their changes, and when they
 	// end, to Run
-	watches := make(map[*entry]watching)
+	watches := make(map[*entry]context.CancelFunc)
 	events, ended := make(chan schema.Event), make(chan watched)
 	defer func() {
 		// Stop watching, and wait for the watches to end, and end the
 		// subscriptions, as there are no more changes
-		for _, w := range watches {
-			w.cancel()
+		for _, cancel := range watches {
+			cancel()
 		}
 		for len(watches) > 0 {
 			select {
@@ -87,7 +81,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 	// Watch the volumes, and send their changes, until it's stopped
 	ticker := time.NewTicker(rescanInterval)
 	defer ticker.Stop()
-	self.startWatches(ctx, watches, events, ended)
+	self.startWatches(watches, events, ended)
 	for {
 		select {
 		case <-ctx.Done():
@@ -95,7 +89,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 		case <-self.done:
 			return nil
 		case <-self.changed:
-			self.startWatches(ctx, watches, events, ended)
+			self.startWatches(watches, events, ended)
 		case event := <-events:
 			if dropped := self.broadcaster.publish(event); dropped > 0 {
 				logger.DebugContext(ctx, "subscribers were slow, so a change was dropped, and they'll be sent a rescan", "volume", event.Name, "subscribers", dropped)
@@ -103,11 +97,10 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 		case w := <-ended:
 			// A watch which fails, while its volume is registered, opens the
 			// volume again, which is watched again, with a rescan
-			volume := watches[w.e].volume
 			delete(watches, w.e)
 			if w.err != nil && !errors.Is(w.err, gofiler.ErrNotImplemented) && w.e.ctx.Err() == nil {
-				logger.WarnContext(ctx, "watching a volume failed, opening it again", "volume", volume, "error", w.err.Error())
-				go self.reopen(w.e, volume)
+				logger.WarnContext(ctx, "watching a volume failed, opening it again", "volume", w.volume, "error", w.err.Error())
+				go self.reopen(w.e, w.volume)
 			}
 		case <-ticker.C:
 			self.broadcaster.flush()
@@ -130,27 +123,25 @@ func (self *Registry) Running() bool {
 // PRIVATE METHODS
 
 // startWatches watches the volumes which are registered, and aren't watched,
-// until they're removed, or Run stops, which sends their changes to events,
-// and when their watches end to ended. A watch is waited for before its
-// volume is closed, so it's added to the entry's calls with the registry
-// locked, while it isn't being removed.
-func (self *Registry) startWatches(ctx context.Context, watches map[*entry]watching, events chan<- schema.Event, ended chan<- watched) {
+// until they're removed, or Run cancels them, as it stops, which sends their
+// changes to events, and when their watches end to ended. A watch is waited
+// for before its volume is closed, so it's added to the entry's calls with
+// the registry locked, while it isn't being removed.
+func (self *Registry) startWatches(watches map[*entry]context.CancelFunc, events chan<- schema.Event, ended chan<- watched) {
 	self.Lock()
 	defer self.Unlock()
 	for volume, e := range self.backend {
 		if _, exists := watches[e]; exists || !e.ready || e.closing {
 			continue
 		}
-		wctx, cancel := context.WithCancel(e.ctx)
-		stop := context.AfterFunc(ctx, cancel)
-		watches[e] = watching{volume: volume, cancel: cancel}
+		ctx, cancel := context.WithCancel(e.ctx)
+		watches[e] = cancel
 		rescan := e.rescan
 		e.wg.Add(1)
 		go func() {
 			defer e.wg.Done()
-			defer stop()
 			defer cancel()
-			ended <- watched{e: e, err: self.watch(wctx, e, volume, rescan, events)}
+			ended <- watched{e: e, volume: volume, err: self.watch(ctx, e, volume, rescan, events)}
 		}()
 	}
 }
