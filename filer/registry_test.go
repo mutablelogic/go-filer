@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -610,6 +611,8 @@ func Test_Registry_WatchSlow(t *testing.T) {
 func Test_Registry_WatchRestart(t *testing.T) {
 	if !fsevents.Supported() {
 		t.Skip(fsevents.ErrNotSupported)
+	} else if runtime.GOOS == "windows" {
+		t.Skip("a directory which is open can't be removed on Windows")
 	}
 	retry := watchRetry
 	watchRetry = 10 * time.Millisecond
@@ -831,6 +834,9 @@ func Test_Registry_Update(t *testing.T) {
 }
 
 func Test_Registry_UpdateMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a directory which is open can't be removed on Windows")
+	}
 	r, dir := newRegistry(t)
 	ctx := context.Background()
 	u := fileURL(t, dir, "media")

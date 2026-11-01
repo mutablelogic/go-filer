@@ -50,8 +50,12 @@ func post(t *testing.T, server *httptest.Server, path string, body, v any) int {
 }
 
 func TestVolumeCreate(t *testing.T) {
-	server, _ := newServer(t)
-	dir := t.TempDir()
+	// The directory of the volume is in the server's, so it's removed after
+	// the registry is closed, as on Windows, a directory which is open can't
+	// be removed
+	server, base := newServer(t)
+	dir, err := os.MkdirTemp(base, "music-")
+	require.NoError(t, err)
 	fileURL := func(name, path, query string) string {
 		return (&url.URL{Scheme: "file", Host: name, Path: filepath.ToSlash(path), RawQuery: query}).String()
 	}

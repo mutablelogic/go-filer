@@ -31,6 +31,12 @@ type watcher struct {
 	// each directory
 	dirs map[int32]string
 	wds  map[string]int32
+
+	// The watch of the root's parent, or -1, and the root's name in it. The
+	// root's own watch doesn't report it's removed while it's open, such as
+	// by a filesystem rooted at it, so its parent does.
+	parent int32
+	base   string
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -47,6 +53,11 @@ const (
 		unix.IN_CLOSE_WRITE | unix.IN_ATTRIB | unix.IN_DELETE_SELF | unix.IN_MOVE_SELF |
 		unix.IN_ONLYDIR | unix.IN_DONT_FOLLOW | unix.IN_EXCL_UNLINK
 
+	// The changes watched for in the root's parent, which are the root being
+	// deleted or moved, or the parent itself
+	parentMask = unix.IN_DELETE | unix.IN_MOVED_FROM | unix.IN_DELETE_SELF | unix.IN_MOVE_SELF |
+		unix.IN_ONLYDIR | unix.IN_DONT_FOLLOW
+
 	// The size of the buffer events are read into, which holds hundreds
 	readSize = 64 * 1024
 )
@@ -62,16 +73,27 @@ func newWatcher(root string) (*watcher, error) {
 		return nil, os.NewSyscallError("inotify_init1", err)
 	}
 	w := &watcher{
-		root: root,
-		fd:   fd,
-		file: os.NewFile(uintptr(fd), "inotify"),
-		dirs: make(map[int32]string),
-		wds:  make(map[string]int32),
+		root:   root,
+		fd:     fd,
+		file:   os.NewFile(uintptr(fd), "inotify"),
+		dirs:   make(map[int32]string),
+		wds:    make(map[string]int32),
+		parent: -1,
 	}
 
 	// Watch every directory
 	if err := w.watchAll(); err != nil {
 		return nil, errors.Join(err, w.file.Close())
+	}
+
+	// Watch the root's parent, for the root being removed, when it can be,
+	// such as when the root isn't the top of the filesystem
+	if abs, err := filepath.Abs(root); err == nil {
+		if parent := filepath.Dir(abs); parent != abs {
+			if wd, err := unix.InotifyAddWatch(fd, parent, parentMask); err == nil {
+				w.parent, w.base = int32(wd), filepath.Base(abs)
+			}
+		}
 	}
 	return w, nil
 }
@@ -128,6 +150,20 @@ func (w *watcher) event(wd int32, mask uint32, name string, fn func(Event)) erro
 			return err
 		}
 		fn(Event{Op: Rescan, IsDir: true})
+		return nil
+	}
+
+	// The root is deleted or moved, or its parent is, which the root's
+	// parent reports
+	if w.parent >= 0 && wd == w.parent {
+		switch {
+		case mask&unix.IN_IGNORED != 0:
+			w.parent = -1
+		case mask&(unix.IN_DELETE_SELF|unix.IN_MOVE_SELF) != 0:
+			return ErrRootRemoved
+		case mask&(unix.IN_DELETE|unix.IN_MOVED_FROM) != 0 && name == w.base:
+			return ErrRootRemoved
+		}
 		return nil
 	}
 

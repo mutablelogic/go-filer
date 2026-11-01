@@ -246,6 +246,28 @@ func TestWatch(t *testing.T) {
 		w.done <- nil
 	})
 
+	t.Run("RootRemovedOpen", func(t *testing.T) {
+		// Removing the watched directory stops watching while it's open,
+		// such as by a filesystem rooted at it, which on Linux, the
+		// directory's own watch doesn't report. Windows can't remove a
+		// directory which is open.
+		if runtime.GOOS == "windows" {
+			t.Skip("an open directory can't be removed on Windows")
+		}
+		w := start(t)
+		f, err := os.Open(w.dir)
+		require.NoError(t, err)
+		defer f.Close()
+		require.NoError(t, os.RemoveAll(w.dir))
+		select {
+		case err := <-w.done:
+			assert.ErrorIs(t, err, fsevents.ErrRootRemoved)
+		case <-time.After(timeout):
+			t.Fatal("the watcher didn't stop")
+		}
+		w.done <- nil
+	})
+
 	t.Run("RootRenamed", func(t *testing.T) {
 		// Renaming the watched directory stops watching
 		w := start(t)

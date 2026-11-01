@@ -27,9 +27,12 @@ import (
 // HELPERS
 
 // newClient returns a client for a test server serving the filer API, for a
-// registry with no volumes
-func newClient(t *testing.T) *httpclient.Client {
+// registry with no volumes, and makes the directory of its volumes, which
+// is made first, so it's removed after the registry is closed, as on
+// Windows, a directory which is open can't be removed
+func newClient(t *testing.T) (*httpclient.Client, func() string) {
 	t.Helper()
+	base := t.TempDir()
 	registry, err := filer.New(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(func() { registry.Close() })
@@ -43,7 +46,11 @@ func newClient(t *testing.T) *httpclient.Client {
 
 	client, err := httpclient.New(server.URL + "/api")
 	require.NoError(t, err)
-	return client
+	return client, func() string {
+		dir, err := os.MkdirTemp(base, "volume-")
+		require.NoError(t, err)
+		return dir
+	}
 }
 
 // fileURL returns the URL of a volume for the directory
@@ -64,9 +71,9 @@ func status(err error) int {
 // TESTS
 
 func TestVolumes(t *testing.T) {
-	client := newClient(t)
+	client, tempDir := newClient(t)
 	ctx := context.Background()
-	dir := t.TempDir()
+	dir := tempDir()
 
 	// There are no volumes, and the schemes they can be created from
 	list, err := client.ListVolumes(ctx)
@@ -93,9 +100,9 @@ func TestVolumes(t *testing.T) {
 }
 
 func TestListObjects(t *testing.T) {
-	client := newClient(t)
+	client, tempDir := newClient(t)
 	ctx := context.Background()
-	dir := t.TempDir()
+	dir := tempDir()
 	for _, name := range []string{"a.txt", "b/c.txt", "b/d.txt", "e.txt"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(name)), 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644))
@@ -151,9 +158,9 @@ func TestListObjects(t *testing.T) {
 }
 
 func TestGetVolume(t *testing.T) {
-	client := newClient(t)
+	client, tempDir := newClient(t)
 	ctx := context.Background()
-	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", t.TempDir(), "readonly=true")})
+	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
 	require.NoError(t, err)
 
 	// The volume is returned as it was created
@@ -167,9 +174,9 @@ func TestGetVolume(t *testing.T) {
 }
 
 func TestDeleteVolume(t *testing.T) {
-	client := newClient(t)
+	client, tempDir := newClient(t)
 	ctx := context.Background()
-	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", t.TempDir(), "readonly=true")})
+	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
 	require.NoError(t, err)
 
 	// The volume is deleted, and returned as it was created, and isn't
@@ -187,9 +194,9 @@ func TestDeleteVolume(t *testing.T) {
 }
 
 func TestUpdateVolume(t *testing.T) {
-	client := newClient(t)
+	client, tempDir := newClient(t)
 	ctx := context.Background()
-	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", t.TempDir(), "readonly=true")})
+	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
 	require.NoError(t, err)
 
 	// An option is set, and one is removed

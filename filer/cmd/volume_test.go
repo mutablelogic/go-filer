@@ -14,9 +14,12 @@ import (
 func Test_VolumeCreateCmd(t *testing.T) {
 	wd, err := os.Getwd()
 	require.NoError(t, err)
+	// abs returns the URL path of a directory, which is absolute, which on
+	// Windows has a drive, so /mnt/media is /C:/mnt/media
 	abs := func(path string) string {
-		path = filepath.ToSlash(path)
-		if path[0] != '/' {
+		path, err := filepath.Abs(path)
+		require.NoError(t, err)
+		if path = filepath.ToSlash(path); path[0] != '/' {
 			path = "/" + path
 		}
 		return path
