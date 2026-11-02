@@ -73,16 +73,21 @@ func userMeta(metadata map[string]string) []schema.Meta {
 // s3Metadata returns the user's metadata of an object, as its x-amz-meta-*
 // headers, without the prefix, which are named by the key, or the namespace
 // and the key, separated by a ".", whose values are JSON, with non-ASCII
-// characters escaped, as S3 only stores ASCII. A namespace or key which
-// isn't lowercase letters, numbers and "-", the name of the modification
-// time, a value which isn't JSON, a name which is repeated, or metadata of
-// more than 2 KB, is ErrBadParameter.
-func s3Metadata(meta []schema.Meta) (map[string]string, error) {
-	if len(meta) == 0 {
+// characters escaped, as S3 only stores ASCII, with the modification time,
+// when it's set (see metaModTime), which counts towards the size. A
+// namespace or key which isn't lowercase letters, numbers and "-", the name
+// of the modification time, a value which isn't JSON, a name which is
+// repeated, or metadata of more than 2 KB, is ErrBadParameter.
+func s3Metadata(meta []schema.Meta, modTime time.Time) (map[string]string, error) {
+	if len(meta) == 0 && modTime.IsZero() {
 		return nil, nil
 	}
-	result := make(map[string]string, len(meta))
+	result := make(map[string]string, len(meta)+1)
 	size := 0
+	if !modTime.IsZero() {
+		result[metaModTime] = formatModTime(modTime)
+		size += len(metaModTime) + len(result[metaModTime])
+	}
 	for _, m := range meta {
 		name := m.Key
 		if !metaName.MatchString(m.Key) {
@@ -110,21 +115,33 @@ func s3Metadata(meta []schema.Meta) (map[string]string, error) {
 }
 
 // formatModTime returns a modification time as the value of its metadata,
-// in seconds since the Unix epoch, with the fraction of a second, without
-// trailing zeros, when it has one
+// in seconds since the Unix epoch, which are negative before it, with the
+// fraction of a second, without trailing zeros, when it has one
 func formatModTime(t time.Time) string {
-	seconds := strconv.FormatInt(t.Unix(), 10)
-	if ns := t.Nanosecond(); ns != 0 {
-		return seconds + "." + strings.TrimRight(fmt.Sprintf("%09d", ns), "0")
+	seconds, ns, sign := t.Unix(), int64(t.Nanosecond()), ""
+	if seconds < 0 {
+		// Before the epoch, the seconds are rounded down, so the fraction is
+		// of the second after them
+		sign, seconds = "-", -seconds
+		if ns != 0 {
+			seconds, ns = seconds-1, 1e9-ns
+		}
 	}
-	return seconds
+	value := sign + strconv.FormatInt(seconds, 10)
+	if ns != 0 {
+		value += "." + strings.TrimRight(fmt.Sprintf("%09d", ns), "0")
+	}
+	return value
 }
 
 // parseModTime returns the modification time of the value of its metadata,
-// in seconds since the Unix epoch, with an optional fraction of a second,
-// and whether it's one
+// in seconds since the Unix epoch, which are negative before it, with an
+// optional fraction of a second, and whether it's one. A time which isn't
+// in the years 0 to 9999 isn't one, as it can't be JSON.
 func parseModTime(value string) (time.Time, bool) {
-	whole, fraction, dot := strings.Cut(strings.TrimSpace(value), ".")
+	value = strings.TrimSpace(value)
+	negative := strings.HasPrefix(value, "-")
+	whole, fraction, dot := strings.Cut(strings.TrimPrefix(value, "-"), ".")
 	if !digits(whole) || len(fraction) > 9 || (dot && !digits(fraction)) {
 		return time.Time{}, false
 	}
@@ -136,7 +153,14 @@ func parseModTime(value string) (time.Time, bool) {
 	if fraction != "" {
 		ns, _ = strconv.ParseInt(fraction+strings.Repeat("0", 9-len(fraction)), 10, 64)
 	}
-	return time.Unix(seconds, ns).UTC(), true
+	if negative {
+		seconds, ns = -seconds, -ns
+	}
+	t := time.Unix(seconds, ns).UTC()
+	if year := t.Year(); year < 0 || year > 9999 {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // digits returns true when the value is one or more decimal digits

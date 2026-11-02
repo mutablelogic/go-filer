@@ -71,15 +71,9 @@ func (self *S3) CreateObject(ctx context.Context, req schema.CreateObjectRequest
 	} else if !sameType(req.ContentType, contentType) {
 		return nil, gofiler.ErrNotImplemented.Withf("Content type %q isn't supported, as the type of %q is from its extension", req.ContentType, req.Path)
 	}
-	metadata, err := s3Metadata(req.Meta)
+	metadata, err := s3Metadata(req.Meta, req.ModTime)
 	if err != nil {
 		return nil, err
-	}
-	if !req.ModTime.IsZero() {
-		if metadata == nil {
-			metadata = make(map[string]string, 1)
-		}
-		metadata[metaModTime] = formatModTime(req.ModTime)
 	}
 
 	// The conditions of the request which writes the file: none must exist,

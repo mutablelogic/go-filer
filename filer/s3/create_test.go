@@ -260,6 +260,20 @@ func Test_S3_CreateModTime(t *testing.T) {
 	assert.NotContains(t, bucket.meta["c.mp3"], "mtime")
 	bucket.Unlock()
 
+	// The modification time counts towards the size of the metadata, so
+	// metadata which fits without it doesn't with it
+	big := []schema.Meta{{Key: "big", Value: json.RawMessage(`"` + strings.Repeat("x", metaSize-len("big")-2) + `"`)}}
+	_, err = create(b, "/big.mp3", "mp3", schema.CreateObjectRequest{Meta: big})
+	assert.NoError(t, err)
+	_, err = create(b, "/big.mp3", "mp3", schema.CreateObjectRequest{Meta: big, ModTime: modified})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+
+	// A modification time before the epoch is the file's too
+	early := time.Date(1969, 7, 20, 20, 17, 40, 250_000_000, time.UTC)
+	object, err = create(b, "/early.mp3", "mp3", schema.CreateObjectRequest{ModTime: early})
+	require.NoError(t, err)
+	assert.True(t, early.Equal(object.ModTime), object.ModTime)
+
 	// The user's metadata can't be the modification time, though it can be
 	// in a namespace
 	_, err = create(b, "/d.mp3", "mp3", schema.CreateObjectRequest{Meta: []schema.Meta{{Key: "mtime", Value: json.RawMessage(`1`)}}})
@@ -273,7 +287,11 @@ func Test_S3_CreateModTime(t *testing.T) {
 		"1764569708":            time.Date(2025, 12, 1, 6, 15, 8, 0, time.UTC),
 		"1764569708.123456789":  time.Date(2025, 12, 1, 6, 15, 8, 123456789, time.UTC),
 		"1764569708.1234567890": bucket.modTime,
-		"-1":                    bucket.modTime,
+		"-1":                    time.Date(1969, 12, 31, 23, 59, 59, 0, time.UTC),
+		"-0.5":                  time.Date(1969, 12, 31, 23, 59, 59, 500_000_000, time.UTC),
+		"253402300799":          time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+		"253402300800":          bucket.modTime,
+		"-62167219201":          bucket.modTime,
 		"yesterday":             bucket.modTime,
 		"":                      bucket.modTime,
 	} {
@@ -292,6 +310,9 @@ func Test_S3_ModTime(t *testing.T) {
 		time.Date(2025, 12, 1, 6, 15, 8, 0, time.UTC),
 		time.Date(2025, 12, 1, 6, 15, 8, 500_000_000, time.UTC),
 		time.Date(2025, 12, 1, 6, 15, 8, 1, time.FixedZone("CET", 3600)),
+		time.Date(1969, 12, 31, 23, 59, 59, 500_000_000, time.UTC),
+		time.Date(1969, 7, 20, 20, 17, 40, 0, time.UTC),
+		time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC),
 	} {
 		value := formatModTime(t0)
 		assert.False(t, strings.HasSuffix(value, "0") && strings.Contains(value, "."), value)
@@ -300,7 +321,9 @@ func Test_S3_ModTime(t *testing.T) {
 		assert.True(t, t0.Equal(parsed), value)
 	}
 	assert.Equal(t, "1764569708", formatModTime(time.Date(2025, 12, 1, 6, 15, 8, 0, time.UTC)))
-	for _, value := range []string{"", ".5", "1.", "+1", "1.-5", "1.5e3", "1 2"} {
+	assert.Equal(t, "-0.5", formatModTime(time.Date(1969, 12, 31, 23, 59, 59, 500_000_000, time.UTC)))
+	assert.Equal(t, "-1.25", formatModTime(time.Date(1969, 12, 31, 23, 59, 58, 750_000_000, time.UTC)))
+	for _, value := range []string{"", ".5", "1.", "+1", "1.-5", "1.5e3", "1 2", "-", "--1", "-.5", "253402300800"} {
 		_, ok := parseModTime(value)
 		assert.False(t, ok, value)
 	}
