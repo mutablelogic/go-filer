@@ -126,7 +126,7 @@ The registry of volumes is watched by its `Run`, which watches each volume when 
 
 ## Modification Time
 
-The modification time of an object is stored in the `x-amz-meta-mtime` metadata of an S3 object, which is used in preference to `LastModified`. `LastModified` is the time the object was uploaded, and cannot be set, so it is only used when the metadata is not set.
+The modification time of an object is stored in the `x-amz-meta-mtime` metadata of an S3 object, which is used in preference to `LastModified`. `LastModified` is the time the object was uploaded, and cannot be set, so it is only used when the metadata is not set. Its value is seconds since the Unix epoch, with an optional fraction of a second, such as `1764569708.5`, as rclone and s3fs write it, so the times they write are read too. It isn't part of an object's user metadata, so `mtime` can't be a key of it, outside a namespace.
 
 `ListObjectsV2` does not return metadata, so a listing from S3 has the `LastModified` time, which can differ from the modification time returned by `GetObject`.
 

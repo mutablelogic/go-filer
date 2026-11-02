@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -219,6 +220,90 @@ func Test_S3_CreateMeta(t *testing.T) {
 	_, exists := bucket.keys["b.jpg"]
 	assert.False(t, exists)
 	bucket.Unlock()
+}
+
+func Test_S3_CreateModTime(t *testing.T) {
+	bucket, b := newFakeBucket(t, "")
+	modified := time.Date(2025, 12, 1, 6, 15, 8, 500_000_000, time.UTC)
+
+	// The modification time of the request is the file's, rather than when
+	// it's written, which is in its metadata, which isn't the user's
+	object, err := create(b, "/a.mp3", "mp3", schema.CreateObjectRequest{ModTime: modified})
+	require.NoError(t, err)
+	assert.True(t, modified.Equal(object.ModTime), object.ModTime)
+	assert.Nil(t, object.Meta)
+	bucket.Lock()
+	assert.Equal(t, map[string]string{"mtime": "1764569708.5"}, bucket.meta["a.mp3"])
+	bucket.Unlock()
+
+	// And it's the file's when it's got, or read
+	object, err = b.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.mp3"}})
+	require.NoError(t, err)
+	assert.True(t, modified.Equal(object.ModTime), object.ModTime)
+	_, object, err = b.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.mp3"}})
+	require.NoError(t, err)
+	assert.True(t, modified.Equal(object.ModTime), object.ModTime)
+
+	// With the user's metadata, which doesn't have it
+	object, err = create(b, "/b.mp3", "mp3", schema.CreateObjectRequest{ModTime: modified, Meta: []schema.Meta{{Key: "rating", Value: json.RawMessage(`5`)}}})
+	require.NoError(t, err)
+	assert.True(t, modified.Equal(object.ModTime), object.ModTime)
+	if assert.Len(t, object.Meta, 1) {
+		assert.Equal(t, "rating", object.Meta[0].Key)
+	}
+
+	// Without one, it's when it's written, as S3 says
+	object, err = create(b, "/c.mp3", "mp3", schema.CreateObjectRequest{})
+	require.NoError(t, err)
+	assert.True(t, bucket.modTime.Equal(object.ModTime), object.ModTime)
+	bucket.Lock()
+	assert.NotContains(t, bucket.meta["c.mp3"], "mtime")
+	bucket.Unlock()
+
+	// The user's metadata can't be the modification time, though it can be
+	// in a namespace
+	_, err = create(b, "/d.mp3", "mp3", schema.CreateObjectRequest{Meta: []schema.Meta{{Key: "mtime", Value: json.RawMessage(`1`)}}})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = create(b, "/d.mp3", "mp3", schema.CreateObjectRequest{Meta: []schema.Meta{{Namespace: "audio", Key: "mtime", Value: json.RawMessage(`1`)}}})
+	assert.NoError(t, err)
+
+	// A modification time which another client wrote, such as rclone, is the
+	// file's, and one which isn't valid is ignored
+	for value, want := range map[string]time.Time{
+		"1764569708":            time.Date(2025, 12, 1, 6, 15, 8, 0, time.UTC),
+		"1764569708.123456789":  time.Date(2025, 12, 1, 6, 15, 8, 123456789, time.UTC),
+		"1764569708.1234567890": bucket.modTime,
+		"-1":                    bucket.modTime,
+		"yesterday":             bucket.modTime,
+		"":                      bucket.modTime,
+	} {
+		bucket.write("e.mp3", "mp3", "audio/mpeg", map[string]string{"mtime": value})
+		object, err := b.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/e.mp3"}})
+		require.NoError(t, err, value)
+		assert.True(t, want.Equal(object.ModTime), "%q: %v", value, object.ModTime)
+		assert.Nil(t, object.Meta, value)
+	}
+}
+
+func Test_S3_ModTime(t *testing.T) {
+	// A modification time is written in seconds, with the fraction of a
+	// second, without trailing zeros, and read again
+	for _, t0 := range []time.Time{
+		time.Date(2025, 12, 1, 6, 15, 8, 0, time.UTC),
+		time.Date(2025, 12, 1, 6, 15, 8, 500_000_000, time.UTC),
+		time.Date(2025, 12, 1, 6, 15, 8, 1, time.FixedZone("CET", 3600)),
+	} {
+		value := formatModTime(t0)
+		assert.False(t, strings.HasSuffix(value, "0") && strings.Contains(value, "."), value)
+		parsed, ok := parseModTime(value)
+		assert.True(t, ok, value)
+		assert.True(t, t0.Equal(parsed), value)
+	}
+	assert.Equal(t, "1764569708", formatModTime(time.Date(2025, 12, 1, 6, 15, 8, 0, time.UTC)))
+	for _, value := range []string{"", ".5", "1.", "+1", "1.-5", "1.5e3", "1 2"} {
+		_, ok := parseModTime(value)
+		assert.False(t, ok, value)
+	}
 }
 
 func Test_S3_CreatePrefix(t *testing.T) {
