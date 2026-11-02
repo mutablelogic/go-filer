@@ -268,7 +268,12 @@ func (self *S3) headObject(ctx context.Context, op, rel string) (*schema.Object,
 		object.ContentType = aws.ToString(response.ContentType)
 	}
 
-	// The user's metadata, which a listing doesn't have
+	// The modification time, which is in its metadata, when it was written
+	// with one, rather than when it was written, and the user's metadata,
+	// which a listing doesn't have
+	if modTime, ok := parseModTime(response.Metadata[metaModTime]); ok {
+		object.ModTime = modTime
+	}
 	object.Meta = userMeta(response.Metadata)
 	return object, nil
 }

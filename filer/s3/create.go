@@ -46,7 +46,9 @@ var partSize = 8 << 20
 // file which doesn't exist isn't created, which is ErrPreconditionFailed, as
 // they're the conditions of the request which writes it. A file is replaced
 // once it's written, so a body which can't be read leaves it as it was. Its
-// modification time is when it's written, as S3 sets it. Returns the file.
+// modification time is the request's, when it's set, which is in its
+// metadata (see metaModTime), as S3 sets its Last-Modified time to when it's
+// written, which it is otherwise. Returns the file.
 func (self *S3) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (_ *schema.Object, err error) {
 	ctx, end := self.span(ctx, "CreateObject", req)
 	defer func() { end(err) }()
@@ -69,7 +71,7 @@ func (self *S3) CreateObject(ctx context.Context, req schema.CreateObjectRequest
 	} else if !sameType(req.ContentType, contentType) {
 		return nil, gofiler.ErrNotImplemented.Withf("Content type %q isn't supported, as the type of %q is from its extension", req.ContentType, req.Path)
 	}
-	metadata, err := s3Metadata(req.Meta)
+	metadata, err := s3Metadata(req.Meta, req.ModTime)
 	if err != nil {
 		return nil, err
 	}
