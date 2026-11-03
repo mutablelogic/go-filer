@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -230,17 +229,9 @@ func (cmd *VolumeUpdateCmd) patch() (schema.VolumePatch, error) {
 // /mnt/media?readonly=true, which is made absolute, as the server's
 // directory, so it's best given as one which is absolute.
 func (cmd *VolumeCreateCmd) volume() (schema.Volume, error) {
-	u, err := url.Parse(cmd.URL)
-	if err != nil || u.Scheme == "" || filepath.IsAbs(cmd.URL) {
-		dir, query, _ := strings.Cut(cmd.URL, "?")
-		path, err := filepath.Abs(dir)
-		if err != nil {
-			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid url: %q", cmd.URL)
-		}
-		u = &url.URL{Scheme: schema.SchemeFile, Path: filepath.ToSlash(path), RawQuery: query}
-		if !strings.HasPrefix(u.Path, "/") {
-			u.Path = "/" + u.Path
-		}
+	u, err := gofiler.ParseURL(cmd.URL)
+	if err != nil {
+		return schema.Volume{}, err
 	}
 
 	// Add the options to those of the URL, each of which is KEY=VALUE, or a

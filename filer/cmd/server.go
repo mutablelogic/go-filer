@@ -7,21 +7,24 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
 	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
 type Flags struct {
-	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, named by its name option, such as s3://my.bucket/photos?name=photos, or its host, such as file://media/mnt/media?readonly=true, which can be repeated."`
+	Volume []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, named by its name option, such as s3://my.bucket/photos?name=photos, or its host, such as file://media/mnt/media?readonly=true, or as a directory, named by its name option, or its base name, such as /mnt/media, which can be repeated."`
 	Worker string   `name:"worker" env:"FILER_WORKER,WORKER" placeholder:"NAME" help:"Name of the worker, which is in the metrics, so those of the servers are told apart. Defaults to the hostname."`
 }
 
@@ -73,12 +76,13 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 	}()
 
 	// Add the volumes, whose names are their name options, or the hosts of
-	// their URLs. A volume which can't be is named by its position, without
-	// its URL, or why it can't be parsed, as they can have credentials.
+	// their URLs, or the base names of their directories. A volume which
+	// can't be is named by its position, without its URL, or why it can't be
+	// parsed, as they can have credentials.
 	for i, volume := range flags.Volume {
-		u, err := url.Parse(volume)
+		u, err := volumeURL(volume)
 		if err != nil {
-			return gofiler.ErrBadParameter.Withf("volume %d: invalid url", i+1)
+			return gofiler.ErrBadParameter.Withf("volume %d: %v", i+1, err)
 		}
 		name := filer.VolumeName(u)
 		if name == "" {
@@ -104,4 +108,35 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn fun
 
 	// Call the function with the registry
 	return fn(registry)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE FUNCTIONS
+
+// volumeURL returns the URL of a volume's backend, which is a URL, or a
+// directory, as gofiler.ParseURL returns it, whose name, as a file URL's
+// host, is its name option, which is moved to its host, or its base name,
+// such as "media" for /mnt/media, when it has no host. Returns an error,
+// without the URL, which can have credentials, when it can't be parsed, or
+// the name isn't valid.
+func volumeURL(volume string) (*url.URL, error) {
+	u, err := gofiler.ParseURL(volume)
+	if err != nil {
+		return nil, errors.New("invalid url")
+	}
+	if u.Scheme == schema.SchemeFile && u.Host == "" {
+		query := u.Query()
+		name := query.Get("name")
+		if name == "" {
+			name = path.Base(u.Path)
+		} else {
+			query.Del("name")
+			u.RawQuery = query.Encode()
+		}
+		if !types.IsIdentifier(name) {
+			return nil, fmt.Errorf("the name %q of the directory isn't valid, so give it with the name option, or as file://NAME/path", name)
+		}
+		u.Host = name
+	}
+	return u, nil
 }
