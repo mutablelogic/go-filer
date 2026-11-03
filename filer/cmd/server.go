@@ -125,7 +125,12 @@ func volumeURL(volume string) (*url.URL, error) {
 		return nil, errors.New("invalid url")
 	}
 	if u.Scheme == schema.SchemeFile && u.Host == "" {
-		query := u.Query()
+		// The options are parsed strictly, as a malformed option, which
+		// would be left out, could be one which makes it read-only
+		query, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return nil, errors.New("invalid options")
+		}
 		name := query.Get("name")
 		if name == "" {
 			name = path.Base(u.Path)
@@ -133,8 +138,11 @@ func volumeURL(volume string) (*url.URL, error) {
 			query.Del("name")
 			u.RawQuery = query.Encode()
 		}
+
+		// The name isn't in the error, as it's from the volume, which can
+		// have credentials
 		if !types.IsIdentifier(name) {
-			return nil, fmt.Errorf("the name %q of the directory isn't valid, so give it with the name option, or as file://NAME/path", name)
+			return nil, errors.New("the base name of the directory isn't a valid name, so give it with the name option, or as file://NAME/path")
 		}
 		u.Host = name
 	}

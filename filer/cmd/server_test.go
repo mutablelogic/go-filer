@@ -67,9 +67,13 @@ func Test_VolumeURL(t *testing.T) {
 		assert.Equal(t, want, u.String(), volume)
 	}
 
-	// But not a directory whose name isn't valid, without its name option
-	for _, volume := range []string{"/Volumes/My Disk", "/mnt/2026", ""} {
+	// But not a directory whose name isn't valid, without its name option,
+	// or whose options are malformed, or a URL which can't be parsed, and
+	// the error doesn't have its credentials
+	for _, volume := range []string{"/Volumes/My Disk", "/mnt/2026", "", "/mnt/media?name=media&readonly=%ZZ", "s3://user:secret@bucket:bad"} {
 		_, err := volumeURL(volume)
-		assert.Error(t, err, volume)
+		if assert.Error(t, err, volume) {
+			assert.NotContains(t, err.Error(), "secret", volume)
+		}
 	}
 }

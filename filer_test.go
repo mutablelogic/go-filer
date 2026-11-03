@@ -52,9 +52,12 @@ func Test_ParseURL(t *testing.T) {
 		assert.Equal(t, want, u.String(), value)
 	}
 
-	// But not nothing
-	for _, value := range []string{"", "?readonly=true"} {
+	// But not nothing, or a URL which can't be parsed, which isn't a
+	// directory, without its credentials in the error
+	for _, value := range []string{"", "?readonly=true", "s3://user:secret@bucket:bad"} {
 		_, err := gofiler.ParseURL(value)
-		assert.ErrorIs(t, err, gofiler.ErrBadParameter, value)
+		if assert.ErrorIs(t, err, gofiler.ErrBadParameter, value) {
+			assert.NotContains(t, err.Error(), "secret", value)
+		}
 	}
 }

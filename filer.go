@@ -76,19 +76,25 @@ type Filer interface {
 // file:///mnt/media?readonly=true. On Windows, a directory with a drive,
 // such as C:\media, or C:media, which is relative to the drive's current
 // directory, isn't a URL whose scheme is its drive, and its URL's path has
-// the drive, such as /C:/media. Returns ErrBadParameter when it can't be
-// parsed.
+// the drive, such as /C:/media. Returns ErrBadParameter, without the value,
+// which can have credentials, when it can't be parsed, and a value with
+// "://" is a URL, not a directory, even when it can't be parsed.
 func ParseURL(value string) (*url.URL, error) {
 	u, err := url.Parse(value)
-	if err == nil && len(u.Scheme) > 1 && !filepath.IsAbs(value) {
+	switch {
+	case err == nil && len(u.Scheme) > 1 && !filepath.IsAbs(value):
 		return u, nil
+	case strings.Contains(value, "://"):
+		// A URL which can't be parsed isn't a directory, and isn't in the
+		// error, as it can have credentials
+		return nil, ErrBadParameter.With("invalid url")
 	}
 
 	// A directory, with any options
 	dir, query, _ := strings.Cut(value, "?")
 	path, err := filepath.Abs(dir)
 	if err != nil || dir == "" {
-		return nil, ErrBadParameter.Withf("invalid url: %q", value)
+		return nil, ErrBadParameter.With("invalid directory")
 	}
 	u = &url.URL{Scheme: schema.SchemeFile, Path: filepath.ToSlash(path), RawQuery: query}
 	if !strings.HasPrefix(u.Path, "/") {
