@@ -100,7 +100,9 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		} else if _, err := self.client.TaskList(ctx, p.list); err != nil {
 			return nil, apiError("list", req.Path, err)
 		}
-		iter.pending = append(iter.pending, listItem{list: p.list, tasks: true})
+		if !iter.before(p.list) {
+			iter.pending = append(iter.pending, listItem{list: p.list, tasks: true})
+		}
 	default:
 		// The lists, each followed by its tasks, when it's recursive
 		lists, err := self.client.TaskLists(ctx)
@@ -188,7 +190,7 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 		if err != nil {
 			return nil, nil, apiError(op, p, err)
 		}
-		return self.listObject(list, countTasks(tasks)), nil, nil
+		return self.listObject(list, tasks), nil, nil
 	default:
 		task, err := self.client.Task(ctx, path.list, path.task)
 		if err != nil {
@@ -217,7 +219,7 @@ func (self *taskIterator) readList(ctx context.Context, item listItem) error {
 	})
 	var items []listItem
 	if item.dir != nil {
-		items = append(items, listItem{object: self.listObject(item.dir, countTasks(tasks))})
+		items = append(items, listItem{object: self.listObject(item.dir, tasks)})
 	}
 	for i := range tasks {
 		if item.tasks && !tasks[i].Deleted && validId(tasks[i].Id) {

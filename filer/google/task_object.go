@@ -88,15 +88,25 @@ func rootObject() *schema.Object {
 }
 
 // listObject returns a list, which is a directory, with its title, and
-// whether it has tasks, and how many
-func (self *TaskFiler) listObject(list *httpclient.TaskList, count int) *schema.Object {
+// whether it has tasks, and how many, which aren't deleted. Its entity tag
+// is the list's, with the count, and its modification time the latest of the
+// list's, and its tasks', including those which are deleted, so a change of
+// its tasks changes them, as well as its metadata.
+func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.Task) *schema.Object {
+	count := countTasks(tasks)
+	modtime := list.Updated
+	for i := range tasks {
+		if tasks[i].Updated.After(modtime) {
+			modtime = tasks[i].Updated
+		}
+	}
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: self.name, Path: listPath(list.Id)},
 		ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType},
-		ObjectAttr: schema.ObjectAttr{IsDir: true, ModTime: list.Updated},
+		ObjectAttr: schema.ObjectAttr{IsDir: true, ModTime: modtime},
 	}
 	if list.ETag != "" {
-		object.ETag = types.Ptr(list.ETag)
+		object.ETag = types.Ptr(list.ETag + "-" + strconv.Itoa(count))
 	}
 	object.Meta = appendMeta(object.Meta, "title", list.Title)
 	object.Meta = append(object.Meta,

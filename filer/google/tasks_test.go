@@ -571,3 +571,49 @@ func Test_TaskReadCancelled(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func Test_TaskListValidators(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A", Updated: time.Date(2026, 11, 18, 13, 0, 0, 0, time.UTC)})
+	filer := newFiler(t, endpoint, nil)
+	get := func(req schema.GetObjectRequest) (*schema.Object, error) {
+		req.Path = "/L1"
+		return filer.GetObject(ctx, req)
+	}
+
+	// A list's directory is modified when its tasks are, after its own
+	// update, so its entity tag, and its modification time, change, though
+	// the list's don't
+	dir, err := get(schema.GetObjectRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2026, 11, 18, 13, 0, 0, 0, time.UTC), dir.ModTime, "of its task, after the list's update")
+	_, err = get(schema.GetObjectRequest{IfNoneMatch: []string{*dir.ETag}})
+	assert.ErrorIs(t, err, gofiler.ErrNotModified)
+	fake.addTask("L1", httpclient.Task{Id: "B", Updated: time.Date(2026, 11, 18, 14, 0, 0, 0, time.UTC)})
+	_, err = get(schema.GetObjectRequest{IfNoneMatch: []string{*dir.ETag}})
+	assert.NoError(t, err, "of a task which is added")
+	_, err = get(schema.GetObjectRequest{IfModifiedSince: dir.ModTime})
+	assert.NoError(t, err)
+
+	// A task which is deleted modifies it too, when it was deleted
+	dir, err = get(schema.GetObjectRequest{})
+	require.NoError(t, err)
+	fake.Lock()
+	fake.tasks["L1"][0].Deleted, fake.tasks["L1"][0].Updated = true, time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC)
+	fake.Unlock()
+	_, err = get(schema.GetObjectRequest{IfNoneMatch: []string{*dir.ETag}})
+	assert.NoError(t, err)
+	_, err = get(schema.GetObjectRequest{IfModifiedSince: dir.ModTime})
+	assert.NoError(t, err)
+
+	// A listing of a list, after its tasks, doesn't read them
+	fake.Lock()
+	before := fake.requests
+	fake.Unlock()
+	assert.Empty(t, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/"}, StartAfter: "/L2/"}))
+	fake.Lock()
+	assert.Equal(t, before+1, fake.requests, "only the list, which is checked")
+	fake.Unlock()
+}
