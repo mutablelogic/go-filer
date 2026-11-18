@@ -604,8 +604,10 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if u.Path != "" && u.Path != "/" {
 			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Tasks has no path: %q", u.Path)
 		}
+		// The registry's client options, or, without them, its tracer, so a
+		// request isn't traced twice, when the options have one
 		opts := slices.Clone(self.clientopts)
-		if self.tracer != nil {
+		if len(opts) == 0 && self.tracer != nil {
 			opts = append(opts, client.OptTracer(self.tracer))
 		}
 		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.credentials, opts...); err != nil {

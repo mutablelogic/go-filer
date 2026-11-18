@@ -125,7 +125,9 @@ func WithCredentials(credentials gofiler.CredentialProvider) Opt {
 }
 
 // WithClientOpts sets the client options of the backends which call other
-// services over HTTP
+// services over HTTP, such as a command's, of server.Cmd's ClientEndpoint,
+// with its trace, tracer and timeout. Without them, the backends' clients
+// have the registry's tracer.
 func WithClientOpts(clientopts ...client.ClientOpt) Opt {
 	return func(o *opt) error {
 		o.clientopts = clientopts
