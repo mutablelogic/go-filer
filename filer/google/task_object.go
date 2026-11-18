@@ -37,6 +37,10 @@ const (
 	TaskNamespace   = "task"
 	FolderNamespace = "folder"
 
+	// DCNamespace is the namespace of the Dublin Core metadata, whose
+	// "title" is a list's
+	DCNamespace = "dc"
+
 	// taskExt is the extension of a task's file
 	taskExt = ".md"
 
@@ -109,6 +113,9 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.
 		object.ETag = types.Ptr(list.ETag + "-" + strconv.Itoa(count))
 	}
 	object.Meta = appendMeta(object.Meta, "title", list.Title)
+	if list.Title != "" {
+		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(list.Title))})
+	}
 	object.Meta = append(object.Meta,
 		schema.Meta{Namespace: FolderNamespace, Key: "children", Value: json.RawMessage(strconv.FormatBool(count > 0))},
 		schema.Meta{Namespace: FolderNamespace, Key: "children-count", Value: json.RawMessage(strconv.Itoa(count))},

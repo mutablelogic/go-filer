@@ -250,6 +250,7 @@ func Test_TaskObjects(t *testing.T) {
 	assert.Equal(t, "/L1", dir.Path)
 	assert.Equal(t, []schema.Meta{
 		{Namespace: google.TaskNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
+		{Namespace: google.DCNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
 		{Namespace: google.FolderNamespace, Key: "children", Value: json.RawMessage(`true`)},
 		{Namespace: google.FolderNamespace, Key: "children-count", Value: json.RawMessage(`2`)},
 	}, dir.Meta, "with its tasks, which aren't deleted")

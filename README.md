@@ -80,7 +80,7 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 
 `google.NewTaskFiler` returns a filer of a person's Google Tasks:
 
-* **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata, and `folder:children` and `folder:children-count`, whether they have tasks, and how many. The API doesn't count them, so they're read: one request a list, for each 100 tasks.
+* **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata, as `task:title` and `dc:title`, and `folder:children` and `folder:children-count`, whether they have tasks, and how many. The API doesn't count them, so they're read: one request a list, for each 100 tasks.
 * **Tasks** are Markdown files, named by their ids, such as `/MTA3NjI/Q2xvdWQ.md`, so a path stays the same when a task is renamed.
 * **Content:** YAML front matter, of the task's id, list, status, due date, completion, update time, parent, links and URL, then its title as a heading, and its notes.
 
