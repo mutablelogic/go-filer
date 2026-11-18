@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	// Packages
+	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	fs "github.com/mutablelogic/go-filer/filer/fs"
@@ -366,6 +367,19 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 
 	// Return the volume
 	return types.Ptr(volumeOf(volume, b)), nil
+}
+
+// SignIn completes a sign-in, of a person who authorized a client, such as
+// the filer command, at a loopback address: the code is exchanged, with the
+// secret of the client, which the registry's credentials have, and the
+// sign-in is stored, as the request's credential, so the volumes which use
+// it can be created. It's Google's, so far.
+func (self *Registry) SignIn(ctx context.Context, req authclient.SignInCode) (*schema.SignInResponse, error) {
+	grant, err := google.Exchange(ctx, self.credentials, google.Google, req)
+	if err != nil {
+		return nil, err
+	}
+	return &schema.SignInResponse{Credential: req.Credential, Scopes: grant.Scopes}, nil
 }
 
 // Del removes the backend for the specified volume from the registry, and

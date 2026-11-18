@@ -45,6 +45,10 @@ const (
 	// Grant, which the credential parameter sets another of
 	ClientCredential  = "GOOGLE_CLIENT"
 	DefaultCredential = "GOOGLE_TOKEN"
+
+	// SignInPrefix is the prefix of the keys of sign-ins, which are those
+	// which start with it, other than ClientCredential
+	SignInPrefix = "GOOGLE_"
 )
 
 // Google is the authorization server of Google accounts
@@ -291,11 +295,12 @@ func isNotFound(err error) bool {
 	return errors.Is(err, auth.ErrNotFound) || errors.Is(err, gofiler.ErrNotFound)
 }
 
-// credentialKey returns an error when the key of a credential isn't an
-// identifier
+// credentialKey returns an error when the key of a credential isn't that
+// of a sign-in, which is an identifier, with SignInPrefix, other than
+// ClientCredential, as only those can be signed in to
 func credentialKey(key string) error {
-	if !types.IsIdentifier(key) {
-		return gofiler.ErrBadParameter.Withf("%s: %q isn't the key of a credential", paramCredential, key)
+	if !types.IsIdentifier(key) || !strings.HasPrefix(key, SignInPrefix) || key == ClientCredential {
+		return gofiler.ErrBadParameter.Withf("%s: %q isn't the key of a sign-in, which is %s*, other than %s", paramCredential, key, SignInPrefix, ClientCredential)
 	}
 	return nil
 }

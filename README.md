@@ -84,6 +84,13 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 * **Tasks** are Markdown files, named by their ids, such as `/MTA3NjI/Q2xvdWQ.md`, so a path stays the same when a task is renamed.
 * **Content:** YAML front matter, of the task's id, list, status, due date, completion, update time, parent, links and URL, then its title as a heading, and its notes.
 
+To set it up, with the `filer` command, store the OAuth client, a desktop app's, which Google's console downloads, as the server's credential, and create a volume, which signs in with Google, in the browser:
+
+```bash
+filer credential-set GOOGLE_CLIENT --json < client_secret.json
+filer volume-create-gtasks tasks
+```
+
 In the registry, its URL is `gtasks://<name>`, such as `gtasks://tasks?readonly=false`, and its sign-in is of the registry's credentials (`filer.WithCredentials`):
 
 ```go

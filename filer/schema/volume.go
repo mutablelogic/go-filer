@@ -146,3 +146,10 @@ func scalar(value any) (string, bool) {
 		return "", false
 	}
 }
+
+// SignInResponse is the credential which a sign-in stored, and the scopes
+// it was granted, without its token
+type SignInResponse struct {
+	Credential string   `json:"credential"`
+	Scopes     []string `json:"scopes,omitempty"`
+}

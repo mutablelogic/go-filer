@@ -252,3 +252,37 @@ func Test_VolumeCreateS3Cmd(t *testing.T) {
 	_, err = volume("not-a-name!", "media")
 	assert.Error(t, err)
 }
+
+func Test_VolumeCreateGTasksCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateGTasks VolumeCreateGTasksCmd `cmd:"" name:"volume-create-gtasks"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		t.Helper()
+		cli.VolumeCreateGTasks = VolumeCreateGTasksCmd{}
+		_, err := parser.Parse(append([]string{"volume-create-gtasks"}, args...))
+		require.NoError(t, err)
+		v, err := cli.VolumeCreateGTasks.volume()
+		if err != nil {
+			return "", err
+		}
+		return v.URL, nil
+	}
+
+	// A volume of the default sign-in, which is read-only, and one which
+	// isn't, of another, with a quota and refresh interval
+	u, err := volume("tasks")
+	require.NoError(t, err)
+	assert.Equal(t, "gtasks://tasks", u)
+	u, err = volume("work", "--writable", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m")
+	require.NoError(t, err)
+	assert.Equal(t, "gtasks://work?credential=GOOGLE_WORK&quota=60&readonly=false&refresh_interval=5m0s", u)
+
+	// A name which isn't an identifier, or a credential which isn't a key
+	_, err = volume("not-a-name!")
+	assert.Error(t, err)
+	_, err = volume("tasks", "--credential", "not a key")
+	assert.Error(t, err)
+}
