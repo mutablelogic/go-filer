@@ -307,3 +307,34 @@ func Test_VolumeCreateGTasksCmd(t *testing.T) {
 	_, err = volume("tasks", "--credential", "not a key")
 	assert.Error(t, err)
 }
+
+func Test_VolumeCreateGContactsCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateGContacts VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		_, err := parser.Parse(append([]string{"volume-create-gcontacts"}, args...))
+		if err != nil {
+			return "", err
+		}
+		v, err := cli.VolumeCreateGContacts.volume()
+		return v.URL, err
+	}
+
+	// A volume of contacts, and of another sign-in, with a quota, a refresh
+	// interval, and another option
+	u, err := volume("contacts")
+	require.NoError(t, err)
+	assert.Equal(t, "gcontacts://contacts", u)
+	u, err = volume("work", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "-o", "index=folders")
+	require.NoError(t, err)
+	assert.Equal(t, "gcontacts://work?credential=GOOGLE_WORK&index=folders&quota=60&refresh_interval=5m0s", u)
+
+	// A name which isn't an identifier, or a credential which isn't a key
+	_, err = volume("not-a-name!")
+	assert.Error(t, err)
+	_, err = volume("contacts", "--credential", "not a key")
+	assert.Error(t, err)
+}

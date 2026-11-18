@@ -380,7 +380,7 @@ func newFiler(t *testing.T, endpoint string, params url.Values) *google.TaskFile
 		// Unlimited, unless a test sets it, so the tests aren't paced
 		params.Set("quota", "0")
 	}
-	filer, err := google.NewTaskFiler(t.Context(), "tasks", params, newCredentials(t, endpoint, nil))
+	filer, err := newTaskFiler(t.Context(), "tasks", params, newCredentials(t, endpoint, nil))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, filer.Close()) })
 	return filer
@@ -446,12 +446,12 @@ func Test_NewTaskFiler(t *testing.T) {
 		{"readonly": {"maybe"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}},
 		{"refresh_interval": {"-1s"}}, {"hidden": {"maybe"}}, {"credential": {"GOOGLE_CLIENT"}}, {"credential": {"S3_SECRET"}}, {"credential": {"not a key"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
 	} {
-		_, err := google.NewTaskFiler(ctx, "tasks", params, nil)
+		_, err := newTaskFiler(ctx, "tasks", params, nil)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
-	_, err = google.NewTaskFiler(ctx, "tasks", url.Values{"credential": {"not a key"}}, nil)
+	_, err = newTaskFiler(ctx, "tasks", url.Values{"credential": {"not a key"}}, nil)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	_, err = google.NewTaskFiler(ctx, "not a name", nil, nil)
+	_, err = newTaskFiler(ctx, "not a name", nil, nil)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
@@ -848,40 +848,40 @@ func Test_TaskSignIn(t *testing.T) {
 	// Without a sign-in, or a client, or a provider of credentials
 	creds := newCredentials(t, endpoint, nil)
 	delete(creds.values, google.DefaultCredential)
-	_, err := google.NewTaskFiler(ctx, "tasks", params(), creds)
+	_, err := newTaskFiler(ctx, "tasks", params(), creds)
 	need := signIn(t, err)
 	assert.Equal(t, google.DefaultCredential, need.Credential)
 	assert.Equal(t, []string{httpclient.TasksReadonlyScope}, need.Scopes, "a read-only volume asks for read-only access")
 	creds = newCredentials(t, endpoint, nil)
 	delete(creds.values, google.ClientCredential)
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), creds)
+	_, err = newTaskFiler(ctx, "tasks", params(), creds)
 	assert.Equal(t, http.StatusServiceUnavailable, status(err), "no one can sign in, without a client")
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), nil)
+	_, err = newTaskFiler(ctx, "tasks", params(), nil)
 	assert.Equal(t, http.StatusServiceUnavailable, status(err))
 
 	// Of another credential, which is the parameter's
 	creds = newCredentials(t, endpoint, nil)
-	_, err = google.NewTaskFiler(ctx, "tasks", params("credential", "GOOGLE_WORK"), creds)
+	_, err = newTaskFiler(ctx, "tasks", params("credential", "GOOGLE_WORK"), creds)
 	assert.Equal(t, "GOOGLE_WORK", signIn(t, err).Credential)
 
 	// For another client, which is signed in to again
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) { c.Client.ClientID = "client-2" }))
+	_, err = newTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) { c.Client.ClientID = "client-2" }))
 	signIn(t, err)
 
 	// Of read-only access, for a volume which isn't read-only, which asks for
 	// the access it needs, and keeps what the sign-in has
-	_, err = google.NewTaskFiler(ctx, "tasks", params("readonly", "false"), newCredentials(t, endpoint, func(c *authclient.Grant) {
+	_, err = newTaskFiler(ctx, "tasks", params("readonly", "false"), newCredentials(t, endpoint, func(c *authclient.Grant) {
 		c.Scopes = []string{httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}
 	}))
 	assert.Equal(t, []string{httpclient.TasksScope, httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}, signIn(t, err).Scopes)
 
 	// Whose token Google doesn't accept, such as when it's revoked
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.AccessToken = "revoked" }))
+	_, err = newTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.AccessToken = "revoked" }))
 	signIn(t, err)
 
 	// Whose token has expired, which is refreshed, and stored
 	creds = newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.Expiry = time.Now().Add(-time.Minute); c.Token.AccessToken = "old" })
-	filer, err := google.NewTaskFiler(ctx, "tasks", params(), creds)
+	filer, err := newTaskFiler(ctx, "tasks", params(), creds)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/L1"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
 	stored := creds.credential(t, google.DefaultCredential)
@@ -900,12 +900,12 @@ func Test_TaskSignIn(t *testing.T) {
 	// signing in again doesn't mend
 	wrong := newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.Expiry = time.Now().Add(-time.Minute) })
 	wrong.values[google.ClientCredential] = json.RawMessage(`{"client_id":"` + clientID + `","client_secret":"wrong-secret"}`)
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), wrong)
+	_, err = newTaskFiler(ctx, "tasks", params(), wrong)
 	assert.Equal(t, http.StatusServiceUnavailable, status(err))
 	assert.Nil(t, authclient.SignInOf(err), "it isn't signed in to again")
 
 	// Whose refresh token is revoked
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) {
+	_, err = newTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) {
 		c.Token.Expiry, c.Token.RefreshToken = time.Now().Add(-time.Minute), "revoked"
 	}))
 	signIn(t, err)
@@ -913,7 +913,7 @@ func Test_TaskSignIn(t *testing.T) {
 	// Whose client isn't one
 	bad := newCredentials(t, endpoint, nil)
 	bad.values[google.ClientCredential] = json.RawMessage(`{"installed":{}}`)
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), bad)
+	_, err = newTaskFiler(ctx, "tasks", params(), bad)
 	assert.Equal(t, http.StatusBadRequest, status(err))
 }
 
@@ -1413,4 +1413,16 @@ func Test_TaskWriteConcurrent(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no update")
 	}
+}
+
+// newTaskFiler returns a task filer, of the credentials, as the registry
+// creates one, with them as its options
+func newTaskFiler(ctx context.Context, name string, params url.Values, credentials gofiler.CredentialProvider) (*google.TaskFiler, error) {
+	return google.NewTaskFiler(ctx, name, params, gofiler.Opts{Credentials: credentials})
+}
+
+// newContactFilerOf returns a contact filer, of the credentials, as the
+// registry creates one, with them as its options
+func newContactFilerOf(ctx context.Context, name string, params url.Values, credentials gofiler.CredentialProvider) (*google.ContactFiler, error) {
+	return google.NewContactFiler(ctx, name, params, gofiler.Opts{Credentials: credentials})
 }

@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 
 	// Packages
-	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	fs "github.com/mutablelogic/go-filer/filer/fs"
 	google "github.com/mutablelogic/go-filer/filer/google"
@@ -109,7 +108,7 @@ var _ gofiler.Filer = (*Registry)(nil)
 // GLOBALS
 
 // schemes are the schemes of the URLs which backends are created from
-var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme}
+var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme, google.ContactsScheme}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -594,13 +593,13 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if path == "" || !filepath.IsAbs(filepath.FromSlash(path)) {
 			return nil, gofiler.ErrBadParameter.Withf("path of volume %q isn't absolute: %q", u.Host, path)
 		}
-		if b, err := fs.New(u.Host, path, query, self.backendOpts()); err != nil {
+		if b, err := fs.New(u.Host, path, query, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil
 		}
 	case schema.SchemeS3:
-		if b, err := s3.New(ctx, u, self.backendOpts()); err != nil {
+		if b, err := s3.New(ctx, u, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil
@@ -612,13 +611,19 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if u.Path != "" && u.Path != "/" {
 			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Tasks has no path: %q", u.Path)
 		}
-		// The registry's client options, or, without them, its tracer, so a
-		// request isn't traced twice, when the options have one
-		opts := slices.Clone(self.clientopts)
-		if len(opts) == 0 && self.tracer != nil {
-			opts = append(opts, client.OptTracer(self.tracer))
+		// The registry's options of its backends: its credentials, of the
+		// sign-in, and its client options, as they are
+		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.backendOpts); err != nil {
+			return nil, err
+		} else {
+			return b, nil
 		}
-		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.credentials, opts...); err != nil {
+	case google.ContactsScheme:
+		// The contacts of a Google account, of its sign-in, as for tasks
+		if u.Path != "" && u.Path != "/" {
+			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Contacts has no path: %q", u.Path)
+		}
+		if b, err := google.NewContactFiler(ctx, u.Host, query, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil
