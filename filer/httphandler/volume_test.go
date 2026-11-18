@@ -2,7 +2,9 @@ package httphandler_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +14,10 @@ import (
 	"testing"
 
 	// Packages
+	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
+	gofiler "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer/filer"
+	google "github.com/mutablelogic/go-filer/filer/google"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -31,7 +37,7 @@ func TestVolumeList(t *testing.T) {
 		assert.Equal(t, "media", u.Host)
 		assert.Equal(t, filepath.Base(dir), filepath.Base(filepath.FromSlash(u.Path)))
 	}
-	assert.Equal(t, []string{"file", "s3"}, list.Schemes)
+	assert.Equal(t, []string{"file", "gtasks", "s3"}, list.Schemes)
 }
 
 // post requests the path with the body as JSON, and decodes the response
@@ -205,4 +211,47 @@ func TestVolumeUpdate(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, patch(t, server, "volume/missing", `{"readonly": true}`, nil))
 	require.Equal(t, http.StatusOK, get(t, server, "volume/media", &volume))
 	assert.Equal(t, url.Values{"readonly": {"true"}}, options(volume))
+}
+
+// credentials is a provider of credentials, in memory
+type credentials map[string]json.RawMessage
+
+func (c credentials) Expand(_ context.Context, value string) (string, error) { return value, nil }
+func (c credentials) Set(_ context.Context, key string, value json.RawMessage) error {
+	c[key] = value
+	return nil
+}
+func (c credentials) Get(_ context.Context, key string) (json.RawMessage, error) {
+	if value, exists := c[key]; exists {
+		return value, nil
+	}
+	return nil, gofiler.ErrNotFound.Withf("credential %q", key)
+}
+
+func TestVolumeCreateSignIn(t *testing.T) {
+	// A volume of Google Tasks, whose user hasn't signed in, is 401, with
+	// how they sign in, without the client's secret
+	server, _ := newServer(t, filer.WithCredentials(credentials{
+		google.ClientCredential: json.RawMessage(`{"installed":{"client_id":"client-1","client_secret":"client-secret"}}`),
+	}))
+	data, err := json.Marshal(schema.Volume{Name: "tasks", URL: "gtasks://tasks"})
+	require.NoError(t, err)
+	resp, err := http.Post(server.URL+"/api/volume", "application/json", bytes.NewReader(data))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	var body struct {
+		Detail authclient.SignIn `json:"detail"`
+	}
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &body))
+	assert.Equal(t, google.Google, body.Detail.Server)
+	assert.Equal(t, "client-1", body.Detail.ClientID)
+	assert.Equal(t, google.DefaultCredential, body.Detail.Credential)
+	assert.Equal(t, []string{"https://www.googleapis.com/auth/tasks.readonly"}, body.Detail.Scopes)
+	assert.NotContains(t, string(raw), "client-secret")
+
+	// A volume of Google Tasks with a path isn't one
+	assert.Equal(t, http.StatusBadRequest, post(t, server, "volume", schema.Volume{Name: "tasks", URL: "gtasks://tasks/lists"}, nil))
 }

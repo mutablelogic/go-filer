@@ -18,12 +18,14 @@ import (
 	"time"
 
 	// Packages
+	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
+	oauth2 "golang.org/x/oauth2"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -33,8 +35,8 @@ import (
 // need a token, and which pages what's listed
 type fakeTasks struct {
 	sync.Mutex
-	lists    []httpclient.TaskList
-	tasks    map[string][]httpclient.Task // By their lists' ids
+	lists     []httpclient.TaskList
+	tasks     map[string][]httpclient.Task // By their lists' ids
 	requests  int
 	refreshes int          // Of the requests to the token endpoint
 	queries   []url.Values // Of the requests for tasks
@@ -70,11 +72,11 @@ func (c *credentials) Set(_ context.Context, key string, value json.RawMessage) 
 }
 
 // credential returns the sign-in which is stored, of the key
-func (c *credentials) credential(t *testing.T, key string) google.Credential {
+func (c *credentials) credential(t *testing.T, key string) authclient.Grant {
 	t.Helper()
 	c.Lock()
 	defer c.Unlock()
-	var result google.Credential
+	var result authclient.Grant
 	require.NoError(t, json.Unmarshal(c.values[key], &result))
 	return result
 }
@@ -82,14 +84,13 @@ func (c *credentials) credential(t *testing.T, key string) google.Credential {
 // newCredentials returns the provider of the client, as the file Google's
 // console downloads, and of a sign-in, whose token the fake accepts, which
 // fn can change, such as to expire it
-func newCredentials(t *testing.T, endpoint string, fn func(*google.Credential)) *credentials {
+func newCredentials(t *testing.T, endpoint string, fn func(*authclient.Grant)) *credentials {
 	t.Helper()
-	sign := google.Credential{
-		Issuer:        google.GoogleIssuer,
-		TokenEndpoint: endpoint + "/token",
-		ClientID:      clientID,
-		Scopes:        []string{httpclient.TasksScope},
-		Token:         google.Token{AccessToken: token, TokenType: "Bearer", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)},
+	sign := authclient.Grant{
+		Server: authclient.ServerMetadata{Issuer: google.Google.Issuer, TokenEndpoint: endpoint + "/token"},
+		Client: authclient.Registration{ClientID: clientID},
+		Scopes: []string{httpclient.TasksScope},
+		Token:  &oauth2.Token{AccessToken: token, TokenType: "Bearer", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)},
 	}
 	if fn != nil {
 		fn(&sign)
@@ -604,24 +605,23 @@ func Test_TaskSignIn(t *testing.T) {
 		}
 		return result
 	}
-	signIn := func(t *testing.T, err error) *gofiler.Authorization {
+	signIn := func(t *testing.T, err error) *authclient.SignIn {
 		t.Helper()
 		require.ErrorIs(t, err, gofiler.ErrNotAuthorized)
-		authorization := gofiler.AuthorizationOf(err)
-		require.NotNil(t, authorization)
-		assert.Equal(t, google.GoogleIssuer, authorization.Issuer)
-		assert.Equal(t, google.GoogleAuthorizationEndpoint, authorization.AuthorizationEndpoint)
-		assert.Equal(t, clientID, authorization.ClientID)
-		return authorization
+		signIn := authclient.SignInOf(err)
+		require.NotNil(t, signIn)
+		assert.Equal(t, google.Google, signIn.Server)
+		assert.Equal(t, clientID, signIn.ClientID)
+		return signIn
 	}
 
 	// Without a sign-in, or a client, or a provider of credentials
 	creds := newCredentials(t, endpoint, nil)
 	delete(creds.values, google.DefaultCredential)
 	_, err := google.NewTaskFiler(ctx, "tasks", params(), creds)
-	authorization := signIn(t, err)
-	assert.Equal(t, google.DefaultCredential, authorization.Credential)
-	assert.Equal(t, []string{httpclient.TasksReadonlyScope}, authorization.Scopes, "a read-only volume asks for read-only access")
+	need := signIn(t, err)
+	assert.Equal(t, google.DefaultCredential, need.Credential)
+	assert.Equal(t, []string{httpclient.TasksReadonlyScope}, need.Scopes, "a read-only volume asks for read-only access")
 	creds = newCredentials(t, endpoint, nil)
 	delete(creds.values, google.ClientCredential)
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), creds)
@@ -635,22 +635,22 @@ func Test_TaskSignIn(t *testing.T) {
 	assert.Equal(t, "GOOGLE_WORK", signIn(t, err).Credential)
 
 	// For another client, which is signed in to again
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *google.Credential) { c.ClientID = "client-2" }))
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) { c.Client.ClientID = "client-2" }))
 	signIn(t, err)
 
 	// Of read-only access, for a volume which isn't read-only, which asks for
 	// the access it needs, and keeps what the sign-in has
-	_, err = google.NewTaskFiler(ctx, "tasks", params("readonly", "false"), newCredentials(t, endpoint, func(c *google.Credential) {
+	_, err = google.NewTaskFiler(ctx, "tasks", params("readonly", "false"), newCredentials(t, endpoint, func(c *authclient.Grant) {
 		c.Scopes = []string{httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}
 	}))
 	assert.Equal(t, []string{httpclient.TasksScope, httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}, signIn(t, err).Scopes)
 
 	// Whose token Google doesn't accept, such as when it's revoked
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *google.Credential) { c.Token.AccessToken = "revoked" }))
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.AccessToken = "revoked" }))
 	signIn(t, err)
 
 	// Whose token has expired, which is refreshed, and stored
-	creds = newCredentials(t, endpoint, func(c *google.Credential) { c.Token.Expiry = time.Now().Add(-time.Minute); c.Token.AccessToken = "old" })
+	creds = newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.Expiry = time.Now().Add(-time.Minute); c.Token.AccessToken = "old" })
 	filer, err := google.NewTaskFiler(ctx, "tasks", params(), creds)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/L1"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
@@ -667,7 +667,7 @@ func Test_TaskSignIn(t *testing.T) {
 	fake.Unlock()
 
 	// Whose refresh token is revoked
-	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *google.Credential) {
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) {
 		c.Token.Expiry, c.Token.RefreshToken = time.Now().Add(-time.Minute), "revoked"
 	}))
 	signIn(t, err)

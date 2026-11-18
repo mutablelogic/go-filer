@@ -13,8 +13,10 @@ import (
 	"sync/atomic"
 
 	// Packages
+	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	fs "github.com/mutablelogic/go-filer/filer/fs"
+	google "github.com/mutablelogic/go-filer/filer/google"
 	s3 "github.com/mutablelogic/go-filer/filer/s3"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -94,7 +96,7 @@ var _ gofiler.Filer = (*Registry)(nil)
 // GLOBALS
 
 // schemes are the schemes of the URLs which backends are created from
-var schemes = []string{schema.SchemeFile, schema.SchemeS3}
+var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -465,6 +467,22 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 		}
 	case schema.SchemeS3:
 		if b, err := s3.New(ctx, u, self.backendOpts()); err != nil {
+			return nil, err
+		} else {
+			return b, nil
+		}
+	case google.TasksScheme:
+		// The tasks of a Google account, of its sign-in, of the provider of
+		// credentials, which is a SignInError, with how to sign in, when
+		// it's needed
+		if u.Path != "" && u.Path != "/" {
+			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Tasks has no path: %q", u.Path)
+		}
+		opts := slices.Clone(self.clientopts)
+		if self.tracer != nil {
+			opts = append(opts, client.OptTracer(self.tracer))
+		}
+		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.credentials, opts...); err != nil {
 			return nil, err
 		} else {
 			return b, nil

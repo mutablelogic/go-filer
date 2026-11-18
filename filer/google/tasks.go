@@ -81,7 +81,7 @@ const (
 // with the parameters, the user's sign-in, of the provider of credentials,
 // and go-client's options of its requests, such as a tracer. The sign-in is
 // checked, and the tasks, so a sign-in which is needed is an
-// AuthorizationError, with how to sign in, which is when there isn't one, or
+// SignInError, with how to sign in, which is when there isn't one, or
 // it's for another client than ClientCredential's, or it doesn't have the
 // access the volume needs. The parameters are:
 //
@@ -253,7 +253,7 @@ func (self *TaskFiler) params() url.Values {
 }
 
 // apiError returns the error of a request, of the operation, of the path:
-// an AuthorizationError, as it is, or of Google's challenge, when the token
+// a SignInError, as it is, or of Google's challenge, when the token
 // isn't accepted, such as when it's revoked, so the user signs in again,
 // fs.ErrNotExist when it isn't found, a context's error, as it is, or else
 // ErrServiceUnavailable
@@ -262,10 +262,10 @@ func (self *TaskFiler) apiError(op, path string, err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case gofiler.AuthorizationOf(err) != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case authclient.SignInOf(err) != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	case errors.As(err, &authErr):
-		return self.tokens.notAuthorized(&self.tokens.current, gofiler.ErrNotAuthorized.Withf("Google didn't accept credential %q, so sign in with Google again: %v", self.credential, err))
+		return self.tokens.signIn(&self.tokens.current, gofiler.ErrNotAuthorized.Withf("Google didn't accept sign-in %q, so sign in with Google again: %v", self.credential, err))
 	case errors.Is(err, httpresponse.Err(http.StatusNotFound)):
 		return &fs.PathError{Op: op, Path: path, Err: fs.ErrNotExist}
 	case errors.Is(err, httpresponse.Err(http.StatusForbidden)):

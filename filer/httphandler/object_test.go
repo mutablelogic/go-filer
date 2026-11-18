@@ -29,10 +29,10 @@ import (
 
 // newServer returns a server of the filer API, for a registry with a volume
 // "media", and the volume's directory
-func newServer(t *testing.T) (*httptest.Server, string) {
+func newServer(t *testing.T, opts ...filer.Opt) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
-	registry, err := filer.New(context.Background())
+	registry, err := filer.New(context.Background(), opts...)
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	running := make(chan error, 1)
