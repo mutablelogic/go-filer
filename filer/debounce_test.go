@@ -79,7 +79,7 @@ func Test_Debouncer_Rescan(t *testing.T) {
 	// held, but not other volumes'
 	d.add(eventOf(schema.EventTypeCreated, "media", "/a"), now)
 	d.add(eventOf(schema.EventTypeCreated, "other", "/a"), now)
-	assert.Equal(t, []schema.Event{rescanEvent("media")}, d.add(rescanEvent("media"), now))
+	assert.Equal(t, []schema.Event{schema.Rescan("media")}, d.add(schema.Rescan("media"), now))
 	assert.Equal(t, []schema.Event{eventOf(schema.EventTypeCreated, "other", "/a")}, d.due(now, true))
 
 	// Without a delay, a change is sent at once

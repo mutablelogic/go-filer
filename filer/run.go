@@ -152,6 +152,18 @@ func (self *Registry) WatchObjects(ctx context.Context, ch chan<- schema.Event) 
 	if err != nil {
 		return fs.ErrClosed
 	}
+
+	// The first changes are rescans of the volumes, once they're watched,
+	// so a caller which lists them then misses no change
+	for _, volume := range self.Keys() {
+		select {
+		case ch <- schema.Rescan(volume):
+		case <-ctx.Done():
+			return nil
+		case <-self.done:
+			return fs.ErrClosed
+		}
+	}
 	ended := func(err error) error {
 		if err != nil {
 			return fs.ErrClosed
@@ -202,29 +214,25 @@ func (self *Registry) startWatches(watches map[*entry]context.CancelFunc, events
 		}
 		ctx, cancel := context.WithCancel(e.ctx)
 		watches[e] = cancel
-		rescan := e.rescan
 		e.wg.Add(1)
 		go func() {
 			defer e.wg.Done()
 			defer cancel()
-			ended <- watched{e: e, volume: volume, err: self.watch(ctx, e, volume, rescan, events)}
+			ended <- watched{e: e, volume: volume, err: self.watch(ctx, e, volume, events)}
 		}()
 	}
 }
 
 // watch watches the volume, sending each change to events, with the name of
-// its volume, until watching fails, or the context is cancelled. With
-// rescan, a rescan of the volume is sent first, as watching starts.
-func (self *Registry) watch(ctx context.Context, e *entry, volume string, rescan bool, events chan<- schema.Event) error {
+// its volume, until watching fails, or the context is cancelled. Its first
+// change is the backend's rescan, once it's watching.
+func (self *Registry) watch(ctx context.Context, e *entry, volume string, events chan<- schema.Event) error {
 	send := func(event schema.Event) {
 		event.Name = volume
 		select {
 		case events <- event:
 		case <-ctx.Done():
 		}
-	}
-	if rescan {
-		send(rescanEvent(volume))
 	}
 	changes, done := make(chan schema.Event), make(chan error, 1)
 	go func() {
@@ -279,10 +287,4 @@ func (self *Registry) registered(e *entry, volume string) bool {
 	self.RLock()
 	defer self.RUnlock()
 	return self.backend != nil && self.backend[volume] == e && e.state != stateClosing
-}
-
-// rescanEvent returns a rescan of the volume, whose changes may have been
-// missed
-func rescanEvent(volume string) schema.Event {
-	return schema.Event{EventType: schema.EventTypeRescan, ObjectKey: schema.ObjectKey{Name: volume, Path: "/"}}
 }

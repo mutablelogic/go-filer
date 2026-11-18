@@ -61,7 +61,9 @@ type Filer interface {
 	DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error)
 
 	// Watch for changes to objects, sending each to the channel, until the
-	// context is cancelled. The channel isn't closed. It will return
+	// context is cancelled. The first is a rescan of the root, once the
+	// objects are watched, so a caller which lists them then misses no
+	// change. The channel isn't closed. It will return
 	// filer.ErrNotImplemented if the filer backend does not support watching objects.
 	WatchObjects(context.Context, chan<- schema.Event) error
 }

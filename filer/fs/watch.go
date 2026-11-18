@@ -26,18 +26,14 @@ type pathFS interface {
 // hidden files, aren't sent, and a change within a package is an update to
 // the package. Returns filer.ErrNotImplemented when the filesystem isn't a
 // directory, or can't be watched on this platform.
+//
+// The first change is a rescan of the root, once the directory is watched,
+// so a change after it is sent. The calls share one watch of the directory,
+// so a second call doesn't watch it again: one which joins a watch which is
+// running is sent its rescan at once. Each is sent each change, and one
+// which falls behind is sent a rescan of the directory, rather than holding
+// up the others.
 func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	return self.WatchObjectsReady(ctx, ch, nil)
-}
-
-// WatchObjectsReady is WatchObjects, which calls ready, when it isn't nil,
-// once the directory is watched, before any change is sent, so a change
-// after it returns is sent. It isn't called when the directory can't be
-// watched. The calls share one watch of the directory, so a second call
-// doesn't watch it again: one which joins a watch which is ready has ready
-// called at once. Each is sent each change, and one which falls behind is
-// sent a rescan of the directory, rather than holding up the others.
-func (self *FS) WatchObjectsReady(ctx context.Context, ch chan<- schema.Event, ready func()) error {
 	if err := self.checkRequest(ctx); err != nil {
 		return err
 	}
@@ -50,7 +46,7 @@ func (self *FS) WatchObjectsReady(ctx context.Context, ch chan<- schema.Event, r
 	// when there's none
 	w := self.join(fsys.Path())
 	defer self.leave(w)
-	return self.subscribe(ctx, w, ch, ready)
+	return self.subscribe(ctx, w, ch)
 }
 
 ////////////////////////////////////////////////////////////////////////////////

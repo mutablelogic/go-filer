@@ -122,10 +122,10 @@ func (self *FS) watch(ctx context.Context, w *watcher, dir string) {
 }
 
 // subscribe sends the changes of the watcher to the channel, once the
-// directory is watched, when ready is called, until the context is
+// directory is watched, after a rescan of the root, until the context is
 // cancelled, when it returns nil, or the filesystem is closed, which is
 // fs.ErrClosed, or the watch fails, with why
-func (self *FS) subscribe(ctx context.Context, w *watcher, ch chan<- schema.Event, ready func()) error {
+func (self *FS) subscribe(ctx context.Context, w *watcher, ch chan<- schema.Event) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	queue := make(chan changes.Change, watchQueue)
@@ -142,8 +142,10 @@ func (self *FS) subscribe(ctx context.Context, w *watcher, ch chan<- schema.Even
 	case <-ctx.Done():
 		return nil
 	}
-	if ready != nil {
-		ready()
+	select {
+	case ch <- schema.Rescan(""):
+	case <-ctx.Done():
+		return nil
 	}
 
 	// Send the changes, without their table, which is the watcher's

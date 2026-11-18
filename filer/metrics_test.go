@@ -35,7 +35,7 @@ func Test_Registry_Metrics(t *testing.T) {
 		require.NoError(t, err)
 		waitFor(t, events, filepath.FromSlash(u.Path), func(event schema.Event) bool {
 			received[event.Name+"/"+event.EventType.String()]++
-			return event.Name == volume
+			return event.Name == volume && event.EventType != schema.EventTypeRescan
 		})
 	}
 	for len(events) > 0 {

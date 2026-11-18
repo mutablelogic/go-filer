@@ -217,13 +217,15 @@ func Test_WatchObjectsShared(t *testing.T) {
 	t.Cleanup(func() { backend.Close() })
 	before := watching.Load()
 
-	// watch watches the backend, until it's stopped, once it's ready
+	// watch watches the backend, until it's stopped, once its first change,
+	// a rescan of the root, says it's watching
 	watch := func() (chan schema.Event, func() error) {
 		ctx, cancel := context.WithCancel(context.Background())
-		events, done, ready := make(chan schema.Event, 1024), make(chan error, 1), make(chan struct{})
-		go func() { done <- backend.WatchObjectsReady(ctx, events, func() { close(ready) }) }()
+		events, done := make(chan schema.Event, 1024), make(chan error, 1)
+		go func() { done <- backend.WatchObjects(ctx, events) }()
 		select {
-		case <-ready:
+		case event := <-events:
+			require.Equal(t, schema.Rescan(""), event)
 		case err := <-done:
 			t.Fatalf("watching failed: %v", err)
 		case <-time.After(10 * time.Second):
