@@ -24,7 +24,8 @@ type ServerCommands struct {
 }
 
 type RunServer struct {
-	Filer filercmd.Flags `embed:""`
+	Filer       filercmd.Flags  `embed:""`
+	Credentials CredentialFlags `embed:""`
 	servercmd.RunServer
 }
 
@@ -35,10 +36,17 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// Log the server configuration
 	ctx.Logger().InfoContext(ctx.Context(), "starting server", "name", ctx.Name(), "version", ctx.Version())
 
+	// The provider of the volumes' credentials, which are kept, encrypted,
+	// or are the environment's
+	credentials, err := runner.Credentials.provider(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
 	// when the registry, and its volumes, are closed
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, nil, func(*filer.Registry) error {
 		return runner.RunServer.Run(ctx)
-	})
+	}, filer.WithCredentials(credentials))
 }
