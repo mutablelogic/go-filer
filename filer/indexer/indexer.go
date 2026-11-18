@@ -301,7 +301,7 @@ func (self *Indexer) watch(ctx context.Context) error {
 			if err := self.apply(ctx, event); err != nil {
 				return err
 			}
-			self.forward(event)
+			self.forward(ctx, event)
 		}
 	}
 }
@@ -315,7 +315,7 @@ func (self *Indexer) poll(ctx context.Context) error {
 		} else if err == nil {
 			// Its watchers compare what they know with it, as its changes
 			// aren't known
-			self.forward(schema.Rescan(self.name))
+			self.forward(ctx, schema.Rescan(self.name))
 		}
 		select {
 		case <-ctx.Done():
@@ -341,8 +341,10 @@ func (self *Indexer) apply(ctx context.Context, event schema.Event) error {
 	}
 }
 
-// forward sends a change, which is indexed, to the watchers
-func (self *Indexer) forward(event schema.Event) {
+// forward sends a change, which is indexed, to the watchers, each until it's
+// sent, or the watcher, or Run, is cancelled, so a watcher which doesn't
+// read its changes doesn't hold Run up, once it's cancelled
+func (self *Indexer) forward(ctx context.Context, event schema.Event) {
 	self.smu.Lock()
 	watchers := make([]*watcher, 0, len(self.watchers))
 	for w := range self.watchers {
@@ -353,6 +355,8 @@ func (self *Indexer) forward(event schema.Event) {
 		select {
 		case w.ch <- event:
 		case <-w.ctx.Done():
+		case <-ctx.Done():
+			return
 		}
 	}
 }

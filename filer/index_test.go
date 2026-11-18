@@ -217,3 +217,31 @@ func Test_Registry_ListType(t *testing.T) {
 	}
 	assert.Equal(t, []string{"/a", "/a/b"}, list("media", ""), "every object is the backend's")
 }
+
+func Test_Registry_DelCancelledIndex(t *testing.T) {
+	r, store, dir := newIndexedRegistry(t)
+	_, err := r.Add(context.Background(), "media", indexedURL(t, dir, "media", "folders"))
+	require.NoError(t, err)
+	ready(t, r, "media")
+
+	// A Del whose request is cancelled still removes the index, once the
+	// volume is closed, before its name is released
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = r.Del(cancelled, "media")
+	require.Eventually(t, func() bool {
+		_, err := r.Volume("media")
+		return err != nil
+	}, 10*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		r.RLock()
+		_, registered := r.backend["media"]
+		r.RUnlock()
+		return !registered
+	}, 10*time.Second, 5*time.Millisecond)
+	state, err := store.State(context.Background(), "media")
+	require.NoError(t, err)
+	assert.Equal(t, indexer.StatusNone, state.Status, "its index is removed before its name is released")
+	_, err = store.Get(context.Background(), "media", "/")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
+}
