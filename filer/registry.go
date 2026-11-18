@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 
 	// Packages
-	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	fs "github.com/mutablelogic/go-filer/filer/fs"
 	google "github.com/mutablelogic/go-filer/filer/google"
@@ -608,13 +607,9 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if u.Path != "" && u.Path != "/" {
 			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Tasks has no path: %q", u.Path)
 		}
-		// The registry's client options, or, without them, its tracer, so a
-		// request isn't traced twice, when the options have one
-		opts := slices.Clone(self.clientopts)
-		if len(opts) == 0 && self.tracer != nil {
-			opts = append(opts, client.OptTracer(self.tracer))
-		}
-		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.credentials, opts...); err != nil {
+		// The registry's client options, as they are, such as a user agent,
+		// and a tracer, which it doesn't add one of its own to
+		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.credentials, self.clientopts...); err != nil {
 			return nil, err
 		} else {
 			return b, nil
@@ -624,11 +619,7 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if u.Path != "" && u.Path != "/" {
 			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Contacts has no path: %q", u.Path)
 		}
-		opts := slices.Clone(self.clientopts)
-		if len(opts) == 0 && self.tracer != nil {
-			opts = append(opts, client.OptTracer(self.tracer))
-		}
-		if b, err := google.NewContactFiler(ctx, u.Host, query, self.credentials, opts...); err != nil {
+		if b, err := google.NewContactFiler(ctx, u.Host, query, self.credentials, self.clientopts...); err != nil {
 			return nil, err
 		} else {
 			return b, nil
