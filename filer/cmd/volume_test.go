@@ -152,3 +152,103 @@ func Test_VolumeOptComma(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{`skip=^(a,b)$`}, cli.VolumeCreate.Opt)
 }
+
+func Test_VolumeCreateFSCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateFS VolumeCreateFSCmd `cmd:"" name:"volume-create-fs"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		t.Helper()
+		cli.VolumeCreateFS = VolumeCreateFSCmd{}
+		_, err := parser.Parse(append([]string{"volume-create-fs"}, args...))
+		require.NoError(t, err)
+		v, err := cli.VolumeCreateFS.volume()
+		if err != nil {
+			return "", err
+		}
+		assert.Equal(t, args[0], v.Name)
+		return v.URL, nil
+	}
+
+	// A directory on the server, with its options, which are repeated, and
+	// a regular expression, with a comma, which isn't split, or empty
+	u, err := volume("media", "/mnt/media")
+	require.NoError(t, err)
+	assert.Equal(t, "file://media/mnt/media", u)
+	u, err = volume("media", "/mnt/media", "--readonly", "--skip", `^(a,b)$`, "--skip", `^\.`, "--package", "")
+	require.NoError(t, err)
+	assert.Equal(t, "file://media/mnt/media?package=&readonly=true&skip=%5E%28a%2Cb%29%24&skip=%5E%5C.", u)
+
+	// A directory on Windows, with a drive, and one on Unix, whose name has
+	// a backslash, and a space, which are kept
+	u, err = volume("media", `C:\media`)
+	require.NoError(t, err)
+	assert.Equal(t, "file://media/C:/media", u)
+	u, err = volume("media", `/mnt/a\b `)
+	require.NoError(t, err)
+	assert.Equal(t, "file://media/mnt/a%5Cb%20", u)
+
+	// A relative path, which can't be the server's, and a name which isn't
+	// an identifier
+	_, err = volume("media", "media")
+	assert.Error(t, err)
+	_, err = volume("not-a-name!", "/mnt/media")
+	assert.Error(t, err)
+}
+
+func Test_VolumeCreateS3Cmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateS3 VolumeCreateS3Cmd `cmd:"" name:"volume-create-s3"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		t.Helper()
+		cli.VolumeCreateS3 = VolumeCreateS3Cmd{}
+		_, err := parser.Parse(append([]string{"volume-create-s3"}, args...))
+		require.NoError(t, err)
+		v, err := cli.VolumeCreateS3.volume()
+		if err != nil {
+			return "", err
+		}
+		assert.Equal(t, args[0], v.Name)
+		return v.URL, nil
+	}
+
+	// A bucket, whose name is the volume's, and one which isn't, with a
+	// prefix, which is the name option
+	u, err := volume("photos", "photos")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://photos", u)
+	u, err = volume("photos", "my.bucket/photos/2026/")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://my.bucket/photos/2026?name=photos", u)
+
+	// A prefix which ends with a space, which is kept
+	u, err = volume("photos", "my.bucket/photos ")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://my.bucket/photos%20?name=photos", u)
+
+	// Its options, and the names of the server's credentials, which are
+	// placeholders, which it looks up
+	u, err = volume("media", "media", "--endpoint", "http://localhost:9000", "--region", "eu-west-1",
+		"--access-key-credential", "S3_KEY", "--secret-key-credential", "S3_SECRET", "--readonly",
+		"--seaweedfs-filer-grpc", "192.168.86.21:18888")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://media?access-key-id=%24%7BS3_KEY%7D&endpoint=http%3A%2F%2Flocalhost%3A9000&readonly=true&region=eu-west-1&seaweedfs-filer-grpc=192.168.86.21%3A18888&secret-access-key=%24%7BS3_SECRET%7D", u)
+
+	// A name of a credential which isn't one, such as a secret
+	_, err = volume("media", "media", "--secret-key-credential", "not/a-name")
+	assert.Error(t, err)
+	u, err = volume("public", "public", "--anonymous", "--profile", "work")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://public?anonymous=true&profile=work", u)
+
+	// A bucket which is empty, and a name which isn't an identifier
+	_, err = volume("media", "/")
+	assert.Error(t, err)
+	_, err = volume("not-a-name!", "media")
+	assert.Error(t, err)
+}
