@@ -98,7 +98,7 @@ func rootObject() *schema.Object {
 // list's, and its tasks', including those which are deleted, so a change of
 // its tasks changes them, as well as its metadata.
 func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.Task) *schema.Object {
-	count := countTasks(tasks)
+	count := self.countTasks(tasks)
 	modtime := list.Updated
 	for i := range tasks {
 		if tasks[i].Updated.After(modtime) {

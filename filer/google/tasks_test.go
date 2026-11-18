@@ -441,7 +441,7 @@ func Test_NewTaskFiler(t *testing.T) {
 	// isn't an identifier
 	for _, params := range []url.Values{
 		{"readonly": {"maybe"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}},
-		{"refresh_interval": {"-1s"}}, {"credential": {"GOOGLE_CLIENT"}}, {"credential": {"S3_SECRET"}}, {"credential": {"not a key"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
+		{"refresh_interval": {"-1s"}}, {"hidden": {"maybe"}}, {"credential": {"GOOGLE_CLIENT"}}, {"credential": {"S3_SECRET"}}, {"credential": {"not a key"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
 	} {
 		_, err := google.NewTaskFiler(ctx, "tasks", params, nil)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
@@ -461,7 +461,7 @@ func Test_TaskObjects(t *testing.T) {
 	fake.addTask("L1", httpclient.Task{Id: "T1", Title: "Buy  milk\n", Notes: "Semi-skimmed, <two> pints.", Status: "needsAction", Due: &due, Updated: completed, WebViewLink: "https://tasks.google.com/task/T1"})
 	fake.addTask("L1", httpclient.Task{Id: "T2", Title: "Bread", Status: "completed", Completed: &completed, Hidden: true, Parent: "T1", Links: []httpclient.TaskLink{{Type: "email", Description: "From Sam", Link: "https://mail.google.com/x"}}})
 	fake.addTask("L1", httpclient.Task{Id: "T3", Title: "Gone", Deleted: true})
-	filer := newFiler(t, endpoint, nil)
+	filer := newFiler(t, endpoint, url.Values{"hidden": {"true"}})
 
 	// The root, and a list, are directories, with its title
 	root, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
@@ -1294,4 +1294,71 @@ func Test_TaskWriteWatched(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
 	assert.Contains(t, err.Error(), "isn't moved")
 	assert.Equal(t, "updated /L1/A.ics", next())
+}
+
+func Test_TaskHidden(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Shopping")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Milk", Status: "needsAction"})
+	fake.addTask("L1", httpclient.Task{Id: "B", Title: "Bread", Status: "completed", Hidden: true})
+	count := func(filer *google.TaskFiler) string {
+		t.Helper()
+		dir, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1"}})
+		require.NoError(t, err)
+		for _, m := range dir.Meta {
+			if m.Key == "children-count" {
+				return string(m.Value)
+			}
+		}
+		return ""
+	}
+
+	// A task which is hidden, as it's completed, and cleared from its list,
+	// isn't listed, counted, found, or written, by default
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}})
+	assert.Equal(t, []string{"/L1", "/L1/A.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	assert.Equal(t, "1", count(filer))
+	_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}, Body: vtodo("SUMMARY:Bread")})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	assert.NotContains(t, filer.URL().RawQuery, "hidden", "it's the default")
+
+	// With hidden=true, it is, and the parameter is the volume's
+	filer = newFiler(t, endpoint, url.Values{"hidden": {"true"}})
+	assert.Equal(t, []string{"/L1", "/L1/A.ics", "/L1/B.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	assert.Equal(t, "2", count(filer))
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
+	assert.NoError(t, err)
+	assert.Equal(t, "true", filer.URL().Query().Get("hidden"))
+
+	// A task which is cleared, while it's watched, is deleted, as it isn't
+	// listed any more
+	filer = newFiler(t, endpoint, url.Values{"refresh_interval": {"20ms"}})
+	watchCtx, cancel := context.WithCancel(ctx)
+	events, done := make(chan schema.Event, 16), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(watchCtx, events) }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case event := <-events:
+		require.Equal(t, schema.Rescan("tasks"), event)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no rescan")
+	}
+	fake.Lock()
+	fake.tasks["L1"][0].Status, fake.tasks["L1"][0].Hidden, fake.tasks["L1"][0].ETag = "completed", true, "A-2"
+	fake.Unlock()
+	var got []string
+	for len(got) < 2 {
+		select {
+		case event := <-events:
+			got = append(got, event.EventType.String()+" "+event.Path)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("waiting for events, got %v", got)
+		}
+	}
+	assert.Equal(t, []string{"deleted /L1/A.ics", "updated /L1"}, got)
 }

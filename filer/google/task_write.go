@@ -100,7 +100,7 @@ func (self *TaskFiler) updateTask(ctx context.Context, list, id string, todo *ic
 	current, err := self.client.Task(ctx, list, id)
 	if err != nil {
 		err = self.apiError("create", req.Path, err)
-	} else if current.Deleted {
+	} else if !self.visible(current) {
 		err = &fs.PathError{Op: "create", Path: req.Path, Err: fs.ErrNotExist}
 	}
 	switch {
@@ -120,7 +120,7 @@ func (self *TaskFiler) updateTask(ctx context.Context, list, id string, todo *ic
 	if move && todo.Parent != "" {
 		if !googleId(todo.Parent) || todo.Parent == id {
 			return nil, gofiler.ErrBadParameter.Withf("the task's parent, %q, isn't another task of its list", todo.Parent)
-		} else if parent, err := self.client.Task(ctx, list, todo.Parent); errors.Is(self.apiError("create", req.Path, err), fs.ErrNotExist) || (err == nil && parent.Deleted) {
+		} else if parent, err := self.client.Task(ctx, list, todo.Parent); errors.Is(self.apiError("create", req.Path, err), fs.ErrNotExist) || (err == nil && !self.visible(parent)) {
 			return nil, gofiler.ErrBadParameter.Withf("the task's parent, %q, isn't a task of its list", todo.Parent)
 		} else if err != nil {
 			return nil, self.apiError("create", req.Path, err)

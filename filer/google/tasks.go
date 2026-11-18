@@ -52,6 +52,7 @@ type taskOpt struct {
 	refreshInterval time.Duration // How often changes are polled for, or zero not to
 	endpoint        string        // The endpoint of the API, which is Google's, but a test's
 	credential      string        // The key of the user's sign-in, which is DefaultCredential, unless it's set
+	hidden          bool          // Tasks which are hidden, as they're completed, and cleared, are included
 }
 
 var _ gofiler.Filer = (*TaskFiler)(nil)
@@ -82,6 +83,7 @@ const (
 	paramQuota           = "quota"
 	paramRefreshInterval = "refresh_interval"
 	paramCredential      = "credential"
+	paramHidden          = "hidden"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -103,6 +105,8 @@ const (
 //     zero not to limit them
 //   - refresh_interval: how often changes are polled for, when they're
 //     watched, which is DefaultRefreshInterval, or zero not to watch them
+//   - hidden: tasks which are hidden, as they're completed, and cleared from
+//     their list, are included, which they aren't unless it's true
 func NewTaskFiler(ctx context.Context, name string, params url.Values, credentials gofiler.CredentialProvider, clientopts ...client.ClientOpt) (*TaskFiler, error) {
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
@@ -151,7 +155,7 @@ func parseTaskOpts(params url.Values) (taskOpt, error) {
 	opt := taskOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: tasksEndpoint}
 	for key := range params {
 		switch key {
-		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential:
+		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, paramHidden:
 		default:
 			return opt, gofiler.ErrBadParameter.Withf("unknown parameter: %q", key)
 		}
@@ -182,6 +186,13 @@ func parseTaskOpts(params url.Values) (taskOpt, error) {
 			return opt, err
 		}
 		opt.credential = value
+	}
+	if value := params.Get(paramHidden); value != "" {
+		hidden, err := strconv.ParseBool(value)
+		if err != nil {
+			return opt, gofiler.ErrBadParameter.Withf("%s: %q", paramHidden, value)
+		}
+		opt.hidden = hidden
 	}
 	return opt, nil
 }
@@ -236,6 +247,9 @@ func (self *TaskFiler) params() url.Values {
 	}
 	if self.credential != DefaultCredential {
 		params.Set(paramCredential, self.credential)
+	}
+	if self.hidden {
+		params.Set(paramHidden, "true")
 	}
 	return params
 }

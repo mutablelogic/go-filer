@@ -195,7 +195,7 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 		task, err := self.client.Task(ctx, path.list, path.task)
 		if err != nil {
 			return nil, nil, self.apiError(op, p, err)
-		} else if task.Deleted {
+		} else if !self.visible(task) {
 			return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 		}
 		object, content := self.taskObject(path.list, task)
@@ -222,7 +222,7 @@ func (self *taskIterator) readList(ctx context.Context, item listItem) error {
 		items = append(items, listItem{object: self.listObject(item.dir, tasks)})
 	}
 	for i := range tasks {
-		if item.tasks && !tasks[i].Deleted && validId(tasks[i].Id) {
+		if item.tasks && self.visible(&tasks[i]) {
 			if object, _ := self.taskObject(list, &tasks[i]); sortKey(object) > self.after {
 				items = append(items, listItem{object: object})
 			}
@@ -240,15 +240,22 @@ func (self *taskIterator) before(list string) bool {
 }
 
 // countTasks returns how many of the tasks are listed, which are those which
-// aren't deleted
-func countTasks(tasks []httpclient.Task) int {
-	var count int
+// are visible
+func (self *TaskFiler) countTasks(tasks []httpclient.Task) int {
+	count := 0
 	for i := range tasks {
-		if !tasks[i].Deleted && validId(tasks[i].Id) {
+		if self.visible(&tasks[i]) {
 			count++
 		}
 	}
 	return count
+}
+
+// visible returns true when a task is listed: it isn't deleted, its id can
+// be a path's name, and it isn't hidden, as it's completed, and cleared
+// from its list, unless the hidden parameter includes those which are
+func (self *TaskFiler) visible(task *httpclient.Task) bool {
+	return !task.Deleted && validId(task.Id) && (self.hidden || !task.Hidden)
 }
 
 // add adds an object, unless it sorts at, or before, where the listing

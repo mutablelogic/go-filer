@@ -221,9 +221,9 @@ func (self *TaskFiler) snapshot(ctx context.Context) (taskSnapshot, error) {
 
 		// A list's directory is updated when the count of its tasks, of its
 		// metadata, changes, as well as its entity tag
-		snapshot[listPath(list.Id)] = list.ETag + "/" + strconv.Itoa(countTasks(tasks))
+		snapshot[listPath(list.Id)] = list.ETag + "/" + strconv.Itoa(self.countTasks(tasks))
 		for _, task := range tasks {
-			if !task.Deleted && validId(task.Id) {
+			if self.visible(&task) {
 				snapshot[taskFilePath(list.Id, task.Id)] = task.ETag
 			}
 		}
