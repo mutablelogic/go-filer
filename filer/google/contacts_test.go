@@ -28,8 +28,9 @@ import (
 // at a time, and of the sign-in's token
 type fakePeople struct {
 	sync.Mutex
-	people []httpclient.Person
-	pages  int
+	people   []httpclient.Person
+	profiles map[string]httpclient.Person // Which are got, by their ids, but aren't contacts, so aren't listed
+	pages    int
 }
 
 func newFakePeople(t *testing.T) (*fakePeople, string) {
@@ -61,6 +62,10 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, page)
 	case len(parts) == 2 && parts[0] == "people":
+		if profile, exists := f.profiles[parts[1]]; exists {
+			writeJSON(w, profile)
+			return
+		}
 		for _, person := range f.people {
 			if person.ResourceName == "people/"+parts[1] {
 				writeJSON(w, person)
@@ -77,7 +82,7 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (f *fakePeople) add(id string, fn func(*httpclient.Person)) {
 	f.Lock()
 	defer f.Unlock()
-	person := httpclient.Person{ResourceName: "people/" + id, ETag: id + "-1"}
+	person := httpclient.Person{ResourceName: "people/" + id, ETag: id + "-1", Metadata: httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "CONTACT"}}}}
 	if fn != nil {
 		fn(&person)
 	}
@@ -139,7 +144,7 @@ func Test_ContactObjects(t *testing.T) {
 		p.Metadata.Sources = []httpclient.PersonSource{{Type: "PROFILE", UpdateTime: updated.Add(time.Hour)}, {Type: "CONTACT", UpdateTime: updated}}
 		p.Names = []httpclient.PersonName{{DisplayName: "Ada Lovelace", GivenName: "Ada", FamilyName: "Lovelace", Metadata: httpclient.FieldMetadata{Primary: true}}}
 		p.EmailAddresses = []httpclient.PersonValue{{Value: "ada@work.example.com", Type: "Work"}, {Value: "ada@example.com", Type: "home", Metadata: httpclient.FieldMetadata{Primary: true}}}
-		p.PhoneNumbers = []httpclient.PersonValue{{Value: "+44 20 7946 0000", Type: "mobile"}}
+		p.PhoneNumbers = []httpclient.PersonValue{{Value: "+44 20 7946 0000", Type: "mobile"}, {Value: "+44 20 7946 0001", Type: "homeFax"}}
 		p.Organizations = []httpclient.PersonOrg{{Name: "Analytical Engines", Department: "Research", Title: "Countess"}}
 		p.Birthdays = []httpclient.PersonDate{{}}
 		p.Birthdays[0].Date.Month, p.Birthdays[0].Date.Day = 12, 10
@@ -150,7 +155,13 @@ func Test_ContactObjects(t *testing.T) {
 		p.Names = []httpclient.PersonName{{DisplayName: "Charles Babbage"}}
 	})
 	fake.add("c3", func(p *httpclient.Person) { p.Metadata.Deleted = true })
-	fake.add("c4", nil)
+	fake.add("c4", func(p *httpclient.Person) {
+		p.EmailAddresses = []httpclient.PersonValue{{Value: "other@example.com"}, {Value: "primary@example.com", Metadata: httpclient.FieldMetadata{Primary: true}}}
+	})
+	fake.profiles = map[string]httpclient.Person{
+		"me":    {ResourceName: "people/me", Metadata: httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "PROFILE"}}}},
+		"alias": {ResourceName: "people/c1", Metadata: httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "CONTACT"}}}},
+	}
 	filer := newContactFiler(t, endpoint, nil)
 
 	// The root is a directory, of the count of its contacts, which aren't
@@ -196,9 +207,11 @@ func Test_ContactObjects(t *testing.T) {
 	assert.Equal(t, "Ada Lovelace", card.FN)
 	assert.Equal(t, vcard.Name{Family: "Lovelace", Given: "Ada"}, card.Name)
 	require.Len(t, card.Emails, 2)
-	assert.Equal(t, vcard.Value{Value: "ada@example.com", Types: []string{"home"}, Pref: true}, card.Emails[1])
-	assert.Equal(t, []string{"work"}, card.Emails[0].Types)
-	assert.Equal(t, "+44 20 7946 0000", card.Phones[0].Value)
+	assert.Equal(t, vcard.Value{Value: "ada@example.com", Types: []string{"home"}, Pref: true}, card.Emails[0], "the primary email is first")
+	assert.Equal(t, []string{"work"}, card.Emails[1].Types)
+	require.Len(t, card.Phones, 2)
+	assert.Equal(t, vcard.Value{Value: "+44 20 7946 0000", Types: []string{"cell"}}, card.Phones[0], "mobile is cell")
+	assert.ElementsMatch(t, []string{"home", "fax"}, card.Phones[1].Types)
 	assert.Equal(t, []vcard.Organization{{Name: "Analytical Engines", Units: []string{"Research"}}}, card.Orgs)
 	assert.Equal(t, []string{"Countess"}, card.Titles)
 	require.NotNil(t, card.Birthday)
@@ -209,6 +222,17 @@ func Test_ContactObjects(t *testing.T) {
 
 	// A contact which is deleted, or isn't there, or a path which isn't a
 	// contact's, isn't found, and the root can't be read
+	// A contact without a name is of its primary email
+	object, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c4.vcf"}})
+	require.NoError(t, err)
+	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.DCNamespace, Key: "title", Value: []byte(`"primary@example.com"`)})
+
+	// A profile, which isn't a contact, such as /me.vcf, or a person of
+	// another id, isn't found, as neither is listed
+	for _, path := range []string{"/me.vcf", "/alias.vcf"} {
+		_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		assert.ErrorIs(t, err, fs.ErrNotExist, path)
+	}
 	for _, path := range []string{"/c3.vcf", "/c9.vcf", "/c1.vcf/", "/c1.txt", "/a/c1.vcf", "/~new.vcf"} {
 		_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
 		assert.ErrorIs(t, err, fs.ErrNotExist, path)
@@ -260,4 +284,27 @@ func Test_ContactWatch(t *testing.T) {
 	// Without a refresh interval, it isn't watched
 	unwatched := newContactFiler(t, endpoint, url.Values{"refresh_interval": {"0s"}})
 	assert.ErrorIs(t, unwatched.WatchObjects(t.Context(), events), gofiler.ErrNotImplemented)
+}
+
+func Test_ContactReadCancelled(t *testing.T) {
+	fake, endpoint := newFakePeople(t)
+	fake.add("c1", func(p *httpclient.Person) {
+		p.Biographies = []httpclient.PersonValue{{Value: strings.Repeat("notes ", 100)}}
+	})
+	filer := newContactFiler(t, endpoint, nil)
+	read, _, err := filer.ReadObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c1.vcf"}})
+	require.NoError(t, err)
+
+	// It's read, until the context is cancelled, when the rest of it isn't
+	ctx, cancel := context.WithCancel(t.Context())
+	err = read(ctx, func(r io.Reader) error {
+		buf := make([]byte, 16)
+		if _, err := r.Read(buf); err != nil {
+			return err
+		}
+		cancel()
+		_, err := r.Read(buf)
+		return err
+	})
+	assert.ErrorIs(t, err, context.Canceled)
 }

@@ -1,6 +1,7 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -216,7 +217,7 @@ func (self *ContactFiler) ReadObject(ctx context.Context, req schema.GetObjectRe
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return fn(strings.NewReader(string(content)))
+		return fn(&contentReader{ctx: ctx, r: bytes.NewReader(content)})
 	}, object, nil
 }
 
@@ -356,6 +357,10 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 	person, err := self.client.Person(ctx, "people/"+id, httpclient.PersonFields)
 	if err != nil {
 		return nil, nil, self.apiError(op, p, err)
+	} else if contactId(person) != id || !isContact(person) {
+		// A profile, such as people/me, or of another id, isn't a contact,
+		// as it isn't listed, or watched
+		return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	}
 	object, content := self.contactObject(person)
 	if object == nil {
@@ -427,6 +432,17 @@ func contactPath(op, p string) (string, bool, error) {
 	return "", false, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 }
 
+// isContact returns true when a person is a contact, of a source of the
+// CONTACT type, rather than only a profile
+func isContact(person *httpclient.Person) bool {
+	for _, source := range person.Metadata.Sources {
+		if source.Type == "CONTACT" {
+			return true
+		}
+	}
+	return false
+}
+
 // contactId returns the id of a contact, of its resource name, people/<id>
 func contactId(person *httpclient.Person) string {
 	id, _ := strings.CutPrefix(person.ResourceName, "people/")
@@ -449,9 +465,9 @@ func contactCard(id string, person *httpclient.Person) *vcard.Card {
 			card.Nicknames = append(card.Nicknames, nickname.Value)
 		}
 	}
-	card.Emails = values(person.EmailAddresses)
-	card.Phones = values(person.PhoneNumbers)
-	card.URLs = values(person.URLs)
+	card.Emails = values(person.EmailAddresses, typesOf)
+	card.Phones = values(person.PhoneNumbers, phoneTypes)
+	card.URLs = values(person.URLs, typesOf)
 	for _, a := range person.Addresses {
 		card.Addresses = append(card.Addresses, vcard.Address{Types: typesOf(a.Type), POBox: a.POBox, Extended: a.ExtendedAddress, Street: a.StreetAddress, Locality: a.City, Region: a.Region, PostalCode: a.PostalCode, Country: a.Country})
 	}
@@ -493,15 +509,42 @@ func contactCard(id string, person *httpclient.Person) *vcard.Card {
 }
 
 // values returns the values of a contact, such as its emails, with their
-// types, and the primary one preferred
-func values(in []httpclient.PersonValue) []vcard.Value {
+// types, of the function, and the primary one first, and preferred, so a
+// contact without a name is of its primary email
+func values(in []httpclient.PersonValue, types func(string) []string) []vcard.Value {
 	var result []vcard.Value
-	for _, v := range in {
+	for _, v := range primaryFirst(in, func(v httpclient.PersonValue) bool { return v.Metadata.Primary }) {
 		if v.Value != "" {
-			result = append(result, vcard.Value{Value: v.Value, Types: typesOf(v.Type), Pref: v.Metadata.Primary})
+			result = append(result, vcard.Value{Value: v.Value, Types: types(v.Type), Pref: v.Metadata.Primary})
 		}
 	}
 	return result
+}
+
+// phoneTypes returns the vCard types of a phone number's type of Google's,
+// such as mobile, which is cell, or homeFax, which is home and fax, or the
+// type, in lower case, when it isn't one of them
+func phoneTypes(t string) []string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "mobile":
+		return []string{"cell"}
+	case "workmobile":
+		return []string{"work", "cell"}
+	case "homefax":
+		return []string{"home", "fax"}
+	case "workfax":
+		return []string{"work", "fax"}
+	case "otherfax":
+		return []string{"fax"}
+	case "pager":
+		return []string{"pager"}
+	case "workpager":
+		return []string{"work", "pager"}
+	case "main", "googlevoice":
+		return []string{"voice"}
+	default:
+		return typesOf(t)
+	}
 }
 
 // typesOf returns the type of a value, such as home or work, in lower case
