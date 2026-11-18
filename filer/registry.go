@@ -37,15 +37,14 @@ type Registry struct {
 	// meter
 	metrics *metrics
 
-	// The backends which are being closed, by Del, Update or Close, which
-	// Close waits for, as a backend which Update is closing is no longer the
-	// volume's in the registry
+	// The backends which are being closed, by Del, Update, or Run, when it
+	// closes the registry, which it waits for, as a backend which Update is
+	// closing is no longer the volume's in the registry
 	teardown map[*entry]struct{}
 
-	// done is closed when the registry is closed, which stops Run, and ends
-	// the subscriptions
-	done      chan struct{}
-	closeOnce sync.Once
+	// done is closed when Run closes the registry, which ends the calls to
+	// WatchObjects, and Run can't run it again
+	done chan struct{}
 }
 
 // entry is a registered backend, with the calls to With which are using it
@@ -132,15 +131,16 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 func (self *Registry) close() error {
 	var result error
 
-	// Stop Run, and the calls to WatchObjects, and those made later
-	self.closeOnce.Do(func() {
-		close(self.done)
-	})
-
-	// Remove all the backends, and close those which aren't already being
-	// closed, while the registry is locked, so they're each closed once.
-	// Those which are being added are closed by Add.
+	// End the calls to WatchObjects, and those made later, and remove all
+	// the backends, and close those which aren't already being closed, while
+	// the registry is locked, so they're each closed once. Those which are
+	// being added are closed by Add.
 	self.Lock()
+	select {
+	case <-self.done:
+	default:
+		close(self.done)
+	}
 	started := make(map[*entry]bool, len(self.backend))
 	for volume, e := range self.backend {
 		if e.ready && !e.closing {
@@ -403,7 +403,7 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 // to fn is cancelled when ctx is cancelled, or when the volume is removed, so
 // that long-running operations do not delay removing it. The registry is not
 // locked while fn runs, so fn may call other registry methods, including Del
-// for the volume, with the context passed to it, but not Close.
+// for the volume, with the context passed to it.
 func (self *Registry) With(ctx context.Context, volume string, fn func(context.Context, gofiler.Filer) error) error {
 	// Find the backend, and record that it is in use
 	e, err := self.use(volume)
