@@ -107,9 +107,10 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **`GOOGLE_TOKEN`:** the credential of the user's sign-in, a go-auth `Grant`, or another, of the `credential` parameter. It must be for `GOOGLE_CLIENT`'s client, and have the `tasks.readonly` or `tasks` scope, or `tasks`, when it isn't read-only. Its token is refreshed, with the client's secret, and stored again, when it expires.
 * **Signing in:** when there's no sign-in, or it's for another client, or doesn't have the scopes, or is revoked, it's go-auth's `SignInError`, with how to sign in: Google's server, the client's ID, the scopes, and the credential. The HTTP API returns it as 401, with its `detail`, without the client's secret.
 * **Client options:** go-client's, such as a tracer, or a trace.
-* **`readonly`:** true by default. Creating and deleting tasks isn't implemented yet.
+* **`readonly`:** true by default. With `false`, tasks can be created, updated and deleted, and lists deleted, as under Writing above.
 * **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
 * **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.
+* **`hidden`:** include tasks which are hidden, as they're completed, and cleared from their list, which are left out unless it's `true`.
 
 ## Object Model
 
