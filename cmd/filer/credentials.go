@@ -24,17 +24,20 @@ import (
 // as the secrets of buckets, and sign-ins, are encrypted with, which it
 // keeps in the user's cache folder
 type CredentialFlags struct {
-	Passphrase []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASE" sep:"none" help:"Passphrase which the server's credentials are encrypted with, which can be repeated, for versions 1, 2 and so on, the last of which encrypts new ones. Without one, a passphrase is made, the first time, and kept in credentials.key, with them, in the user's cache folder."`
+	Passphrase []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASE" sep:"none" help:"Passphrase which the server's credentials are encrypted with, which can be repeated, for versions 1, 2 and so on, the last of which encrypts new ones. Without one, a passphrase is made, the first time, and kept in credentials.key, beside them, in the user's cache folder."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
-// credentialsKeyFile is the file, in the command's folder of the user's
-// cache, with the credentials, which has the passphrase they're encrypted
-// with, without --passphrase. It isn't a credential, as its name isn't an
-// identifier.
-const credentialsKeyFile = "credentials.key"
+const (
+	// credentialsDir is the directory of the credentials, in the
+	// command's folder of the user's cache, and credentialsKeyFile the file
+	// beside it which has the passphrase they're encrypted with, without
+	// --passphrase
+	credentialsDir     = "credentials"
+	credentialsKeyFile = "credentials.key"
+)
 
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
@@ -61,7 +64,7 @@ func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, 
 	for i, passphrase := range passphrases {
 		opts = append(opts, filecredential.WithPassphrase(uint64(i+1), passphrase))
 	}
-	return filecredential.New(dir, opts...)
+	return filecredential.New(filepath.Join(dir, credentialsDir), opts...)
 }
 
 // credentialsKey returns the passphrase in the file, or makes one, of 32
