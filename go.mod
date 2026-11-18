@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.19
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.115.0
 	github.com/aws/smithy-go v1.28.9
-	github.com/mutablelogic/go-auth v0.0.20-0.20261118181001-28a61ebeec98
+	github.com/mutablelogic/go-auth v0.0.20-0.20261118181435-b57c0ad63aa0
 	github.com/mutablelogic/go-client v1.4.14
 	github.com/mutablelogic/go-server v1.8.20
 	github.com/stretchr/testify v1.12.1

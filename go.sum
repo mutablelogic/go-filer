@@ -183,6 +183,8 @@ github.com/mutablelogic/go-auth v0.0.20-0.20261118180507-e3d0adc787ea h1:nJ57wh6
 github.com/mutablelogic/go-auth v0.0.20-0.20261118180507-e3d0adc787ea/go.mod h1:E8HtK4VMt9cvUob+oeZ/yCk1UCG/DQnKbGNH22hxMoQ=
 github.com/mutablelogic/go-auth v0.0.20-0.20261118181001-28a61ebeec98 h1:f8DJQ9st2EaycwtW8mXpNdsDyWVwGKA4l+NVoCvC1mo=
 github.com/mutablelogic/go-auth v0.0.20-0.20261118181001-28a61ebeec98/go.mod h1:E8HtK4VMt9cvUob+oeZ/yCk1UCG/DQnKbGNH22hxMoQ=
+github.com/mutablelogic/go-auth v0.0.20-0.20261118181435-b57c0ad63aa0 h1:3mO3woVj+VLkwLHVZ62sJlhq/LDQ5p3aPSuLLF6m8B4=
+github.com/mutablelogic/go-auth v0.0.20-0.20261118181435-b57c0ad63aa0/go.mod h1:E8HtK4VMt9cvUob+oeZ/yCk1UCG/DQnKbGNH22hxMoQ=
 github.com/mutablelogic/go-client v1.4.14 h1:+LFkuiCsQw0VldaXlMZS3qKB/ISKBQbcxD3W+zmf/Fc=
 github.com/mutablelogic/go-client v1.4.14/go.mod h1:tyoLKaQYbdgnGUOkfpcXkA+HD90lL1sOq+X+kI8fU4Q=
 github.com/mutablelogic/go-pg v1.5.1 h1:a7fbAvrm9t7OO6suxKfZ3A8ui3xxMhQTUi8cQzFKthA=
