@@ -3,6 +3,7 @@ package fs
 import (
 	"mime"
 	"net/url"
+	"slices"
 	"testing"
 )
 
@@ -54,7 +55,7 @@ func Test_packageOpt(t *testing.T) {
 	if !fsys.isPackage("Photos.photoslibrary") || fsys.isPackage("Disk.sparsebundle") {
 		t.Error("custom package")
 	}
-	if v := o.values().Encode(); v != "package=%28%3Fi%29%5C.photoslibrary%24" {
+	if v := o.values()["package"]; !slices.Equal(v, []string{`(?i)\.photoslibrary$`}) {
 		t.Error(v)
 	}
 

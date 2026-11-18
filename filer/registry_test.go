@@ -297,8 +297,8 @@ func Test_Registry_With(t *testing.T) {
 func Test_Registry_Validate(t *testing.T) {
 	r, dir := newRegistry(t)
 
-	// The URL which is validated has the backend's options, which aren't the
-	// defaults, and adds the same backend
+	// The URL which is validated has each of the backend's options, and adds
+	// the same backend
 	u := fileURL(t, dir, "media")
 	u.RawQuery = url.Values{"readonly": {"true"}, "package": {"(?i)\\.bundle$", "(?i)\\.sparsebundle$"}}.Encode()
 	validated, err := r.Validate(context.Background(), u)
@@ -306,7 +306,7 @@ func Test_Registry_Validate(t *testing.T) {
 	assert.Equal(t, "file", validated.Scheme)
 	assert.Equal(t, "media", validated.Host)
 	assert.Equal(t, "true", validated.Query().Get("readonly"))
-	assert.False(t, validated.Query().Has("package"), "the default packages are in the URL")
+	assert.Equal(t, []string{"(?i)\\.bundle$", "(?i)\\.sparsebundle$"}, validated.Query()["package"], "the default packages are in the URL")
 
 	b, err := r.Add(context.Background(), "media", validated)
 	require.NoError(t, err)
@@ -463,7 +463,7 @@ func Test_Registry_S3(t *testing.T) {
 	// as it can't be, and can be removed
 	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly&"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/?"+endpoint+"&name=photos&readonly=true&region=us-east-1", b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+endpoint+"&name=photos&profile=&readonly=true&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
 	volume, err := r.Volume("photos")
 	require.NoError(t, err)
 	assert.Equal(t, schema.Volume{Name: "photos", URL: b.URL().String(), Readonly: true}, *volume)
@@ -472,7 +472,7 @@ func Test_Registry_S3(t *testing.T) {
 	// A bucket's name is the volume's, unless the name option is set
 	b, err = r.Add(context.Background(), "bucket", mustURL(t, "s3://bucket/photos?"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/?"+endpoint+"&region=us-east-1", b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+endpoint+"&name=bucket&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
 	require.NoError(t, r.Del(context.Background(), "bucket"))
 
 	// The name must be the volume's
@@ -913,26 +913,44 @@ func Test_Registry_Update(t *testing.T) {
 		return err
 	}
 
+	// The options of a volume, which are the defaults, unless they're
+	// changed, as its URL has each of them
+	validated, err := r.Validate(ctx, fileURL(t, dir, "defaults"))
+	require.NoError(t, err)
+	defaults := validated.Query()
+	options := func(changed url.Values) url.Values {
+		result := url.Values{}
+		for key, values := range defaults {
+			result[key] = values
+		}
+		for key, values := range changed {
+			result[key] = values
+		}
+		return result
+	}
+	assert.Equal(t, "false", defaults.Get("readonly"))
+	assert.Equal(t, options(url.Values{"skip": {`\.tmp$`}}), query())
+
 	// An option is added, and the others are kept, and the volume is opened
 	// again with them
 	volume, err := r.Update(ctx, "media", url.Values{"readonly": {"true"}})
 	require.NoError(t, err)
 	assert.Equal(t, "media", volume.Name)
-	assert.Equal(t, url.Values{"readonly": {"true"}, "skip": {`\.tmp$`}}, query())
+	assert.Equal(t, options(url.Values{"readonly": {"true"}, "skip": {`\.tmp$`}}), query())
 	assert.ErrorIs(t, create("/a.txt"), gofiler.ErrForbidden)
 
 	// An option is replaced, and one without values is removed, so it's the
 	// default
 	_, err = r.Update(ctx, "media", url.Values{"readonly": {"false"}, "skip": {}})
 	require.NoError(t, err)
-	assert.Empty(t, query())
+	assert.Equal(t, defaults, query())
 	assert.NoError(t, create("/a.txt"))
 
 	// Options which are invalid don't change the volume
 	for _, patch := range []url.Values{{"unknown": {"1"}}, {"readonly": {"maybe"}}, {"skip": {"("}}} {
 		_, err := r.Update(ctx, "media", patch)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, patch)
-		assert.Empty(t, query(), patch)
+		assert.Equal(t, defaults, query(), patch)
 	}
 
 	// A volume which isn't registered isn't found
@@ -975,7 +993,7 @@ func Test_Registry_Update(t *testing.T) {
 	}
 	close(release)
 	require.NoError(t, <-updated)
-	assert.Equal(t, url.Values{"readonly": {"true"}}, query())
+	assert.Equal(t, options(url.Values{"readonly": {"true"}}), query())
 }
 
 func Test_Registry_UpdateMissing(t *testing.T) {
@@ -1045,7 +1063,9 @@ func Test_Registry_Cancelled(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 	volume, err := r.Volume("media")
 	require.NoError(t, err)
-	assert.NotContains(t, volume.URL, "readonly")
+	u, err := url.Parse(volume.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "false", u.Query().Get("readonly"))
 }
 
 func Test_Registry_InvalidQuery(t *testing.T) {

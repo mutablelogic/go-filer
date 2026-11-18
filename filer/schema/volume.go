@@ -37,7 +37,7 @@ const (
 // it can be added again from
 type Volume struct {
 	Name     string `json:"name" help:"Volume name"`
-	URL      string `json:"url" help:"URL of the volume's backend, with the options which aren't the defaults"`
+	URL      string `json:"url" help:"URL of the volume's backend, with each of its options, defaults too, but without secrets"`
 	Readonly bool   `json:"readonly,omitempty" readonly:"" help:"Objects can't be created or deleted, by its options, or as its backend can't be written"`
 	Offline  string `json:"offline,omitempty" readonly:"" help:"Why the volume's backend isn't working, when watching it failed, until it's opened again, such as when its user needs to sign in again, which volume-update does"`
 }

@@ -112,37 +112,15 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 		self.name = name
 	}
 
-	// Set the region, profile and endpoint
+	// Set the region, profile and endpoint, which aren't set when they're
+	// empty, as a URL has each of them
 	self.region = values.Get(optRegion)
 	self.profile = values.Get(optProfile)
-	if values.Has(optEndpoint) {
-		value := values.Get(optEndpoint)
+	if value := values.Get(optEndpoint); value != "" {
 		if endpoint, err := url.Parse(value); err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" {
 			return opt{}, filer.ErrBadParameter.Withf("Invalid %s option: %q", optEndpoint, value)
 		}
 		self.endpoint = value
-	}
-
-	// Set the credentials, which are an access key ID and secret access key,
-	// with an optional session token, whose secrets are placeholders, which
-	// aren't with the profile, or anonymous
-	self.keyID, self.secret, self.token = values.Get(optAccessKeyID), values.Get(optSecretAccessKey), values.Get(optSessionToken)
-	if (self.keyID == "") != (self.secret == "") || (self.token != "" && self.keyID == "") {
-		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options are both needed, with the %s option", optAccessKeyID, optSecretAccessKey, optSessionToken)
-	}
-	if self.keyID != "" && values.Has(optProfile) {
-		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optProfile)
-	} else if self.keyID != "" && values.Has(optAnonymous) {
-		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optAnonymous)
-	}
-
-	// Set the address of the SeaweedFS filer, which is host:port
-	if values.Has(optSeaweedFS) {
-		value := values.Get(optSeaweedFS)
-		if host, port, err := net.SplitHostPort(value); err != nil || host == "" || port == "" {
-			return opt{}, filer.ErrBadParameter.Withf("Invalid %s option: %q, which is host:port", optSeaweedFS, value)
-		}
-		self.seaweedfs = value
 	}
 
 	// Set whether requests are anonymous, and whether objects can only be
@@ -158,24 +136,44 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 		self.readonly = readonly
 	}
 
+	// Set the credentials, which are an access key ID and secret access key,
+	// with an optional session token, whose secrets are placeholders, which
+	// aren't with the profile, or anonymous
+	self.keyID, self.secret, self.token = values.Get(optAccessKeyID), values.Get(optSecretAccessKey), values.Get(optSessionToken)
+	if (self.keyID == "") != (self.secret == "") || (self.token != "" && self.keyID == "") {
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options are both needed, with the %s option", optAccessKeyID, optSecretAccessKey, optSessionToken)
+	}
+	if self.keyID != "" && self.profile != "" {
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optProfile)
+	} else if self.keyID != "" && self.anonymous {
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optAnonymous)
+	}
+
+	// Set the address of the SeaweedFS filer, which is host:port, unless
+	// it's empty
+	if value := values.Get(optSeaweedFS); value != "" {
+		if host, port, err := net.SplitHostPort(value); err != nil || host == "" || port == "" {
+			return opt{}, filer.ErrBadParameter.Withf("Invalid %s option: %q, which is host:port", optSeaweedFS, value)
+		}
+		self.seaweedfs = value
+	}
+
 	// Return success
 	return self, nil
 }
 
-// values returns the options which are set, as query parameters, so the
-// bucket can be created again with them, without the name when it's the
-// bucket's, and with the credentials, which are placeholders, when they're
-// asked for
-func (self opt) values(bucket string, credentials bool) url.Values {
-	values := url.Values{}
-	if self.name != bucket {
-		values.Set(optName, self.name)
-	}
-	if self.region != "" {
-		values.Set(optRegion, self.region)
-	}
-	if self.profile != "" {
-		values.Set(optProfile, self.profile)
+// values returns each of the options, as query parameters, so the bucket
+// can be created again with them, and a URL says how it's set up, with the
+// credentials, which are placeholders, only when they're asked for
+func (self opt) values(credentials bool) url.Values {
+	// Each option which isn't a credential is set, empty when it isn't, so
+	// the URL says how it's set up
+	values := url.Values{
+		optName:      {self.name},
+		optRegion:    {self.region},
+		optProfile:   {self.profile},
+		optEndpoint:  {self.endpoint},
+		optSeaweedFS: {self.seaweedfs},
 	}
 	if self.keyID != "" && credentials {
 		values.Set(optAccessKeyID, self.keyID)
@@ -184,18 +182,8 @@ func (self opt) values(bucket string, credentials bool) url.Values {
 	if self.token != "" && credentials {
 		values.Set(optSessionToken, self.token)
 	}
-	if self.endpoint != "" {
-		values.Set(optEndpoint, self.endpoint)
-	}
-	if self.anonymous {
-		values.Set(optAnonymous, "true")
-	}
-	if self.seaweedfs != "" {
-		values.Set(optSeaweedFS, self.seaweedfs)
-	}
-	if self.readonly {
-		values.Set(optReadonly, "true")
-	}
+	values.Set(optAnonymous, strconv.FormatBool(self.anonymous))
+	values.Set(optReadonly, strconv.FormatBool(self.readonly))
 	return values
 }
 

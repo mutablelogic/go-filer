@@ -206,5 +206,5 @@ func isBucketName(name string) bool {
 
 // url returns the URL of the bucket, with or without its credentials
 func (self *S3) url(credentials bool) *url.URL {
-	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(self.bucket, credentials).Encode()}
+	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(credentials).Encode()}
 }

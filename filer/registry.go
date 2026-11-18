@@ -269,8 +269,8 @@ func (self *Registry) Schemes() []string {
 }
 
 // Validate returns the URL of a backend, after checking a backend can be
-// created from it, which is then closed. The URL is the backend's, with the
-// options which aren't the defaults, which a backend can be added from.
+// created from it, which is then closed. The URL is the backend's, with
+// each of its options, defaults too, which a backend can be added from.
 func (self *Registry) Validate(ctx context.Context, url *url.URL) (*url.URL, error) {
 	backend, err := self.new(ctx, url)
 	if err != nil {

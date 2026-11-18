@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/url"
+	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -24,28 +25,28 @@ func Test_opt(t *testing.T) {
 	if err != nil || len(o.skip) != 0 || (&FS{opt: o}).skip(".git") {
 		t.Error("empty skip", err)
 	}
-	if v := o.values().Encode(); v != "skip=" {
-		t.Error(v)
+	if v := o.values(); !slices.Equal(v["skip"], []string{""}) || !slices.Equal(v["package"], defaultPackage) || v.Get("readonly") != "false" {
+		t.Error(v.Encode())
 	}
 	o, _ = parseOpts(url.Values{"skip": {`\.tmp$`}})
 	if !(&FS{opt: o}).skip("a.tmp") || (&FS{opt: o}).skip(".git") {
 		t.Error("custom skip")
 	}
 	o, _ = parseOpts(nil)
-	if v := o.values().Encode(); v != "" {
-		t.Error(v)
+	if v := o.values(); !slices.Equal(v["skip"], defaultSkip) || !slices.Equal(v["package"], defaultPackage) || v.Get("readonly") != "false" {
+		t.Error(v.Encode())
 	}
 }
 
 func Test_optDefault(t *testing.T) {
-	// The default expressions, when they're set, are the defaults, so they
-	// aren't in the values
+	// The default expressions, when they're set, are in the values, as
+	// each option is
 	o, err := parseOpts(url.Values{"skip": defaultSkip})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := o.values().Encode(); v != "" {
-		t.Error(v)
+	if v := o.values(); !slices.Equal(v["skip"], defaultSkip) {
+		t.Error(v.Encode())
 	}
 	o, _ = parseOpts(url.Values{"skip": {`\.tmp$`, `^#`}})
 	if v := o.values()["skip"]; len(v) != 2 || v[0] != `\.tmp$` || v[1] != `^#` {
