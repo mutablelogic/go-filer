@@ -206,3 +206,62 @@ func Test_eventTypes(t *testing.T) {
 	_, ok = self.event(fsevents.Event{Path: "a.txt"})
 	assert.False(t, ok)
 }
+
+func Test_WatchObjectsShared(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	dir := t.TempDir()
+	backend, err := New("test", dir, nil, filer.Opts{})
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+	before := watching.Load()
+
+	// watch watches the backend, until it's stopped, once it's ready
+	watch := func() (chan schema.Event, func() error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		events, done, ready := make(chan schema.Event, 1024), make(chan error, 1), make(chan struct{})
+		go func() { done <- backend.WatchObjectsReady(ctx, events, func() { close(ready) }) }()
+		select {
+		case <-ready:
+		case err := <-done:
+			t.Fatalf("watching failed: %v", err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("watching wasn't ready")
+		}
+		return events, func() error {
+			cancel()
+			select {
+			case err := <-done:
+				return err
+			case <-time.After(10 * time.Second):
+				t.Fatal("watching didn't stop")
+				return nil
+			}
+		}
+	}
+
+	// Two calls share one watch of the directory, which is ready for the
+	// second at once, and both are sent a change
+	a, stopA := watch()
+	b, stopB := watch()
+	assert.Equal(t, before+1, watching.Load(), "one watch of the directory")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), nil, 0o600))
+	receive(t, a, "/a.txt")
+	receive(t, b, "/a.txt")
+
+	// One leaving doesn't stop the other
+	require.NoError(t, stopA())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.txt"), nil, 0o600))
+	receive(t, b, "/b.txt")
+	assert.Equal(t, before+1, watching.Load())
+
+	// The last to leave stops it, and a call after starts another
+	require.NoError(t, stopB())
+	require.Eventually(t, func() bool { return watching.Load() == before }, 10*time.Second, 10*time.Millisecond)
+	c, stopC := watch()
+	assert.Equal(t, before+1, watching.Load())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "c.txt"), nil, 0o600))
+	receive(t, c, "/c.txt")
+	require.NoError(t, stopC())
+}
