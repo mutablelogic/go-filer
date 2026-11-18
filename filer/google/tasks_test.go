@@ -874,6 +874,8 @@ func Test_TaskDelete(t *testing.T) {
 	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Parent"})
 	fake.addTask("L1", httpclient.Task{Id: "B", Title: "Child", Parent: "A"})
 	fake.addTask("L1", httpclient.Task{Id: "C", Title: "Other"})
+	fake.addTask("L1", httpclient.Task{Id: "D", Title: "Grandchild", Parent: "B"})
+	fake.addTask("L1", httpclient.Task{Id: "E", Title: "Deleted child", Parent: "A", Deleted: true})
 	fake.addTask("L2", httpclient.Task{Id: "X"})
 	fake.addTask("L2", httpclient.Task{Id: "Y", Deleted: true})
 	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}})
@@ -889,7 +891,7 @@ func Test_TaskDelete(t *testing.T) {
 	// listed, nor found
 	resp, err := filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/L1/A.ics", "/L1/B.ics"}, paths(resp))
+	assert.Equal(t, []string{"/L1/A.ics", "/L1/B.ics", "/L1/D.ics"}, paths(resp), "with its subtasks, and theirs, but not those already deleted")
 	assert.Equal(t, []string{"/L1/C.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/"}}))
 	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
 	assert.ErrorIs(t, err, fs.ErrNotExist)
@@ -915,6 +917,10 @@ func Test_TaskDelete(t *testing.T) {
 	assert.Equal(t, []string{"/L1", "/L1/C.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
 	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2"}, Recursive: true})
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+	for _, path := range []string{"/L2", "/L9"} {
+		_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		assert.ErrorIs(t, err, fs.ErrNotExist, "a list which doesn't exist isn't found, rather than a conflict: %s", path)
+	}
 	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 

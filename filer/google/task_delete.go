@@ -42,14 +42,14 @@ func (self *TaskFiler) DeleteObjects(ctx context.Context, req schema.DeleteObjec
 // PRIVATE METHODS
 
 // deleteList deletes a list, and its tasks, which the request must be
-// recursive for, and returns its tasks, and then the list
+// recursive for, and returns its tasks, and then the list. A list which
+// doesn't exist isn't found, whether the request is recursive or not.
 func (self *TaskFiler) deleteList(ctx context.Context, list string, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	if !req.Recursive {
-		return nil, gofiler.ErrConflict.Withf("Cannot delete directory %q unless recursive", req.Path)
-	}
 	meta, err := self.client.TaskList(ctx, list)
 	if err != nil {
 		return nil, self.apiError("delete", req.Path, err)
+	} else if !req.Recursive {
+		return nil, gofiler.ErrConflict.Withf("Cannot delete directory %q unless recursive", req.Path)
 	}
 	tasks, err := self.client.Tasks(ctx, list)
 	if err != nil {
@@ -92,23 +92,28 @@ func (self *TaskFiler) deleteTask(ctx context.Context, list, id string, req sche
 }
 
 // subtasks returns the task, which isn't deleted, and those beneath it,
-// which aren't, or nil, when there's no such task
+// which aren't, or nil, when there's no such task. The tasks are indexed by
+// their parents once, so the subtree is collected in one pass of them.
 func subtasks(tasks []httpclient.Task, id string) []*httpclient.Task {
-	var result []*httpclient.Task
+	var root *httpclient.Task
+	children := make(map[string][]*httpclient.Task)
 	for i := range tasks {
-		if tasks[i].Id == id && !tasks[i].Deleted {
-			result = append(result, &tasks[i])
+		task := &tasks[i]
+		switch {
+		case task.Deleted:
+			continue
+		case task.Id == id:
+			root = task
+		case task.Parent != "" && validId(task.Id):
+			children[task.Parent] = append(children[task.Parent], task)
 		}
 	}
-	if len(result) == 0 {
+	if root == nil {
 		return nil
 	}
+	result := []*httpclient.Task{root}
 	for i := 0; i < len(result); i++ {
-		for j := range tasks {
-			if tasks[j].Parent == result[i].Id && !tasks[j].Deleted && validId(tasks[j].Id) {
-				result = append(result, &tasks[j])
-			}
-		}
+		result = append(result, children[result[i].Id]...)
 	}
 	return result
 }
