@@ -183,10 +183,8 @@ github.com/mutablelogic/go-client v1.4.14 h1:+LFkuiCsQw0VldaXlMZS3qKB/ISKBQbcxD3
 github.com/mutablelogic/go-client v1.4.14/go.mod h1:tyoLKaQYbdgnGUOkfpcXkA+HD90lL1sOq+X+kI8fU4Q=
 github.com/mutablelogic/go-media v1.11.4 h1:U1yIHMW/Apc/cHSeagkTuwcnPkYtI9Gk/zsD9o4VVlw=
 github.com/mutablelogic/go-media v1.11.4/go.mod h1:YsHBSCO3JV782+JNDmn1nyLgm5r2BSi1J2/kbHxJtKI=
-github.com/mutablelogic/go-metadata v1.1.5-0.20261118184523-8061247579a6 h1:C0mcoiEot+cebOCKs0YHvEELDo0zganMvLexVzktKRA=
-github.com/mutablelogic/go-metadata v1.1.5-0.20261118184523-8061247579a6/go.mod h1:oAK6X11F4kt0GTfhGuYxrSVk5XUgJBP1w/dJkidBzps=
-github.com/mutablelogic/go-metadata v1.1.5-0.20261118185118-2124abf30feb h1:2xesbCbe2rWSPYzBWNc8XxVzFNylme+LaNzLRs25Gak=
-github.com/mutablelogic/go-metadata v1.1.5-0.20261118185118-2124abf30feb/go.mod h1:oAK6X11F4kt0GTfhGuYxrSVk5XUgJBP1w/dJkidBzps=
+github.com/mutablelogic/go-metadata v1.1.5 h1:gGLvHvoNpIlB55mwOeAnHSqJ/2EyHN4KGXo8PbjirFw=
+github.com/mutablelogic/go-metadata v1.1.5/go.mod h1:oAK6X11F4kt0GTfhGuYxrSVk5XUgJBP1w/dJkidBzps=
 github.com/mutablelogic/go-pg v1.5.1 h1:a7fbAvrm9t7OO6suxKfZ3A8ui3xxMhQTUi8cQzFKthA=
 github.com/mutablelogic/go-pg v1.5.1/go.mod h1:5X2kRfnnvBzwNhZysUr4JTjwV/OwGXNumiRbDEeMzlM=
 github.com/mutablelogic/go-server v1.8.20 h1:h5RCNMOmQ7k6iqvu6G8zeAQt9zvPZdlCGuUFb/AGdf8=

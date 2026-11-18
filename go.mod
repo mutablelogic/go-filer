@@ -10,7 +10,7 @@ require (
 	github.com/aws/smithy-go v1.28.9
 	github.com/mutablelogic/go-auth v0.0.20
 	github.com/mutablelogic/go-client v1.4.14
-	github.com/mutablelogic/go-metadata v1.1.5-0.20261118185118-2124abf30feb
+	github.com/mutablelogic/go-metadata v1.1.5
 	github.com/mutablelogic/go-server v1.8.20
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.47.0
