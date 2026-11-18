@@ -5,6 +5,7 @@ package httpclient
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	client "github.com/mutablelogic/go-client"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -204,4 +206,62 @@ func (c *TasksClient) DeleteTaskList(ctx context.Context, id string) error {
 	return c.DoAuthWithContext(ctx, client.MethodDelete, nil,
 		client.OptPath("users", "@me", "lists", id),
 	)
+}
+
+// TaskFields are the fields of a task which are written, by their names in
+// the API, where a nil value clears a field, such as "due"
+type TaskFields map[string]any
+
+// InsertTask creates a task in a list, beneath the parent, unless it's
+// empty, and returns it, with the id Google gives it
+func (c *TasksClient) InsertTask(ctx context.Context, list, parent string, fields TaskFields) (*Task, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPost, fields, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	query := url.Values{}
+	if parent != "" {
+		query.Set("parent", parent)
+	}
+	var result Task
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("lists", list, "tasks"),
+		client.OptQuery(query),
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// PatchTask changes the fields of a task, and returns it, keeping those
+// which aren't in the fields
+func (c *TasksClient) PatchTask(ctx context.Context, list, id string, fields TaskFields) (*Task, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPatch, fields, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result Task
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("lists", list, "tasks", id),
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// MoveTask moves a task beneath the parent, or to the top of its list, when
+// it's empty, and returns it
+func (c *TasksClient) MoveTask(ctx context.Context, list, id, parent string) (*Task, error) {
+	query := url.Values{}
+	if parent != "" {
+		query.Set("parent", parent)
+	}
+	var result Task
+	if err := c.DoAuthWithContext(ctx, client.MethodPost, &result,
+		client.OptPath("lists", list, "tasks", id, "move"),
+		client.OptQuery(query),
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

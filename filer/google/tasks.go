@@ -20,7 +20,6 @@ import (
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
-	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -39,10 +38,10 @@ type TaskFiler struct {
 	clientopts  []client.ClientOpt
 	client      *httpclient.TasksClient
 
-	// The watches, which are sent the paths which the filer deletes, so
-	// they're sent their deletions without waiting to refresh
+	// The watches, which are sent the changes the filer makes, so they're
+	// sent them without waiting to refresh
 	mu      sync.Mutex
-	watches map[chan []string]struct{}
+	watches map[chan []taskChange]struct{}
 }
 
 // taskOpt are the options of a task filer, of its parameters
@@ -219,14 +218,6 @@ func (self *TaskFiler) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - WRITE
 
-// CreateObject creates, or updates, a task, which isn't implemented yet
-func (self *TaskFiler) CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error) {
-	if self.readonly {
-		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
-	}
-	return nil, gofiler.ErrNotImplemented.With("writing tasks isn't implemented yet")
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -266,6 +257,9 @@ func (self *TaskFiler) apiError(op, path string, err error) error {
 		return &fs.PathError{Op: op, Path: path, Err: fs.ErrNotExist}
 	case errors.Is(err, httpresponse.Err(http.StatusForbidden)):
 		return gofiler.ErrForbidden.Withf("%s %s: %v", op, path, err)
+	case errors.Is(err, httpresponse.Err(http.StatusBadRequest)):
+		// Such as a parent which isn't a task of the list
+		return gofiler.ErrBadParameter.Withf("%s %s: %v", op, path, err)
 	default:
 		return gofiler.ErrServiceUnavailable.Withf("%s %s: %v", op, path, fmt.Sprint(err))
 	}
