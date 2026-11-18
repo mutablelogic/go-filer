@@ -78,7 +78,7 @@ type ObjectListCmd struct {
 	Recursive  bool    `name:"recursive" short:"r" help:"List every object beneath the directory."`
 	StartAfter string  `name:"start-after" help:"Return objects whose keys sort after this key, which is the next key of the previous page."`
 	Limit      *uint64 `name:"limit" help:"Maximum number of objects to return, which defaults to and is capped at 100."`
-	Type       string  `name:"type" placeholder:"TYPE" help:"Only objects of this type, such as inode/directory, or of the major type, such as inode, or image. Folders of an indexed volume are listed from its index."`
+	Type       string  `name:"type" placeholder:"TYPE" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters. Folders of an indexed volume are listed from its index."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////

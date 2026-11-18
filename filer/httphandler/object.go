@@ -66,7 +66,7 @@ type objectListQuery struct {
 	Recursive  bool    `json:"recursive,omitempty" help:"List every object beneath the directory"`
 	StartAfter string  `json:"start_after,omitempty" help:"Return objects whose keys sort after this key"`
 	Limit      *uint64 `json:"limit,omitempty" help:"Maximum number of objects to return, which defaults to and is capped at 100"`
-	Type       string  `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or of the major type, such as inode, or image"`
+	Type       string  `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////

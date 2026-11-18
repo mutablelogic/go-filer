@@ -212,6 +212,8 @@ func Test_Registry_ListType(t *testing.T) {
 	ready(t, r, "media")
 	store := r.indexStore
 	require.NoError(t, store.Put(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
-	assert.Equal(t, []string{"/a", "/a/b", "/only-in-the-index"}, list("media", "inode"))
+	for _, typ := range []string{"inode", "directory", "inode/directory", "inode/directory; charset=binary"} {
+		assert.Equal(t, []string{"/a", "/a/b", "/only-in-the-index"}, list("media", typ), typ)
+	}
 	assert.Equal(t, []string{"/a", "/a/b"}, list("media", ""), "every object is the backend's")
 }

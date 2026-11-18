@@ -85,7 +85,7 @@ type ListObjectsRequest struct {
 	ObjectKey
 	Recursive  bool   `json:"recursive,omitempty"`
 	StartAfter string `json:"start_after,omitempty" help:"Return objects after this path"`
-	Type       string `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or of the major type, such as inode, or image"`
+	Type       string `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters"`
 }
 
 // ObjectListRequest lists the objects beneath a path in a volume, a page at
@@ -258,9 +258,10 @@ func FormatSize(size int64) string {
 }
 
 // MatchType returns true when an object is of the type, which is a media
-// type, such as inode/directory, without its parameters, or a major type,
-// such as image, or empty, which every object is. A directory is of
-// DirectoryType, when it has no type of its own.
+// type, such as inode/directory, or its major type, such as inode, or its
+// subtype, such as directory, or empty, which every object is. The
+// object's type's parameters, such as charset, are ignored, as is case. A
+// directory is of DirectoryType, when it has no type of its own.
 func MatchType(object *Object, t string) bool {
 	if t = strings.ToLower(strings.TrimSpace(t)); t == "" {
 		return true
@@ -274,8 +275,11 @@ func MatchType(object *Object, t string) bool {
 		return false
 	}
 	if strings.Contains(t, "/") {
+		if mt, _, err := mime.ParseMediaType(t); err == nil {
+			t = mt
+		}
 		return mediaType == t
 	}
-	major, _, _ := strings.Cut(mediaType, "/")
-	return major == t
+	major, minor, _ := strings.Cut(mediaType, "/")
+	return major == t || minor == t
 }
