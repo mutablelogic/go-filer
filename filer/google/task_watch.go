@@ -1,9 +1,11 @@
 package google
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	// Packages
@@ -20,19 +22,26 @@ type taskSnapshot map[string]string
 
 // taskChange is a change the filer made, which is sent to its watches as
 // it's made: a task or list which is deleted, or a task which is created,
-// or updated, with its entity tag
+// or updated, with its entity tag, and its sequence, in the order the filer
+// made them
 type taskChange struct {
 	eventType schema.EventType
 	path      string
 	etag      string
+	seq       uint64
+}
+
+// taskWatch is a watch's changes, which the filer made, which it hasn't
+// sent: the latest of each path, so an earlier one isn't sent after a later
+// one, and the signal that there are some
+type taskWatch struct {
+	mu      sync.Mutex
+	pending map[string]taskChange
+	signal  chan struct{}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
-
-// deletedBuffer is how many deletions a watch keeps, which it hasn't sent,
-// beyond which they're sent when it refreshes
-const changeBuffer = 16
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -51,11 +60,13 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 	}
 
 	// The changes the filer makes, from when it's watching
-	changed := self.watch()
-	defer self.unwatch(changed)
+	watch := self.watch()
+	defer self.unwatch(watch)
 
 	// What's there is read, and then the first change is a rescan of the
-	// root, so a change after it is sent
+	// root, so a change after it is sent. A change the filer made before a
+	// snapshot is read is in it, so isn't sent.
+	seen := self.sequence()
 	last, err := self.snapshot(ctx)
 	if err != nil {
 		return err
@@ -71,10 +82,11 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case changes := <-changed:
-			// What the filer changed is sent now, unless the snapshot has it
-			// already, and isn't sent again when it's refreshed
-			for _, change := range changes {
+		case <-watch.signal:
+			// What the filer changed is sent now, in the order it was made,
+			// unless the snapshot has it already, and isn't sent again when
+			// it's refreshed
+			for _, change := range watch.take(seen) {
 				etag, exists := last[change.path]
 				switch {
 				case change.eventType == schema.EventTypeDeleted && !exists:
@@ -100,6 +112,7 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 			continue
 		case <-ticker.C:
 		}
+		started := self.sequence()
 		next, err := self.snapshot(ctx)
 		if err != nil {
 			return err
@@ -111,49 +124,82 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 				return ctx.Err()
 			}
 		}
-		last = next
+		last, seen = next, started
 	}
 }
 
-// watch returns the channel of a watch, which is sent the changes the
-// filer makes, until unwatch removes it
-func (self *TaskFiler) watch() chan []taskChange {
+// watch returns a watch, which is sent the changes the filer makes, until
+// unwatch removes it
+func (self *TaskFiler) watch() *taskWatch {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	if self.watches == nil {
-		self.watches = make(map[chan []taskChange]struct{})
+		self.watches = make(map[*taskWatch]struct{})
 	}
-	ch := make(chan []taskChange, changeBuffer)
-	self.watches[ch] = struct{}{}
-	return ch
+	watch := &taskWatch{pending: make(map[string]taskChange), signal: make(chan struct{}, 1)}
+	self.watches[watch] = struct{}{}
+	return watch
 }
 
-func (self *TaskFiler) unwatch(ch chan []taskChange) {
+func (self *TaskFiler) unwatch(watch *taskWatch) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	delete(self.watches, ch)
+	delete(self.watches, watch)
 }
 
-// changed sends the changes the filer made to its watches, without
-// waiting, so a watch which is behind is told when it refreshes instead
+// sequence returns the sequence of the last change the filer made
+func (self *TaskFiler) sequence() uint64 {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	return self.seq
+}
+
+// changed numbers the changes the filer made, in order, and gives them to
+// its watches, without waiting, where each keeps the latest of a path
 func (self *TaskFiler) changed(changes ...taskChange) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	for ch := range self.watches {
+	for i := range changes {
+		self.seq++
+		changes[i].seq = self.seq
+	}
+	for watch := range self.watches {
+		watch.mu.Lock()
+		for _, change := range changes {
+			watch.pending[change.path] = change
+		}
+		watch.mu.Unlock()
 		select {
-		case ch <- changes:
+		case watch.signal <- struct{}{}:
 		default:
 		}
 	}
 }
 
-// deleted sends the paths the filer deleted to its watches
+// deleted gives the paths the filer deleted to its watches
 func (self *TaskFiler) deleted(paths []string) {
 	changes := make([]taskChange, 0, len(paths))
 	for _, path := range paths {
 		changes = append(changes, taskChange{eventType: schema.EventTypeDeleted, path: path})
 	}
 	self.changed(changes...)
+}
+
+// take returns the changes a watch hasn't sent, in the order they were made,
+// without those made before its snapshot was read, which it has
+func (self *taskWatch) take(seen uint64) []taskChange {
+	self.mu.Lock()
+	pending := self.pending
+	self.pending = make(map[string]taskChange)
+	self.mu.Unlock()
+	result := make([]taskChange, 0, len(pending))
+	for _, change := range pending {
+		if change.seq > seen {
+			result = append(result, change)
+		}
+	}
+	slices.SortFunc(result, func(a, b taskChange) int { return cmp.Compare(a.seq, b.seq) })
+	return result
 }
 
 // snapshot returns the entity tags of the lists, and of their tasks, by

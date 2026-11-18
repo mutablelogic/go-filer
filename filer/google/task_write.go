@@ -1,7 +1,9 @@
 package google
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"mime"
@@ -13,6 +15,7 @@ import (
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	ical "github.com/mutablelogic/go-metadata/pkg/ical"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -53,7 +56,7 @@ func (self *TaskFiler) CreateObject(ctx context.Context, req schema.CreateObject
 		return nil, &fs.PathError{Op: "create", Path: req.Path, Err: fs.ErrNotExist}
 	}
 	if req.ContentType != "" {
-		if mediaType, _, err := mime.ParseMediaType(req.ContentType); err != nil || mediaType != ical.ContentType {
+		if mediaType, _, err := mime.ParseMediaType(req.ContentType); err != nil || (mediaType != ical.ContentType && mediaType != types.ContentTypeBinary) {
 			return nil, gofiler.ErrBadParameter.Withf("a task is written as %s, not %q", ical.ContentType, req.ContentType)
 		}
 	}
@@ -96,22 +99,46 @@ func (self *TaskFiler) CreateObject(ctx context.Context, req schema.CreateObject
 func (self *TaskFiler) updateTask(ctx context.Context, list, id string, todo *ical.Event, fields httpclient.TaskFields, req schema.CreateObjectRequest) (*httpclient.Task, error) {
 	current, err := self.client.Task(ctx, list, id)
 	if err != nil {
-		return nil, self.apiError("create", req.Path, err)
+		err = self.apiError("create", req.Path, err)
 	} else if current.Deleted {
-		return nil, &fs.PathError{Op: "create", Path: req.Path, Err: fs.ErrNotExist}
-	} else if req.IfNotExists {
+		err = &fs.PathError{Op: "create", Path: req.Path, Err: fs.ErrNotExist}
+	}
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && req.IfExists:
+		return nil, gofiler.ErrPreconditionFailed.Withf("task %q doesn't exist", req.Path)
+	case err != nil:
+		return nil, err
+	case req.IfNotExists:
 		return nil, gofiler.ErrConflict.Withf("task %q exists", req.Path)
-	} else if todo.UID != "" && todo.UID != id {
+	case todo.UID != "" && todo.UID != id:
 		return nil, gofiler.ErrBadParameter.Withf("the task's UID, %q, isn't its id, %q", todo.UID, id)
+	}
+
+	// A parent which changes must be a task of the list, which is checked
+	// before the task is changed, so a bad parent doesn't change it
+	move := todo.Parent != current.Parent
+	if move && todo.Parent != "" {
+		if !googleId(todo.Parent) || todo.Parent == id {
+			return nil, gofiler.ErrBadParameter.Withf("the task's parent, %q, isn't another task of its list", todo.Parent)
+		} else if parent, err := self.client.Task(ctx, list, todo.Parent); errors.Is(self.apiError("create", req.Path, err), fs.ErrNotExist) || (err == nil && parent.Deleted) {
+			return nil, gofiler.ErrBadParameter.Withf("the task's parent, %q, isn't a task of its list", todo.Parent)
+		} else if err != nil {
+			return nil, self.apiError("create", req.Path, err)
+		}
 	}
 	task, err := self.client.PatchTask(ctx, list, id, fields)
 	if err != nil {
 		return nil, self.apiError("create", req.Path, err)
 	}
-	if todo.Parent != current.Parent {
-		if task, err = self.client.MoveTask(ctx, list, id, todo.Parent); err != nil {
-			return nil, self.apiError("create", req.Path, err)
+	if move {
+		moved, err := self.client.MoveTask(ctx, list, id, todo.Parent)
+		if err != nil {
+			// The fields are changed, which the watches are sent, though it
+			// isn't moved
+			self.changed(taskChange{eventType: schema.EventTypeUpdated, path: taskFilePath(list, id), etag: task.ETag})
+			return nil, errors.Join(gofiler.ErrServiceUnavailable.Withf("task %q is changed, but isn't moved beneath %q", req.Path, todo.Parent), self.apiError("create", req.Path, err))
 		}
+		task = moved
 	}
 	return task, nil
 }
@@ -128,13 +155,74 @@ func readTask(r io.Reader) (*ical.Event, error) {
 	} else if len(data) > maxTaskSize {
 		return nil, gofiler.ErrBadParameter.Withf("a task's iCalendar is larger than %d bytes", maxTaskSize)
 	}
-	cal, err := ical.Decode(strings.NewReader(string(data)))
+	props, err := taskProperties(data)
+	if err != nil {
+		return nil, err
+	}
+	cal, err := ical.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("a task's iCalendar: %v", err)
 	} else if len(cal.Events) != 1 || cal.Events[0].Kind != ical.KindTask {
 		return nil, gofiler.ErrBadParameter.With("a task is written as an iCalendar, of one VTODO")
 	}
-	return cal.Events[0], nil
+
+	// A date which it has, which isn't one, isn't taken as none, which would
+	// clear it
+	todo := cal.Events[0]
+	for name, zero := range map[string]bool{"DUE": todo.Due.IsZero(), "COMPLETED": todo.Completed.IsZero()} {
+		if value, exists := props[name]; exists && zero {
+			return nil, gofiler.ErrBadParameter.Withf("the task's %s, %q, isn't a date, or a time", name, value)
+		}
+	}
+	return todo, nil
+}
+
+// taskProperties returns the properties of the VTODO of an iCalendar, by
+// their names, which must be the only VTODO, without any events, journals
+// or free/busy times, though it can have its zones, and its VTODO alarms,
+// as they're read, rather than decoded, which ignores what it can't read
+func taskProperties(data []byte) (map[string]string, error) {
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.NewReplacer("\n ", "", "\n\t", "").Replace(text)
+	var stack []string
+	props := make(map[string]string)
+	todos := 0
+	for _, line := range strings.Split(text, "\n") {
+		if line = strings.TrimRight(line, "\r"); line == "" {
+			continue
+		}
+		name, value, _ := strings.Cut(line, ":")
+		if i := strings.Index(name, ";"); i >= 0 {
+			name = name[:i]
+		}
+		name, value = strings.ToUpper(strings.TrimSpace(name)), strings.TrimSpace(value)
+		switch name {
+		case "BEGIN":
+			component := strings.ToUpper(value)
+			switch {
+			case len(stack) == 0 && component != "VCALENDAR":
+				return nil, gofiler.ErrBadParameter.With("a task is written as an iCalendar, of one VTODO")
+			case component == "VTODO" && len(stack) == 1:
+				todos++
+			case component == "VEVENT", component == "VJOURNAL", component == "VFREEBUSY":
+				return nil, gofiler.ErrBadParameter.Withf("a task is written as an iCalendar, of one VTODO, without a %s", component)
+			}
+			stack = append(stack, component)
+		case "END":
+			if len(stack) == 0 || stack[len(stack)-1] != strings.ToUpper(value) {
+				return nil, gofiler.ErrBadParameter.Withf("a task's iCalendar has an END:%s without its BEGIN", value)
+			}
+			stack = stack[:len(stack)-1]
+		default:
+			if len(stack) == 2 && stack[1] == "VTODO" {
+				props[name] = value
+			}
+		}
+	}
+	if todos != 1 || len(stack) != 0 {
+		return nil, gofiler.ErrBadParameter.With("a task is written as an iCalendar, of one VTODO")
+	}
+	return props, nil
 }
 
 // taskFields returns the fields of a task, of its VTODO, which replace

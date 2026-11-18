@@ -41,7 +41,8 @@ type TaskFiler struct {
 	// The watches, which are sent the changes the filer makes, so they're
 	// sent them without waiting to refresh
 	mu      sync.Mutex
-	watches map[chan []taskChange]struct{}
+	watches map[*taskWatch]struct{}
+	seq     uint64 // The sequence of the last change the filer made
 }
 
 // taskOpt are the options of a task filer, of its parameters

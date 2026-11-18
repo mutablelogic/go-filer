@@ -46,6 +46,7 @@ type fakeTasks struct {
 	queries   []url.Values                 // Of the requests for tasks
 	deletes   []string                     // The paths which are deleted
 	writes    []string                     // The methods, and paths, which are written
+	failMove  bool                         // Moving a task fails, as Google can
 	fields    []map[string]json.RawMessage // The fields which are written
 }
 
@@ -270,7 +271,10 @@ func (f *fakeTasks) write(w http.ResponseWriter, r *http.Request, parts []string
 			return
 		}
 	case r.Method == http.MethodPost && len(parts) == 5 && parts[4] == "move":
-		if task = find(parts[3]); task == nil {
+		if f.failMove {
+			writeError(w, http.StatusServiceUnavailable)
+			return
+		} else if task = find(parts[3]); task == nil {
 			writeError(w, http.StatusNotFound)
 			return
 		}
@@ -1217,6 +1221,39 @@ func Test_TaskWrite(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/~new.ics"}, Body: vtodo("SUMMARY:x"), IfExists: true})
 	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/Z.ics"}, Body: vtodo("SUMMARY:x"), IfExists: true})
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed, "a task which doesn't exist, which must")
+
+	// A binary upload is a task, as its content is
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/C.ics"}, Body: vtodo("SUMMARY:Errands"), ObjectMeta: schema.ObjectMeta{ContentType: "application/octet-stream"}})
+	assert.NoError(t, err)
+
+	// What isn't valid doesn't change the task: a parent which isn't a task
+	// of the list, a date which isn't one, which would clear its due date,
+	// or an event, which isn't decoded, as it has no start
+	before := task("C")
+	fake.Lock()
+	writes := len(fake.writes)
+	fake.Unlock()
+	for name, body := range map[string]io.Reader{
+		"Parent":    vtodo("SUMMARY:Changed", "RELATED-TO:Z"),
+		"Itself":    vtodo("SUMMARY:Changed", "RELATED-TO:C"),
+		"Due":       vtodo("SUMMARY:Changed", "DUE;VALUE=DATE:20260230"),
+		"Completed": vtodo("SUMMARY:Changed", "STATUS:COMPLETED", "COMPLETED:yesterday"),
+		"Event":     strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:No start\r\nEND:VEVENT\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"),
+		"Unclosed":  strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nEND:VCALENDAR\r\n"),
+	} {
+		_, err := write("/L1/C.ics", body)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, name)
+	}
+	assert.Equal(t, before, task("C"), "it isn't changed")
+	fake.Lock()
+	assert.Len(t, fake.writes, writes, "nothing is written")
+	fake.Unlock()
+
+	// Its zones, and its alarms, which a task can have, are fine
+	_, err = write("/L1/C.ics", strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/Berlin\r\nBEGIN:STANDARD\r\nDTSTART:19701025T030000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VTODO\r\nSUMMARY:Errands\r\nDUE;TZID=Europe/Berlin:20261121T090000\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"))
+	assert.NoError(t, err)
 }
 
 func Test_TaskWriteWatched(t *testing.T) {
@@ -1246,5 +1283,15 @@ func Test_TaskWriteWatched(t *testing.T) {
 	assert.Equal(t, "created /L1/N2.ics", next())
 	_, err = filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}, Body: vtodo("SUMMARY:Shopping, again")})
 	require.NoError(t, err)
+	assert.Equal(t, "updated /L1/A.ics", next())
+
+	// A task whose fields are changed, but which can't be moved, is an error,
+	// though the watches are sent its change
+	fake.Lock()
+	fake.failMove = true
+	fake.Unlock()
+	_, err = filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}, Body: vtodo("SUMMARY:Moved", "RELATED-TO:N2")})
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Contains(t, err.Error(), "isn't moved")
 	assert.Equal(t, "updated /L1/A.ics", next())
 }
