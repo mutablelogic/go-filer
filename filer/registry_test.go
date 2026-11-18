@@ -933,6 +933,16 @@ func Test_Registry_Update(t *testing.T) {
 	_, err = r.Update(ctx, "missing", url.Values{"readonly": {"true"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 
+	// A volume can't be updated from a function using it, which it'd wait
+	// for, nor removed
+	require.NoError(t, r.With(ctx, "media", func(ctx context.Context, _ gofiler.Filer) error {
+		_, err := r.Update(ctx, "media", url.Values{"readonly": {"true"}})
+		assert.ErrorIs(t, err, gofiler.ErrConflict)
+		assert.ErrorIs(t, r.Del(ctx, "media"), gofiler.ErrConflict)
+		return nil
+	}))
+	assert.Contains(t, r.Keys(), "media", "it isn't removed")
+
 	// Updating waits for the calls using the volume, which are cancelled,
 	// and the volume can't be added meanwhile
 	entered, release := make(chan struct{}), make(chan struct{})

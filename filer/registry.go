@@ -75,6 +75,13 @@ type entry struct {
 	err    error
 }
 
+// usingKey is the key of the value in the context which With passes to its
+// function, so Del or Update of the volume within it is a conflict, rather
+// than waiting for the function to return
+type usingKey struct {
+	e *entry
+}
+
 // entryState is how far a backend is added, or removed
 type entryState int
 
@@ -304,14 +311,17 @@ func (self *Registry) Add(ctx context.Context, volume string, url *url.URL) (gof
 // is registered in its place. Its name is kept while it's closed, so it isn't
 // added by another call. Returns ErrNotImplemented when the backend can't be
 // cloned, such as a filesystem which isn't a directory, ErrNotFound when the volume isn't registered, or
-// is being added or removed. It can't be called from a function passed to
-// With which is using the volume, which it waits for.
+// is being added or removed, and ErrConflict when it's called from a
+// function passed to With which is using the volume, which it'd wait for.
 func (self *Registry) Update(ctx context.Context, volume string, patch url.Values) (*schema.Volume, error) {
 	e, err := self.use(volume)
 	if err != nil {
 		return nil, err
 	}
 	e.wg.Done()
+	if ctx.Value(usingKey{e}) != nil {
+		return nil, gofiler.ErrConflict.Withf("volume %q can't be updated by a function which is using it", volume)
+	}
 	return self.update(ctx, e, volume, patch)
 }
 
@@ -365,12 +375,17 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 // are cancelled, and it's no longer watched. It can't be used once Del is called, but
 // stays registered until it's closed, so a volume which isn't registered has
 // released what it used, such as its directory. Del waits until the backend
-// is closed, or ctx is cancelled. It can't be called from a function passed
-// to With which is using the volume, which it waits for.
+// is closed, or ctx is cancelled. Returns ErrConflict, and doesn't remove
+// it, when it's called from a function passed to With which is using the
+// volume, which it'd wait for.
 // Does nothing if there is no backend for the volume, or it's being added.
 func (self *Registry) Del(ctx context.Context, volume string) error {
 	self.Lock()
 	e, exists := self.backend[volume]
+	if exists && ctx.Value(usingKey{e}) != nil {
+		self.Unlock()
+		return gofiler.ErrConflict.Withf("volume %q can't be removed by a function which is using it", volume)
+	}
 	if exists = exists && e.state != stateAdding; exists && e.state == stateReady {
 		self.startClose(e, volume)
 	}
@@ -392,8 +407,9 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 // so fn must finish using the backend before it returns. The context passed
 // to fn is cancelled when ctx is cancelled, or when the volume is removed, so
 // that long-running operations do not delay removing it. The registry is not
-// locked while fn runs, so fn may call other registry methods, but not Del or
-// Update of its own volume, which wait for fn to return.
+// locked while fn runs, so fn may call other registry methods, but Del or
+// Update of its own volume, with the context passed to it, is ErrConflict,
+// as they'd wait for fn to return.
 func (self *Registry) With(ctx context.Context, volume string, fn func(context.Context, gofiler.Filer) error) error {
 	// Find the backend, and record that it is in use
 	e, err := self.use(volume)
@@ -402,8 +418,9 @@ func (self *Registry) With(ctx context.Context, volume string, fn func(context.C
 	}
 	defer e.wg.Done()
 
-	// Cancel the context passed to fn when the volume is removed
-	ctx, cancel := context.WithCancel(ctx)
+	// Cancel the context passed to fn when the volume is removed, and mark
+	// it as using the volume, so it can't remove or update it
+	ctx, cancel := context.WithCancel(context.WithValue(ctx, usingKey{e}, true))
 	defer cancel()
 	stop := context.AfterFunc(e.ctx, cancel)
 	defer stop()
