@@ -296,7 +296,7 @@ func Test_NewTaskFiler(t *testing.T) {
 	// isn't an identifier
 	for _, params := range []url.Values{
 		{"readonly": {"maybe"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}},
-		{"refresh_interval": {"-1s"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
+		{"refresh_interval": {"-1s"}}, {"credential": {"GOOGLE_CLIENT"}}, {"credential": {"S3_SECRET"}}, {"credential": {"not a key"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
 	} {
 		_, err := google.NewTaskFiler(ctx, "tasks", params, nil)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)

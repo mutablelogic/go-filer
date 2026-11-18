@@ -10,8 +10,10 @@ import (
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	credentialclient "github.com/mutablelogic/go-auth/credential/httpclient"
+	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
+	server "github.com/mutablelogic/go-server"
 	oauth2 "golang.org/x/oauth2"
 )
 
@@ -23,7 +25,7 @@ import (
 // unless noBrowser, which redirects to a loopback address, with the code,
 // which the server's credentials API exchanges, as it has the client's
 // secret, and stores
-func signInWithBrowser(ctx context.Context, client *credentialclient.Client, signIn authclient.SignIn, noBrowser bool) error {
+func signInWithBrowser(ctx context.Context, api *credentialclient.Client, signIn authclient.SignIn, noBrowser bool) error {
 	if signIn.Server.Issuer != google.Google.Issuer {
 		return gofiler.ErrNotImplemented.Withf("signing in with %q", signIn.Server.Issuer)
 	}
@@ -53,7 +55,7 @@ func signInWithBrowser(ctx context.Context, client *credentialclient.Client, sig
 	}
 
 	// The server exchanges it, and stores the sign-in
-	response, err := client.SignIn(ctx, authclient.SignInCode{
+	response, err := api.SignIn(ctx, authclient.SignInCode{
 		Credential:   signIn.Credential,
 		Code:         query.Get("code"),
 		CodeVerifier: verifier,
@@ -64,6 +66,23 @@ func signInWithBrowser(ctx context.Context, client *credentialclient.Client, sig
 	}
 	fmt.Fprintln(os.Stderr, "Signed in, as", response.Key)
 	return nil
+}
+
+// newSignInClient returns a client of the server's credentials API, which
+// sends the code of a
+// sign-in, and its verifier: it has the command's tracer, which records
+// the URL, but not the trace to stderr, of --debug or --verbose, which
+// writes the request's body
+func newSignInClient(ctx server.Cmd) (*credentialclient.Client, error) {
+	endpoint, _, err := ctx.ClientEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	var opts []client.ClientOpt
+	if tracer := ctx.Tracer(); tracer != nil {
+		opts = append(opts, client.OptTracer(tracer))
+	}
+	return credentialclient.New(endpoint, opts...)
 }
 
 // openBrowser opens the URL in the person's browser

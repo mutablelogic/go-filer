@@ -47,7 +47,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 
 	// Serve the credentials, so they're stored, such as GOOGLE_CLIENT, with
 	// the filer command's credential-set, and listed, without their values
-	runner.RunServer.Register(credentialhandler.RegisterManagerHandlers(credentials, false, credentialhandler.WithSignIn("GOOGLE_", google.Google, google.ClientCredential)))
+	runner.RunServer.Register(credentialhandler.RegisterManagerHandlers(credentials, false, credentialhandler.WithSignIn(google.SignInPrefix, google.Google, google.ClientCredential)))
 
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
