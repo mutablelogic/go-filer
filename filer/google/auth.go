@@ -26,17 +26,17 @@ type tokens struct {
 // GLOBALS
 
 const (
+	// SignInPrefix is the prefix of the keys of Google's credentials: the
+	// client's, and the sign-ins, which are those other than the client's
+	SignInPrefix = "GOOGLE_"
+
 	// ClientCredential is the key of the credential of the OAuth client, a
 	// desktop app's, which can redirect to a loopback address, as the JSON
 	// of its client_id and client_secret, or the file Google's console
 	// downloads, and DefaultCredential the key of a user's sign-in, a go-auth
 	// Grant, which the credential parameter sets another of
-	ClientCredential  = "GOOGLE_CLIENT"
-	DefaultCredential = "GOOGLE_TOKEN"
-
-	// SignInPrefix is the prefix of the keys of sign-ins, which are those
-	// which start with it, other than ClientCredential
-	SignInPrefix = "GOOGLE_"
+	ClientCredential  = SignInPrefix + "CLIENT"
+	DefaultCredential = SignInPrefix + "TOKEN"
 )
 
 // Google is the authorization server of Google accounts
