@@ -1,6 +1,6 @@
 module github.com/mutablelogic/go-filer
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/alecthomas/kong v1.17.0
@@ -10,6 +10,7 @@ require (
 	github.com/aws/smithy-go v1.28.9
 	github.com/mutablelogic/go-auth v0.0.20
 	github.com/mutablelogic/go-client v1.4.14
+	github.com/mutablelogic/go-metadata v1.1.5-0.20261118184523-8061247579a6
 	github.com/mutablelogic/go-server v1.8.20
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.47.0

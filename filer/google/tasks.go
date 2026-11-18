@@ -28,8 +28,8 @@ import (
 // TYPES
 
 // TaskFiler is a filer of Google Tasks: each task list is a directory, of
-// its id, and each task a file, of its id, in Markdown, with its metadata,
-// such as its due date, as front matter
+// its id, and each task a file, of its id, as an iCalendar of its VTODO,
+// with its metadata, such as its due date
 type TaskFiler struct {
 	taskOpt
 	name        string

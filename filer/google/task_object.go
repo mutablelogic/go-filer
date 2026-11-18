@@ -12,6 +12,7 @@ import (
 	// Packages
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	ical "github.com/mutablelogic/go-metadata/pkg/ical"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -28,8 +29,12 @@ type taskPath struct {
 // GLOBALS
 
 const (
-	// MarkdownType is the content type of a task's file
-	MarkdownType = "text/markdown"
+	// CalendarType is the content type of a task's file, which is an
+	// iCalendar of its VTODO
+	CalendarType = "text/calendar"
+
+	// ProdID is the product which writes a task's iCalendar
+	ProdID = "-//mutablelogic//go-filer//EN"
 
 	// TaskNamespace is the namespace of the metadata of tasks and lists, and
 	// FolderNamespace of directories, whose "children" is whether they have
@@ -42,7 +47,7 @@ const (
 	DCNamespace = "dc"
 
 	// taskExt is the extension of a task's file
-	taskExt = ".md"
+	taskExt = ".ics"
 
 	// dateFormat is the format of a task's due date, which has no time
 	dateFormat = "2006-01-02"
@@ -52,7 +57,7 @@ const (
 // PATHS
 
 // parseTaskPath returns the path of the root, "/", a list, "/<list>", or a
-// task, "/<list>/<task>.md", which isn't a directory, of a path which
+// task, "/<list>/<task>.ics", which isn't a directory, of a path which
 // doesn't end with "/". Returns fs.ErrNotExist of any other path.
 func parseTaskPath(op, p string) (taskPath, error) {
 	rel := strings.Trim(path.Clean("/"+p), "/")
@@ -123,13 +128,13 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.
 	return object
 }
 
-// taskObject returns a task, which is a file, of its Markdown, with its
+// taskObject returns a task, which is a file, of its iCalendar, with its
 // metadata, and its content
 func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.Object, []byte) {
-	content := taskMarkdown(list, task)
+	content := taskCalendar(task)
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: self.name, Path: taskFilePath(list, task.Id)},
-		ObjectMeta: schema.ObjectMeta{ContentType: MarkdownType},
+		ObjectMeta: schema.ObjectMeta{ContentType: CalendarType},
 		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: task.Updated},
 	}
 	if task.ETag != "" {
@@ -144,6 +149,17 @@ func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.O
 		object.Meta = appendMeta(object.Meta, "completed", task.Completed.UTC().Format(time.RFC3339))
 	}
 	object.Meta = appendMeta(object.Meta, "parent", task.Parent)
+
+	// What the iCalendar can't have: whether it's cleared from the list,
+	// and its links, such as to the email it was created from
+	if task.Hidden {
+		object.Meta = append(object.Meta, schema.Meta{Namespace: TaskNamespace, Key: "hidden", Value: json.RawMessage("true")})
+	}
+	if len(task.Links) > 0 {
+		if data, err := json.Marshal(task.Links); err == nil {
+			object.Meta = append(object.Meta, schema.Meta{Namespace: TaskNamespace, Key: "links", Value: data})
+		}
+	}
 	return object, content
 }
 
@@ -157,63 +173,49 @@ func appendMeta(meta []schema.Meta, key, value string) []schema.Meta {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// MARKDOWN
+// ICALENDAR
 
-// taskMarkdown returns a task as Markdown: its metadata as YAML front
-// matter, then its title, as a heading, and its notes. Strings are quoted
-// as JSON, which is YAML.
-func taskMarkdown(list string, task *httpclient.Task) []byte {
-	var buf bytes.Buffer
-	buf.WriteString("---\n")
-	field(&buf, "id", quote(task.Id))
-	field(&buf, "list", quote(list))
-	field(&buf, "status", quote(task.Status))
+// taskCalendar returns a task as an iCalendar, of its VTODO: its id, as its
+// UID, its title, notes, due date, status, when it was completed, its
+// parent, its link, and when it was updated
+func taskCalendar(task *httpclient.Task) []byte {
+	todo := &ical.Event{
+		Kind:        ical.KindTask,
+		UID:         task.Id,
+		Summary:     strings.Join(strings.Fields(task.Title), " "),
+		Description: strings.TrimSpace(task.Notes),
+		Status:      taskStatus(task.Status),
+		Parent:      task.Parent,
+		URL:         task.WebViewLink,
+		Stamp:       task.Updated,
+		Modified:    task.Updated,
+	}
 	if task.Due != nil {
-		field(&buf, "due", task.Due.UTC().Format(dateFormat))
+		// A due date, which Google stores as midnight, in UTC
+		due := task.Due.UTC()
+		todo.Due = ical.Date(due.Year(), due.Month(), due.Day())
 	}
 	if task.Completed != nil {
-		field(&buf, "completed", task.Completed.UTC().Format(time.RFC3339))
+		todo.Completed = task.Completed.UTC()
 	}
-	if !task.Updated.IsZero() {
-		field(&buf, "updated", task.Updated.UTC().Format(time.RFC3339))
+	data, err := (&ical.Calendar{ProdID: ProdID, Events: []*ical.Event{todo}}).MarshalText()
+	if err != nil {
+		return nil
 	}
-	if task.Parent != "" {
-		field(&buf, "parent", quote(task.Parent))
-	}
-	if task.Hidden {
-		field(&buf, "hidden", "true")
-	}
-	if task.WebViewLink != "" {
-		field(&buf, "url", quote(task.WebViewLink))
-	}
-	if len(task.Links) > 0 {
-		buf.WriteString("links:\n")
-		for _, link := range task.Links {
-			buf.WriteString("  - type: " + quote(link.Type) + "\n")
-			if link.Description != "" {
-				buf.WriteString("    description: " + quote(link.Description) + "\n")
-			}
-			buf.WriteString("    link: " + quote(link.Link) + "\n")
-		}
-	}
-	buf.WriteString("---\n")
-
-	// The title, on one line, and the notes
-	if title := strings.Join(strings.Fields(task.Title), " "); title != "" {
-		buf.WriteString("# " + title + "\n")
-	}
-	if notes := strings.TrimSpace(task.Notes); notes != "" {
-		buf.WriteString("\n" + notes + "\n")
-	}
-	return buf.Bytes()
+	return data
 }
 
-// field writes a field of the front matter, unless its value is empty
-func field(buf *bytes.Buffer, key, value string) {
-	if value == "" || value == `""` {
-		return
+// taskStatus returns the VTODO status of a task's, which is needsAction,
+// or completed, or empty, when it's neither
+func taskStatus(status string) string {
+	switch status {
+	case "needsAction":
+		return "NEEDS-ACTION"
+	case "completed":
+		return "COMPLETED"
+	default:
+		return ""
 	}
-	buf.WriteString(key + ": " + value + "\n")
 }
 
 // quote returns a string quoted as JSON, which is a YAML string, without

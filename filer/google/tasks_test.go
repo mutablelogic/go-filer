@@ -24,6 +24,7 @@ import (
 	google "github.com/mutablelogic/go-filer/filer/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	ical "github.com/mutablelogic/go-metadata/pkg/ical"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -333,12 +334,12 @@ func Test_TaskObjects(t *testing.T) {
 		{Namespace: google.FolderNamespace, Key: "children-count", Value: json.RawMessage(`2`)},
 	}, dir.Meta, "with its tasks, which aren't deleted")
 
-	// A task is a file, of Markdown, with its metadata, its entity tag and
+	// A task is a file, of iCalendar, with its metadata, its entity tag and
 	// when it was updated
-	file, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.md"}})
+	file, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}})
 	require.NoError(t, err)
 	assert.False(t, file.IsDir)
-	assert.Equal(t, google.MarkdownType, file.ContentType)
+	assert.Equal(t, google.CalendarType, file.ContentType)
 	assert.Equal(t, "T1-1", *file.ETag)
 	assert.Equal(t, completed, file.ModTime)
 	meta := make(map[string]string)
@@ -350,7 +351,7 @@ func Test_TaskObjects(t *testing.T) {
 	assert.Equal(t, map[string]string{"title": "Buy  milk\n", "status": "needsAction", "due": "2026-11-20"}, meta)
 
 	// Its content, whose size is its file's
-	read, object, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.md"}})
+	read, object, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}})
 	require.NoError(t, err)
 	var content string
 	require.NoError(t, read(ctx, func(r io.Reader) error {
@@ -358,50 +359,65 @@ func Test_TaskObjects(t *testing.T) {
 		content = string(data)
 		return err
 	}))
-	assert.Equal(t, `---
-id: "T1"
-list: "L1"
-status: "needsAction"
-due: 2026-11-20
-updated: 2026-11-18T09:30:00Z
-url: "https://tasks.google.com/task/T1"
----
-# Buy milk
-
-Semi-skimmed, <two> pints.
-`, content)
+	// It's an iCalendar, of a VTODO, with its id, title, on one line, notes,
+	// due date, status, link, and when it was updated
+	assert.True(t, strings.HasPrefix(content, "BEGIN:VCALENDAR\r\n"))
+	for _, line := range []string{"PRODID:" + google.ProdID, "BEGIN:VTODO", "UID:T1", "DUE;VALUE=DATE:20261120", "STATUS:NEEDS-ACTION", "LAST-MODIFIED:20261118T093000Z"} {
+		assert.Contains(t, content, line+"\r\n")
+	}
+	cal, err := ical.Decode(strings.NewReader(content))
+	require.NoError(t, err)
+	require.Len(t, cal.Events, 1)
+	todo := cal.Events[0]
+	assert.Equal(t, ical.KindTask, todo.Kind)
+	assert.Equal(t, "T1", todo.UID)
+	assert.Equal(t, "Buy milk", todo.Summary)
+	assert.Equal(t, "Semi-skimmed, <two> pints.", todo.Description)
+	assert.Equal(t, ical.Date(2026, 11, 20), todo.Due)
+	assert.Equal(t, "NEEDS-ACTION", todo.Status)
+	assert.Equal(t, "https://tasks.google.com/task/T1", todo.URL)
+	assert.True(t, todo.Modified.Equal(completed))
+	assert.True(t, todo.Completed.IsZero())
+	assert.Empty(t, todo.Parent)
 	assert.Equal(t, int64(len(content)), *object.Size)
 
 	// Of a completed subtask, with links
-	read, _, err = filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T2.md"}})
+	read, _, err = filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T2.ics"}})
 	require.NoError(t, err)
 	require.NoError(t, read(ctx, func(r io.Reader) error {
 		data, err := io.ReadAll(r)
 		content = string(data)
 		return err
 	}))
-	assert.Equal(t, `---
-id: "T2"
-list: "L1"
-status: "completed"
-completed: 2026-11-18T09:30:00Z
-parent: "T1"
-hidden: true
-links:
-  - type: "email"
-    description: "From Sam"
-    link: "https://mail.google.com/x"
----
-# Bread
-`, content)
+	cal, err = ical.Decode(strings.NewReader(content))
+	require.NoError(t, err)
+	require.Len(t, cal.Events, 1)
+	todo = cal.Events[0]
+	assert.Equal(t, "Bread", todo.Summary)
+	assert.Equal(t, "COMPLETED", todo.Status)
+	assert.True(t, todo.Completed.Equal(completed))
+	assert.Equal(t, "T1", todo.Parent)
+	assert.True(t, todo.Due.IsZero() && todo.Start.IsZero(), "it isn't due")
+
+	// What an iCalendar can't have is its metadata: it's hidden, and its
+	// links
+	file, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T2.ics"}})
+	require.NoError(t, err)
+	extra := make(map[string]string)
+	for _, m := range file.Meta {
+		if m.Key == "hidden" || m.Key == "links" {
+			extra[m.Key] = string(m.Value)
+		}
+	}
+	assert.Equal(t, map[string]string{"hidden": "true", "links": `[{"type":"email","description":"From Sam","link":"https://mail.google.com/x"}]`}, extra)
 
 	// Not modified, of its entity tag
-	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.md"}, IfNoneMatch: []string{"T1-1"}})
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}, IfNoneMatch: []string{"T1-1"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotModified)
 
 	// What doesn't exist: a list, a task, a deleted task, a task as a
 	// directory, a file which isn't Markdown, and a deeper path
-	for _, path := range []string{"/L9", "/L1/T9.md", "/L1/T3.md", "/L1/T1.md/", "/L1/T1.txt", "/L1/T1/x.md", "/L1/.md"} {
+	for _, path := range []string{"/L9", "/L1/T9.ics", "/L1/T3.ics", "/L1/T1.ics/", "/L1/T1.txt", "/L1/T1/x.ics", "/L1/.ics"} {
 		_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
 		assert.ErrorIs(t, err, fs.ErrNotExist, path)
 	}
@@ -411,12 +427,12 @@ links:
 	assert.ErrorIs(t, err, fs.ErrInvalid)
 
 	// A read-only volume can't be written, and one which isn't can't yet
-	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T4.md"}})
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T4.ics"}})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
-	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.md"}})
+	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 	writable := newFiler(t, endpoint, url.Values{"readonly": {"false"}})
-	_, err = writable.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T4.md"}})
+	_, err = writable.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T4.ics"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 }
 
@@ -433,7 +449,7 @@ func Test_TaskList(t *testing.T) {
 	// The lists, and, recursively, each followed by its tasks, in the order
 	// of their paths
 	assert.Equal(t, []string{"/L1", "/L2"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
-	assert.Equal(t, []string{"/L1", "/L1/A.md", "/L1/B.md", "/L2", "/L2/X.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	assert.Equal(t, []string{"/L1", "/L1/A.ics", "/L1/B.ics", "/L2", "/L2/X.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
 
 	// Each list's directory has the count of its tasks, which aren't
 	// deleted, and whether it has any
@@ -464,17 +480,17 @@ func Test_TaskList(t *testing.T) {
 	fake.Unlock()
 
 	// A list's tasks, and only a task
-	assert.Equal(t, []string{"/L1/A.md", "/L1/B.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/"}}))
-	assert.Equal(t, []string{"/L2/X.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2/X.md"}}))
+	assert.Equal(t, []string{"/L1/A.ics", "/L1/B.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/"}}))
+	assert.Equal(t, []string{"/L2/X.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2/X.ics"}}))
 
 	// After a path: within a list, after a list's directory, and after a
 	// list's tasks, which aren't read
-	assert.Equal(t, []string{"/L1/B.md", "/L2", "/L2/X.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "/L1/A.md"}))
-	assert.Equal(t, []string{"/L1/A.md", "/L1/B.md", "/L2", "/L2/X.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "/L1/"}))
+	assert.Equal(t, []string{"/L1/B.ics", "/L2", "/L2/X.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "/L1/A.ics"}))
+	assert.Equal(t, []string{"/L1/A.ics", "/L1/B.ics", "/L2", "/L2/X.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "/L1/"}))
 	fake.Lock()
 	before := fake.requests
 	fake.Unlock()
-	assert.Equal(t, []string{"/L2/X.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "/L2/"}))
+	assert.Equal(t, []string{"/L2/X.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "/L2/"}))
 	fake.Lock()
 	assert.Equal(t, before+2, fake.requests, "the lists, and L2's tasks, but not L1's")
 	fake.Unlock()
@@ -495,7 +511,7 @@ func Test_TaskListPages(t *testing.T) {
 	for i := range 250 {
 		id := fmt.Sprintf("T%03d", i)
 		fake.addTask("L1", httpclient.Task{Id: id})
-		want = append(want, "/L1/"+id+".md")
+		want = append(want, "/L1/"+id+".ics")
 	}
 	filer := newFiler(t, endpoint, nil)
 	assert.Equal(t, want, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1"}}))
@@ -540,7 +556,7 @@ func Test_TaskWatch(t *testing.T) {
 			t.Fatalf("waiting for events, got %v", got)
 		}
 	}
-	assert.Equal(t, []string{"deleted /L1/B.md", "updated /L1/A.md", "created /L1/C.md", "created /L2", "created /L2/X.md"}, got)
+	assert.Equal(t, []string{"deleted /L1/B.ics", "updated /L1/A.ics", "created /L1/C.ics", "created /L2", "created /L2/X.ics"}, got)
 
 	// A list which is deleted is the deletion of its tasks, then it
 	fake.Lock()
@@ -555,7 +571,7 @@ func Test_TaskWatch(t *testing.T) {
 			t.Fatalf("waiting for events, got %v", got)
 		}
 	}
-	assert.Equal(t, []string{"deleted /L2/X.md", "deleted /L2"}, got)
+	assert.Equal(t, []string{"deleted /L2/X.ics", "deleted /L2"}, got)
 
 	// A task which is added to a list updates its directory too, as the
 	// count of its tasks changes
@@ -571,7 +587,7 @@ func Test_TaskWatch(t *testing.T) {
 			t.Fatalf("waiting for events, got %v", got)
 		}
 	}
-	assert.Equal(t, []string{"updated /L1", "created /L1/D.md"}, got)
+	assert.Equal(t, []string{"updated /L1", "created /L1/D.ics"}, got)
 
 	// Until it's cancelled
 	cancel()
@@ -585,7 +601,7 @@ func Test_TaskWatch(t *testing.T) {
 func Test_TaskListOrder(t *testing.T) {
 	fake, endpoint := newFake(t)
 
-	// Ids whose order changes once a "/", or ".md", follows them, which are
+	// Ids whose order changes once a "/", or ".ics", follows them, which are
 	// listed in the order of their paths, so a page, of one object, which
 	// starts after the last, misses none
 	fake.addList("A", "")
@@ -593,7 +609,7 @@ func Test_TaskListOrder(t *testing.T) {
 	fake.addTask("A", httpclient.Task{Id: "T"})
 	fake.addTask("A", httpclient.Task{Id: "T-"})
 	filer := newFiler(t, endpoint, nil)
-	want := []string{"/A-", "/A", "/A/T-.md", "/A/T.md"}
+	want := []string{"/A-", "/A", "/A/T-.ics", "/A/T.ics"}
 	assert.Equal(t, want, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
 	var paged []string
 	after := ""
@@ -628,7 +644,7 @@ func Test_TaskReadCancelled(t *testing.T) {
 	fake.addList("L1", "")
 	fake.addTask("L1", httpclient.Task{Id: "T1", Title: "A task", Notes: strings.Repeat("notes ", 100)})
 	filer := newFiler(t, endpoint, nil)
-	read, _, err := filer.ReadObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.md"}})
+	read, _, err := filer.ReadObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}})
 	require.NoError(t, err)
 
 	// It can seek, so it's read in ranges, until the context is cancelled,

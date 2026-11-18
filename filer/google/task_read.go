@@ -56,7 +56,7 @@ func (self *TaskFiler) GetObject(ctx context.Context, req schema.GetObjectReques
 	return object, nil
 }
 
-// ReadObject returns the function which reads a task's Markdown, and the
+// ReadObject returns the function which reads a task's iCalendar, and the
 // task. A list, or the root, can't be read, which is fs.ErrInvalid.
 func (self *TaskFiler) ReadObject(ctx context.Context, req schema.GetObjectRequest) (gofiler.ReadObjectFunc, *schema.Object, error) {
 	object, content, err := self.stat(ctx, "read", req.Path)
