@@ -33,7 +33,9 @@ type taskIterator struct {
 // it's reached
 type listItem struct {
 	object *schema.Object
-	list   string
+	list   string               // The list whose tasks are read
+	dir    *httpclient.TaskList // The list's directory, which is returned, with the count of its tasks, or nil
+	tasks  bool                 // The list's tasks are returned
 }
 
 var _ schema.ListObjectsIterator = (*taskIterator)(nil)
@@ -98,7 +100,9 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		} else if _, err := self.client.TaskList(ctx, p.list); err != nil {
 			return nil, apiError("list", req.Path, err)
 		}
-		iter.pending = append(iter.pending, listItem{list: p.list})
+		if !iter.before(p.list) {
+			iter.pending = append(iter.pending, listItem{list: p.list, tasks: true})
+		}
 	default:
 		// The lists, each followed by its tasks, when it's recursive
 		lists, err := self.client.TaskLists(ctx)
@@ -110,13 +114,19 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		slices.SortFunc(lists, func(a, b httpclient.TaskList) int {
 			return strings.Compare(listPath(a.Id)+"/", listPath(b.Id)+"/")
 		})
+		// Each list's tasks are read, when it's reached, for the count of
+		// them, of its directory, and its tasks, when it's recursive, unless
+		// they all sort before where the listing starts
 		for i := range lists {
 			if !validId(lists[i].Id) {
 				continue
 			}
-			iter.add(self.listObject(&lists[i]))
-			if req.Recursive {
-				iter.pending = append(iter.pending, listItem{list: lists[i].Id})
+			item := listItem{list: lists[i].Id, tasks: req.Recursive && !iter.before(lists[i].Id)}
+			if listPath(lists[i].Id)+"/" > iter.after {
+				item.dir = &lists[i]
+			}
+			if item.dir != nil || item.tasks {
+				iter.pending = append(iter.pending, item)
 			}
 		}
 	}
@@ -141,7 +151,7 @@ func (self *taskIterator) Next(ctx context.Context) (*schema.Object, error) {
 			return item.object, nil
 		}
 		// Read the list's tasks, which are returned next
-		if err := self.readList(ctx, item.list); err != nil {
+		if err := self.readList(ctx, item); err != nil {
 			return nil, err
 		}
 	}
@@ -170,11 +180,17 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 	case !validId(path.list) || (path.task != "" && !validId(path.task)):
 		return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	case path.task == "":
+		// A list, with the count of its tasks, which are read, as the API
+		// doesn't count them
 		list, err := self.client.TaskList(ctx, path.list)
 		if err != nil {
 			return nil, nil, apiError(op, p, err)
 		}
-		return self.listObject(list), nil, nil
+		tasks, err := self.client.Tasks(ctx, path.list)
+		if err != nil {
+			return nil, nil, apiError(op, p, err)
+		}
+		return self.listObject(list, tasks), nil, nil
 	default:
 		task, err := self.client.Task(ctx, path.list, path.task)
 		if err != nil {
@@ -190,10 +206,8 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 // readList reads the tasks of a list, in the order of their ids, to be
 // returned next, unless they all sort before where the listing starts,
 // which must be locked
-func (self *taskIterator) readList(ctx context.Context, list string) error {
-	if prefix := listPath(list) + "/"; self.after > prefix && !strings.HasPrefix(self.after, prefix) {
-		return nil
-	}
+func (self *taskIterator) readList(ctx context.Context, item listItem) error {
+	list := item.list
 	tasks, err := self.client.Tasks(ctx, list)
 	if err != nil {
 		return apiError("list", listPath(list), err)
@@ -204,8 +218,11 @@ func (self *taskIterator) readList(ctx context.Context, list string) error {
 		return strings.Compare(taskFilePath(list, a.Id), taskFilePath(list, b.Id))
 	})
 	var items []listItem
+	if item.dir != nil {
+		items = append(items, listItem{object: self.listObject(item.dir, tasks)})
+	}
 	for i := range tasks {
-		if !tasks[i].Deleted && validId(tasks[i].Id) {
+		if item.tasks && !tasks[i].Deleted && validId(tasks[i].Id) {
 			if object, _ := self.taskObject(list, &tasks[i]); sortKey(object) > self.after {
 				items = append(items, listItem{object: object})
 			}
@@ -213,6 +230,25 @@ func (self *taskIterator) readList(ctx context.Context, list string) error {
 	}
 	self.pending = append(items, self.pending...)
 	return nil
+}
+
+// before returns true when the list's tasks all sort before where the
+// listing starts, so they aren't read
+func (self *taskIterator) before(list string) bool {
+	prefix := listPath(list) + "/"
+	return self.after > prefix && !strings.HasPrefix(self.after, prefix)
+}
+
+// countTasks returns how many of the tasks are listed, which are those which
+// aren't deleted
+func countTasks(tasks []httpclient.Task) int {
+	var count int
+	for i := range tasks {
+		if !tasks[i].Deleted && validId(tasks[i].Id) {
+			count++
+		}
+	}
+	return count
 }
 
 // add adds an object, unless it sorts at, or before, where the listing
