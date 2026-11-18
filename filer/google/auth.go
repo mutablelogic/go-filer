@@ -11,6 +11,7 @@ import (
 	grant "github.com/mutablelogic/go-auth/credential/grant"
 	gofiler "github.com/mutablelogic/go-filer"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	oauth2 "golang.org/x/oauth2"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -42,6 +43,15 @@ var Google = authclient.ServerMetadata{
 	AuthorizationEndpoint:         "https://accounts.google.com/o/oauth2/v2/auth",
 	TokenEndpoint:                 "https://oauth2.googleapis.com/token",
 	CodeChallengeMethodsSupported: []string{"S256"},
+}
+
+// SignInOptions are the options of the URL to sign in with Google at: it
+// asks for offline access, and consent, so Google issues a refresh token,
+// and includes the scopes the person has granted already
+var SignInOptions = []oauth2.AuthCodeOption{
+	oauth2.AccessTypeOffline,
+	oauth2.SetAuthURLParam("prompt", "consent"),
+	oauth2.SetAuthURLParam("include_granted_scopes", "true"),
 }
 
 ////////////////////////////////////////////////////////////////////////////////
