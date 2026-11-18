@@ -281,9 +281,9 @@ func Test_VolumeCreateGTasksCmd(t *testing.T) {
 	u, err := volume("tasks")
 	require.NoError(t, err)
 	assert.Equal(t, "gtasks://tasks", u)
-	u, err = volume("work", "--writable", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m")
+	u, err = volume("work", "--writable", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "--hidden")
 	require.NoError(t, err)
-	assert.Equal(t, "gtasks://work?credential=GOOGLE_WORK&quota=60&readonly=false&refresh_interval=5m0s", u)
+	assert.Equal(t, "gtasks://work?credential=GOOGLE_WORK&hidden=true&quota=60&readonly=false&refresh_interval=5m0s", u)
 
 	// A name which isn't an identifier, or a credential which isn't a key
 	_, err = volume("not-a-name!")

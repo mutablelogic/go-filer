@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,9 +42,12 @@ type fakeTasks struct {
 	lists     []httpclient.TaskList
 	tasks     map[string][]httpclient.Task // By their lists' ids
 	requests  int
-	refreshes int          // Of the requests to the token endpoint
-	queries   []url.Values // Of the requests for tasks
-	deletes   []string     // The paths which are deleted
+	refreshes int                          // Of the requests to the token endpoint
+	queries   []url.Values                 // Of the requests for tasks
+	deletes   []string                     // The paths which are deleted
+	writes    []string                     // The methods, and paths, which are written
+	failMove  bool                         // Moving a task fails, as Google can
+	fields    []map[string]json.RawMessage // The fields which are written
 }
 
 const (
@@ -146,8 +150,21 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if r.Method == http.MethodDelete {
+
+	// An id which isn't base64url, as Google's are, is a bad request, as
+	// Google says it's an invalid id, rather than that it isn't found
+	for _, part := range parts {
+		if strings.ContainsAny(part, "~.!*") {
+			writeError(w, http.StatusBadRequest)
+			return
+		}
+	}
+	switch r.Method {
+	case http.MethodDelete:
 		f.delete(w, parts)
+		return
+	case http.MethodPost, http.MethodPatch:
+		f.write(w, r, parts)
 		return
 	}
 	switch {
@@ -213,6 +230,92 @@ func (f *fakeTasks) delete(w http.ResponseWriter, parts []string) {
 		}
 	}
 	writeError(w, http.StatusNotFound)
+}
+
+// written is when the fake writes a task, which is its update time, and, of
+// a task which is completed without a time, its completion
+var written = time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC)
+
+// write inserts a task, beneath its parent, with an id, or patches a task's
+// fields, where null clears one, or moves a task beneath its parent, as
+// Google does, and returns it. A parent which isn't a task of the list is
+// a bad request.
+func (f *fakeTasks) write(w http.ResponseWriter, r *http.Request, parts []string) {
+	f.writes = append(f.writes, r.Method+" /"+strings.Join(parts, "/"))
+	if len(parts) < 3 || parts[0] != "lists" || parts[2] != "tasks" || f.list(parts[1]) == nil {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	list := parts[1]
+	find := func(id string) *httpclient.Task {
+		for i := range f.tasks[list] {
+			if task := &f.tasks[list][i]; task.Id == id && !task.Deleted {
+				return task
+			}
+		}
+		return nil
+	}
+	parent := r.URL.Query().Get("parent")
+	if parent != "" && find(parent) == nil {
+		writeError(w, http.StatusBadRequest)
+		return
+	}
+	var task *httpclient.Task
+	switch {
+	case r.Method == http.MethodPost && len(parts) == 3:
+		f.tasks[list] = append(f.tasks[list], httpclient.Task{Id: "N" + strconv.Itoa(len(f.tasks[list])+1), Parent: parent})
+		task = &f.tasks[list][len(f.tasks[list])-1]
+	case r.Method == http.MethodPatch && len(parts) == 4:
+		if task = find(parts[3]); task == nil {
+			writeError(w, http.StatusNotFound)
+			return
+		}
+	case r.Method == http.MethodPost && len(parts) == 5 && parts[4] == "move":
+		if f.failMove {
+			writeError(w, http.StatusServiceUnavailable)
+			return
+		} else if task = find(parts[3]); task == nil {
+			writeError(w, http.StatusNotFound)
+			return
+		}
+		task.Parent = parent
+		task.ETag = task.Id + "-" + strconv.Itoa(len(f.writes))
+		writeJSON(w, task)
+		return
+	default:
+		writeError(w, http.StatusNotFound)
+		return
+	}
+
+	// The fields, where null clears one
+	var fields map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
+		writeError(w, http.StatusBadRequest)
+		return
+	}
+	f.fields = append(f.fields, fields)
+	str := func(key string, value *string) {
+		if raw, exists := fields[key]; exists {
+			*value = ""
+			_ = json.Unmarshal(raw, value)
+		}
+	}
+	at := func(key string, value **time.Time) {
+		if raw, exists := fields[key]; exists {
+			*value = nil
+			_ = json.Unmarshal(raw, value)
+		}
+	}
+	str("title", &task.Title)
+	str("notes", &task.Notes)
+	str("status", &task.Status)
+	at("due", &task.Due)
+	at("completed", &task.Completed)
+	if task.Status == "completed" && task.Completed == nil {
+		task.Completed = &written
+	}
+	task.Updated, task.ETag = written, task.Id+"-"+strconv.Itoa(len(f.writes))
+	writeJSON(w, task)
 }
 
 func (f *fakeTasks) list(id string) *httpclient.TaskList {
@@ -338,7 +441,7 @@ func Test_NewTaskFiler(t *testing.T) {
 	// isn't an identifier
 	for _, params := range []url.Values{
 		{"readonly": {"maybe"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}},
-		{"refresh_interval": {"-1s"}}, {"credential": {"GOOGLE_CLIENT"}}, {"credential": {"S3_SECRET"}}, {"credential": {"not a key"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
+		{"refresh_interval": {"-1s"}}, {"hidden": {"maybe"}}, {"credential": {"GOOGLE_CLIENT"}}, {"credential": {"S3_SECRET"}}, {"credential": {"not a key"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
 	} {
 		_, err := google.NewTaskFiler(ctx, "tasks", params, nil)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
@@ -358,7 +461,7 @@ func Test_TaskObjects(t *testing.T) {
 	fake.addTask("L1", httpclient.Task{Id: "T1", Title: "Buy  milk\n", Notes: "Semi-skimmed, <two> pints.", Status: "needsAction", Due: &due, Updated: completed, WebViewLink: "https://tasks.google.com/task/T1"})
 	fake.addTask("L1", httpclient.Task{Id: "T2", Title: "Bread", Status: "completed", Completed: &completed, Hidden: true, Parent: "T1", Links: []httpclient.TaskLink{{Type: "email", Description: "From Sam", Link: "https://mail.google.com/x"}}})
 	fake.addTask("L1", httpclient.Task{Id: "T3", Title: "Gone", Deleted: true})
-	filer := newFiler(t, endpoint, nil)
+	filer := newFiler(t, endpoint, url.Values{"hidden": {"true"}})
 
 	// The root, and a list, are directories, with its title
 	root, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
@@ -474,7 +577,7 @@ func Test_TaskObjects(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 	writable := newFiler(t, endpoint, url.Values{"readonly": {"false"}})
 	_, err = writable.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T4.ics"}})
-	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter, "without an iCalendar")
 }
 
 func Test_TaskList(t *testing.T) {
@@ -995,5 +1098,316 @@ func Test_TaskWatchDeleted(t *testing.T) {
 	case event := <-events:
 		t.Fatalf("unexpected %s %s", event.EventType.String(), event.Path)
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// vtodo returns an iCalendar of a VTODO, of its properties
+func vtodo(lines ...string) io.Reader {
+	return strings.NewReader("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\n" + strings.Join(lines, "\r\n") + "\r\nEND:VTODO\r\nEND:VCALENDAR\r\n")
+}
+
+func Test_TaskWrite(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	due := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Shopping", Notes: "Milk", Status: "needsAction", Due: &due, Links: []httpclient.TaskLink{{Type: "email", Link: "https://mail.google.com/x"}}})
+	fake.addTask("L1", httpclient.Task{Id: "C", Title: "Errands", Status: "needsAction"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}})
+	write := func(path string, body io.Reader) (*schema.Object, error) {
+		return filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: path}, Body: body, ObjectMeta: schema.ObjectMeta{ContentType: ical.TaskType}})
+	}
+	task := func(id string) httpclient.Task {
+		fake.Lock()
+		defer fake.Unlock()
+		for _, task := range fake.tasks["L1"] {
+			if task.Id == id {
+				return task
+			}
+		}
+		t.Fatalf("no task %q", id)
+		return httpclient.Task{}
+	}
+
+	// The PUT handler gets ~new.ics first, to know whether it's created,
+	// which isn't found, as it can't be an id of Google's, rather than
+	// asked for, which Google refuses as a bad request
+	_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/~new.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	for _, path := range []string{"/L1/~other.ics", "/L~1/A.ics", "/L~1"} {
+		_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		assert.ErrorIs(t, err, fs.ErrNotExist, path)
+		_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: path}, Recursive: true})
+		assert.ErrorIs(t, err, fs.ErrNotExist, path)
+		_, err = write(path, vtodo("SUMMARY:x"))
+		assert.Error(t, err, path)
+	}
+	_, err = write("/L1/~other.ics", vtodo("SUMMARY:x"))
+	assert.ErrorIs(t, err, fs.ErrNotExist, "only ~new creates a task")
+
+	// Writing ~new.ics creates a task, which is at the path of its id, with
+	// its fields, and a due date, which is its day
+	object, err := write("/L1/~new.ics", vtodo("SUMMARY:Buy eggs", "DESCRIPTION:A dozen", "DUE;TZID=Europe/Berlin:20261121T230000"))
+	require.NoError(t, err)
+	assert.Equal(t, "/L1/N3.ics", object.Path)
+	assert.Equal(t, ical.TaskType, object.ContentType)
+	created := task("N3")
+	assert.Equal(t, "Buy eggs", created.Title)
+	assert.Equal(t, "A dozen", created.Notes)
+	assert.Equal(t, "needsAction", created.Status)
+	require.NotNil(t, created.Due)
+	assert.Equal(t, time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC), created.Due.UTC(), "the day it's due, where it's due")
+	assert.Contains(t, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/"}}), "/L1/N3.ics")
+
+	// Beneath its parent
+	object, err = write("/L1/~new.ics", vtodo("SUMMARY:Bread", "RELATED-TO:A"))
+	require.NoError(t, err)
+	assert.Equal(t, "A", task(strings.TrimSuffix(path.Base(object.Path), ".ics")).Parent)
+
+	// Writing a task's path replaces the fields a VTODO has, clearing those
+	// it doesn't have, such as its notes and due date, and keeps the
+	// others, such as its links, and it's completed, when it's completed
+	object, err = write("/L1/A.ics", vtodo("UID:A", "SUMMARY:Shopping, done", "STATUS:COMPLETED"))
+	require.NoError(t, err)
+	assert.Equal(t, "/L1/A.ics", object.Path)
+	updated := task("A")
+	assert.Equal(t, "Shopping, done", updated.Title)
+	assert.Empty(t, updated.Notes)
+	assert.Nil(t, updated.Due)
+	assert.Equal(t, "completed", updated.Status)
+	require.NotNil(t, updated.Completed)
+	assert.Len(t, updated.Links, 1, "its links are kept")
+	fake.Lock()
+	assert.Equal(t, json.RawMessage("null"), fake.fields[len(fake.fields)-1]["due"], "a due date it doesn't have is cleared")
+	fake.Unlock()
+
+	// It's opened again, which clears when it was completed, and moved
+	// beneath another task, and back to the top
+	_, err = write("/L1/A.ics", vtodo("SUMMARY:Shopping", "STATUS:NEEDS-ACTION", "RELATED-TO:C"))
+	require.NoError(t, err)
+	updated = task("A")
+	assert.Equal(t, "needsAction", updated.Status)
+	assert.Nil(t, updated.Completed)
+	assert.Equal(t, "C", updated.Parent)
+	_, err = write("/L1/A.ics", vtodo("SUMMARY:Shopping"))
+	require.NoError(t, err)
+	assert.Empty(t, task("A").Parent)
+	fake.Lock()
+	assert.Contains(t, fake.writes, "POST /lists/L1/tasks/A/move", "a parent which changes moves it")
+	fake.Unlock()
+
+	// Errors
+	for name, test := range map[string]struct {
+		path string
+		body io.Reader
+		want error
+	}{
+		"NotATask":     {"/L1/Z.ics", vtodo("SUMMARY:x"), fs.ErrNotExist},
+		"AList":        {"/L1", vtodo("SUMMARY:x"), gofiler.ErrBadParameter},
+		"OtherUID":     {"/L1/A.ics", vtodo("UID:C", "SUMMARY:x"), gofiler.ErrBadParameter},
+		"Cancelled":    {"/L1/A.ics", vtodo("SUMMARY:x", "STATUS:CANCELLED"), gofiler.ErrBadParameter},
+		"NoParent":     {"/L1/~new.ics", vtodo("SUMMARY:x", "RELATED-TO:Z"), gofiler.ErrBadParameter},
+		"Event":        {"/L1/~new.ics", strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20261121T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"), gofiler.ErrBadParameter},
+		"TwoTasks":     {"/L1/~new.ics", strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nEND:VTODO\r\nBEGIN:VTODO\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"), gofiler.ErrBadParameter},
+		"NotICalendar": {"/L1/~new.ics", strings.NewReader("not a calendar"), gofiler.ErrBadParameter},
+		"NoList":       {"/L9/~new.ics", vtodo("SUMMARY:x"), fs.ErrNotExist},
+	} {
+		_, err := write(test.path, test.body)
+		assert.ErrorIs(t, err, test.want, name)
+	}
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/~new.ics"}, Body: vtodo("SUMMARY:x"), ObjectMeta: schema.ObjectMeta{ContentType: "text/plain"}})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter, "another content type")
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}, Body: vtodo("SUMMARY:x"), IfNotExists: true})
+	assert.ErrorIs(t, err, gofiler.ErrConflict)
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/~new.ics"}, Body: vtodo("SUMMARY:x"), IfExists: true})
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/Z.ics"}, Body: vtodo("SUMMARY:x"), IfExists: true})
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed, "a task which doesn't exist, which must")
+
+	// A binary upload is a task, as its content is
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/C.ics"}, Body: vtodo("SUMMARY:Errands"), ObjectMeta: schema.ObjectMeta{ContentType: "application/octet-stream"}})
+	assert.NoError(t, err)
+
+	// What isn't valid doesn't change the task: a parent which isn't a task
+	// of the list, a date which isn't one, which would clear its due date,
+	// or an event, which isn't decoded, as it has no start
+	before := task("C")
+	fake.Lock()
+	writes := len(fake.writes)
+	fake.Unlock()
+	for name, body := range map[string]io.Reader{
+		"Parent":    vtodo("SUMMARY:Changed", "RELATED-TO:Z"),
+		"Itself":    vtodo("SUMMARY:Changed", "RELATED-TO:C"),
+		"Due":       vtodo("SUMMARY:Changed", "DUE;VALUE=DATE:20260230"),
+		"Completed": vtodo("SUMMARY:Changed", "STATUS:COMPLETED", "COMPLETED:yesterday"),
+		"Event":     strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:No start\r\nEND:VEVENT\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"),
+		"Unclosed":  strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nEND:VCALENDAR\r\n"),
+		"Nested":    strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nBEGIN:VTODO\r\nSUMMARY:Inner\r\nEND:VTODO\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"),
+	} {
+		_, err := write("/L1/C.ics", body)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, name)
+	}
+	assert.Equal(t, before, task("C"), "it isn't changed")
+	fake.Lock()
+	assert.Len(t, fake.writes, writes, "nothing is written")
+	fake.Unlock()
+
+	// Its zones, and its alarms, which a task can have, are fine
+	_, err = write("/L1/C.ics", strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/Berlin\r\nBEGIN:STANDARD\r\nDTSTART:19701025T030000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VTODO\r\nSUMMARY:Errands\r\nDUE;TZID=Europe/Berlin:20261121T090000\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"))
+	assert.NoError(t, err)
+}
+
+func Test_TaskWriteWatched(t *testing.T) {
+	// What the filer creates, or updates, is sent to its watches as it's
+	// written, without waiting to refresh
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Shopping"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	ctx, cancel := context.WithCancel(t.Context())
+	events, done := make(chan schema.Event, 16), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(ctx, events) }()
+	t.Cleanup(func() { cancel(); <-done })
+	next := func() string {
+		t.Helper()
+		select {
+		case event := <-events:
+			return event.EventType.String() + " " + event.Path
+		case <-time.After(5 * time.Second):
+			t.Fatal("no event")
+			return ""
+		}
+	}
+	require.Equal(t, "rescan /", next())
+	_, err := filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/~new.ics"}, Body: vtodo("SUMMARY:New")})
+	require.NoError(t, err)
+	assert.Equal(t, "created /L1/N2.ics", next())
+	_, err = filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}, Body: vtodo("SUMMARY:Shopping, again")})
+	require.NoError(t, err)
+	assert.Equal(t, "updated /L1/A.ics", next())
+
+	// A task whose fields are changed, but which can't be moved, is an error,
+	// though the watches are sent its change
+	fake.Lock()
+	fake.failMove = true
+	fake.Unlock()
+	_, err = filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}, Body: vtodo("SUMMARY:Moved", "RELATED-TO:N2")})
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Contains(t, err.Error(), "isn't moved")
+	assert.Equal(t, "updated /L1/A.ics", next())
+}
+
+func Test_TaskHidden(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Shopping")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Milk", Status: "needsAction"})
+	fake.addTask("L1", httpclient.Task{Id: "B", Title: "Bread", Status: "completed", Hidden: true})
+	count := func(filer *google.TaskFiler) string {
+		t.Helper()
+		dir, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1"}})
+		require.NoError(t, err)
+		for _, m := range dir.Meta {
+			if m.Key == "children-count" {
+				return string(m.Value)
+			}
+		}
+		return ""
+	}
+
+	// A task which is hidden, as it's completed, and cleared from its list,
+	// isn't listed, counted, found, or written, by default
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}})
+	assert.Equal(t, []string{"/L1", "/L1/A.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	assert.Equal(t, "1", count(filer))
+	_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}, Body: vtodo("SUMMARY:Bread")})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	assert.NotContains(t, filer.URL().RawQuery, "hidden", "it's the default")
+
+	// With hidden=true, it is, and the parameter is the volume's
+	filer = newFiler(t, endpoint, url.Values{"hidden": {"true"}})
+	assert.Equal(t, []string{"/L1", "/L1/A.ics", "/L1/B.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	assert.Equal(t, "2", count(filer))
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
+	assert.NoError(t, err)
+	assert.Equal(t, "true", filer.URL().Query().Get("hidden"))
+
+	// A task which is cleared, while it's watched, is deleted, as it isn't
+	// listed any more
+	filer = newFiler(t, endpoint, url.Values{"refresh_interval": {"20ms"}})
+	watchCtx, cancel := context.WithCancel(ctx)
+	events, done := make(chan schema.Event, 16), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(watchCtx, events) }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case event := <-events:
+		require.Equal(t, schema.Rescan("tasks"), event)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no rescan")
+	}
+	fake.Lock()
+	fake.tasks["L1"][0].Status, fake.tasks["L1"][0].Hidden, fake.tasks["L1"][0].ETag = "completed", true, "A-2"
+	fake.Unlock()
+	var got []string
+	for len(got) < 2 {
+		select {
+		case event := <-events:
+			got = append(got, event.EventType.String()+" "+event.Path)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("waiting for events, got %v", got)
+		}
+	}
+	assert.Equal(t, []string{"deleted /L1/A.ics", "updated /L1"}, got)
+}
+
+func Test_TaskWriteConcurrent(t *testing.T) {
+	// Writes of a task, at once, are told to a watch in the order Google
+	// made them, so its last change is the task's
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Shopping"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	ctx, cancel := context.WithCancel(t.Context())
+	events, done := make(chan schema.Event, 64), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(ctx, events) }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case <-events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no rescan")
+	}
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}, Body: vtodo("SUMMARY:Shopping " + strconv.Itoa(i))})
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	// The filer's object is the one the watch was told of last, which is
+	// the task's entity tag
+	object, err := filer.GetObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	fake.Lock()
+	etag := ""
+	for _, task := range fake.tasks["L1"] {
+		if task.Id == "A" {
+			etag = task.ETag
+		}
+	}
+	fake.Unlock()
+	assert.Equal(t, etag, *object.ETag)
+	select {
+	case event := <-events:
+		assert.Equal(t, "updated /L1/A.ics", event.EventType.String()+" "+event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no update")
 	}
 }

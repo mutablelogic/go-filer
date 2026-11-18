@@ -93,10 +93,11 @@ type VolumeCreateS3Cmd struct {
 
 type VolumeCreateGTasksCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Writable        bool           `name:"writable" help:"Tasks can be created, updated and deleted, which needs Google's tasks scope, rather than tasks.readonly. Writing them isn't implemented yet."`
+	Writable        bool           `name:"writable" help:"Tasks can be created, updated and deleted, which needs Google's tasks scope, rather than tasks.readonly."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
+	Hidden          bool           `name:"hidden" help:"Include tasks which are hidden, as they're completed, and cleared from their list, which aren't, unless it's set."`
 	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
 }
 
@@ -510,6 +511,9 @@ func (cmd *VolumeCreateGTasksCmd) volume() (schema.Volume, error) {
 	}
 	if cmd.RefreshInterval != nil {
 		query.Set("refresh_interval", cmd.RefreshInterval.String())
+	}
+	if cmd.Hidden {
+		query.Set("hidden", "true")
 	}
 	u := url.URL{Scheme: google.TasksScheme, Host: cmd.Name, RawQuery: query.Encode()}
 	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil

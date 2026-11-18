@@ -26,10 +26,14 @@ func (self *TaskFiler) DeleteObjects(ctx context.Context, req schema.DeleteObjec
 	if err != nil {
 		return nil, err
 	}
+	// One write at a time, through telling the watches, so they're told in
+	// the order Google made them
+	self.writes.Lock()
+	defer self.writes.Unlock()
 	switch {
 	case path.list == "":
 		return nil, gofiler.ErrBadParameter.Withf("Cannot delete the root of volume %q", self.name)
-	case !validId(path.list) || (path.task != "" && !validId(path.task)):
+	case !googleId(path.list) || (path.task != "" && !googleId(path.task)):
 		return nil, &fs.PathError{Op: "delete", Path: req.Path, Err: fs.ErrNotExist}
 	case path.task == "":
 		return self.deleteList(ctx, path.list, req)
@@ -57,7 +61,7 @@ func (self *TaskFiler) deleteList(ctx context.Context, list string, req schema.D
 	}
 	result := &schema.DeleteObjectsResponse{Body: []*schema.Object{}}
 	for i := range tasks {
-		if !tasks[i].Deleted && validId(tasks[i].Id) {
+		if self.visible(&tasks[i]) {
 			object, _ := self.taskObject(list, &tasks[i])
 			result.Body = append(result.Body, object)
 		}
@@ -77,7 +81,7 @@ func (self *TaskFiler) deleteTask(ctx context.Context, list, id string, req sche
 	if err != nil {
 		return nil, self.apiError("delete", req.Path, err)
 	}
-	deleted := subtasks(tasks, id)
+	deleted := self.subtasks(tasks, id)
 	if len(deleted) == 0 {
 		return nil, &fs.PathError{Op: "delete", Path: req.Path, Err: fs.ErrNotExist}
 	}
@@ -103,20 +107,20 @@ func paths(resp *schema.DeleteObjectsResponse) []string {
 	return result
 }
 
-// subtasks returns the task, which isn't deleted, and those beneath it,
-// which aren't, or nil, when there's no such task. The tasks are indexed by
+// subtasks returns the task, which is visible, and those beneath it, which
+// are, or nil, when there's no such task. The tasks are indexed by
 // their parents once, so the subtree is collected in one pass of them.
-func subtasks(tasks []httpclient.Task, id string) []*httpclient.Task {
+func (self *TaskFiler) subtasks(tasks []httpclient.Task, id string) []*httpclient.Task {
 	var root *httpclient.Task
 	children := make(map[string][]*httpclient.Task)
 	for i := range tasks {
 		task := &tasks[i]
 		switch {
-		case task.Deleted:
+		case !self.visible(task):
 			continue
 		case task.Id == id:
 			root = task
-		case task.Parent != "" && validId(task.Id):
+		case task.Parent != "":
 			children[task.Parent] = append(children[task.Parent], task)
 		}
 	}
