@@ -182,10 +182,16 @@ func (cmd *VolumeCreateGTasksCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
+	// The client which sends the sign-in's code, which isn't traced to
+	// stderr, with --debug or --verbose, as its body is a secret
+	signInClient, err := newSignInClient(ctx)
+	if err != nil {
+		return err
+	}
 	return withClient(ctx, "filer.VolumeCreateGTasksCmd", func(ctx context.Context, client *httpclient.Client) error {
 		created, err := client.CreateVolume(ctx, volume)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
-			if err := signInWithBrowser(ctx, client, *signIn, cmd.NoBrowser); err != nil {
+			if err := signInWithBrowser(ctx, signInClient, *signIn, cmd.NoBrowser); err != nil {
 				return err
 			}
 			created, err = client.CreateVolume(ctx, volume)

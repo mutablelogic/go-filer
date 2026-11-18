@@ -39,7 +39,7 @@ func Exchange(ctx context.Context, credentials gofiler.CredentialProvider, serve
 	switch {
 	case credentials == nil:
 		return nil, gofiler.ErrServiceUnavailable.With("can't sign in with Google, without a provider of credentials")
-	case !types.IsIdentifier(code.Credential) || !strings.HasPrefix(code.Credential, "GOOGLE_") || code.Credential == ClientCredential:
+	case !types.IsIdentifier(code.Credential) || !strings.HasPrefix(code.Credential, SignInPrefix) || code.Credential == ClientCredential:
 		return nil, gofiler.ErrBadParameter.Withf("credential %q isn't a sign-in's, which is GOOGLE_*, other than %s", code.Credential, ClientCredential)
 	case !isLoopback(code.RedirectURI):
 		return nil, gofiler.ErrBadParameter.Withf("redirect URI %q isn't a loopback address", code.RedirectURI)
