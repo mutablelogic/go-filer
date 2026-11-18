@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 
 	// Packages
+	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
@@ -65,6 +67,13 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 		}()
 	}
 	defaults := []filer.Opt{filer.WithBroadcaster(b), filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter())}
+
+	// With --debug, or --verbose, the requests of the backends' clients, such
+	// as Google's APIs, are traced to stderr, with their headers' secrets
+	// redacted, and without their bodies
+	if ctx.IsDebug() {
+		defaults = append(defaults, filer.WithClientOpts(client.OptTrace(os.Stderr, false)))
+	}
 	if flags.Worker != "" {
 		defaults = append(defaults, filer.WithWorker(flags.Worker))
 	}
