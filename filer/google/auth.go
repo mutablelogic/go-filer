@@ -133,11 +133,16 @@ func (self *tokens) token(ctx context.Context) (string, error) {
 		return current.Token.AccessToken, nil
 	}
 
-	// Refresh it, with the client's secret, which isn't stored with it
+	// Refresh it, with the client's secret, which isn't stored with it. A
+	// client which Google refuses, such as one whose secret is wrong, isn't
+	// mended by signing in again.
 	grant := *current
 	grant.Client = self.client
 	token, err := self.refresher.TokenSource(ctx, &grant, nil).Token()
+	var retrieve *oauth2.RetrieveError
 	switch {
+	case errors.As(err, &retrieve) && (retrieve.ErrorCode == "invalid_client" || retrieve.ErrorCode == "unauthorized_client"):
+		return "", gofiler.ErrServiceUnavailable.Withf("Google refused the client of %q, so check its client_id and client_secret: %v", ClientCredential, err)
 	case errors.Is(err, auth.ErrBadParameter):
 		// Refused, as it's revoked, or expired, or can't be refreshed
 		return "", self.signIn(current, gofiler.ErrNotAuthorized.Withf("sign-in %q is revoked, or expired, so sign in with Google again: %v", self.key, err))
@@ -145,7 +150,10 @@ func (self *tokens) token(ctx context.Context) (string, error) {
 		return "", gofiler.ErrServiceUnavailable.Withf("refreshing sign-in %q: %v", self.key, err)
 	}
 
-	// Store it, unless it was replaced meanwhile
+	// Store it, unless it was replaced meanwhile, under the key's lock,
+	// which every volume, and sign-in, of the key shares
+	unlock := lockCredential(self.key)
+	defer unlock()
 	if latest, err := self.read(ctx); err != nil {
 		return "", err
 	} else if !sameToken(latest.Token, current.Token) {
@@ -196,6 +204,15 @@ func (self *tokens) read(ctx context.Context) (*authclient.Grant, error) {
 	return &grant, nil
 }
 
+// signInAgain returns a SignInError, of the current sign-in, which is read
+// under the lock, as a request which changes it can be in progress
+func (self *tokens) signInAgain(err error) error {
+	self.mu.Lock()
+	current := self.current
+	self.mu.Unlock()
+	return self.signIn(&current, err)
+}
+
 // signIn returns a SignInError, with how the user signs in: Google, the
 // client, and the scopes, with those the sign-in has, when it isn't nil, so
 // signing in again doesn't take away what others need
@@ -232,6 +249,21 @@ func readClient(ctx context.Context, credentials gofiler.CredentialProvider) (*a
 		data = []byte(value)
 	}
 	return ParseClient(data)
+}
+
+// credentialLocks are the locks of the keys of sign-ins, which every volume,
+// and sign-in, of a key, in the process, shares, so a refresh doesn't
+// replace a sign-in which was stored after it was read. A credential which
+// is stored by another process, or the credentials API, isn't locked, as
+// the provider can't store one only when it hasn't changed.
+var credentialLocks sync.Map
+
+// lockCredential locks the key, and returns the function which unlocks it
+func lockCredential(key string) func() {
+	value, _ := credentialLocks.LoadOrStore(key, new(sync.Mutex))
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // sameToken returns true when two tokens are the same

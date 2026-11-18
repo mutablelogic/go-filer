@@ -108,6 +108,7 @@ func newFake(t *testing.T) (*fakeTasks, string) {
 	fake := &fakeTasks{tasks: make(map[string][]httpclient.Task)}
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
+	google.SetEndpoint(t, server.URL)
 	return fake, server.URL
 }
 
@@ -118,6 +119,12 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// The token endpoint refreshes a sign-in, of its refresh token, which
 	// is revoked, unless it's "refresh"
+	if r.URL.Path == "/token" && r.FormValue("client_secret") == "wrong-secret" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
+		return
+	}
 	if r.URL.Path == "/token" {
 		f.refreshes++
 		if r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "refresh" || r.FormValue("client_id") != clientID || r.FormValue("client_secret") != "client-secret" {
@@ -222,7 +229,6 @@ func newFiler(t *testing.T, endpoint string, params url.Values) *google.TaskFile
 	if params == nil {
 		params = url.Values{}
 	}
-	params.Set("endpoint", endpoint)
 	if !params.Has("quota") {
 		// Unlimited, unless a test sets it, so the tests aren't paced
 		params.Set("quota", "0")
@@ -599,7 +605,7 @@ func Test_TaskSignIn(t *testing.T) {
 	fake, endpoint := newFake(t)
 	fake.addList("L1", "Home")
 	params := func(values ...string) url.Values {
-		result := url.Values{"endpoint": {endpoint}, "quota": {"0"}}
+		result := url.Values{"quota": {"0"}}
 		for i := 0; i+1 < len(values); i += 2 {
 			result.Set(values[i], values[i+1])
 		}
@@ -665,6 +671,14 @@ func Test_TaskSignIn(t *testing.T) {
 	fake.Lock()
 	assert.Equal(t, refreshes, fake.refreshes, "it isn't refreshed again, until it expires")
 	fake.Unlock()
+
+	// Whose client Google refuses, such as with the wrong secret, which
+	// signing in again doesn't mend
+	wrong := newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.Expiry = time.Now().Add(-time.Minute) })
+	wrong.values[google.ClientCredential] = json.RawMessage(`{"client_id":"` + clientID + `","client_secret":"wrong-secret"}`)
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), wrong)
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Nil(t, authclient.SignInOf(err), "it isn't signed in to again")
 
 	// Whose refresh token is revoked
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) {

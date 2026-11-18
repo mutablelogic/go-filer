@@ -44,11 +44,16 @@ type taskOpt struct {
 	readonly        bool          // Tasks can't be created, updated or deleted
 	quota           uint          // The most requests each minute, or zero
 	refreshInterval time.Duration // How often changes are polled for, or zero not to
-	endpoint        string        // The endpoint of the API, or the default
+	endpoint        string        // The endpoint of the API, which is Google's, but a test's
 	credential      string        // The key of the user's sign-in, which is DefaultCredential, unless it's set
 }
 
 var _ gofiler.Filer = (*TaskFiler)(nil)
+
+// tasksEndpoint is the endpoint of the API, which is Google's, unless a
+// test sets another. It isn't a parameter, as a volume's URL could send the
+// sign-in's token to another server.
+var tasksEndpoint = httpclient.TasksEndpoint
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -70,7 +75,6 @@ const (
 	paramReadonly        = "readonly"
 	paramQuota           = "quota"
 	paramRefreshInterval = "refresh_interval"
-	paramEndpoint        = "endpoint"
 	paramCredential      = "credential"
 )
 
@@ -93,7 +97,6 @@ const (
 //     zero not to limit them
 //   - refresh_interval: how often changes are polled for, when they're
 //     watched, which is DefaultRefreshInterval, or zero not to watch them
-//   - endpoint: the endpoint of the API, which is Google's, for tests
 func NewTaskFiler(ctx context.Context, name string, params url.Values, credentials gofiler.CredentialProvider, clientopts ...client.ClientOpt) (*TaskFiler, error) {
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
@@ -115,8 +118,12 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, credentia
 
 	// The client, whose requests have the sign-in's token, and are limited
 	// to the quota, spaced evenly
+	api, err := url.Parse(opt.endpoint)
+	if err != nil {
+		return nil, err
+	}
 	opts := append(slices.Clone(clientopts), client.OptTransport(func(parent http.RoundTripper) http.RoundTripper {
-		return &tokenTransport{parent: parent, tokens: self.tokens}
+		return &tokenTransport{parent: parent, tokens: self.tokens, scheme: api.Scheme, host: api.Host}
 	}))
 	if opt.quota > 0 {
 		opts = append(opts, client.OptRateLimit(float32(opt.quota)/60))
@@ -135,10 +142,10 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, credentia
 // parseTaskOpts returns the options of the parameters, which are rejected
 // when they can't be parsed
 func parseTaskOpts(params url.Values) (taskOpt, error) {
-	opt := taskOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential}
+	opt := taskOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: tasksEndpoint}
 	for key := range params {
 		switch key {
-		case paramReadonly, paramQuota, paramRefreshInterval, paramEndpoint, paramCredential:
+		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential:
 		default:
 			return opt, gofiler.ErrBadParameter.Withf("unknown parameter: %q", key)
 		}
@@ -169,12 +176,6 @@ func parseTaskOpts(params url.Values) (taskOpt, error) {
 			return opt, err
 		}
 		opt.credential = value
-	}
-	if value := params.Get(paramEndpoint); value != "" {
-		if u, err := url.Parse(value); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return opt, gofiler.ErrBadParameter.Withf("%s: %q", paramEndpoint, value)
-		}
-		opt.endpoint = value
 	}
 	return opt, nil
 }
@@ -243,9 +244,6 @@ func (self *TaskFiler) params() url.Values {
 	if self.refreshInterval != DefaultRefreshInterval {
 		params.Set(paramRefreshInterval, self.refreshInterval.String())
 	}
-	if self.endpoint != "" {
-		params.Set(paramEndpoint, self.endpoint)
-	}
 	if self.credential != DefaultCredential {
 		params.Set(paramCredential, self.credential)
 	}
@@ -265,7 +263,7 @@ func (self *TaskFiler) apiError(op, path string, err error) error {
 	case authclient.SignInOf(err) != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	case errors.As(err, &authErr):
-		return self.tokens.signIn(&self.tokens.current, gofiler.ErrNotAuthorized.Withf("Google didn't accept sign-in %q, so sign in with Google again: %v", self.credential, err))
+		return self.tokens.signInAgain(gofiler.ErrNotAuthorized.Withf("Google didn't accept sign-in %q, so sign in with Google again: %v", self.credential, err))
 	case errors.Is(err, httpresponse.Err(http.StatusNotFound)):
 		return &fs.PathError{Op: op, Path: path, Err: fs.ErrNotExist}
 	case errors.Is(err, httpresponse.Err(http.StatusForbidden)):
@@ -278,23 +276,28 @@ func (self *TaskFiler) apiError(op, path string, err error) error {
 ////////////////////////////////////////////////////////////////////////////////
 // TRANSPORT
 
-// tokenTransport sets the token of each request, of the sign-in, which is
-// refreshed, when it has expired
+// tokenTransport sets the token of each request to the API, of the
+// sign-in, which is refreshed, when it has expired. A request to another
+// origin, such as a redirect, isn't sent it.
 type tokenTransport struct {
-	parent http.RoundTripper
-	tokens *tokens
+	parent       http.RoundTripper
+	tokens       *tokens
+	scheme, host string // The origin of the API
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	parent := t.parent
+	if parent == nil {
+		parent = http.DefaultTransport
+	}
+	if req.URL.Scheme != t.scheme || req.URL.Host != t.host {
+		return parent.RoundTrip(req)
+	}
 	token, err := t.tokens.token(req.Context())
 	if err != nil {
 		return nil, err
 	}
 	req = req.Clone(req.Context())
 	req.Header.Set("Authorization", "Bearer "+token)
-	parent := t.parent
-	if parent == nil {
-		parent = http.DefaultTransport
-	}
 	return parent.RoundTrip(req)
 }
