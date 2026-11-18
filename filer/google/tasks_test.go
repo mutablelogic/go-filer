@@ -411,7 +411,8 @@ func Test_NewTaskFiler(t *testing.T) {
 	_, endpoint := newFake(t)
 
 	var err error
-	// Its parameters, and those which aren't their defaults are its URL's
+	// Its parameters, each of which is its URL's, with those which aren't
+	// set at their defaults
 	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "quota": {"0"}, "refresh_interval": {"30s"}})
 	assert.False(t, filer.Readonly())
 	u := filer.URL()
@@ -420,6 +421,8 @@ func Test_NewTaskFiler(t *testing.T) {
 	assert.Equal(t, "false", u.Query().Get("readonly"))
 	assert.Equal(t, "0", u.Query().Get("quota"))
 	assert.Equal(t, "30s", u.Query().Get("refresh_interval"))
+	assert.Equal(t, google.DefaultCredential, u.Query().Get("credential"))
+	assert.Equal(t, "false", u.Query().Get("hidden"))
 	assert.True(t, newFiler(t, endpoint, nil).Readonly(), "read-only by default")
 
 	// Its quota spaces its requests evenly: at 600 a minute, one each 100ms,
@@ -435,7 +438,7 @@ func Test_NewTaskFiler(t *testing.T) {
 	// A clone, with a patch, and the same token
 	clone, err := filer.Clone(ctx, url.Values{"readonly": nil})
 	require.NoError(t, err)
-	assert.False(t, clone.URL().Query().Has("readonly"))
+	assert.Equal(t, "true", clone.URL().Query().Get("readonly"), "it's the default")
 
 	// Parameters which can't be parsed, or aren't known, and a name which
 	// isn't an identifier
@@ -1326,7 +1329,7 @@ func Test_TaskHidden(t *testing.T) {
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
 	assert.ErrorIs(t, err, fs.ErrNotExist)
-	assert.NotContains(t, filer.URL().RawQuery, "hidden", "it's the default")
+	assert.Equal(t, "false", filer.URL().Query().Get("hidden"), "it's the default")
 
 	// With hidden=true, it is, and the parameter is the volume's
 	filer = newFiler(t, endpoint, url.Values{"hidden": {"true"}})

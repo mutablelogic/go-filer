@@ -189,18 +189,34 @@ func TestVolumeUpdate(t *testing.T) {
 		return u.Query()
 	}
 
-	// Options are set, and kept, and removed with null
+	// The volume's URL has each of its options, which are the defaults, as
+	// none are set
 	var volume schema.Volume
-	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": true, "skip": ["\\.tmp$"]}`, &volume))
-	assert.Equal(t, url.Values{"readonly": {"true"}, "skip": {`\.tmp$`}}, options(volume))
-	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"skip": null}`, &volume))
-	assert.Equal(t, url.Values{"readonly": {"true"}}, options(volume))
 	require.Equal(t, http.StatusOK, get(t, server, "volume/media", &volume))
-	assert.Equal(t, url.Values{"readonly": {"true"}}, options(volume))
+	defaults := options(volume)
+	assert.Equal(t, "false", defaults.Get("readonly"))
+	with := func(key, value string) url.Values {
+		result := url.Values{}
+		for option, values := range defaults {
+			result[option] = values
+		}
+		result.Set("readonly", "true")
+		result.Set(key, value)
+		return result
+	}
+
+	// Options are set, and kept, and removed with null, so they're the
+	// defaults
+	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": true, "skip": ["\\.tmp$"]}`, &volume))
+	assert.Equal(t, with("skip", `\.tmp$`), options(volume))
+	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"skip": null}`, &volume))
+	assert.Equal(t, with("readonly", "true"), options(volume))
+	require.Equal(t, http.StatusOK, get(t, server, "volume/media", &volume))
+	assert.Equal(t, with("readonly", "true"), options(volume))
 
 	// Without options, it's opened again, as it is
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{}`, &volume))
-	assert.Equal(t, url.Values{"readonly": {"true"}}, options(volume))
+	assert.Equal(t, with("readonly", "true"), options(volume))
 
 	// Errors
 	for body, want := range map[string]int{
@@ -213,7 +229,7 @@ func TestVolumeUpdate(t *testing.T) {
 	}
 	assert.Equal(t, http.StatusNotFound, patch(t, server, "volume/missing", `{"readonly": true}`, nil))
 	require.Equal(t, http.StatusOK, get(t, server, "volume/media", &volume))
-	assert.Equal(t, url.Values{"readonly": {"true"}}, options(volume))
+	assert.Equal(t, with("readonly", "true"), options(volume))
 }
 
 // credentials is a provider of credentials, in memory

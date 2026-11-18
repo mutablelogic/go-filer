@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,7 +25,7 @@ func Test_New(t *testing.T) {
 	self, err := New("test", dir, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
-	} else if self.URL().Query().Get("readonly") != "" {
+	} else if q := self.URL().Query(); q.Get("readonly") != "false" || !slices.Equal(q["skip"], defaultSkip) || !slices.Equal(q["package"], defaultPackage) {
 		t.Errorf("url: %v", self.URL())
 	}
 	ctx := context.Background()
@@ -103,8 +104,8 @@ func Test_New(t *testing.T) {
 func Test_URL(t *testing.T) {
 	dir := t.TempDir()
 
-	// A filesystem rooted at a directory has its path, and the options which
-	// aren't the defaults, even once it's closed
+	// A filesystem rooted at a directory has its path, and each of its
+	// options, even once it's closed
 	self, err := New("media", dir, url.Values{"readonly": {"true"}, "skip": {`\.tmp$`}}, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +113,7 @@ func Test_URL(t *testing.T) {
 	u := self.URL()
 	if u.Scheme != "file" || u.Host != "media" || u.Path != urlPath(self.path) || !strings.HasSuffix(u.Path, filepath.ToSlash(filepath.Base(dir))) {
 		t.Errorf("url: %v", u)
-	} else if u.Query().Get("readonly") != "true" || u.Query().Get("skip") != `\.tmp$` || u.Query().Has("package") {
+	} else if u.Query().Get("readonly") != "true" || !slices.Equal(u.Query()["skip"], []string{`\.tmp$`}) || !slices.Equal(u.Query()["package"], defaultPackage) {
 		t.Errorf("query: %v", u.RawQuery)
 	}
 	self.Close()
@@ -124,8 +125,10 @@ func Test_URL(t *testing.T) {
 	self, err = NewFS("media", fstest.MapFS{}, nil, filer.Opts{})
 	if err != nil {
 		t.Fatal(err)
-	} else if got := self.URL().String(); got != "fs://media?readonly=true" {
-		t.Errorf("url: %v", got)
+	} else if u := self.URL(); u.Scheme != "fs" || u.Host != "media" || u.Path != "" {
+		t.Errorf("url: %v", u)
+	} else if q := u.Query(); q.Get("readonly") != "true" || !slices.Equal(q["skip"], defaultSkip) || !slices.Equal(q["package"], defaultPackage) {
+		t.Errorf("query: %v", u.RawQuery)
 	}
 
 	// A path is converted to a URL path, with forward slashes, and a leading
@@ -152,7 +155,7 @@ func Test_Clone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clone.(io.Closer).Close()
-	if got, want := clone.URL().Query(), (url.Values{"skip": {"^x"}, "readonly": {"true"}}); got.Encode() != want.Encode() {
+	if got, want := clone.URL().Query(), (url.Values{"skip": {"^x"}, "package": defaultPackage, "readonly": {"true"}}); got.Encode() != want.Encode() {
 		t.Errorf("clone: got %q, want %q", got, want)
 	} else if clone.URL().Path != self.URL().Path {
 		t.Errorf("clone: got %q, want %q", clone.URL().Path, self.URL().Path)

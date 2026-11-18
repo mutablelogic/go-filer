@@ -3,7 +3,6 @@ package fs
 import (
 	"net/url"
 	"regexp"
-	"slices"
 	"strconv"
 
 	// Packages
@@ -91,15 +90,14 @@ func parseOpts(values url.Values) (opt, error) {
 	return self, nil
 }
 
-// values returns the options which aren't the defaults, as query
-// parameters, so the filesystem can be created again with them
+// values returns each of the options, defaults too, as query parameters,
+// so the filesystem can be created again with them, and a URL says how
+// it's set up
 func (self opt) values() url.Values {
 	values := url.Values{}
-	setExprs(values, optSkip, self.skip, defaultSkip)
-	setExprs(values, optPackage, self.packages, defaultPackage)
-	if self.readonly {
-		values.Set(optReadonly, "true")
-	}
+	setExprs(values, optSkip, self.skip)
+	setExprs(values, optPackage, self.packages)
+	values.Set(optReadonly, strconv.FormatBool(self.readonly))
 	return values
 }
 
@@ -125,16 +123,16 @@ func compileExprs(values url.Values, key string, defaults []string) ([]*regexp.R
 	return result, nil
 }
 
-// setExprs sets the expressions of the option, when they aren't the
-// defaults, or an empty expression when there are none
-func setExprs(values url.Values, key string, res []*regexp.Regexp, defaults []string) {
+// setExprs sets the expressions of the option, which are the defaults when
+// it isn't set, or an empty expression when there are none
+func setExprs(values url.Values, key string, res []*regexp.Regexp) {
 	exprs := make([]string, 0, len(res))
 	for _, re := range res {
 		exprs = append(exprs, re.String())
 	}
 	if len(exprs) == 0 {
 		values[key] = []string{""}
-	} else if !slices.Equal(exprs, defaults) {
+	} else {
 		values[key] = exprs
 	}
 }

@@ -250,7 +250,7 @@ func Test_S3_StoreCredentials(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, provider, 6)
 	assert.NotEqual(t, storedKey(t, b, "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_"), storedKey(t, other, "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_"))
-	assert.Equal(t, "s3://keys/?endpoint="+url.QueryEscape(endpoint)+"&name=photos&region=us-east-1", b.URL().String())
+	assert.Equal(t, "s3://keys/?anonymous=false&endpoint="+url.QueryEscape(endpoint)+"&name=photos&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
 	_, err = New(ctx, b.url(true), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
 
