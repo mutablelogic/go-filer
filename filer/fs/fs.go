@@ -156,7 +156,7 @@ func (self *FS) URL() *url.URL {
 		url.Scheme, url.Path = schema.SchemeFile, urlPath(self.path)
 	}
 
-	// Set the options which aren't the defaults, including whether it's
+	// Set each of the options, defaults too, including whether it's
 	// read-only
 	url.RawQuery = self.opt.values().Encode()
 

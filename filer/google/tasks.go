@@ -205,8 +205,8 @@ func (self *TaskFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-// URL returns the URL of the filer, such as gtasks://tasks, with the
-// parameters which aren't their defaults
+// URL returns the URL of the filer, such as gtasks://tasks, with each of
+// its parameters
 func (self *TaskFiler) URL() *url.URL {
 	return &url.URL{Scheme: TasksScheme, Host: self.name, RawQuery: self.params().Encode()}
 }
@@ -233,25 +233,16 @@ func (self *TaskFiler) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// params returns the parameters of the filer which aren't their defaults
+// params returns the parameters of the filer, each of which is set, so the
+// URL says how it's set up, defaults too
 func (self *TaskFiler) params() url.Values {
-	params := url.Values{}
-	if !self.readonly {
-		params.Set(paramReadonly, "false")
+	return url.Values{
+		paramReadonly:        {strconv.FormatBool(self.readonly)},
+		paramQuota:           {strconv.FormatUint(uint64(self.quota), 10)},
+		paramRefreshInterval: {self.refreshInterval.String()},
+		paramCredential:      {self.credential},
+		paramHidden:          {strconv.FormatBool(self.hidden)},
 	}
-	if self.quota != DefaultTasksQuota {
-		params.Set(paramQuota, strconv.FormatUint(uint64(self.quota), 10))
-	}
-	if self.refreshInterval != DefaultRefreshInterval {
-		params.Set(paramRefreshInterval, self.refreshInterval.String())
-	}
-	if self.credential != DefaultCredential {
-		params.Set(paramCredential, self.credential)
-	}
-	if self.hidden {
-		params.Set(paramHidden, "true")
-	}
-	return params
 }
 
 // apiError returns the error of a request, of the operation, of the path:

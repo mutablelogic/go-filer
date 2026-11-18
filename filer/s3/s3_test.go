@@ -13,40 +13,54 @@ import (
 )
 
 func Test_S3_Parse(t *testing.T) {
-	// The URL is the bucket, the prefix, which is a directory, and the
-	// options which are set, which it's created again from. The name is the
-	// bucket's, unless it's set.
+	// The URL is the bucket, the prefix, which is a directory, and each of
+	// the options, which it's created again from, which are empty or false
+	// unless they're set. The name is the bucket's, unless it's set.
 	for _, test := range []struct {
 		url, want string
+		query     url.Values
 		readonly  bool
 	}{
-		{"s3://photos", "s3://photos/", false},
-		{"s3://my-bucket/a?name=", "s3://my-bucket/a/", false},
-		{"s3://my-bucket/?name=my-bucket", "s3://my-bucket/", false},
-		{"s3://my-bucket/?readonly", "s3://my-bucket/?readonly=true", true},
-		{"s3://my.bucket/?name=photos", "s3://my.bucket/?name=photos", false},
-		{"s3://192.168.0.1a/?name=photos", "s3://192.168.0.1a/?name=photos", false},
-		{"s3://my-xn--bucket", "s3://my-xn--bucket/", false},
-		{"s3://my-bucket?name=photos", "s3://my-bucket/?name=photos", false},
-		{"s3://my-bucket/?name=photos", "s3://my-bucket/?name=photos", false},
-		{"s3://my-bucket/a/b?name=photos", "s3://my-bucket/a/b/?name=photos", false},
-		{"s3://my-bucket//a/b//?name=photos", "s3://my-bucket/a/b/?name=photos", false},
-		{"s3://my.bucket-1/?name=photos&region=eu-west-1", "s3://my.bucket-1/?name=photos&region=eu-west-1", false},
-		{"s3://my-bucket/?name=photos&endpoint=http://localhost:9000", "s3://my-bucket/?endpoint=http%3A%2F%2Flocalhost%3A9000&name=photos", false},
-		{"s3://my-bucket/?name=photos&readonly", "s3://my-bucket/?name=photos&readonly=true", true},
-		{"s3://my-bucket/?profile=work", "s3://my-bucket/?profile=work", false},
-		{"s3://my-bucket/?seaweedfs-filer-grpc=192.168.86.21:18888", "s3://my-bucket/?seaweedfs-filer-grpc=192.168.86.21%3A18888", false},
-		{"s3://my-bucket/?seaweedfs-filer-grpc=[::1]:18888", "s3://my-bucket/?seaweedfs-filer-grpc=%5B%3A%3A1%5D%3A18888", false},
-		{"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}", "s3://my-bucket/?access-key-id=AKID&secret-access-key=%24%7BSECRET%7D", false},
-		{"s3://my-bucket/?access-key-id=${ID}&secret-access-key=$SECRET&session-token=${TOKEN}", "s3://my-bucket/?access-key-id=%24%7BID%7D&secret-access-key=%24SECRET&session-token=%24%7BTOKEN%7D", false},
-		{"s3://my-bucket/?name=photos&readonly=false", "s3://my-bucket/?name=photos", false},
-		{"s3://my-bucket/?name=photos&anonymous=true", "s3://my-bucket/?anonymous=true&name=photos", true},
+		{"s3://photos", "s3://photos/", url.Values{"name": {"photos"}}, false},
+		{"s3://my-bucket/a?name=", "s3://my-bucket/a/", url.Values{"name": {"my-bucket"}}, false},
+		{"s3://my-bucket/?name=my-bucket", "s3://my-bucket/", url.Values{"name": {"my-bucket"}}, false},
+		{"s3://my-bucket/?readonly", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "readonly": {"true"}}, true},
+		{"s3://my.bucket/?name=photos", "s3://my.bucket/", nil, false},
+		{"s3://192.168.0.1a/?name=photos", "s3://192.168.0.1a/", nil, false},
+		{"s3://my-xn--bucket", "s3://my-xn--bucket/", url.Values{"name": {"my-xn--bucket"}}, false},
+		{"s3://my-bucket?name=photos", "s3://my-bucket/", nil, false},
+		{"s3://my-bucket/?name=photos", "s3://my-bucket/", nil, false},
+		{"s3://my-bucket/a/b?name=photos", "s3://my-bucket/a/b/", nil, false},
+		{"s3://my-bucket//a/b//?name=photos", "s3://my-bucket/a/b/", nil, false},
+		{"s3://my.bucket-1/?name=photos&region=eu-west-1", "s3://my.bucket-1/", url.Values{"region": {"eu-west-1"}}, false},
+		{"s3://my-bucket/?name=photos&endpoint=http://localhost:9000", "s3://my-bucket/", url.Values{"endpoint": {"http://localhost:9000"}}, false},
+		{"s3://my-bucket/?name=photos&endpoint=", "s3://my-bucket/", nil, false},
+		{"s3://my-bucket/?name=photos&readonly", "s3://my-bucket/", url.Values{"readonly": {"true"}}, true},
+		{"s3://my-bucket/?profile=work", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "profile": {"work"}}, false},
+		{"s3://my-bucket/?seaweedfs-filer-grpc=192.168.86.21:18888", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "seaweedfs-filer-grpc": {"192.168.86.21:18888"}}, false},
+		{"s3://my-bucket/?seaweedfs-filer-grpc=[::1]:18888", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "seaweedfs-filer-grpc": {"[::1]:18888"}}, false},
+		{"s3://my-bucket/?seaweedfs-filer-grpc=", "s3://my-bucket/", url.Values{"name": {"my-bucket"}}, false},
+		{"s3://my-bucket/?seaweedfs-filer-grpc", "s3://my-bucket/", url.Values{"name": {"my-bucket"}}, false},
+		{"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"AKID"}, "secret-access-key": {"${SECRET}"}}, false},
+		{"s3://my-bucket/?access-key-id=${ID}&secret-access-key=$SECRET&session-token=${TOKEN}", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"${ID}"}, "secret-access-key": {"$SECRET"}, "session-token": {"${TOKEN}"}}, false},
+		{"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}&profile=&anonymous=false", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"AKID"}, "secret-access-key": {"${SECRET}"}}, false},
+		{"s3://my-bucket/?name=photos&readonly=false", "s3://my-bucket/", nil, false},
+		{"s3://my-bucket/?name=photos&anonymous=true", "s3://my-bucket/", url.Values{"anonymous": {"true"}}, true},
 	} {
+		// The options which aren't in the test are their defaults, and the
+		// name is photos
+		want := url.Values{"name": {"photos"}, "region": {""}, "profile": {""}, "endpoint": {""}, "seaweedfs-filer-grpc": {""}, "anonymous": {"false"}, "readonly": {"false"}}
+		for key, value := range test.query {
+			want[key] = value
+		}
+
 		u, err := url.Parse(test.url)
 		require.NoError(t, err)
 		b, err := parse(u)
 		require.NoError(t, err, test.url)
-		assert.Equal(t, test.want, b.url(true).String(), test.url)
+		got := b.url(true)
+		assert.Equal(t, test.want, (&url.URL{Scheme: got.Scheme, Host: got.Host, Path: got.Path}).String(), test.url)
+		assert.Equal(t, want, got.Query(), test.url)
 		assert.Equal(t, test.readonly, b.Readonly(), test.url)
 		assert.NoError(t, b.Close())
 
@@ -97,7 +111,6 @@ func Test_S3_ParseInvalid(t *testing.T) {
 		"s3://my-bucket/?seaweedfs-filer-grpc=192.168.86.21",
 		"s3://my-bucket/?seaweedfs-filer-grpc=:18888",
 		"s3://my-bucket/?seaweedfs-filer-grpc=192.168.86.21:",
-		"s3://my-bucket/?seaweedfs-filer-grpc",
 		"s3://my-bucket/?access-key-id=AKID",
 		"s3://my-bucket/?secret-access-key=${SECRET}",
 		"s3://my-bucket/?session-token=${TOKEN}",

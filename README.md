@@ -66,7 +66,7 @@ Closing the filer stops listings, reads, writes and watches which are in progres
 
 ### Options
 
-The options of the filesystem backend are passed to `New` and `NewFS` as `url.Values`, and are the query parameters of the filer's URL, `fs://<name>`, when they aren't the defaults. They're followed by the options of a backend, `gofiler.Opts`, whose `Tracer` traces each operation, such as `fs.ListObjects`, with the volume and path, when it's set. Each option can be repeated, and setting one replaces its defaults, so an empty value, such as `skip=`, sets none.
+The options of the filesystem backend are passed to `New` and `NewFS` as `url.Values`, and are the query parameters of the filer's URL, `fs://<name>`, which has each of them, defaults too, so it says how the filer is set up. They're followed by the options of a backend, `gofiler.Opts`, whose `Tracer` traces each operation, such as `fs.ListObjects`, with the volume and path, when it's set. Each option can be repeated, and setting one replaces its defaults, so an empty value, such as `skip=`, sets none.
 
 | Option | Description | Default |
 | -------- | ------------- | --------- |

@@ -210,15 +210,21 @@ func TestDeleteVolume(t *testing.T) {
 func TestUpdateVolume(t *testing.T) {
 	client, tempDir := newClient(t)
 	ctx := context.Background()
-	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
+	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
 	require.NoError(t, err)
+	u, err := url.Parse(created.URL)
+	require.NoError(t, err)
+	want := u.Query()
 
-	// An option is set, and one is removed
+	// An option is set, and one is removed, so it's the default, and the
+	// others are kept
 	volume, err := client.UpdateVolume(ctx, "media", schema.VolumePatch{"skip": json.RawMessage(`["\\.tmp$"]`), "readonly": json.RawMessage(`null`)})
 	require.NoError(t, err)
-	u, err := url.Parse(volume.URL)
+	u, err = url.Parse(volume.URL)
 	require.NoError(t, err)
-	assert.Equal(t, url.Values{"skip": {`\.tmp$`}}, u.Query())
+	want.Set("skip", `\.tmp$`)
+	want.Set("readonly", "false")
+	assert.Equal(t, want, u.Query())
 
 	// Errors are returned with their status
 	_, err = client.UpdateVolume(ctx, "media", schema.VolumePatch{"unknown": json.RawMessage(`1`)})
