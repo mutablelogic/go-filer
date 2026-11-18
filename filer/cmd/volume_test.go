@@ -181,10 +181,14 @@ func Test_VolumeCreateFSCmd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "file://media/mnt/media?package=&readonly=true&skip=%5E%28a%2Cb%29%24&skip=%5E%5C.", u)
 
-	// A directory on Windows, with a drive
+	// A directory on Windows, with a drive, and one on Unix, whose name has
+	// a backslash, and a space, which are kept
 	u, err = volume("media", `C:\media`)
 	require.NoError(t, err)
 	assert.Equal(t, "file://media/C:/media", u)
+	u, err = volume("media", `/mnt/a\b `)
+	require.NoError(t, err)
+	assert.Equal(t, "file://media/mnt/a%5Cb%20", u)
 
 	// A relative path, which can't be the server's, and a name which isn't
 	// an identifier
@@ -222,13 +226,22 @@ func Test_VolumeCreateS3Cmd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "s3://my.bucket/photos/2026?name=photos", u)
 
-	// Its options, with placeholders of the credentials, which the server
-	// expands
+	// A prefix which ends with a space, which is kept
+	u, err = volume("photos", "my.bucket/photos ")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://my.bucket/photos%20?name=photos", u)
+
+	// Its options, and the names of the server's credentials, which are
+	// placeholders, which it looks up
 	u, err = volume("media", "media", "--endpoint", "http://localhost:9000", "--region", "eu-west-1",
-		"--access-key-id", "${S3_KEY}", "--secret-access-key", "${S3_SECRET}", "--readonly",
+		"--access-key-credential", "S3_KEY", "--secret-key-credential", "S3_SECRET", "--readonly",
 		"--seaweedfs-filer-grpc", "192.168.86.21:18888")
 	require.NoError(t, err)
 	assert.Equal(t, "s3://media?access-key-id=%24%7BS3_KEY%7D&endpoint=http%3A%2F%2Flocalhost%3A9000&readonly=true&region=eu-west-1&seaweedfs-filer-grpc=192.168.86.21%3A18888&secret-access-key=%24%7BS3_SECRET%7D", u)
+
+	// A name of a credential which isn't one, such as a secret
+	_, err = volume("media", "media", "--secret-key-credential", "not/a-name")
+	assert.Error(t, err)
 	u, err = volume("public", "public", "--anonymous", "--profile", "work")
 	require.NoError(t, err)
 	assert.Equal(t, "s3://public?anonymous=true&profile=work", u)

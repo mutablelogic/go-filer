@@ -74,17 +74,17 @@ type VolumeCreateFSCmd struct {
 }
 
 type VolumeCreateS3Cmd struct {
-	Name            string `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Bucket          string `arg:"" name:"bucket" help:"Bucket, and optionally a prefix of its keys, such as my.bucket or my.bucket/photos."`
-	Region          string `name:"region" help:"Region of the bucket, which is its own, when it's not set."`
-	Endpoint        string `name:"endpoint" placeholder:"URL" help:"URL of a service which is compatible with S3, such as http://localhost:9000 for MinIO."`
-	Profile         string `name:"profile" help:"Profile of the server's shared AWS configuration, whose credentials are used."`
-	AccessKeyID     string `name:"access-key-id" placeholder:"ID" help:"Access key ID, or a placeholder, such as '$S3_KEY', which the server expands from its environment, rather than storing it."`
-	SecretAccessKey string `name:"secret-access-key" placeholder:"SECRET" help:"Secret access key, or a placeholder, such as '$S3_SECRET', which the server expands from its environment, rather than storing it."`
-	SessionToken    string `name:"session-token" placeholder:"TOKEN" help:"Session token, or a placeholder, such as '$S3_TOKEN'."`
-	Anonymous       bool   `name:"anonymous" help:"Requests aren't signed, so they're without credentials, and the volume is read-only."`
-	Readonly        bool   `name:"readonly" help:"Objects can only be read, and not created or deleted."`
-	SeaweedFS       string `name:"seaweedfs-filer-grpc" placeholder:"HOST:PORT" help:"gRPC service of the SeaweedFS filer whose S3 gateway the endpoint is, such as 192.168.86.21:18888, so the bucket's objects are watched."`
+	Name         string `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Bucket       string `arg:"" name:"bucket" help:"Bucket, and optionally a prefix of its keys, such as my.bucket or my.bucket/photos."`
+	Region       string `name:"region" help:"Region of the bucket, which is its own, when it's not set."`
+	Endpoint     string `name:"endpoint" placeholder:"URL" help:"URL of a service which is compatible with S3, such as http://localhost:9000 for MinIO."`
+	Profile      string `name:"profile" help:"Profile of the server's shared AWS configuration, whose credentials are used."`
+	AccessKey    string `name:"access-key-credential" placeholder:"NAME" help:"Name of the server's credential of the access key ID, such as S3_KEY, of its environment, which it looks up, so the key isn't sent, or stored."`
+	SecretKey    string `name:"secret-key-credential" placeholder:"NAME" help:"Name of the server's credential of the secret access key, such as S3_SECRET, which it looks up, so the secret isn't sent, or stored."`
+	SessionToken string `name:"session-token-credential" placeholder:"NAME" help:"Name of the server's credential of the session token, such as S3_TOKEN, which it looks up."`
+	Anonymous    bool   `name:"anonymous" help:"Requests aren't signed, so they're without credentials, and the volume is read-only."`
+	Readonly     bool   `name:"readonly" help:"Objects can only be read, and not created or deleted."`
+	SeaweedFS    string `name:"seaweedfs-filer-grpc" placeholder:"HOST:PORT" help:"gRPC service of the SeaweedFS filer whose S3 gateway the endpoint is, such as 192.168.86.21:18888, so the bucket's objects are watched."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -353,11 +353,15 @@ func (cmd *VolumeCreateFSCmd) volume() (schema.Volume, error) {
 	if !types.IsIdentifier(cmd.Name) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
-	path := strings.ReplaceAll(strings.TrimSpace(cmd.Path), "\\", "/")
+	// A path is used as it is, as a name can have spaces, or a backslash,
+	// on Unix, except a path on Windows, with a drive, whose backslashes are
+	// separators
+	path := cmd.Path
 	switch {
+	case strings.HasPrefix(path, "/"):
 	case windowsDrive.MatchString(path):
-		path = "/" + path
-	case !strings.HasPrefix(path, "/"):
+		path = "/" + strings.ReplaceAll(path, "\\", "/")
+	default:
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("the path of the directory, on the server, must be absolute: %q", cmd.Path)
 	}
 	query := url.Values{}
@@ -375,16 +379,19 @@ func (cmd *VolumeCreateFSCmd) volume() (schema.Volume, error) {
 }
 
 // volume returns the volume of a bucket, whose URL is
-// s3://<bucket>/<prefix>, with its options, and the name option, when the
-// volume's name isn't the bucket's
+// s3://<bucket>/<prefix>, with its options, as they are, and the name
+// option, when the volume's name isn't the bucket's. Its credentials are the
+// names of the server's, which it looks up, as placeholders, such as
+// ${S3_SECRET}, so they aren't sent, or stored.
 func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 	if !types.IsIdentifier(cmd.Name) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
-	bucket, prefix, _ := strings.Cut(strings.Trim(strings.TrimSpace(cmd.Bucket), "/"), "/")
+	bucket, prefix, _ := strings.Cut(strings.TrimPrefix(cmd.Bucket, "/"), "/")
 	if bucket == "" {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid bucket: %q", cmd.Bucket)
 	}
+	prefix = strings.TrimSuffix(prefix, "/")
 	query := url.Values{}
 	if cmd.Name != bucket {
 		query.Set("name", cmd.Name)
@@ -393,14 +400,23 @@ func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 		"region":               cmd.Region,
 		"endpoint":             cmd.Endpoint,
 		"profile":              cmd.Profile,
-		"access-key-id":        cmd.AccessKeyID,
-		"secret-access-key":    cmd.SecretAccessKey,
-		"session-token":        cmd.SessionToken,
 		"seaweedfs-filer-grpc": cmd.SeaweedFS,
 	} {
-		if value = strings.TrimSpace(value); value != "" {
+		if value != "" {
 			query.Set(key, value)
 		}
+	}
+	for key, name := range map[string]string{
+		"access-key-id":     cmd.AccessKey,
+		"secret-access-key": cmd.SecretKey,
+		"session-token":     cmd.SessionToken,
+	} {
+		if name == "" {
+			continue
+		} else if !credentialName.MatchString(name) {
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid name of a credential: %q, which is letters, digits and underscores, such as S3_SECRET", name)
+		}
+		query.Set(key, "${"+name+"}")
 	}
 	if cmd.Anonymous {
 		query.Set("anonymous", "true")
@@ -416,5 +432,9 @@ func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 }
 
 // windowsDrive is a path of a directory on Windows, with a drive, such as
-// C:/media
-var windowsDrive = regexp.MustCompile(`^[A-Za-z]:/`)
+// C:\media or C:/media, and credentialName is the name of a credential, as
+// an environment variable's, such as S3_SECRET
+var (
+	windowsDrive   = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+	credentialName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
