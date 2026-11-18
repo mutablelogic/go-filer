@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	// Packages
@@ -103,12 +104,15 @@ func credentialsKey(path string) (string, error) {
 }
 
 // readCredentialsKey returns the passphrase in the file, which must only be
-// readable by its owner
+// readable by its owner. On Windows, a file's permissions are its ACLs, which
+// its mode doesn't say, as it's 0666 unless the file is read-only, so it
+// isn't checked, and the file is in the user's local application data,
+// whose ACLs only let the user read it, by default.
 func readCredentialsKey(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", err
-	} else if info.Mode().Perm()&0o077 != 0 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return "", gofiler.ErrBadParameter.Withf("%s is readable by others than its owner", path)
 	}
 	data, err := os.ReadFile(path)
