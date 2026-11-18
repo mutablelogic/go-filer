@@ -930,3 +930,70 @@ func Test_TaskDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/L3"}, paths(resp))
 }
+
+func Test_TaskWatchDeleted(t *testing.T) {
+	// watchEvents watches the filer, once it's read what's there, and
+	// returns its events, after its rescan
+	watchEvents := func(t *testing.T, filer *google.TaskFiler) <-chan schema.Event {
+		t.Helper()
+		ctx, cancel := context.WithCancel(t.Context())
+		events, done := make(chan schema.Event, 16), make(chan error, 1)
+		go func() { done <- filer.WatchObjects(ctx, events) }()
+		t.Cleanup(func() { cancel(); <-done })
+		select {
+		case event := <-events:
+			require.Equal(t, schema.Rescan("tasks"), event)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no rescan")
+		}
+		return events
+	}
+	next := func(t *testing.T, events <-chan schema.Event) string {
+		t.Helper()
+		select {
+		case event := <-events:
+			return event.EventType.String() + " " + event.Path
+		case <-time.After(5 * time.Second):
+			t.Fatal("no event")
+			return ""
+		}
+	}
+
+	// What the filer deletes is sent as it's deleted, without waiting to
+	// refresh: a task, with its subtask, and a list, with its tasks, and
+	// then the list
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addList("L2", "Work")
+	fake.addTask("L1", httpclient.Task{Id: "A"})
+	fake.addTask("L1", httpclient.Task{Id: "B", Parent: "A"})
+	fake.addTask("L2", httpclient.Task{Id: "X"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	events := watchEvents(t, filer)
+	_, err := filer.DeleteObjects(t.Context(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	assert.Equal(t, "deleted /L1/A.ics", next(t, events))
+	assert.Equal(t, "deleted /L1/B.ics", next(t, events))
+	_, err = filer.DeleteObjects(t.Context(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2"}, Recursive: true})
+	require.NoError(t, err)
+	assert.Equal(t, "deleted /L2/X.ics", next(t, events))
+	assert.Equal(t, "deleted /L2", next(t, events))
+
+	// And isn't sent again when it's refreshed, though the list whose task
+	// is deleted is updated, as its count of tasks is
+	fake, endpoint = newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A"})
+	fake.addTask("L1", httpclient.Task{Id: "C"})
+	filer = newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"50ms"}})
+	events = watchEvents(t, filer)
+	_, err = filer.DeleteObjects(t.Context(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	assert.Equal(t, "deleted /L1/A.ics", next(t, events))
+	assert.Equal(t, "updated /L1", next(t, events))
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected %s %s", event.EventType.String(), event.Path)
+	case <-time.After(300 * time.Millisecond):
+	}
+}

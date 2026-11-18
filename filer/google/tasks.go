@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	// Packages
@@ -37,6 +38,11 @@ type TaskFiler struct {
 	tokens      *tokens
 	clientopts  []client.ClientOpt
 	client      *httpclient.TasksClient
+
+	// The watches, which are sent the paths which the filer deletes, so
+	// they're sent their deletions without waiting to refresh
+	mu      sync.Mutex
+	watches map[chan []string]struct{}
 }
 
 // taskOpt are the options of a task filer, of its parameters

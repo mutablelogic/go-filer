@@ -66,6 +66,7 @@ func (self *TaskFiler) deleteList(ctx context.Context, list string, req schema.D
 		return nil, self.apiError("delete", req.Path, err)
 	}
 	result.Body = append(result.Body, self.listObject(meta, tasks))
+	self.deleted(paths(result))
 	return result, nil
 }
 
@@ -88,7 +89,18 @@ func (self *TaskFiler) deleteTask(ctx context.Context, list, id string, req sche
 		object, _ := self.taskObject(list, task)
 		result.Body = append(result.Body, object)
 	}
+	self.deleted(paths(result))
 	return result, nil
+}
+
+// paths returns the paths of the objects which were deleted, in their order,
+// so a list's tasks are deleted before it
+func paths(resp *schema.DeleteObjectsResponse) []string {
+	result := make([]string, 0, len(resp.Body))
+	for _, object := range resp.Body {
+		result = append(result, object.Path)
+	}
+	return result
 }
 
 // subtasks returns the task, which isn't deleted, and those beneath it,
