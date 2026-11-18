@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,8 +31,15 @@ const (
 	// MarkdownType is the content type of a task's file
 	MarkdownType = "text/markdown"
 
-	// TaskNamespace is the namespace of the metadata of tasks and lists
-	TaskNamespace = "task"
+	// TaskNamespace is the namespace of the metadata of tasks and lists, and
+	// FolderNamespace of directories, whose "children" is whether they have
+	// any, and "children-count" how many
+	TaskNamespace   = "task"
+	FolderNamespace = "folder"
+
+	// DCNamespace is the namespace of the Dublin Core metadata, whose
+	// "title" is a list's
+	DCNamespace = "dc"
 
 	// taskExt is the extension of a task's file
 	taskExt = ".md"
@@ -83,17 +91,35 @@ func rootObject() *schema.Object {
 	}
 }
 
-// listObject returns a list, which is a directory, with its title
-func (self *TaskFiler) listObject(list *httpclient.TaskList) *schema.Object {
+// listObject returns a list, which is a directory, with its title, and
+// whether it has tasks, and how many, which aren't deleted. Its entity tag
+// is the list's, with the count, and its modification time the latest of the
+// list's, and its tasks', including those which are deleted, so a change of
+// its tasks changes them, as well as its metadata.
+func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.Task) *schema.Object {
+	count := countTasks(tasks)
+	modtime := list.Updated
+	for i := range tasks {
+		if tasks[i].Updated.After(modtime) {
+			modtime = tasks[i].Updated
+		}
+	}
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: self.name, Path: listPath(list.Id)},
 		ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType},
-		ObjectAttr: schema.ObjectAttr{IsDir: true, ModTime: list.Updated},
+		ObjectAttr: schema.ObjectAttr{IsDir: true, ModTime: modtime},
 	}
 	if list.ETag != "" {
-		object.ETag = types.Ptr(list.ETag)
+		object.ETag = types.Ptr(list.ETag + "-" + strconv.Itoa(count))
 	}
 	object.Meta = appendMeta(object.Meta, "title", list.Title)
+	if list.Title != "" {
+		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(list.Title))})
+	}
+	object.Meta = append(object.Meta,
+		schema.Meta{Namespace: FolderNamespace, Key: "children", Value: json.RawMessage(strconv.FormatBool(count > 0))},
+		schema.Meta{Namespace: FolderNamespace, Key: "children-count", Value: json.RawMessage(strconv.Itoa(count))},
+	)
 	return object
 }
 
