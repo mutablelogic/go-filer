@@ -20,12 +20,11 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// CredentialFlags are where the server keeps the volumes' credentials, such
-// as the secrets of buckets, and sign-ins, encrypted, and the passphrases
-// they're encrypted with
+// CredentialFlags are the passphrases which the server's credentials, such
+// as the secrets of buckets, and sign-ins, are encrypted with, which it
+// keeps in the user's cache folder
 type CredentialFlags struct {
-	Credentials string   `name:"credentials" env:"${ENV_NAME}_CREDENTIALS" placeholder:"DIR" help:"Directory of the server's credentials, encrypted, such as the secrets of buckets and sign-ins. Defaults to credentials in the user's cache folder."`
-	Passphrase  []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASE" sep:"none" help:"Passphrase which the credentials are encrypted with, which can be repeated, for versions 1, 2 and so on, the last of which encrypts new ones. Without one, a passphrase is made, the first time, and kept beside the directory, in credentials.key."`
+	Passphrase []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASE" sep:"none" help:"Passphrase which the server's credentials are encrypted with, which can be repeated, for versions 1, 2 and so on, the last of which encrypts new ones. Without one, a passphrase is made, the first time, and kept in credentials.key, beside them, in the user's cache folder."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -33,9 +32,9 @@ type CredentialFlags struct {
 
 const (
 	// credentialsDir is the directory of the credentials, in the
-	// command's folder of the user's cache, unless --credentials sets
-	// another, and credentialsKeyFile the file beside it which has the
-	// passphrase they're encrypted with, without --passphrase
+	// command's folder of the user's cache, and credentialsKeyFile the file
+	// beside it which has the passphrase they're encrypted with, without
+	// --passphrase
 	credentialsDir     = "credentials"
 	credentialsKeyFile = "credentials.key"
 )
@@ -44,20 +43,18 @@ const (
 // PRIVATE METHODS
 
 // provider returns the provider of the credentials, which are kept,
-// encrypted, in the directory, or else the environment's, such as
-// S3_SECRET, so a volume's placeholder, such as ${S3_SECRET}, is either
+// encrypted, in the command's folder of the user's cache, or else the
+// environment's, such as S3_SECRET, so a volume's placeholder, such as
+// ${S3_SECRET}, is either
 func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, error) {
-	dir := flags.Credentials
-	if dir == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return nil, err
-		}
-		dir = filepath.Join(cache, ctx.Name(), credentialsDir)
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return nil, err
 	}
+	dir := filepath.Join(cache, ctx.Name())
 	passphrases := flags.Passphrase
 	if len(passphrases) == 0 {
-		passphrase, err := credentialsKey(filepath.Join(filepath.Dir(filepath.Clean(dir)), credentialsKeyFile))
+		passphrase, err := credentialsKey(filepath.Join(dir, credentialsKeyFile))
 		if err != nil {
 			return nil, err
 		}
@@ -67,7 +64,7 @@ func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, 
 	for i, passphrase := range passphrases {
 		opts = append(opts, filecredential.WithPassphrase(uint64(i+1), passphrase))
 	}
-	return filecredential.New(dir, opts...)
+	return filecredential.New(filepath.Join(dir, credentialsDir), opts...)
 }
 
 // credentialsKey returns the passphrase in the file, or makes one, of 32
