@@ -339,7 +339,7 @@ func Test_TaskObjects(t *testing.T) {
 	file, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}})
 	require.NoError(t, err)
 	assert.False(t, file.IsDir)
-	assert.Equal(t, google.TaskType, file.ContentType)
+	assert.Equal(t, ical.TaskType, file.ContentType)
 	assert.Equal(t, "T1-1", *file.ETag)
 	assert.Equal(t, completed, file.ModTime)
 	meta := make(map[string]string)

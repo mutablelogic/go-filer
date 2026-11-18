@@ -29,11 +29,6 @@ type taskPath struct {
 // GLOBALS
 
 const (
-	// TaskType is the content type of a task's file, which is an iCalendar
-	// of its VTODO, whose component parameter, of RFC 5545, says it's a
-	// task, rather than an event, or a calendar
-	TaskType = "text/calendar; component=VTODO"
-
 	// ProdID is the product which writes a task's iCalendar
 	ProdID = "-//mutablelogic//go-filer//EN"
 
@@ -132,10 +127,13 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.
 // taskObject returns a task, which is a file, of its iCalendar, with its
 // metadata, and its content
 func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.Object, []byte) {
-	content := taskCalendar(task)
+	// The calendar, which only fails to be written when the writer does,
+	// which a buffer doesn't
+	cal := taskCalendar(task)
+	content, _ := cal.MarshalText()
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: self.name, Path: taskFilePath(list, task.Id)},
-		ObjectMeta: schema.ObjectMeta{ContentType: TaskType},
+		ObjectMeta: schema.ObjectMeta{ContentType: cal.ContentType()},
 		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: task.Updated},
 	}
 	if task.ETag != "" {
@@ -178,8 +176,9 @@ func appendMeta(meta []schema.Meta, key, value string) []schema.Meta {
 
 // taskCalendar returns a task as an iCalendar, of its VTODO: its id, as its
 // UID, its title, notes, due date, status, when it was completed, its
-// parent, its link, and when it was updated
-func taskCalendar(task *httpclient.Task) []byte {
+// parent, its link, and when it was updated. Its content type is
+// go-metadata's ical.TaskType.
+func taskCalendar(task *httpclient.Task) *ical.Calendar {
 	todo := &ical.Event{
 		Kind:        ical.KindTask,
 		UID:         task.Id,
@@ -199,11 +198,7 @@ func taskCalendar(task *httpclient.Task) []byte {
 	if task.Completed != nil {
 		todo.Completed = task.Completed.UTC()
 	}
-	data, err := (&ical.Calendar{ProdID: ProdID, Events: []*ical.Event{todo}}).MarshalText()
-	if err != nil {
-		return nil
-	}
-	return data
+	return &ical.Calendar{ProdID: ProdID, Events: []*ical.Event{todo}}
 }
 
 // taskStatus returns the VTODO status of a task's, which is needsAction,
