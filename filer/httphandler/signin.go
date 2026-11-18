@@ -5,6 +5,7 @@ import (
 
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
+	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
@@ -28,7 +29,7 @@ func signInHandlers(registry *filer.Registry, router *httprouter.Router, documen
 			if err := httprequest.Read(r, &req); err != nil {
 				httpresponse.Error(w, err)
 			} else if response, err := registry.SignIn(r.Context(), req); err != nil {
-				httpError(w, err, req.Credential)
+				httpresponse.Error(w, gofiler.HTTPErr(err), req.Credential)
 			} else {
 				httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), response)
 			}

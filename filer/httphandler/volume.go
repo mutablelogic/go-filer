@@ -6,6 +6,8 @@ import (
 	"net/url"
 
 	// Packages
+	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
+	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
@@ -34,7 +36,7 @@ func volumeGetDeleteHandlers(registry *filer.Registry, router *httprouter.Router
 		path.Get(func(w http.ResponseWriter, r *http.Request) {
 			name := r.PathValue("name")
 			if volume, err := registry.Volume(name); err != nil {
-				httpError(w, err, name)
+				httpresponse.Error(w, gofiler.HTTPErr(err), name)
 			} else {
 				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
 			}
@@ -56,7 +58,7 @@ func volumeGetDeleteHandlers(registry *filer.Registry, router *httprouter.Router
 			} else if len(values) == 0 {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.With("no options to update"), name)
 			} else if volume, err := registry.Update(r.Context(), name, values); err != nil {
-				httpError(w, err, name)
+				httpresponse.Error(w, gofiler.HTTPErr(err), name)
 			} else {
 				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
 			}
@@ -74,9 +76,9 @@ func volumeGetDeleteHandlers(registry *filer.Registry, router *httprouter.Router
 		path.Delete(func(w http.ResponseWriter, r *http.Request) {
 			name := r.PathValue("name")
 			if volume, err := registry.Volume(name); err != nil {
-				httpError(w, err, name)
+				httpresponse.Error(w, gofiler.HTTPErr(err), name)
 			} else if err := registry.Del(r.Context(), name); err != nil {
-				httpError(w, err, name)
+				httpresponse.Error(w, gofiler.HTTPErr(err), name)
 			} else {
 				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
 			}
@@ -113,9 +115,15 @@ func volumeListHandlers(registry *filer.Registry, router *httprouter.Router, doc
 			} else if u, err := url.Parse(req.URL); err != nil || req.URL == "" {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("invalid url: %q", req.URL))
 			} else if _, err := registry.Add(r.Context(), req.Name, u); err != nil {
-				httpError(w, err, req.Name)
+				// A backend whose user needs to sign in is 401, with how
+				// they sign in
+				if signIn := authclient.SignInOf(err); signIn != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), signIn)
+				} else {
+					httpresponse.Error(w, gofiler.HTTPErr(err), req.Name)
+				}
 			} else if volume, err := registry.Volume(req.Name); err != nil {
-				httpError(w, err, req.Name)
+				httpresponse.Error(w, gofiler.HTTPErr(err), req.Name)
 			} else {
 				httpresponse.JSON(w, http.StatusCreated, httprequest.Indent(r), volume)
 			}
