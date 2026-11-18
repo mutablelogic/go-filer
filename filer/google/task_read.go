@@ -96,14 +96,14 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		if !validId(p.list) {
 			return nil, &fs.PathError{Op: "list", Path: req.Path, Err: fs.ErrNotExist}
 		} else if _, err := self.client.TaskList(ctx, p.list); err != nil {
-			return nil, apiError("list", req.Path, err)
+			return nil, self.apiError("list", req.Path, err)
 		}
 		iter.pending = append(iter.pending, listItem{list: p.list})
 	default:
 		// The lists, each followed by its tasks, when it's recursive
 		lists, err := self.client.TaskLists(ctx)
 		if err != nil {
-			return nil, apiError("list", "/", err)
+			return nil, self.apiError("list", "/", err)
 		}
 		// In the order of their directories' keys, which a page's last is
 		// where the next starts after
@@ -172,13 +172,13 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 	case path.task == "":
 		list, err := self.client.TaskList(ctx, path.list)
 		if err != nil {
-			return nil, nil, apiError(op, p, err)
+			return nil, nil, self.apiError(op, p, err)
 		}
 		return self.listObject(list), nil, nil
 	default:
 		task, err := self.client.Task(ctx, path.list, path.task)
 		if err != nil {
-			return nil, nil, apiError(op, p, err)
+			return nil, nil, self.apiError(op, p, err)
 		} else if task.Deleted {
 			return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 		}
@@ -196,7 +196,7 @@ func (self *taskIterator) readList(ctx context.Context, list string) error {
 	}
 	tasks, err := self.client.Tasks(ctx, list)
 	if err != nil {
-		return apiError("list", listPath(list), err)
+		return self.apiError("list", listPath(list), err)
 	}
 	// In the order of their files' paths, which a page's last is where the
 	// next starts after

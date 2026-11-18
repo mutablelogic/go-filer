@@ -18,8 +18,6 @@ import (
 	"time"
 
 	// Packages
-	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
-	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
@@ -37,11 +35,72 @@ type fakeTasks struct {
 	sync.Mutex
 	lists    []httpclient.TaskList
 	tasks    map[string][]httpclient.Task // By their lists' ids
-	requests int
-	queries  []url.Values // Of the requests for tasks
+	requests  int
+	refreshes int          // Of the requests to the token endpoint
+	queries   []url.Values // Of the requests for tasks
 }
 
-const token = "secret"
+const (
+	token    = "secret"
+	clientID = "client-1"
+)
+
+// credentials is a provider of credentials, in memory
+type credentials struct {
+	sync.Mutex
+	values map[string]json.RawMessage
+}
+
+func (c *credentials) Expand(_ context.Context, value string) (string, error) { return value, nil }
+
+func (c *credentials) Get(_ context.Context, key string) (json.RawMessage, error) {
+	c.Lock()
+	defer c.Unlock()
+	if value, exists := c.values[key]; exists {
+		return value, nil
+	}
+	return nil, gofiler.ErrNotFound.Withf("credential %q", key)
+}
+
+func (c *credentials) Set(_ context.Context, key string, value json.RawMessage) error {
+	c.Lock()
+	defer c.Unlock()
+	c.values[key] = value
+	return nil
+}
+
+// credential returns the sign-in which is stored, of the key
+func (c *credentials) credential(t *testing.T, key string) google.Credential {
+	t.Helper()
+	c.Lock()
+	defer c.Unlock()
+	var result google.Credential
+	require.NoError(t, json.Unmarshal(c.values[key], &result))
+	return result
+}
+
+// newCredentials returns the provider of the client, as the file Google's
+// console downloads, and of a sign-in, whose token the fake accepts, which
+// fn can change, such as to expire it
+func newCredentials(t *testing.T, endpoint string, fn func(*google.Credential)) *credentials {
+	t.Helper()
+	sign := google.Credential{
+		Issuer:        google.GoogleIssuer,
+		TokenEndpoint: endpoint + "/token",
+		ClientID:      clientID,
+		Scopes:        []string{httpclient.TasksScope},
+		Token:         google.Token{AccessToken: token, TokenType: "Bearer", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)},
+	}
+	if fn != nil {
+		fn(&sign)
+	}
+	data, err := json.Marshal(sign)
+	require.NoError(t, err)
+	return &credentials{values: map[string]json.RawMessage{
+		google.ClientCredential:  json.RawMessage(`{"installed":{"client_id":"` + clientID + `","client_secret":"client-secret"}}`),
+		google.DefaultCredential: data,
+	}}
+}
 
 func newFake(t *testing.T) (*fakeTasks, string) {
 	t.Helper()
@@ -55,6 +114,20 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.Lock()
 	defer f.Unlock()
 	f.requests++
+
+	// The token endpoint refreshes a sign-in, of its refresh token, which
+	// is revoked, unless it's "refresh"
+	if r.URL.Path == "/token" {
+		f.refreshes++
+		if r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "refresh" || r.FormValue("client_id") != clientID || r.FormValue("client_secret") != "client-secret" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			return
+		}
+		writeJSON(w, map[string]any{"access_token": token, "token_type": "Bearer", "expires_in": 3600})
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer "+token {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="https://accounts.google.com/", error="invalid_token"`)
 		writeError(w, http.StatusUnauthorized)
@@ -153,7 +226,7 @@ func newFiler(t *testing.T, endpoint string, params url.Values) *google.TaskFile
 		// Unlimited, unless a test sets it, so the tests aren't paced
 		params.Set("quota", "0")
 	}
-	filer, err := google.NewTaskFiler(t.Context(), "tasks", params, client.OptReqToken(client.Token{Scheme: "Bearer", Value: token}))
+	filer, err := google.NewTaskFiler(t.Context(), "tasks", params, newCredentials(t, endpoint, nil))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, filer.Close()) })
 	return filer
@@ -183,13 +256,7 @@ func Test_NewTaskFiler(t *testing.T) {
 	ctx := t.Context()
 	_, endpoint := newFake(t)
 
-	// Without a token, a sign-in is needed, which is an AuthError, with
-	// Google's challenge
-	_, err := google.NewTaskFiler(ctx, "tasks", url.Values{"endpoint": {endpoint}})
-	var authErr *authclient.AuthError
-	require.ErrorAs(t, err, &authErr)
-	assert.Equal(t, "https://accounts.google.com/", authErr.Get("realm"))
-
+	var err error
 	// Its parameters, and those which aren't their defaults are its URL's
 	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "quota": {"0"}, "refresh_interval": {"30s"}})
 	assert.False(t, filer.Readonly())
@@ -222,10 +289,12 @@ func Test_NewTaskFiler(t *testing.T) {
 		{"readonly": {"maybe"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}},
 		{"refresh_interval": {"-1s"}}, {"endpoint": {"ftp://example.com"}}, {"colour": {"blue"}},
 	} {
-		_, err := google.NewTaskFiler(ctx, "tasks", params)
+		_, err := google.NewTaskFiler(ctx, "tasks", params, nil)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
-	_, err = google.NewTaskFiler(ctx, "not a name", nil)
+	_, err = google.NewTaskFiler(ctx, "tasks", url.Values{"credential": {"not a key"}}, nil)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = google.NewTaskFiler(ctx, "not a name", nil, nil)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
@@ -522,4 +591,96 @@ func Test_TaskReadCancelled(t *testing.T) {
 		return err
 	})
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func Test_TaskSignIn(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	params := func(values ...string) url.Values {
+		result := url.Values{"endpoint": {endpoint}, "quota": {"0"}}
+		for i := 0; i+1 < len(values); i += 2 {
+			result.Set(values[i], values[i+1])
+		}
+		return result
+	}
+	signIn := func(t *testing.T, err error) *gofiler.Authorization {
+		t.Helper()
+		require.ErrorIs(t, err, gofiler.ErrNotAuthorized)
+		authorization := gofiler.AuthorizationOf(err)
+		require.NotNil(t, authorization)
+		assert.Equal(t, google.GoogleIssuer, authorization.Issuer)
+		assert.Equal(t, google.GoogleAuthorizationEndpoint, authorization.AuthorizationEndpoint)
+		assert.Equal(t, clientID, authorization.ClientID)
+		return authorization
+	}
+
+	// Without a sign-in, or a client, or a provider of credentials
+	creds := newCredentials(t, endpoint, nil)
+	delete(creds.values, google.DefaultCredential)
+	_, err := google.NewTaskFiler(ctx, "tasks", params(), creds)
+	authorization := signIn(t, err)
+	assert.Equal(t, google.DefaultCredential, authorization.Credential)
+	assert.Equal(t, []string{httpclient.TasksReadonlyScope}, authorization.Scopes, "a read-only volume asks for read-only access")
+	creds = newCredentials(t, endpoint, nil)
+	delete(creds.values, google.ClientCredential)
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), creds)
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable, "no one can sign in, without a client")
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), nil)
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+
+	// Of another credential, which is the parameter's
+	creds = newCredentials(t, endpoint, nil)
+	_, err = google.NewTaskFiler(ctx, "tasks", params("credential", "GOOGLE_WORK"), creds)
+	assert.Equal(t, "GOOGLE_WORK", signIn(t, err).Credential)
+
+	// For another client, which is signed in to again
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *google.Credential) { c.ClientID = "client-2" }))
+	signIn(t, err)
+
+	// Of read-only access, for a volume which isn't read-only, which asks for
+	// the access it needs, and keeps what the sign-in has
+	_, err = google.NewTaskFiler(ctx, "tasks", params("readonly", "false"), newCredentials(t, endpoint, func(c *google.Credential) {
+		c.Scopes = []string{httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}
+	}))
+	assert.Equal(t, []string{httpclient.TasksScope, httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}, signIn(t, err).Scopes)
+
+	// Whose token Google doesn't accept, such as when it's revoked
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *google.Credential) { c.Token.AccessToken = "revoked" }))
+	signIn(t, err)
+
+	// Whose token has expired, which is refreshed, and stored
+	creds = newCredentials(t, endpoint, func(c *google.Credential) { c.Token.Expiry = time.Now().Add(-time.Minute); c.Token.AccessToken = "old" })
+	filer, err := google.NewTaskFiler(ctx, "tasks", params(), creds)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/L1"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
+	stored := creds.credential(t, google.DefaultCredential)
+	assert.Equal(t, token, stored.Token.AccessToken)
+	assert.True(t, stored.Token.Expiry.After(time.Now().Add(30*time.Minute)))
+	assert.Equal(t, "refresh", stored.Token.RefreshToken, "its refresh token is kept")
+	fake.Lock()
+	refreshes := fake.refreshes
+	fake.Unlock()
+	list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+	fake.Lock()
+	assert.Equal(t, refreshes, fake.refreshes, "it isn't refreshed again, until it expires")
+	fake.Unlock()
+
+	// Whose refresh token is revoked
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *google.Credential) {
+		c.Token.Expiry, c.Token.RefreshToken = time.Now().Add(-time.Minute), "revoked"
+	}))
+	signIn(t, err)
+
+	// The client, of its client_id and client_secret, or of the file
+	// Google's console downloads, of a desktop or web client
+	for _, data := range []string{`{"client_id":"a","client_secret":"b"}`, `{"installed":{"client_id":"a","client_secret":"b"}}`, `{"web":{"client_id":"a"}}`} {
+		client, err := google.ParseClient([]byte(data))
+		require.NoError(t, err, data)
+		assert.Equal(t, "a", client.ClientID, data)
+	}
+	for _, data := range []string{`"a"`, `{}`, `{"installed":{}}`} {
+		_, err := google.ParseClient([]byte(data))
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, data)
+	}
 }
