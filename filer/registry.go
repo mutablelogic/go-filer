@@ -71,6 +71,11 @@ type entry struct {
 	// registry, when err is why it couldn't be closed
 	closed chan struct{}
 	err    error
+
+	// offline is why the volume's backend isn't working, when watching it
+	// failed, until it's opened again. It's only read or set with the
+	// registry locked.
+	offline error
 }
 
 // usingKey is the key of the value in the context which With passes to its
@@ -199,7 +204,7 @@ func (self *Registry) Volumes() []schema.Volume {
 	volumes := make([]schema.Volume, 0, len(self.backend))
 	for name, e := range self.backend {
 		if e.state == stateReady {
-			volumes = append(volumes, volumeOf(name, e.Filer))
+			volumes = append(volumes, volumeOf(name, e))
 		}
 	}
 	slices.SortFunc(volumes, func(a, b schema.Volume) int {
@@ -217,7 +222,7 @@ func (self *Registry) Volume(name string) (*schema.Volume, error) {
 	if e, exists := self.backend[name]; !exists || e.state != stateReady {
 		return nil, gofiler.ErrNotFound.Withf("volume %q is not mounted", name)
 	} else {
-		return types.Ptr(volumeOf(name, e.Filer)), nil
+		return types.Ptr(volumeOf(name, e)), nil
 	}
 }
 
@@ -234,14 +239,25 @@ func VolumeName(u *url.URL) string {
 	return u.Host
 }
 
-// volumeOf returns the volume of a backend, with its URL, and whether it's
-// read-only, when the backend says
-func volumeOf(name string, b gofiler.Filer) schema.Volume {
-	volume := schema.Volume{Name: name, URL: b.URL().String()}
-	if b, ok := b.(interface{ Readonly() bool }); ok {
+// volumeOf returns the volume of an entry, with the URL of its backend,
+// whether it's read-only, when the backend says, and why it's offline,
+// when it is. The registry must be locked.
+func volumeOf(name string, e *entry) schema.Volume {
+	volume := schema.Volume{Name: name, URL: e.URL().String()}
+	if b, ok := e.Filer.(interface{ Readonly() bool }); ok {
 		volume.Readonly = b.Readonly()
 	}
+	if e.offline != nil {
+		volume.Offline = e.offline.Error()
+	}
 	return volume
+}
+
+// setOffline records why the volume of the entry is offline
+func (self *Registry) setOffline(e *entry, err error) {
+	self.Lock()
+	defer self.Unlock()
+	e.offline = err
 }
 
 // Schemes returns the schemes of the URLs which backends can be created from,
@@ -358,14 +374,15 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 
 	// Register the clone in its place, which only fails when the registry is
 	// closed in the meantime
-	b, err := self.register(pending, volume, clone)
-	if err != nil {
+	if _, err := self.register(pending, volume, clone); err != nil {
 		self.unreserve(pending, volume)
 		return nil, err
 	}
 
-	// Return the volume
-	return types.Ptr(volumeOf(volume, b)), nil
+	// Return the volume, which isn't offline, as it's opened again
+	self.RLock()
+	defer self.RUnlock()
+	return types.Ptr(volumeOf(volume, pending)), nil
 }
 
 // Del removes the backend for the specified volume from the registry, and

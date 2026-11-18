@@ -8,6 +8,7 @@ import (
 	"time"
 
 	// Packages
+	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	changes "github.com/mutablelogic/go-server/broadcaster/schema"
@@ -117,12 +118,19 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 		case event := <-events:
 			publish(debouncer.add(event, time.Now()))
 		case w := <-ended:
-			// A watch which fails, while its volume is registered, opens the
-			// volume again, which is watched again, with a rescan
+			// A watch which fails, while its volume is registered, makes it
+			// offline, and opens it again, which is watched again, with a
+			// rescan, unless its user needs to sign in again, which only
+			// they can do, with volume-update
 			delete(watches, w.e)
 			if w.err != nil && !errors.Is(w.err, gofiler.ErrNotImplemented) && w.e.ctx.Err() == nil {
-				logger.WarnContext(ctx, "watching a volume failed, opening it again", "volume", w.volume, "error", w.err.Error())
-				go self.reopen(w.e, w.volume)
+				self.setOffline(w.e, w.err)
+				if authclient.SignInOf(w.err) != nil {
+					logger.WarnContext(ctx, "a volume is offline, until its user signs in again, with volume-update", "volume", w.volume, "error", w.err.Error())
+				} else {
+					logger.WarnContext(ctx, "watching a volume failed, opening it again", "volume", w.volume, "error", w.err.Error())
+					go self.reopen(w.e, w.volume)
+				}
 			}
 		case <-ticker.C:
 			publish(debouncer.due(time.Now(), false))
@@ -261,7 +269,8 @@ func (self *Registry) changedVolumes() {
 }
 
 // reopen opens the volume again, after a while, until it can be, which
-// doubles each time it can't, or the volume is removed, or changed
+// doubles each time it can't, or the volume is removed, or changed, or its
+// user needs to sign in again, when it stays offline, with why
 func (self *Registry) reopen(e *entry, volume string) {
 	retry := watchRetry
 	for {
@@ -274,7 +283,12 @@ func (self *Registry) reopen(e *entry, volume string) {
 		// entry's, as it's removed, or changed, or the registry is closed,
 		// but not when its backend is unavailable, such as a server which is
 		// down, which it's tried again for
-		if _, err := self.update(context.Background(), e, volume, nil); err == nil || !self.registered(e, volume) {
+		_, err := self.update(context.Background(), e, volume, nil)
+		if err == nil || !self.registered(e, volume) {
+			return
+		}
+		self.setOffline(e, err)
+		if authclient.SignInOf(err) != nil {
 			return
 		}
 		retry = min(retry*2, watchRetryMax)

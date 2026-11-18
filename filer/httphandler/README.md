@@ -6,7 +6,7 @@ A volume is a backend which stores objects, which is registered with a `name`, a
 
 ### GET /volume
 
-List the volumes which are registered, in order of their names, with the `url` of each one's backend, which includes the options which aren't the defaults, such as `readonly=true`, and which a volume can be added from again. A volume which is being added or removed isn't listed. `schemes` is the schemes of the URLs which volumes can be added from, such as `file` and `s3`.
+List the volumes which are registered, in order of their names, with the `url` of each one's backend, which includes the options which aren't the defaults, such as `readonly=true`, and which a volume can be added from again. A volume which is being added or removed isn't listed. A volume whose watch failed has `offline`, with why, until it's opened again: one whose user needs to sign in again stays offline until `PATCH /volume/{name}` opens it, and others are opened again by the server, after a while. `schemes` is the schemes of the URLs which volumes can be added from, such as `file` and `s3`.
 
 ### POST /volume
 
@@ -39,6 +39,8 @@ Get the volume `name`, with the `url` of its backend, which includes the options
 ### PATCH /volume/{name}
 
 Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept. The volume's backend is cloned with the options, which are checked, so the volume isn't changed when they're invalid, and its credentials, which its `url` doesn't have, are kept.
+
+Without any options, `{}`, the volume is opened again, as it is. That brings an `offline` volume back, such as one whose user signed in again. Returns 401, with how to sign in as its `detail`, as `POST /volume` does, when its user needs to sign in, such as when their sign-in is revoked.
 
 ### DELETE /volume/{name}
 
