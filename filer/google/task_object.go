@@ -32,11 +32,9 @@ const (
 	// ProdID is the product which writes a task's iCalendar
 	ProdID = "-//mutablelogic//go-filer//EN"
 
-	// TaskNamespace is the namespace of the metadata of tasks and lists, and
-	// FolderNamespace of directories, whose "children" is whether they have
-	// any, and "children-count" how many
-	TaskNamespace   = "task"
-	FolderNamespace = "folder"
+	// TaskNamespace is the namespace of the metadata of tasks and lists. A
+	// list's folder:children and folder:children-count are schema's.
+	TaskNamespace = "task"
 
 	// DCNamespace is the namespace of the Dublin Core metadata, whose
 	// "title" is a list's
@@ -117,10 +115,7 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.
 	if list.Title != "" {
 		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(list.Title))})
 	}
-	object.Meta = append(object.Meta,
-		schema.Meta{Namespace: FolderNamespace, Key: "children", Value: json.RawMessage(strconv.FormatBool(count > 0))},
-		schema.Meta{Namespace: FolderNamespace, Key: "children-count", Value: json.RawMessage(strconv.Itoa(count))},
-	)
+	object.Meta = append(object.Meta, schema.FolderMeta(count)...)
 	return object
 }
 

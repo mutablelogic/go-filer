@@ -474,8 +474,8 @@ func Test_TaskObjects(t *testing.T) {
 	assert.Equal(t, []schema.Meta{
 		{Namespace: google.TaskNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
 		{Namespace: google.DCNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
-		{Namespace: google.FolderNamespace, Key: "children", Value: json.RawMessage(`true`)},
-		{Namespace: google.FolderNamespace, Key: "children-count", Value: json.RawMessage(`2`)},
+		{Namespace: schema.FolderNamespace, Key: "children", Value: json.RawMessage(`true`)},
+		{Namespace: schema.FolderNamespace, Key: "children-count", Value: json.RawMessage(`2`)},
 	}, dir.Meta, "with its tasks, which aren't deleted")
 
 	// A task is a file, of iCalendar, with its metadata, its entity tag and
@@ -608,7 +608,7 @@ func Test_TaskList(t *testing.T) {
 		}
 		require.NoError(t, err)
 		for _, m := range object.Meta {
-			if m.Namespace == google.FolderNamespace {
+			if m.Namespace == schema.FolderNamespace {
 				counts[object.Path+" "+m.Key] = string(m.Value)
 			}
 		}
