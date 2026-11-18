@@ -87,7 +87,11 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 * **Tasks** are iCalendar files, `text/calendar; component=VTODO`, named by their ids, such as `/MTA3NjI/Q2xvdWQ.ics`, so a path stays the same when a task is renamed.
 * **Content:** one `VTODO`, which calendar and task apps can import: the task's id as its `UID`, its title, notes, due date, status, completion, parent as `RELATED-TO`, URL, and update time.
 * **Metadata:** `task:title`, `status`, `due`, `completed` and `parent`, and what iCalendar can't have, `task:hidden`, of a completed task cleared from its list, and `task:links`, such as to the email a task was created from.
-* **Writing:** a volume with `readonly=false`, which asks for write access when its user signs in, can delete a task, with its subtasks, as Google does, or a list, with its tasks, with `recursive`, which returns the list too, after its tasks, as it's an object of its own. Creating and changing tasks isn't implemented yet.
+* **Writing:** a volume with `readonly=false`, which asks for write access when its user signs in, writes a task as an iCalendar of one `VTODO`:
+  * **Creating:** `PUT /LIST/~new.ics` creates a task, beneath its `RELATED-TO`, when it has one, and returns it at its path, of the id Google gives it, as `~` is never in one.
+  * **Updating:** `PUT` of a task's path replaces its title, notes, due date and status, clearing those the `VTODO` doesn't have, and moves it, when its `RELATED-TO` changes. Its other fields, such as its links, are kept. Its `UID`, when it has one, must be the task's id, and a task which doesn't exist isn't found, as its id can't be chosen.
+  * **Deleting:** a task, with its subtasks, as Google does, or a list, with its tasks, with `recursive`, which returns the list too, after its tasks, as it's an object of its own.
+  * **Watching:** what the volume writes, or deletes, is sent to its watches straight away, rather than when they refresh.
 
 To set it up, with the `filer` command, store the OAuth client, a desktop app's, which Google's console downloads, as the server's credential, and create a volume, which signs in with Google, in the browser:
 
@@ -106,9 +110,10 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **`GOOGLE_TOKEN`:** the credential of the user's sign-in, a go-auth `Grant`, or another, of the `credential` parameter. It must be for `GOOGLE_CLIENT`'s client, and have the `tasks.readonly` or `tasks` scope, or `tasks`, when it isn't read-only. Its token is refreshed, with the client's secret, and stored again, when it expires.
 * **Signing in:** when there's no sign-in, or it's for another client, or doesn't have the scopes, or is revoked, it's go-auth's `SignInError`, with how to sign in: Google's server, the client's ID, the scopes, and the credential. The HTTP API returns it as 401, with its `detail`, without the client's secret.
 * **Client options:** go-client's, such as a tracer, or a trace.
-* **`readonly`:** true by default. Creating and deleting tasks isn't implemented yet.
+* **`readonly`:** true by default. With `false`, tasks can be created, updated and deleted, and lists deleted, as under Writing above.
 * **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
 * **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.
+* **`hidden`:** include tasks which are hidden, as they're completed, and cleared from their list, which are left out unless it's `true`.
 
 ## Indexer
 

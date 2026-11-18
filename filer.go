@@ -40,7 +40,9 @@ type Filer interface {
 	// watching it fails.
 	Clone(context.Context, url.Values) (Filer, error)
 
-	// Create object in the filer
+	// Create object in the filer, and return it, which is at the request's
+	// path, unless the backend names it, such as a Google task, whose id
+	// Google gives it
 	CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error)
 
 	// Get object metadata from the filer

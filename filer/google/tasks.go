@@ -20,7 +20,6 @@ import (
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
-	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -39,10 +38,15 @@ type TaskFiler struct {
 	clientopts  []client.ClientOpt
 	client      *httpclient.TasksClient
 
-	// The watches, which are sent the paths which the filer deletes, so
-	// they're sent their deletions without waiting to refresh
+	// The watches, which are sent the changes the filer makes, so they're
+	// sent them without waiting to refresh
+	// writes serialises the filer's writes, and deletes, through telling the
+	// watches, so they're told in the order Google made them
+	writes sync.Mutex
+
 	mu      sync.Mutex
-	watches map[chan []string]struct{}
+	watches map[*taskWatch]struct{}
+	seq     uint64 // The sequence of the last change the filer made
 }
 
 // taskOpt are the options of a task filer, of its parameters
@@ -52,6 +56,7 @@ type taskOpt struct {
 	refreshInterval time.Duration // How often changes are polled for, or zero not to
 	endpoint        string        // The endpoint of the API, which is Google's, but a test's
 	credential      string        // The key of the user's sign-in, which is DefaultCredential, unless it's set
+	hidden          bool          // Tasks which are hidden, as they're completed, and cleared, are included
 }
 
 var _ gofiler.Filer = (*TaskFiler)(nil)
@@ -82,6 +87,7 @@ const (
 	paramQuota           = "quota"
 	paramRefreshInterval = "refresh_interval"
 	paramCredential      = "credential"
+	paramHidden          = "hidden"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -103,6 +109,8 @@ const (
 //     zero not to limit them
 //   - refresh_interval: how often changes are polled for, when they're
 //     watched, which is DefaultRefreshInterval, or zero not to watch them
+//   - hidden: tasks which are hidden, as they're completed, and cleared from
+//     their list, are included, which they aren't unless it's true
 func NewTaskFiler(ctx context.Context, name string, params url.Values, credentials gofiler.CredentialProvider, clientopts ...client.ClientOpt) (*TaskFiler, error) {
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
@@ -151,7 +159,7 @@ func parseTaskOpts(params url.Values) (taskOpt, error) {
 	opt := taskOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: tasksEndpoint}
 	for key := range params {
 		switch key {
-		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential:
+		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, paramHidden:
 		default:
 			return opt, gofiler.ErrBadParameter.Withf("unknown parameter: %q", key)
 		}
@@ -182,6 +190,13 @@ func parseTaskOpts(params url.Values) (taskOpt, error) {
 			return opt, err
 		}
 		opt.credential = value
+	}
+	if value := params.Get(paramHidden); value != "" {
+		hidden, err := strconv.ParseBool(value)
+		if err != nil {
+			return opt, gofiler.ErrBadParameter.Withf("%s: %q", paramHidden, value)
+		}
+		opt.hidden = hidden
 	}
 	return opt, nil
 }
@@ -219,14 +234,6 @@ func (self *TaskFiler) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - WRITE
 
-// CreateObject creates, or updates, a task, which isn't implemented yet
-func (self *TaskFiler) CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error) {
-	if self.readonly {
-		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
-	}
-	return nil, gofiler.ErrNotImplemented.With("writing tasks isn't implemented yet")
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -244,6 +251,9 @@ func (self *TaskFiler) params() url.Values {
 	}
 	if self.credential != DefaultCredential {
 		params.Set(paramCredential, self.credential)
+	}
+	if self.hidden {
+		params.Set(paramHidden, "true")
 	}
 	return params
 }
@@ -266,6 +276,9 @@ func (self *TaskFiler) apiError(op, path string, err error) error {
 		return &fs.PathError{Op: op, Path: path, Err: fs.ErrNotExist}
 	case errors.Is(err, httpresponse.Err(http.StatusForbidden)):
 		return gofiler.ErrForbidden.Withf("%s %s: %v", op, path, err)
+	case errors.Is(err, httpresponse.Err(http.StatusBadRequest)):
+		// Such as a parent which isn't a task of the list
+		return gofiler.ErrBadParameter.Withf("%s %s: %v", op, path, err)
 	default:
 		return gofiler.ErrServiceUnavailable.Withf("%s %s: %v", op, path, fmt.Sprint(err))
 	}
