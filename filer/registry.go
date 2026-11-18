@@ -267,7 +267,11 @@ func (self *Registry) volumeOf(name string, e *entry) schema.Volume {
 	}
 	if i, ok := e.Filer.(*indexer.Indexer); ok {
 		volume.Index = &schema.VolumeIndex{Mode: string(indexer.ModeFolders)}
-		if state, err := i.State(context.Background()); err == nil {
+		if state, err := i.State(context.Background()); err != nil {
+			// Its state can't be read, such as of a store which isn't
+			// implemented, which is why it isn't indexed
+			volume.Index.Error = err.Error()
+		} else {
 			volume.Index.Status, volume.Index.Folders, volume.Index.Started, volume.Index.Scanned, volume.Index.Error = string(state.Status), state.Folders, state.Started, state.Scanned, state.Error
 		}
 	}
