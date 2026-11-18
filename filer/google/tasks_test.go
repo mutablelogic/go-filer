@@ -108,6 +108,7 @@ func newFake(t *testing.T) (*fakeTasks, string) {
 	fake := &fakeTasks{tasks: make(map[string][]httpclient.Task)}
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
+	google.SetEndpoint(t, server.URL)
 	return fake, server.URL
 }
 
@@ -118,6 +119,12 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// The token endpoint refreshes a sign-in, of its refresh token, which
 	// is revoked, unless it's "refresh"
+	if r.URL.Path == "/token" && r.FormValue("client_secret") == "wrong-secret" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
+		return
+	}
 	if r.URL.Path == "/token" && r.FormValue("grant_type") == "authorization_code" {
 		// A code of a sign-in, of its verifier, with the client's secret
 		if r.FormValue("code") != "code" || r.FormValue("code_verifier") != "verifier" || r.FormValue("client_secret") != "client-secret" {
@@ -233,7 +240,6 @@ func newFiler(t *testing.T, endpoint string, params url.Values) *google.TaskFile
 	if params == nil {
 		params = url.Values{}
 	}
-	params.Set("endpoint", endpoint)
 	if !params.Has("quota") {
 		// Unlimited, unless a test sets it, so the tests aren't paced
 		params.Set("quota", "0")
@@ -610,7 +616,7 @@ func Test_TaskSignIn(t *testing.T) {
 	fake, endpoint := newFake(t)
 	fake.addList("L1", "Home")
 	params := func(values ...string) url.Values {
-		result := url.Values{"endpoint": {endpoint}, "quota": {"0"}}
+		result := url.Values{"quota": {"0"}}
 		for i := 0; i+1 < len(values); i += 2 {
 			result.Set(values[i], values[i+1])
 		}
@@ -677,6 +683,14 @@ func Test_TaskSignIn(t *testing.T) {
 	assert.Equal(t, refreshes, fake.refreshes, "it isn't refreshed again, until it expires")
 	fake.Unlock()
 
+	// Whose client Google refuses, such as with the wrong secret, which
+	// signing in again doesn't mend
+	wrong := newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.Expiry = time.Now().Add(-time.Minute) })
+	wrong.values[google.ClientCredential] = json.RawMessage(`{"client_id":"` + clientID + `","client_secret":"wrong-secret"}`)
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), wrong)
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Nil(t, authclient.SignInOf(err), "it isn't signed in to again")
+
 	// Whose refresh token is revoked
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) {
 		c.Token.Expiry, c.Token.RefreshToken = time.Now().Add(-time.Minute), "revoked"
@@ -713,7 +727,7 @@ func Test_TaskExchange(t *testing.T) {
 	stored := creds.credential(t, "GOOGLE_WORK")
 	assert.Equal(t, authclient.Registration{ClientID: clientID}, stored.Client, "without the client's secret")
 	assert.Equal(t, "refresh", stored.Token.RefreshToken)
-	filer, err := google.NewTaskFiler(ctx, "work", url.Values{"endpoint": {endpoint}, "quota": {"0"}, "credential": {"GOOGLE_WORK"}}, creds)
+	filer, err := google.NewTaskFiler(ctx, "work", url.Values{"quota": {"0"}, "credential": {"GOOGLE_WORK"}}, creds)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/L1"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
 
@@ -735,6 +749,17 @@ func Test_TaskExchange(t *testing.T) {
 		_, err = google.Exchange(ctx, creds, server, bad)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, uri)
 	}
+
+	// A client which Google refuses isn't a reason to sign in again, and the
+	// sign-in isn't replaced
+	wrong := newCredentials(t, endpoint, nil)
+	wrong.values[google.ClientCredential] = json.RawMessage(`{"client_id":"` + clientID + `","client_secret":"wrong-secret"}`)
+	delete(wrong.values, "GOOGLE_WORK")
+	_, err = google.Exchange(ctx, wrong, server, code)
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Nil(t, authclient.SignInOf(err), "it isn't signed in to again")
+	_, exists := wrong.values["GOOGLE_WORK"]
+	assert.False(t, exists)
 
 	// The URL to sign in at asks for a refresh token
 	u, err := url.Parse(authclient.SignIn{Server: google.Google, ClientID: clientID, Scopes: []string{httpclient.TasksScope}}.AuthCodeURL(code.RedirectURI, "state", "verifier", google.SignInOptions...))

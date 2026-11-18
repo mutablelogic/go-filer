@@ -32,8 +32,7 @@ var SignInOptions = []oauth2.AuthCodeOption{
 // another, for tests: the code is exchanged, with its PKCE verifier, and the
 // secret of the client, of ClientCredential, with go-auth's ExchangeCode,
 // for a Grant, which is stored, without the secret, as the code's
-// credential. The
-// credential must be a sign-in's, GOOGLE_*, other than ClientCredential, so
+// credential. The credential must be a sign-in's, GOOGLE_*, other than ClientCredential, so
 // a request can't replace another credential, and the redirect URI a
 // loopback address's, as a desktop client's is.
 func Exchange(ctx context.Context, credentials gofiler.CredentialProvider, server authclient.ServerMetadata, code authclient.SignInCode) (*authclient.Grant, error) {
@@ -52,17 +51,27 @@ func Exchange(ctx context.Context, credentials gofiler.CredentialProvider, serve
 
 	// Exchange the code, with the client's secret, and store the grant,
 	// without it
+	// A client which Google refuses, such as one whose secret is wrong, isn't
+	// mended by signing in again
 	grant, err := authclient.ExchangeCode(ctx, server, *client, code)
+	var retrieve *oauth2.RetrieveError
 	switch {
+	case errors.As(err, &retrieve) && (retrieve.ErrorCode == "invalid_client" || retrieve.ErrorCode == "unauthorized_client"):
+		return nil, gofiler.ErrServiceUnavailable.Withf("Google refused the client of %q, so check its client_id and client_secret: %v", ClientCredential, err)
 	case errors.Is(err, auth.ErrBadParameter):
 		return nil, gofiler.ErrNotAuthorized.Withf("%v", err)
 	case err != nil:
 		return nil, gofiler.ErrServiceUnavailable.Withf("%v", err)
 	}
+	// Store it under the key's lock, which every volume of the key shares, so
+	// a refresh in progress doesn't replace it
 	data, err := json.Marshal(grant)
 	if err != nil {
 		return nil, err
-	} else if err := credentials.Set(ctx, code.Credential, data); err != nil {
+	}
+	unlock := lockCredential(code.Credential)
+	defer unlock()
+	if err := credentials.Set(ctx, code.Credential, data); err != nil {
 		return nil, err
 	}
 	return grant, nil
