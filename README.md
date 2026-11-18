@@ -69,7 +69,7 @@ Closing the filer stops listings, reads, writes and watches which are in progres
 
 ### Options
 
-The options of the filesystem backend are passed to `New` and `NewFS` as `url.Values`, and are the query parameters of the filer's URL, `fs://<name>`, which has each of them, defaults too, so it says how the filer is set up. They're followed by the options of a backend, `gofiler.Opts`, whose `Tracer` traces each operation, such as `fs.ListObjects`, with the volume and path, when it's set. Each option can be repeated, and setting one replaces its defaults, so an empty value, such as `skip=`, sets none.
+The options of the filesystem backend are passed to `New` and `NewFS` as `url.Values`, and are the query parameters of the filer's URL, `fs://<name>`, which has each of them, defaults too, so it says how the filer is set up. They're followed by the options of a backend, `gofiler.Opts`, which every backend is created with, of the registry's `WithTracer`, `WithCredentials` and `WithClientOpts`, whose `Tracer` traces each operation, such as `fs.ListObjects`, with the volume and path, when it's set. Each option can be repeated, and setting one replaces its defaults, so an empty value, such as `skip=`, sets none.
 
 | Option | Description | Default |
 | -------- | ------------- | --------- |
@@ -103,13 +103,13 @@ filer volume-create-gtasks tasks
 In the registry, its URL is `gtasks://<name>`, such as `gtasks://tasks?readonly=false`, and its sign-in is of the registry's credentials (`filer.WithCredentials`):
 
 ```go
-filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}, credentials)
+filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}, gofiler.Opts{Credentials: credentials, ClientOpts: clientopts})
 ```
 
 * **`GOOGLE_CLIENT`:** the credential of the OAuth client, a desktop app's, as the JSON of its `client_id` and `client_secret`, or the file Google's console downloads for it.
 * **`GOOGLE_TOKEN`:** the credential of the user's sign-in, a go-auth `Grant`, or another, of the `credential` parameter. It must be for `GOOGLE_CLIENT`'s client, and have the `tasks.readonly` or `tasks` scope, or `tasks`, when it isn't read-only. Its token is refreshed, with the client's secret, and stored again, when it expires.
 * **Signing in:** when there's no sign-in, or it's for another client, or doesn't have the scopes, or is revoked, it's go-auth's `SignInError`, with how to sign in: Google's server, the client's ID, the scopes, and the credential. The HTTP API returns it as 401, with its `detail`, without the client's secret.
-* **Client options:** go-client's, such as a tracer, or a trace.
+* **Options:** a backend's `gofiler.Opts`: its `Credentials`, of the sign-in, and its `ClientOpts`, go-client's, as they are, such as a user agent, a tracer, of `client.OptTracer`, or a trace.
 * **`readonly`:** true by default. With `false`, tasks can be created, updated and deleted, and lists deleted, as under Writing above.
 * **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
 * **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.

@@ -32,11 +32,10 @@ import (
 // with its metadata, such as its due date
 type TaskFiler struct {
 	taskOpt
-	name        string
-	credentials gofiler.CredentialProvider
-	tokens      *tokens
-	clientopts  []client.ClientOpt
-	client      *httpclient.TasksClient
+	name   string
+	opts   gofiler.Opts // Its credentials, and client options, which a clone is created with
+	tokens *tokens
+	client *httpclient.TasksClient
 
 	// The watches, which are sent the changes the filer makes, so they're
 	// sent them without waiting to refresh
@@ -111,7 +110,7 @@ const (
 //     watched, which is DefaultRefreshInterval, or zero not to watch them
 //   - hidden: tasks which are hidden, as they're completed, and cleared from
 //     their list, are included, which they aren't unless it's true
-func NewTaskFiler(ctx context.Context, name string, params url.Values, credentials gofiler.CredentialProvider, clientopts ...client.ClientOpt) (*TaskFiler, error) {
+func NewTaskFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*TaskFiler, error) {
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
@@ -119,14 +118,15 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, credentia
 	if err != nil {
 		return nil, err
 	}
-	self := &TaskFiler{taskOpt: opt, name: name, credentials: credentials, clientopts: slices.Clone(clientopts)}
+	opts.ClientOpts = slices.Clone(opts.ClientOpts)
+	self := &TaskFiler{taskOpt: opt, name: name, opts: opts}
 
 	// The user's sign-in, which has the access the volume needs
 	required, scopes := []string{httpclient.TasksScope}, []string{httpclient.TasksScope}
 	if opt.readonly {
 		required, scopes = []string{httpclient.TasksReadonlyScope, httpclient.TasksScope}, []string{httpclient.TasksReadonlyScope}
 	}
-	if self.tokens, err = newTokens(ctx, credentials, opt.credential, required, scopes); err != nil {
+	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, scopes); err != nil {
 		return nil, err
 	}
 
@@ -136,13 +136,13 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, credentia
 	if err != nil {
 		return nil, err
 	}
-	opts := append(slices.Clone(clientopts), client.OptTransport(func(parent http.RoundTripper) http.RoundTripper {
+	clientopts := append(slices.Clone(opts.ClientOpts), client.OptTransport(func(parent http.RoundTripper) http.RoundTripper {
 		return &tokenTransport{parent: parent, tokens: self.tokens, scheme: api.Scheme, host: api.Host}
 	}))
 	if opt.quota > 0 {
-		opts = append(opts, client.OptRateLimit(float32(opt.quota)/60))
+		clientopts = append(clientopts, client.OptRateLimit(float32(opt.quota)/60))
 	}
-	if self.client, err = httpclient.NewTasksClient(opt.endpoint, opts...); err != nil {
+	if self.client, err = httpclient.NewTasksClient(opt.endpoint, clientopts...); err != nil {
 		return nil, err
 	}
 
@@ -219,7 +219,7 @@ func (self *TaskFiler) URL() *url.URL {
 // the patch, and the same client options, which is checked as a new filer
 // is
 func (self *TaskFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
-	clone, err := NewTaskFiler(ctx, self.name, gofiler.PatchValues(self.params(), patch), self.credentials, self.clientopts...)
+	clone, err := NewTaskFiler(ctx, self.name, gofiler.PatchValues(self.params(), patch), self.opts)
 	if err != nil {
 		return nil, err
 	}

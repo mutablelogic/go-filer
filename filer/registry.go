@@ -589,13 +589,13 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if path == "" || !filepath.IsAbs(filepath.FromSlash(path)) {
 			return nil, gofiler.ErrBadParameter.Withf("path of volume %q isn't absolute: %q", u.Host, path)
 		}
-		if b, err := fs.New(u.Host, path, query, self.backendOpts()); err != nil {
+		if b, err := fs.New(u.Host, path, query, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil
 		}
 	case schema.SchemeS3:
-		if b, err := s3.New(ctx, u, self.backendOpts()); err != nil {
+		if b, err := s3.New(ctx, u, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil
@@ -607,9 +607,9 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if u.Path != "" && u.Path != "/" {
 			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Tasks has no path: %q", u.Path)
 		}
-		// The registry's client options, as they are, such as a user agent,
-		// and a tracer, which it doesn't add one of its own to
-		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.credentials, self.clientopts...); err != nil {
+		// The registry's options of its backends: its credentials, of the
+		// sign-in, and its client options, as they are
+		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil
@@ -619,7 +619,7 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 		if u.Path != "" && u.Path != "/" {
 			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Contacts has no path: %q", u.Path)
 		}
-		if b, err := google.NewContactFiler(ctx, u.Host, query, self.credentials, self.clientopts...); err != nil {
+		if b, err := google.NewContactFiler(ctx, u.Host, query, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil

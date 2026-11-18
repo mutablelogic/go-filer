@@ -32,11 +32,10 @@ import (
 // name. It's read, and watched, but not written, so far.
 type ContactFiler struct {
 	contactOpt
-	name        string
-	credentials gofiler.CredentialProvider
-	tokens      *tokens
-	clientopts  []client.ClientOpt
-	client      *httpclient.PeopleClient
+	name   string
+	opts   gofiler.Opts // Its credentials, and client options, which a clone is created with
+	tokens *tokens
+	client *httpclient.PeopleClient
 }
 
 // contactOpt are the options of a contact filer, of its parameters
@@ -78,7 +77,7 @@ var peopleEndpoint = httpclient.PeopleEndpoint
 // The sign-in, and the contacts, are checked, as for NewTaskFiler, and its
 // parameters are readonly, which must be true, so far, quota,
 // refresh_interval and credential, as a task filer's.
-func NewContactFiler(ctx context.Context, name string, params url.Values, credentials gofiler.CredentialProvider, clientopts ...client.ClientOpt) (*ContactFiler, error) {
+func NewContactFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*ContactFiler, error) {
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
@@ -86,11 +85,12 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, creden
 	if err != nil {
 		return nil, err
 	}
-	self := &ContactFiler{contactOpt: opt, name: name, credentials: credentials, clientopts: slices.Clone(clientopts)}
+	opts.ClientOpts = slices.Clone(opts.ClientOpts)
+	self := &ContactFiler{contactOpt: opt, name: name, opts: opts}
 
 	// The user's sign-in, which can read contacts
 	required := []string{httpclient.ContactsReadonlyScope, httpclient.ContactsScope}
-	if self.tokens, err = newTokens(ctx, credentials, opt.credential, required, []string{httpclient.ContactsReadonlyScope}); err != nil {
+	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, []string{httpclient.ContactsReadonlyScope}); err != nil {
 		return nil, err
 	}
 
@@ -100,13 +100,13 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, creden
 	if err != nil {
 		return nil, err
 	}
-	opts := append(slices.Clone(clientopts), client.OptTransport(func(parent http.RoundTripper) http.RoundTripper {
+	clientopts := append(slices.Clone(opts.ClientOpts), client.OptTransport(func(parent http.RoundTripper) http.RoundTripper {
 		return &tokenTransport{parent: parent, tokens: self.tokens, scheme: api.Scheme, host: api.Host}
 	}))
 	if opt.quota > 0 {
-		opts = append(opts, client.OptRateLimit(float32(opt.quota)/60))
+		clientopts = append(clientopts, client.OptRateLimit(float32(opt.quota)/60))
 	}
-	if self.client, err = httpclient.NewPeopleClient(opt.endpoint, opts...); err != nil {
+	if self.client, err = httpclient.NewPeopleClient(opt.endpoint, clientopts...); err != nil {
 		return nil, err
 	}
 
@@ -176,7 +176,7 @@ func (self *ContactFiler) URL() *url.URL {
 // the patch, and the same client options, which is checked as a new filer
 // is
 func (self *ContactFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
-	clone, err := NewContactFiler(ctx, self.name, gofiler.PatchValues(self.params(), patch), self.credentials, self.clientopts...)
+	clone, err := NewContactFiler(ctx, self.name, gofiler.PatchValues(self.params(), patch), self.opts)
 	if err != nil {
 		return nil, err
 	}

@@ -22,10 +22,8 @@ type Opt func(*opt) error
 
 type opt struct {
 	broadcaster *broadcaster.Broadcaster
-	tracer      trace.Tracer
 	meter       metric.Meter
-	clientopts  []client.ClientOpt
-	credentials gofiler.CredentialProvider
+	backendOpts gofiler.Opts  // the options every backend is created with: its tracer, credentials, and client options
 	indexStore  indexer.Store // where the indexes of volumes with the index option are kept
 	worker      string        // the name of the worker, which is in the metrics
 	debounce    time.Duration // how long a change is held, until its object is quiet
@@ -98,10 +96,11 @@ func WithBroadcaster(b *broadcaster.Broadcaster) Opt {
 	}
 }
 
-// WithTracer sets the tracer used for tracing operations.
+// WithTracer sets the tracer of the backends' operations, such as fs's,
+// and S3's
 func WithTracer(tracer trace.Tracer) Opt {
 	return func(o *opt) error {
-		o.tracer = tracer
+		o.backendOpts.Tracer = tracer
 		return nil
 	}
 }
@@ -119,7 +118,7 @@ func WithMeter(meter metric.Meter) Opt {
 // ${S3_SECRET}, so the URLs don't have the credentials
 func WithCredentials(credentials gofiler.CredentialProvider) Opt {
 	return func(o *opt) error {
-		o.credentials = credentials
+		o.backendOpts.Credentials = credentials
 		return nil
 	}
 }
@@ -132,19 +131,13 @@ func WithCredentials(credentials gofiler.CredentialProvider) Opt {
 // left out of a trace it's given.
 func WithClientOpts(clientopts ...client.ClientOpt) Opt {
 	return func(o *opt) error {
-		o.clientopts = clientopts
+		o.backendOpts.ClientOpts = clientopts
 		return nil
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
-
-// backendOpts returns the options of a backend, which are the registry's
-// tracer, and the provider of credentials
-func (o *opt) backendOpts() gofiler.Opts {
-	return gofiler.Opts{Tracer: o.tracer, Credentials: o.credentials}
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS

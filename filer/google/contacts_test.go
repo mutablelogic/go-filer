@@ -104,7 +104,7 @@ func newContactFiler(t *testing.T, endpoint string, params url.Values) *google.C
 		params = url.Values{}
 	}
 	params.Set("quota", "0")
-	filer, err := google.NewContactFiler(t.Context(), "contacts", params, contactCredentials(t, endpoint))
+	filer, err := newContactFilerOf(t.Context(), "contacts", params, contactCredentials(t, endpoint))
 	require.NoError(t, err)
 	return filer
 }
@@ -115,7 +115,7 @@ func Test_NewContactFiler(t *testing.T) {
 
 	// A sign-in without the contacts' scope signs in again, asking for it,
 	// and keeping those it has, such as of tasks
-	_, err := google.NewContactFiler(ctx, "contacts", url.Values{"quota": {"0"}}, newCredentials(t, endpoint, nil))
+	_, err := newContactFilerOf(ctx, "contacts", url.Values{"quota": {"0"}}, newCredentials(t, endpoint, nil))
 	require.Equal(t, http.StatusUnauthorized, status(err))
 	signIn := authclient.SignInOf(err)
 	require.NotNil(t, signIn)
@@ -123,10 +123,10 @@ func Test_NewContactFiler(t *testing.T) {
 
 	// Writing isn't implemented, so far, and parameters which aren't known,
 	// or can't be parsed, are bad
-	_, err = google.NewContactFiler(ctx, "contacts", url.Values{"readonly": {"false"}}, contactCredentials(t, endpoint))
+	_, err = newContactFilerOf(ctx, "contacts", url.Values{"readonly": {"false"}}, contactCredentials(t, endpoint))
 	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 	for _, params := range []url.Values{{"hidden": {"true"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}}, {"credential": {"S3_SECRET"}}} {
-		_, err := google.NewContactFiler(ctx, "contacts", params, contactCredentials(t, endpoint))
+		_, err := newContactFilerOf(ctx, "contacts", params, contactCredentials(t, endpoint))
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
 
