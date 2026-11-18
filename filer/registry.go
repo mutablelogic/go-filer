@@ -58,19 +58,16 @@ type entry struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// Set once the backend is created, as the volume is registered while
-	// it's being added, so it can't be added twice, but can't be used until
-	// then. It's only read or set with the registry locked.
-	ready bool
+	// Whether the backend is being added, when its volume is registered, so
+	// it can't be added twice, but can't be used, is ready, or is being
+	// removed, when it can't be used, but is still registered until it's
+	// closed, so its volume can't be added again until then. It's only read
+	// or set with the registry locked.
+	state entryState
 
 	// Set when the volume is updated, or opened again, so it's sent a rescan
 	// once Run watches it, as its changes may have been missed
 	rescan bool
-
-	// Set while the backend is being removed, when it can't be used, but is
-	// still registered until it's closed, so its volume can't be added again
-	// until then. It's only read or set with the registry locked.
-	closing bool
 
 	// closed is closed once the backend is closed, and removed from the
 	// registry, when err is why it couldn't be closed
@@ -78,14 +75,16 @@ type entry struct {
 	err    error
 }
 
-// usingKey is the key of the value in the context of a function which is
-// using a backend, passed to With, so removing the volume within it doesn't
-// wait for it to return
-type usingKey struct {
-	e *entry
-}
+// entryState is how far a backend is added, or removed
+type entryState int
 
-// Ensure Registry implements io.Closer, and is a filer of every volume
+const (
+	stateAdding  entryState = iota // Being added, so it can't be used yet
+	stateReady                     // Can be used
+	stateClosing                   // Being removed, so it can't be used
+)
+
+// Ensure Registry is a filer of every volume
 var _ gofiler.Filer = (*Registry)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -143,7 +142,7 @@ func (self *Registry) close() error {
 	}
 	started := make(map[*entry]bool, len(self.backend))
 	for volume, e := range self.backend {
-		if e.ready && !e.closing {
+		if e.state == stateReady {
 			self.startClose(e, volume)
 			started[e] = true
 		}
@@ -179,7 +178,7 @@ func (self *Registry) Keys() []string {
 	defer self.RUnlock()
 	keys := make([]string, 0, len(self.backend))
 	for volume, e := range self.backend {
-		if e.ready && !e.closing {
+		if e.state == stateReady {
 			keys = append(keys, volume)
 		}
 	}
@@ -194,7 +193,7 @@ func (self *Registry) Volumes() []schema.Volume {
 	defer self.RUnlock()
 	volumes := make([]schema.Volume, 0, len(self.backend))
 	for name, e := range self.backend {
-		if e.ready && !e.closing {
+		if e.state == stateReady {
 			volumes = append(volumes, volumeOf(name, e.Filer))
 		}
 	}
@@ -210,7 +209,7 @@ func (self *Registry) Volumes() []schema.Volume {
 func (self *Registry) Volume(name string) (*schema.Volume, error) {
 	self.RLock()
 	defer self.RUnlock()
-	if e, exists := self.backend[name]; !exists || !e.ready || e.closing {
+	if e, exists := self.backend[name]; !exists || e.state != stateReady {
 		return nil, gofiler.ErrNotFound.Withf("volume %q is not mounted", name)
 	} else {
 		return types.Ptr(volumeOf(name, e.Filer)), nil
@@ -305,17 +304,14 @@ func (self *Registry) Add(ctx context.Context, volume string, url *url.URL) (gof
 // is registered in its place. Its name is kept while it's closed, so it isn't
 // added by another call. Returns ErrNotImplemented when the backend can't be
 // cloned, such as a filesystem which isn't a directory, ErrNotFound when the volume isn't registered, or
-// is being added or removed, and ErrConflict when it's called from a
-// function passed to With which is using the volume, which it would wait for.
+// is being added or removed. It can't be called from a function passed to
+// With which is using the volume, which it waits for.
 func (self *Registry) Update(ctx context.Context, volume string, patch url.Values) (*schema.Volume, error) {
 	e, err := self.use(volume)
 	if err != nil {
 		return nil, err
 	}
 	e.wg.Done()
-	if ctx.Value(usingKey{e}) != nil {
-		return nil, gofiler.ErrConflict.Withf("volume %q can't be updated while it's used by the caller", volume)
-	}
 	return self.update(ctx, e, volume, patch)
 }
 
@@ -343,7 +339,7 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 	if self.backend == nil {
 		self.Unlock()
 		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), closeFiler(clone))
-	} else if current, exists := self.backend[volume]; !exists || current != e || e.closing {
+	} else if current, exists := self.backend[volume]; !exists || current != e || e.state == stateClosing {
 		self.Unlock()
 		return nil, errors.Join(gofiler.ErrNotFound.Withf("volume %q is not mounted", volume), closeFiler(clone))
 	}
@@ -369,14 +365,13 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 // are cancelled, and it's no longer watched. It can't be used once Del is called, but
 // stays registered until it's closed, so a volume which isn't registered has
 // released what it used, such as its directory. Del waits until the backend
-// is closed, or ctx is cancelled, except when it's called from a function
-// passed to With, which uses the backend, when it returns once the backend
-// can't be used, and the backend is closed once the function returns.
+// is closed, or ctx is cancelled. It can't be called from a function passed
+// to With which is using the volume, which it waits for.
 // Does nothing if there is no backend for the volume, or it's being added.
 func (self *Registry) Del(ctx context.Context, volume string) error {
 	self.Lock()
 	e, exists := self.backend[volume]
-	if exists = exists && e.ready; exists && !e.closing {
+	if exists = exists && e.state != stateAdding; exists && e.state == stateReady {
 		self.startClose(e, volume)
 	}
 	self.Unlock()
@@ -384,11 +379,6 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 		return nil
 	}
 
-	// Don't wait for the backend to be closed when it's being used by the
-	// caller, which it waits for
-	if ctx.Value(usingKey{e}) != nil {
-		return nil
-	}
 	select {
 	case <-e.closed:
 		return e.err
@@ -402,8 +392,8 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 // so fn must finish using the backend before it returns. The context passed
 // to fn is cancelled when ctx is cancelled, or when the volume is removed, so
 // that long-running operations do not delay removing it. The registry is not
-// locked while fn runs, so fn may call other registry methods, including Del
-// for the volume, with the context passed to it.
+// locked while fn runs, so fn may call other registry methods, but not Del or
+// Update of its own volume, which wait for fn to return.
 func (self *Registry) With(ctx context.Context, volume string, fn func(context.Context, gofiler.Filer) error) error {
 	// Find the backend, and record that it is in use
 	e, err := self.use(volume)
@@ -412,9 +402,8 @@ func (self *Registry) With(ctx context.Context, volume string, fn func(context.C
 	}
 	defer e.wg.Done()
 
-	// Cancel the context passed to fn when the volume is removed, and mark it
-	// as using the backend
-	ctx, cancel := context.WithCancel(context.WithValue(ctx, usingKey{e}, true))
+	// Cancel the context passed to fn when the volume is removed
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(e.ctx, cancel)
 	defer stop()
@@ -496,7 +485,7 @@ func (self *Registry) register(e *entry, volume string, b gofiler.Filer, rescan 
 	if self.backend == nil {
 		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), closeFiler(b))
 	}
-	e.Filer, e.ready, e.rescan = b, true, rescan
+	e.Filer, e.state, e.rescan = b, stateReady, rescan
 	e.ctx, e.cancel = context.WithCancel(context.Background())
 	self.changedVolumes()
 	return b, nil
@@ -517,7 +506,7 @@ func (self *Registry) unreserve(e *entry, volume string) {
 // watching it, which are cancelled, have returned, and then removes it from the
 // registry, and closes e.closed. The registry must be locked.
 func (self *Registry) startClose(e *entry, volume string) {
-	e.closing = true
+	e.state = stateClosing
 	e.cancel()
 	self.teardown[e] = struct{}{}
 	go func() {

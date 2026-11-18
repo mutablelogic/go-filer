@@ -197,7 +197,7 @@ func (self *Registry) startWatches(watches map[*entry]context.CancelFunc, events
 	self.Lock()
 	defer self.Unlock()
 	for volume, e := range self.backend {
-		if _, exists := watches[e]; exists || !e.ready || e.closing {
+		if _, exists := watches[e]; exists || e.state != stateReady {
 			continue
 		}
 		ctx, cancel := context.WithCancel(e.ctx)
@@ -278,7 +278,7 @@ func (self *Registry) reopen(e *entry, volume string) {
 func (self *Registry) registered(e *entry, volume string) bool {
 	self.RLock()
 	defer self.RUnlock()
-	return self.backend != nil && self.backend[volume] == e && !e.closing
+	return self.backend != nil && self.backend[volume] == e && e.state != stateClosing
 }
 
 // rescanEvent returns a rescan of the volume, whose changes may have been
