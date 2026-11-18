@@ -2,37 +2,25 @@ package google
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/url"
-	"slices"
 	"strings"
-	"sync"
 
 	// Packages
 	auth "github.com/mutablelogic/go-auth"
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
-	credential "github.com/mutablelogic/go-auth/credential"
+	grant "github.com/mutablelogic/go-auth/credential/grant"
 	gofiler "github.com/mutablelogic/go-filer"
 	types "github.com/mutablelogic/go-server/pkg/types"
-	oauth2 "golang.org/x/oauth2"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
 // tokens is the source of a filer's access token, of the user's sign-in,
-// which is a go-auth Grant, whose token is refreshed, and stored again, when
-// it has expired, with the client of ClientCredential
+// which go-auth's grant source refreshes, and stores, with the client of
+// ClientCredential, with go-filer's errors
 type tokens struct {
-	mu          sync.Mutex
-	credentials gofiler.CredentialProvider
-	key         string   // The key of the sign-in
-	required    []string // A sign-in has one of the scopes
-	scopes      []string // The scopes which are asked for, when signing in
-	client      authclient.Registration
-	current     authclient.Grant
-	refresher   *authclient.Client // Refreshes tokens, without the API's options, so a trace doesn't log their secrets
+	source *grant.Source
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -62,194 +50,67 @@ var Google = authclient.ServerMetadata{
 // newTokens returns the source of the access token of the sign-in with the
 // key, which must be for the client, of ClientCredential, and have one of
 // the required scopes. The scopes are asked for when the user signs in, with
-// those the sign-in has already. Returns a SignInError, with how to sign
-// in, when the user hasn't, or their sign-in is for another client, or
-// doesn't have the scopes.
+// those the sign-in has already. Returns a SignInError, which is
+// ErrNotAuthorized, with how to sign in, when the user hasn't, or their
+// sign-in is for another client, or doesn't have the scopes.
 func newTokens(ctx context.Context, credentials gofiler.CredentialProvider, key string, required, scopes []string) (*tokens, error) {
 	if credentials == nil {
 		return nil, gofiler.ErrServiceUnavailable.With("can't sign in with Google, without a provider of credentials")
 	}
-	refresher, err := authclient.New(Google.Issuer)
+	source, err := grant.New(ctx, credentials, grant.Config{Server: Google, Client: ClientCredential, Key: key, Required: required, Scopes: scopes})
 	if err != nil {
-		return nil, err
+		return nil, authError(err)
 	}
-	self := &tokens{credentials: credentials, key: key, required: required, scopes: scopes, refresher: refresher}
-	client, err := readClient(ctx, credentials)
-	if err != nil {
-		return nil, err
-	}
-	self.client = *client
-	current, err := self.read(ctx)
-	if err != nil {
-		return nil, err
-	}
-	self.current = *current
-	return self, nil
+	return &tokens{source: source}, nil
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// PUBLIC METHODS
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
 // token returns the access token, which is refreshed, and stored, once it
-// has expired. A sign-in which was replaced while it was refreshed, such as
-// when the user signed in again, is used, rather than overwritten.
+// has expired
 func (self *tokens) token(ctx context.Context) (string, error) {
-	self.mu.Lock()
-	defer self.mu.Unlock()
-
-	// The sign-in, as it's stored, which the user can replace, by signing in
-	// again
-	current, err := self.read(ctx)
+	token, err := self.source.Token(ctx)
 	if err != nil {
-		return "", err
+		return "", authError(err)
 	}
-	self.current = *current
-	if current.Token.Valid() {
-		return current.Token.AccessToken, nil
-	}
-
-	// Refresh it, with the client's secret, which isn't stored with it. A
-	// client which Google refuses, such as one whose secret is wrong, isn't
-	// mended by signing in again.
-	grant := *current
-	grant.Client = self.client
-	token, err := self.refresher.TokenSource(ctx, &grant, nil).Token()
-	var retrieve *oauth2.RetrieveError
-	switch {
-	case errors.As(err, &retrieve) && (retrieve.ErrorCode == "invalid_client" || retrieve.ErrorCode == "unauthorized_client"):
-		return "", gofiler.ErrServiceUnavailable.Withf("Google refused the client of %q, so check its client_id and client_secret: %v", ClientCredential, err)
-	case errors.Is(err, auth.ErrBadParameter):
-		// Refused, as it's revoked, or expired, or can't be refreshed
-		return "", self.signIn(current, gofiler.ErrNotAuthorized.Withf("sign-in %q is revoked, or expired, so sign in with Google again: %v", self.key, err))
-	case err != nil:
-		return "", gofiler.ErrServiceUnavailable.Withf("refreshing sign-in %q: %v", self.key, err)
-	}
-
-	// Store it, unless it was replaced meanwhile, under the key's lock,
-	// which every volume, and sign-in, of the key shares
-	unlock := credential.Lock(self.key)
-	defer unlock()
-	if latest, err := self.read(ctx); err != nil {
-		return "", err
-	} else if !sameToken(latest.Token, current.Token) {
-		self.current = *latest
-		return latest.Token.AccessToken, nil
-	}
-	refreshed := *current
-	refreshed.Token = token
-	if refreshed.Token.RefreshToken == "" {
-		refreshed.Token.RefreshToken = current.Token.RefreshToken
-	}
-	data, err := json.Marshal(refreshed)
-	if err != nil {
-		return "", err
-	} else if err := self.credentials.Set(ctx, self.key, data); err != nil {
-		return "", err
-	}
-	self.current = refreshed
-	return refreshed.Token.AccessToken, nil
+	return token.AccessToken, nil
 }
 
-// read returns the sign-in, which must be Google's, for the client, and
-// have one of the required scopes, or a SignInError
-func (self *tokens) read(ctx context.Context) (*authclient.Grant, error) {
-	data, err := self.credentials.Get(ctx, self.key)
-	if isNotFound(err) {
-		return nil, self.signIn(nil, gofiler.ErrNotAuthorized.Withf("no %q sign-in, so sign in with Google", self.key))
-	} else if err != nil {
-		return nil, err
-	}
-	var grant authclient.Grant
-	if err := json.Unmarshal(data, &grant); err != nil {
-		return nil, self.signIn(nil, gofiler.ErrNotAuthorized.Withf("credential %q isn't a sign-in: %v", self.key, err))
-	}
-	switch {
-	case grant.Server.Issuer != Google.Issuer:
-		return nil, self.signIn(nil, gofiler.ErrNotAuthorized.Withf("sign-in %q isn't Google's, so sign in with Google", self.key))
-	case grant.Client.ClientID != self.client.ClientID:
-		return nil, self.signIn(&grant, gofiler.ErrNotAuthorized.Withf("sign-in %q is for another client than %q's, so sign in with Google again", self.key, ClientCredential))
-	case grant.Token == nil || (grant.Token.AccessToken == "" && grant.Token.RefreshToken == ""):
-		return nil, self.signIn(&grant, gofiler.ErrNotAuthorized.Withf("sign-in %q has no token, so sign in with Google again", self.key))
-	case !hasScope(grant.Scopes, self.required):
-		return nil, self.signIn(&grant, gofiler.ErrNotAuthorized.Withf("sign-in %q doesn't have the access the volume needs, %s, so sign in with Google again", self.key, strings.Join(self.required, " or ")))
-	}
-	if u, err := url.Parse(grant.Server.TokenEndpoint); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return nil, self.signIn(&grant, gofiler.ErrNotAuthorized.Withf("sign-in %q has no token endpoint, so sign in with Google again", self.key))
-	}
-	return &grant, nil
-}
-
-// signInAgain returns a SignInError, of the current sign-in, which is read
-// under the lock, as a request which changes it can be in progress
+// signInAgain returns a SignInError, of the current sign-in, which wraps the
+// error, such as when the API doesn't accept its token
 func (self *tokens) signInAgain(err error) error {
-	self.mu.Lock()
-	current := self.current
-	self.mu.Unlock()
-	return self.signIn(&current, err)
+	return authError(self.source.SignIn(err))
 }
 
-// signIn returns a SignInError, with how the user signs in: Google, the
-// client, and the scopes, with those the sign-in has, when it isn't nil, so
-// signing in again doesn't take away what others need
-func (self *tokens) signIn(grant *authclient.Grant, err error) error {
-	scopes := slices.Clone(self.scopes)
-	if grant != nil {
-		for _, scope := range grant.Scopes {
-			if !slices.Contains(scopes, scope) {
-				scopes = append(scopes, scope)
-			}
-		}
+// authError returns go-filer's error of go-auth's, so a sign-in which is
+// needed is ErrNotAuthorized, and keeps how to sign in
+func authError(err error) error {
+	var signIn *authclient.SignInError
+	if errors.As(err, &signIn) {
+		return authclient.NewSignInError(signIn.SignIn, authError(signIn.Err))
 	}
-	return authclient.NewSignInError(authclient.SignIn{
-		Server:     Google,
-		ClientID:   self.client.ClientID,
-		Scopes:     scopes,
-		Credential: self.key,
-	}, err)
-}
-
-// readClient returns the client, of ClientCredential, which is
-// ErrServiceUnavailable when there's none, as no one can sign in
-func readClient(ctx context.Context, credentials gofiler.CredentialProvider) (*authclient.Registration, error) {
-	data, err := credentials.Get(ctx, ClientCredential)
-	if isNotFound(err) {
-		return nil, gofiler.ErrServiceUnavailable.Withf("can't sign in with Google: no %q credential, with the client_id and client_secret of a Google OAuth desktop client", ClientCredential)
-	} else if err != nil {
-		return nil, err
+	var authErr auth.Err
+	if !errors.As(err, &authErr) {
+		return err
 	}
-	client, err := authclient.ParseRegistration(data)
-	if err != nil {
-		return nil, gofiler.ErrBadParameter.Withf("credential %q: %v", ClientCredential, err)
+	reason := strings.TrimPrefix(err.Error(), authErr.Error()+": ")
+	switch authErr {
+	case auth.ErrInvalidProvider:
+		return gofiler.ErrNotAuthorized.With(reason)
+	case auth.ErrBadParameter:
+		return gofiler.ErrBadParameter.With(reason)
+	case auth.ErrNotFound:
+		return gofiler.ErrNotFound.With(reason)
+	case auth.ErrForbidden:
+		return gofiler.ErrForbidden.With(reason)
+	case auth.ErrConflict:
+		return gofiler.ErrConflict.With(reason)
+	case auth.ErrNotImplemented:
+		return gofiler.ErrNotImplemented.With(reason)
+	default:
+		return gofiler.ErrServiceUnavailable.With(reason)
 	}
-	return client, nil
-}
-
-// sameToken returns true when two tokens are the same
-func sameToken(a, b *oauth2.Token) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return a.AccessToken == b.AccessToken && a.RefreshToken == b.RefreshToken && a.Expiry.Equal(b.Expiry)
-}
-
-// hasScope returns true when the scopes have one of those which are required
-func hasScope(scopes, required []string) bool {
-	for _, scope := range required {
-		if slices.Contains(scopes, scope) {
-			return true
-		}
-	}
-	return false
-}
-
-// isNotFound returns true when the error of a provider of credentials is
-// that it doesn't have the credential, which is go-auth's ErrNotFound, of
-// its providers, or go-filer's
-func isNotFound(err error) bool {
-	return errors.Is(err, auth.ErrNotFound) || errors.Is(err, gofiler.ErrNotFound)
 }
 
 // credentialKey returns an error when the key of a credential isn't an

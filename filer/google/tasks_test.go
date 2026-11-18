@@ -18,6 +18,7 @@ import (
 	"time"
 
 	// Packages
+	auth "github.com/mutablelogic/go-auth"
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
@@ -61,7 +62,7 @@ func (c *credentials) Get(_ context.Context, key string) (json.RawMessage, error
 	if value, exists := c.values[key]; exists {
 		return value, nil
 	}
-	return nil, gofiler.ErrNotFound.Withf("credential %q", key)
+	return nil, auth.ErrNotFound.Withf("credential %q", key)
 }
 
 func (c *credentials) Set(_ context.Context, key string, value json.RawMessage) error {
