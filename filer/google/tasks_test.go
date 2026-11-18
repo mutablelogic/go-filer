@@ -248,7 +248,11 @@ func Test_TaskObjects(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, dir.IsDir)
 	assert.Equal(t, "/L1", dir.Path)
-	assert.Equal(t, []schema.Meta{{Namespace: google.TaskNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)}}, dir.Meta)
+	assert.Equal(t, []schema.Meta{
+		{Namespace: google.TaskNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
+		{Namespace: google.FolderNamespace, Key: "children", Value: json.RawMessage(`true`)},
+		{Namespace: google.FolderNamespace, Key: "children-count", Value: json.RawMessage(`2`)},
+	}, dir.Meta, "with its tasks, which aren't deleted")
 
 	// A task is a file, of Markdown, with its metadata, its entity tag and
 	// when it was updated
@@ -352,6 +356,34 @@ func Test_TaskList(t *testing.T) {
 	assert.Equal(t, []string{"/L1", "/L2"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
 	assert.Equal(t, []string{"/L1", "/L1/A.md", "/L1/B.md", "/L2", "/L2/X.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
 
+	// Each list's directory has the count of its tasks, which aren't
+	// deleted, and whether it has any
+	fake.addList("L3", "Empty")
+	counts := map[string]string{}
+	iter, err := filer.ListObjects(t.Context(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+	require.NoError(t, err)
+	for {
+		object, err := iter.Next(t.Context())
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		for _, m := range object.Meta {
+			if m.Namespace == google.FolderNamespace {
+				counts[object.Path+" "+m.Key] = string(m.Value)
+			}
+		}
+	}
+	require.NoError(t, iter.Close())
+	assert.Equal(t, map[string]string{
+		"/L1 children": "true", "/L1 children-count": "2",
+		"/L2 children": "true", "/L2 children-count": "1",
+		"/L3 children": "false", "/L3 children-count": "0",
+	}, counts)
+	fake.Lock()
+	fake.lists = fake.lists[:2]
+	fake.Unlock()
+
 	// A list's tasks, and only a task
 	assert.Equal(t, []string{"/L1/A.md", "/L1/B.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/"}}))
 	assert.Equal(t, []string{"/L2/X.md"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2/X.md"}}))
@@ -369,7 +401,7 @@ func Test_TaskList(t *testing.T) {
 	fake.Unlock()
 
 	// A list which doesn't exist
-	_, err := filer.ListObjects(t.Context(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L9/"}})
+	_, err = filer.ListObjects(t.Context(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L9/"}})
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
@@ -445,6 +477,22 @@ func Test_TaskWatch(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"deleted /L2/X.md", "deleted /L2"}, got)
+
+	// A task which is added to a list updates its directory too, as the
+	// count of its tasks changes
+	fake.Lock()
+	fake.tasks["L1"] = append(fake.tasks["L1"], httpclient.Task{Id: "D", ETag: "D-1"})
+	fake.Unlock()
+	got = nil
+	for len(got) < 2 {
+		select {
+		case event := <-events:
+			got = append(got, event.EventType.String()+" "+event.Path)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("waiting for events, got %v", got)
+		}
+	}
+	assert.Equal(t, []string{"updated /L1", "created /L1/D.md"}, got)
 
 	// Until it's cancelled
 	cancel()

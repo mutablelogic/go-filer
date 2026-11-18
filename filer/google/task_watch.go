@@ -3,6 +3,7 @@ package google
 import (
 	"context"
 	"slices"
+	"strconv"
 	"time"
 
 	// Packages
@@ -77,11 +78,14 @@ func (self *TaskFiler) snapshot(ctx context.Context) (taskSnapshot, error) {
 		if !validId(list.Id) {
 			continue
 		}
-		snapshot[listPath(list.Id)] = list.ETag
 		tasks, err := self.client.Tasks(ctx, list.Id)
 		if err != nil {
 			return nil, apiError("watch", listPath(list.Id), err)
 		}
+
+		// A list's directory is updated when the count of its tasks, of its
+		// metadata, changes, as well as its entity tag
+		snapshot[listPath(list.Id)] = list.ETag + "/" + strconv.Itoa(countTasks(tasks))
 		for _, task := range tasks {
 			if !task.Deleted && validId(task.Id) {
 				snapshot[taskFilePath(list.Id, task.Id)] = task.ETag

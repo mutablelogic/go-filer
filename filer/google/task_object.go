@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,8 +31,11 @@ const (
 	// MarkdownType is the content type of a task's file
 	MarkdownType = "text/markdown"
 
-	// TaskNamespace is the namespace of the metadata of tasks and lists
-	TaskNamespace = "task"
+	// TaskNamespace is the namespace of the metadata of tasks and lists, and
+	// FolderNamespace of directories, whose "children" is whether they have
+	// any, and "children-count" how many
+	TaskNamespace   = "task"
+	FolderNamespace = "folder"
 
 	// taskExt is the extension of a task's file
 	taskExt = ".md"
@@ -83,8 +87,9 @@ func rootObject() *schema.Object {
 	}
 }
 
-// listObject returns a list, which is a directory, with its title
-func (self *TaskFiler) listObject(list *httpclient.TaskList) *schema.Object {
+// listObject returns a list, which is a directory, with its title, and
+// whether it has tasks, and how many
+func (self *TaskFiler) listObject(list *httpclient.TaskList, count int) *schema.Object {
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: self.name, Path: listPath(list.Id)},
 		ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType},
@@ -94,6 +99,10 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList) *schema.Object {
 		object.ETag = types.Ptr(list.ETag)
 	}
 	object.Meta = appendMeta(object.Meta, "title", list.Title)
+	object.Meta = append(object.Meta,
+		schema.Meta{Namespace: FolderNamespace, Key: "children", Value: json.RawMessage(strconv.FormatBool(count > 0))},
+		schema.Meta{Namespace: FolderNamespace, Key: "children-count", Value: json.RawMessage(strconv.Itoa(count))},
+	)
 	return object
 }
 
