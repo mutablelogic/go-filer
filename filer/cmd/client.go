@@ -4,6 +4,7 @@ import (
 	"context"
 
 	// Packages
+	credentialcmd "github.com/mutablelogic/go-auth/credential/cmd"
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	server "github.com/mutablelogic/go-server"
@@ -17,6 +18,11 @@ import (
 type ClientCommands struct {
 	VolumeCommands
 	ObjectCommands
+
+	// The server's credentials, such as GOOGLE_CLIENT, and the sign-ins
+	// which are stored, of go-auth's
+	credentialcmd.CredentialProviderCommands
+	credentialcmd.CredentialManagerCommands
 }
 
 ///////////////////////////////////////////////////////////////////////////////

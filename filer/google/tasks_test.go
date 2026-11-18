@@ -118,6 +118,17 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// The token endpoint refreshes a sign-in, of its refresh token, which
 	// is revoked, unless it's "refresh"
+	if r.URL.Path == "/token" && r.FormValue("grant_type") == "authorization_code" {
+		// A code of a sign-in, of its verifier, with the client's secret
+		if r.FormValue("code") != "code" || r.FormValue("code_verifier") != "verifier" || r.FormValue("client_secret") != "client-secret" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			return
+		}
+		writeJSON(w, map[string]any{"access_token": token, "token_type": "Bearer", "refresh_token": "refresh", "expires_in": 3600, "scope": httpclient.TasksScope})
+		return
+	}
 	if r.URL.Path == "/token" {
 		f.refreshes++
 		if r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "refresh" || r.FormValue("client_id") != clientID || r.FormValue("client_secret") != "client-secret" {
@@ -683,4 +694,51 @@ func Test_TaskSignIn(t *testing.T) {
 		_, err := google.ParseClient([]byte(data))
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, data)
 	}
+}
+
+func Test_TaskExchange(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	server := authclient.ServerMetadata{Issuer: google.Google.Issuer, AuthorizationEndpoint: google.Google.AuthorizationEndpoint, TokenEndpoint: endpoint + "/token"}
+	creds := newCredentials(t, endpoint, nil)
+	delete(creds.values, "GOOGLE_WORK")
+	code := authclient.SignInCode{Credential: "GOOGLE_WORK", Code: "code", CodeVerifier: "verifier", RedirectURI: "http://127.0.0.1:8085/callback"}
+
+	// The code is exchanged, with the client's secret, and the grant is
+	// stored, without it, so the volume of the credential is created
+	grant, err := google.Exchange(ctx, creds, server, code)
+	require.NoError(t, err)
+	assert.Equal(t, []string{httpclient.TasksScope}, grant.Scopes)
+	stored := creds.credential(t, "GOOGLE_WORK")
+	assert.Equal(t, authclient.Registration{ClientID: clientID}, stored.Client, "without the client's secret")
+	assert.Equal(t, "refresh", stored.Token.RefreshToken)
+	filer, err := google.NewTaskFiler(ctx, "work", url.Values{"endpoint": {endpoint}, "quota": {"0"}, "credential": {"GOOGLE_WORK"}}, creds)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/L1"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
+
+	// A code which is refused isn't authorized, and a credential which isn't
+	// a sign-in's, or a redirect which isn't a loopback address, are bad
+	refused := code
+	refused.Code = "other"
+	_, err = google.Exchange(ctx, creds, server, refused)
+	assert.ErrorIs(t, err, gofiler.ErrNotAuthorized)
+	for _, key := range []string{google.ClientCredential, "S3_SECRET", "not a key"} {
+		bad := code
+		bad.Credential = key
+		_, err = google.Exchange(ctx, creds, server, bad)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, key)
+	}
+	for _, uri := range []string{"https://example.com/callback", "http://example.com/callback"} {
+		bad := code
+		bad.RedirectURI = uri
+		_, err = google.Exchange(ctx, creds, server, bad)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, uri)
+	}
+
+	// The URL to sign in at asks for a refresh token
+	u, err := url.Parse(authclient.SignIn{Server: google.Google, ClientID: clientID, Scopes: []string{httpclient.TasksScope}}.AuthCodeURL(code.RedirectURI, "state", "verifier", google.SignInOptions...))
+	require.NoError(t, err)
+	assert.Equal(t, "offline", u.Query().Get("access_type"))
+	assert.Equal(t, "consent", u.Query().Get("prompt"))
 }

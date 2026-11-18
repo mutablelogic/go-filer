@@ -4,6 +4,7 @@ package main
 
 import (
 	// Packages
+	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	filer "github.com/mutablelogic/go-filer/filer"
 	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
 	server "github.com/mutablelogic/go-server"
@@ -42,6 +43,10 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
+
+	// Serve the credentials, so they're stored, such as GOOGLE_CLIENT, with
+	// the filer command's credential-set, and listed, without their values
+	runner.RunServer.Register(credentialhandler.RegisterManagerHandlers(credentials, false))
 
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
