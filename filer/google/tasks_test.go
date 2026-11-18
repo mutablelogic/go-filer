@@ -1242,6 +1242,7 @@ func Test_TaskWrite(t *testing.T) {
 		"Completed": vtodo("SUMMARY:Changed", "STATUS:COMPLETED", "COMPLETED:yesterday"),
 		"Event":     strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:No start\r\nEND:VEVENT\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"),
 		"Unclosed":  strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nEND:VCALENDAR\r\n"),
+		"Nested":    strings.NewReader("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:Changed\r\nBEGIN:VTODO\r\nSUMMARY:Inner\r\nEND:VTODO\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"),
 	} {
 		_, err := write("/L1/C.ics", body)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, name)
@@ -1361,4 +1362,52 @@ func Test_TaskHidden(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"deleted /L1/A.ics", "updated /L1"}, got)
+}
+
+func Test_TaskWriteConcurrent(t *testing.T) {
+	// Writes of a task, at once, are told to a watch in the order Google
+	// made them, so its last change is the task's
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Shopping"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	ctx, cancel := context.WithCancel(t.Context())
+	events, done := make(chan schema.Event, 64), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(ctx, events) }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case <-events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no rescan")
+	}
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}, Body: vtodo("SUMMARY:Shopping " + strconv.Itoa(i))})
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	// The filer's object is the one the watch was told of last, which is
+	// the task's entity tag
+	object, err := filer.GetObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	fake.Lock()
+	etag := ""
+	for _, task := range fake.tasks["L1"] {
+		if task.Id == "A" {
+			etag = task.ETag
+		}
+	}
+	fake.Unlock()
+	assert.Equal(t, etag, *object.ETag)
+	select {
+	case event := <-events:
+		assert.Equal(t, "updated /L1/A.ics", event.EventType.String()+" "+event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no update")
+	}
 }

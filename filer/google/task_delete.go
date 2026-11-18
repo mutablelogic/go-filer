@@ -26,6 +26,10 @@ func (self *TaskFiler) DeleteObjects(ctx context.Context, req schema.DeleteObjec
 	if err != nil {
 		return nil, err
 	}
+	// One write at a time, through telling the watches, so they're told in
+	// the order Google made them
+	self.writes.Lock()
+	defer self.writes.Unlock()
 	switch {
 	case path.list == "":
 		return nil, gofiler.ErrBadParameter.Withf("Cannot delete the root of volume %q", self.name)

@@ -40,6 +40,10 @@ type TaskFiler struct {
 
 	// The watches, which are sent the changes the filer makes, so they're
 	// sent them without waiting to refresh
+	// writes serialises the filer's writes, and deletes, through telling the
+	// watches, so they're told in the order Google made them
+	writes sync.Mutex
+
 	mu      sync.Mutex
 	watches map[*taskWatch]struct{}
 	seq     uint64 // The sequence of the last change the filer made
