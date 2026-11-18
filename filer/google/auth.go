@@ -39,22 +39,24 @@ const (
 	DefaultCredential = SignInPrefix + "TOKEN"
 )
 
-// Google is the authorization server of Google accounts
-var Google = authclient.ServerMetadata{
-	Issuer:                        "https://accounts.google.com",
-	AuthorizationEndpoint:         "https://accounts.google.com/o/oauth2/v2/auth",
-	TokenEndpoint:                 "https://oauth2.googleapis.com/token",
-	CodeChallengeMethodsSupported: []string{"S256"},
-}
+var (
+	// Google is the authorization server of Google accounts
+	Google = authclient.ServerMetadata{
+		Issuer:                        "https://accounts.google.com",
+		AuthorizationEndpoint:         "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenEndpoint:                 "https://oauth2.googleapis.com/token",
+		CodeChallengeMethodsSupported: []string{"S256"},
+	}
 
-// SignInOptions are the options of the URL to sign in with Google at: it
-// asks for offline access, and consent, so Google issues a refresh token,
-// and includes the scopes the person has granted already
-var SignInOptions = []oauth2.AuthCodeOption{
-	oauth2.AccessTypeOffline,
-	oauth2.SetAuthURLParam("prompt", "consent"),
-	oauth2.SetAuthURLParam("include_granted_scopes", "true"),
-}
+	// SignInOptions are the options of the URL to sign in with Google at:
+	// it asks for offline access, and consent, so Google issues a refresh
+	// token, and includes the scopes the person has granted already
+	SignInOptions = []oauth2.AuthCodeOption{
+		oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("prompt", "consent"),
+		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
+	}
+)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
