@@ -29,7 +29,7 @@ func (self *TaskFiler) DeleteObjects(ctx context.Context, req schema.DeleteObjec
 	switch {
 	case path.list == "":
 		return nil, gofiler.ErrBadParameter.Withf("Cannot delete the root of volume %q", self.name)
-	case !validId(path.list) || (path.task != "" && !validId(path.task)):
+	case !googleId(path.list) || (path.task != "" && !googleId(path.task)):
 		return nil, &fs.PathError{Op: "delete", Path: req.Path, Err: fs.ErrNotExist}
 	case path.task == "":
 		return self.deleteList(ctx, path.list, req)

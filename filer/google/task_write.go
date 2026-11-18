@@ -49,7 +49,7 @@ func (self *TaskFiler) CreateObject(ctx context.Context, req schema.CreateObject
 	switch {
 	case path.task == "":
 		return nil, gofiler.ErrBadParameter.Withf("only a task can be written, as /<list>/<task>%s, or /<list>/%s%s, which creates one", taskExt, NewTask, taskExt)
-	case !validId(path.list) || !validId(path.task):
+	case !googleId(path.list) || (path.task != NewTask && !googleId(path.task)):
 		return nil, &fs.PathError{Op: "create", Path: req.Path, Err: fs.ErrNotExist}
 	}
 	if req.ContentType != "" {

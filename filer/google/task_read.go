@@ -95,7 +95,7 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		iter.add(object)
 	case p.list != "":
 		// The list's tasks, once it's known to exist
-		if !validId(p.list) {
+		if !googleId(p.list) {
 			return nil, &fs.PathError{Op: "list", Path: req.Path, Err: fs.ErrNotExist}
 		} else if _, err := self.client.TaskList(ctx, p.list); err != nil {
 			return nil, self.apiError("list", req.Path, err)
@@ -177,7 +177,7 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 	switch {
 	case path.list == "":
 		return rootObject(), nil, nil
-	case !validId(path.list) || (path.task != "" && !validId(path.task)):
+	case !googleId(path.list) || (path.task != "" && !googleId(path.task)):
 		return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	case path.task == "":
 		// A list, with the count of its tasks, which are read, as the API
@@ -293,8 +293,24 @@ func sortKey(object *schema.Object) string {
 	return object.Path
 }
 
-// validId returns true when an id can be a name of a path: it isn't empty,
-// and has no "/", or ".."
+// validId returns true when an id, which Google gave, can be a name of a
+// path: it isn't empty, and has no "/", or ".."
 func validId(id string) bool {
 	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, "/\\")
+}
+
+// googleId returns true when a name of a path, which is asked for, can be
+// an id of Google's, which is base64url, with or without padding, so one
+// which can't, such as ~new, isn't found, rather than asked for, which Google refuses as a bad
+// request
+func googleId(id string) bool {
+	if !validId(id) {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '=') {
+			return false
+		}
+	}
+	return true
 }

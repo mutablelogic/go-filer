@@ -149,6 +149,15 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+
+	// An id which isn't base64url, as Google's are, is a bad request, as
+	// Google says it's an invalid id, rather than that it isn't found
+	for _, part := range parts {
+		if strings.ContainsAny(part, "~.!*") {
+			writeError(w, http.StatusBadRequest)
+			return
+		}
+	}
 	switch r.Method {
 	case http.MethodDelete:
 		f.delete(w, parts)
@@ -1115,6 +1124,22 @@ func Test_TaskWrite(t *testing.T) {
 		t.Fatalf("no task %q", id)
 		return httpclient.Task{}
 	}
+
+	// The PUT handler gets ~new.ics first, to know whether it's created,
+	// which isn't found, as it can't be an id of Google's, rather than
+	// asked for, which Google refuses as a bad request
+	_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/~new.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	for _, path := range []string{"/L1/~other.ics", "/L~1/A.ics", "/L~1"} {
+		_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		assert.ErrorIs(t, err, fs.ErrNotExist, path)
+		_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: path}, Recursive: true})
+		assert.ErrorIs(t, err, fs.ErrNotExist, path)
+		_, err = write(path, vtodo("SUMMARY:x"))
+		assert.Error(t, err, path)
+	}
+	_, err = write("/L1/~other.ics", vtodo("SUMMARY:x"))
+	assert.ErrorIs(t, err, fs.ErrNotExist, "only ~new creates a task")
 
 	// Writing ~new.ics creates a task, which is at the path of its id, with
 	// its fields, and a due date, which is its day
