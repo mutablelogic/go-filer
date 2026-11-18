@@ -35,7 +35,7 @@ type VolumeCommands struct {
 	VolumeCreateFS     VolumeCreateFSCmd     `cmd:"" name:"volume-create-fs" help:"Create a volume of a directory on the server." group:"VOLUME"`
 	VolumeCreateS3     VolumeCreateS3Cmd     `cmd:"" name:"volume-create-s3" help:"Create a volume of an S3 bucket, or one which is compatible, such as MinIO's or SeaweedFS's." group:"VOLUME"`
 	VolumeCreateGTasks VolumeCreateGTasksCmd `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
-	VolumeUpdate       VolumeUpdateCmd       `cmd:"" name:"volume-update" help:"Change the options of a volume by its name." group:"VOLUME"`
+	VolumeUpdate       VolumeUpdateCmd       `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
 	VolumeDelete       VolumeDeleteCmd       `cmd:"" name:"volume-delete" help:"Delete a volume by its name, without deleting its files." group:"VOLUME"`
 	VolumeWatch        VolumeWatchCmd        `cmd:"" name:"volume-watch" help:"Show the changes to the objects of volumes, as they happen, until it's interrupted." group:"VOLUME"`
 }
@@ -50,8 +50,9 @@ type VolumeGetCmd struct {
 
 type VolumeUpdateCmd struct {
 	VolumeGetCmd
-	Opt   []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
-	Unset []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
+	NoBrowser bool     `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it."`
+	Opt       []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
+	Unset     []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
 }
 
 type VolumeWatchCmd struct {
@@ -233,8 +234,18 @@ func (cmd *VolumeUpdateCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
+	signInClient, err := newSignInClient(ctx)
+	if err != nil {
+		return err
+	}
 	return withClient(ctx, "filer.VolumeUpdateCmd", func(ctx context.Context, client *httpclient.Client) error {
 		volume, err := client.UpdateVolume(ctx, cmd.Name, patch)
+		if signIn := httpclient.SignInOf(err); signIn != nil {
+			if err := signInWithBrowser(ctx, signInClient, *signIn, cmd.NoBrowser); err != nil {
+				return err
+			}
+			volume, err = client.UpdateVolume(ctx, cmd.Name, patch)
+		}
 		if err != nil {
 			return err
 		}
@@ -315,9 +326,6 @@ func (cmd *VolumeUpdateCmd) patch() (schema.VolumePatch, error) {
 			return nil, gofiler.ErrBadParameter.Withf("option %q is set and removed", key)
 		}
 		patch[key] = json.RawMessage("null")
-	}
-	if len(patch) == 0 {
-		return nil, gofiler.ErrBadParameter.With("no options to update, with --opt or --unset")
 	}
 	return patch, nil
 }

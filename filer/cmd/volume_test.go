@@ -132,9 +132,14 @@ func Test_VolumeUpdateCmd(t *testing.T) {
 		"other":    `null`,
 	}, got)
 
-	// No options, an option without a key, or one which is set and removed,
-	// isn't a patch
-	for _, args := range [][]string{{}, {"-o", "=true"}, {"--unset", ""}, {"-o", "readonly=true", "--unset", "readonly"}} {
+	// No options is an empty patch, which opens the volume again
+	got, err = patch()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	// An option without a key, or one which is set and removed, isn't a
+	// patch
+	for _, args := range [][]string{{"-o", "=true"}, {"--unset", ""}, {"-o", "readonly=true", "--unset", "readonly"}} {
 		_, err := patch(args...)
 		assert.Error(t, err, args)
 	}

@@ -55,10 +55,14 @@ func volumeGetDeleteHandlers(registry *filer.Registry, router *httprouter.Router
 				httpresponse.Error(w, err)
 			} else if values, err := patch.Values(); err != nil {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%v", err), name)
-			} else if len(values) == 0 {
-				httpresponse.Error(w, httpresponse.ErrBadRequest.With("no options to update"), name)
 			} else if volume, err := registry.Update(r.Context(), name, values); err != nil {
-				httpresponse.Error(w, gofiler.HTTPErr(err), name)
+				// A backend whose user needs to sign in again is 401, with
+				// how they sign in
+				if signIn := authclient.SignInOf(err); signIn != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), signIn)
+				} else {
+					httpresponse.Error(w, gofiler.HTTPErr(err), name)
+				}
 			} else {
 				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), volume)
 			}
@@ -67,7 +71,8 @@ func volumeGetDeleteHandlers(registry *filer.Registry, router *httprouter.Router
 			op.Description(documentation.Section(3, "PATCH /volume/{name}").Body)
 			op.RequestBody(jsonschema.MustFor[schema.VolumePatch]())
 			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume](), "Updated volume, with the URL of its backend")
-			op.ErrorResponse(http.StatusBadRequest, "Invalid request body, no options, or an option which is unknown or invalid")
+			op.ErrorResponse(http.StatusBadRequest, "Invalid request body, or an option which is unknown or invalid")
+			op.ErrorResponse(http.StatusUnauthorized, "The volume's user needs to sign in, with how they sign in")
 			op.ErrorResponse(http.StatusNotFound, "Volume isn't mounted")
 			op.ErrorResponse(http.StatusServiceUnavailable, "Registry is closed")
 		})

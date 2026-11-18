@@ -198,9 +198,12 @@ func TestVolumeUpdate(t *testing.T) {
 	require.Equal(t, http.StatusOK, get(t, server, "volume/media", &volume))
 	assert.Equal(t, url.Values{"readonly": {"true"}}, options(volume))
 
+	// Without options, it's opened again, as it is
+	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{}`, &volume))
+	assert.Equal(t, url.Values{"readonly": {"true"}}, options(volume))
+
 	// Errors
 	for body, want := range map[string]int{
-		`{}`:                   http.StatusBadRequest,
 		`{"unknown": true}`:    http.StatusBadRequest,
 		`{"readonly": "what"}`: http.StatusBadRequest,
 		`{"readonly": {}}`:     http.StatusBadRequest,
