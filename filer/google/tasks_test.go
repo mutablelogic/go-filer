@@ -18,11 +18,13 @@ import (
 	"time"
 
 	// Packages
+	auth "github.com/mutablelogic/go-auth"
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 	oauth2 "golang.org/x/oauth2"
@@ -61,7 +63,7 @@ func (c *credentials) Get(_ context.Context, key string) (json.RawMessage, error
 	if value, exists := c.values[key]; exists {
 		return value, nil
 	}
-	return nil, gofiler.ErrNotFound.Withf("credential %q", key)
+	return nil, auth.ErrNotFound.Withf("credential %q", key)
 }
 
 func (c *credentials) Set(_ context.Context, key string, value json.RawMessage) error {
@@ -123,17 +125,6 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
-		return
-	}
-	if r.URL.Path == "/token" && r.FormValue("grant_type") == "authorization_code" {
-		// A code of a sign-in, of its verifier, with the client's secret
-		if r.FormValue("code") != "code" || r.FormValue("code_verifier") != "verifier" || r.FormValue("client_secret") != "client-secret" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
-			return
-		}
-		writeJSON(w, map[string]any{"access_token": token, "token_type": "Bearer", "refresh_token": "refresh", "expires_in": 3600, "scope": httpclient.TasksScope})
 		return
 	}
 	if r.URL.Path == "/token" {
@@ -660,6 +651,16 @@ func Test_TaskReadCancelled(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+// status returns the HTTP status of an error, as the root's HTTPErr maps
+// it, of go-filer's errors, or go-auth's
+func status(err error) int {
+	var code httpresponse.Err
+	if errors.As(gofiler.HTTPErr(err), &code) {
+		return int(code)
+	}
+	return 0
+}
+
 func Test_TaskSignIn(t *testing.T) {
 	ctx := t.Context()
 	fake, endpoint := newFake(t)
@@ -673,7 +674,7 @@ func Test_TaskSignIn(t *testing.T) {
 	}
 	signIn := func(t *testing.T, err error) *authclient.SignIn {
 		t.Helper()
-		require.ErrorIs(t, err, gofiler.ErrNotAuthorized)
+		require.Equal(t, http.StatusUnauthorized, status(err))
 		signIn := authclient.SignInOf(err)
 		require.NotNil(t, signIn)
 		assert.Equal(t, google.Google, signIn.Server)
@@ -691,9 +692,9 @@ func Test_TaskSignIn(t *testing.T) {
 	creds = newCredentials(t, endpoint, nil)
 	delete(creds.values, google.ClientCredential)
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), creds)
-	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable, "no one can sign in, without a client")
+	assert.Equal(t, http.StatusServiceUnavailable, status(err), "no one can sign in, without a client")
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), nil)
-	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Equal(t, http.StatusServiceUnavailable, status(err))
 
 	// Of another credential, which is the parameter's
 	creds = newCredentials(t, endpoint, nil)
@@ -737,7 +738,7 @@ func Test_TaskSignIn(t *testing.T) {
 	wrong := newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.Expiry = time.Now().Add(-time.Minute) })
 	wrong.values[google.ClientCredential] = json.RawMessage(`{"client_id":"` + clientID + `","client_secret":"wrong-secret"}`)
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), wrong)
-	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Equal(t, http.StatusServiceUnavailable, status(err))
 	assert.Nil(t, authclient.SignInOf(err), "it isn't signed in to again")
 
 	// Whose refresh token is revoked
@@ -746,75 +747,20 @@ func Test_TaskSignIn(t *testing.T) {
 	}))
 	signIn(t, err)
 
-	// The client, of its client_id and client_secret, or of the file
-	// Google's console downloads, of a desktop or web client
-	for _, data := range []string{`{"client_id":"a","client_secret":"b"}`, `{"installed":{"client_id":"a","client_secret":"b"}}`, `{"web":{"client_id":"a"}}`} {
-		client, err := google.ParseClient([]byte(data))
-		require.NoError(t, err, data)
-		assert.Equal(t, "a", client.ClientID, data)
-	}
-	for _, data := range []string{`"a"`, `{}`, `{"installed":{}}`} {
-		_, err := google.ParseClient([]byte(data))
-		assert.ErrorIs(t, err, gofiler.ErrBadParameter, data)
-	}
+	// Whose client isn't one
+	bad := newCredentials(t, endpoint, nil)
+	bad.values[google.ClientCredential] = json.RawMessage(`{"installed":{}}`)
+	_, err = google.NewTaskFiler(ctx, "tasks", params(), bad)
+	assert.Equal(t, http.StatusBadRequest, status(err))
 }
 
-func Test_TaskExchange(t *testing.T) {
-	ctx := t.Context()
-	fake, endpoint := newFake(t)
-	fake.addList("L1", "Home")
-	server := authclient.ServerMetadata{Issuer: google.Google.Issuer, AuthorizationEndpoint: google.Google.AuthorizationEndpoint, TokenEndpoint: endpoint + "/token"}
-	creds := newCredentials(t, endpoint, nil)
-	delete(creds.values, "GOOGLE_WORK")
-	code := authclient.SignInCode{Credential: "GOOGLE_WORK", Code: "code", CodeVerifier: "verifier", RedirectURI: "http://127.0.0.1:8085/callback"}
-
-	// The code is exchanged, with the client's secret, and the grant is
-	// stored, without it, so the volume of the credential is created
-	grant, err := google.Exchange(ctx, creds, server, code)
-	require.NoError(t, err)
-	assert.Equal(t, []string{httpclient.TasksScope}, grant.Scopes)
-	stored := creds.credential(t, "GOOGLE_WORK")
-	assert.Equal(t, authclient.Registration{ClientID: clientID}, stored.Client, "without the client's secret")
-	assert.Equal(t, "refresh", stored.Token.RefreshToken)
-	filer, err := google.NewTaskFiler(ctx, "work", url.Values{"quota": {"0"}, "credential": {"GOOGLE_WORK"}}, creds)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"/L1"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
-
-	// A code which is refused isn't authorized, and a credential which isn't
-	// a sign-in's, or a redirect which isn't a loopback address, are bad
-	refused := code
-	refused.Code = "other"
-	_, err = google.Exchange(ctx, creds, server, refused)
-	assert.ErrorIs(t, err, gofiler.ErrNotAuthorized)
-	for _, key := range []string{google.ClientCredential, "S3_SECRET", "not a key"} {
-		bad := code
-		bad.Credential = key
-		_, err = google.Exchange(ctx, creds, server, bad)
-		assert.ErrorIs(t, err, gofiler.ErrBadParameter, key)
-	}
-	for _, uri := range []string{"https://example.com/callback", "http://example.com/callback"} {
-		bad := code
-		bad.RedirectURI = uri
-		_, err = google.Exchange(ctx, creds, server, bad)
-		assert.ErrorIs(t, err, gofiler.ErrBadParameter, uri)
-	}
-
-	// A client which Google refuses isn't a reason to sign in again, and the
-	// sign-in isn't replaced
-	wrong := newCredentials(t, endpoint, nil)
-	wrong.values[google.ClientCredential] = json.RawMessage(`{"client_id":"` + clientID + `","client_secret":"wrong-secret"}`)
-	delete(wrong.values, "GOOGLE_WORK")
-	_, err = google.Exchange(ctx, wrong, server, code)
-	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
-	assert.Nil(t, authclient.SignInOf(err), "it isn't signed in to again")
-	_, exists := wrong.values["GOOGLE_WORK"]
-	assert.False(t, exists)
-
+func Test_TaskSignInOptions(t *testing.T) {
 	// The URL to sign in at asks for a refresh token
-	u, err := url.Parse(authclient.SignIn{Server: google.Google, ClientID: clientID, Scopes: []string{httpclient.TasksScope}}.AuthCodeURL(code.RedirectURI, "state", "verifier", google.SignInOptions...))
+	u, err := url.Parse(authclient.SignIn{Server: google.Google, ClientID: clientID, Scopes: []string{httpclient.TasksScope}}.AuthCodeURL("http://127.0.0.1:8085/callback", "state", "verifier", google.SignInOptions...))
 	require.NoError(t, err)
 	assert.Equal(t, "offline", u.Query().Get("access_type"))
 	assert.Equal(t, "consent", u.Query().Get("prompt"))
+	assert.Equal(t, "true", u.Query().Get("include_granted_scopes"))
 }
 
 func Test_TaskListValidators(t *testing.T) {

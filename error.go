@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	// Packages
+	auth "github.com/mutablelogic/go-auth"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 )
 
@@ -132,6 +133,12 @@ func HTTPErr(err error) error {
 	var e Err
 	if errors.As(err, &e) {
 		return e.HTTP().Withf("%w", err)
+	}
+
+	// A go-auth error, such as a sign-in which is needed, which is 401
+	var authErr auth.Err
+	if errors.As(err, &authErr) {
+		return auth.HTTPError(err)
 	}
 
 	// A request whose body ends before it should, such as an upload which

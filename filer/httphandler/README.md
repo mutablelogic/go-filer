@@ -74,13 +74,9 @@ Upload files into the directory at `path` in the volume `name`, or its root, whe
 
 Delete the file at `path` in the volume `name`, or a directory, with `recursive=true`, and every object beneath it, including hidden files, which aren't listed. A package, such as a macOS sparse disk image, is deleted as a file, with the files in it, without `recursive`. The directories which are left empty are removed, as a directory exists while an object is beneath it. Returns the objects deleted, which are files, not directories. Returns 400 if the path is outside the volume, has `%2F`, is hidden, or is the root of the volume, or the query is invalid, 403 if the volume is read-only, 404 if the volume isn't mounted, or the object doesn't exist, or 409 if the object is a directory, and the request isn't recursive. A path which ends with `/` is a directory, even when a file has its name, as it can in a bucket, and isn't found when it's a file. In a bucket, a directory's keys are deleted a page of up to 1,000 at a time, so when one can't be, those before it, and the others of its page, are deleted, and a directory which is a key of its own, ending with `/`, isn't removed when the last file beneath it is.
 
-## Sign-In Operations
+## Signing In
 
-A volume whose backend needs its user to sign in, such as one of Google Tasks, which they haven't, or whose sign-in is revoked, is 401, with how to sign in as its `detail`: the authorization `server`, the `client_id`, the `scopes`, and the `credential` which is stored once they've signed in. A client, such as the `filer` command, authorizes, at a loopback address, with PKCE, and the server exchanges the code, as it has the client's secret.
-
-### POST /signin
-
-Complete a sign-in, with the `credential`, the `code`, the PKCE `code_verifier`, and the `redirect_uri`, which must be a loopback address's, as go-auth's `SignInCode`. The code is exchanged, with the secret of the client, the `GOOGLE_CLIENT` credential, and the sign-in is stored as the `credential`, which must be `GOOGLE_*`, other than `GOOGLE_CLIENT`, so a request can't replace another credential. Returns 201, with the credential and the scopes it was granted, 400 if the request is invalid, 401 if the code can't be exchanged, or 503 if there's no client, or provider of credentials.
+A volume whose backend needs its user to sign in, such as one of Google Tasks, which they haven't, or whose sign-in is revoked, is 401 on `POST /volume`, with how to sign in as its `detail`: the authorization `server`, the `client_id`, the `scopes`, and the `credential` which is stored once they've signed in. A client, such as the `filer` command, authorizes at a loopback address with PKCE, and sends the code to go-auth's `POST /credential/{key}/signin`, which exchanges it with the secret of the `GOOGLE_CLIENT` credential, and stores the sign-in as the `GOOGLE_*` credential.
 
 ## Changes
 

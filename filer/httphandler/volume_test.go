@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	// Packages
+	auth "github.com/mutablelogic/go-auth"
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
-	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
@@ -225,7 +225,7 @@ func (c credentials) Get(_ context.Context, key string) (json.RawMessage, error)
 	if value, exists := c[key]; exists {
 		return value, nil
 	}
-	return nil, gofiler.ErrNotFound.Withf("credential %q", key)
+	return nil, auth.ErrNotFound.Withf("credential %q", key)
 }
 
 func TestVolumeCreateSignIn(t *testing.T) {

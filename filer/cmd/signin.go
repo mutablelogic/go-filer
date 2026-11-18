@@ -9,10 +9,10 @@ import (
 
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
+	credentialclient "github.com/mutablelogic/go-auth/credential/httpclient"
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
-	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	server "github.com/mutablelogic/go-server"
 	oauth2 "golang.org/x/oauth2"
 )
@@ -23,8 +23,9 @@ import (
 // signInWithBrowser signs in, of what the server needs: the person signs in
 // with Google, in the browser, at the URL, which is printed, and opened,
 // unless noBrowser, which redirects to a loopback address, with the code,
-// which the server exchanges, as it has the client's secret, and stores
-func signInWithBrowser(ctx context.Context, api *httpclient.Client, signIn authclient.SignIn, noBrowser bool) error {
+// which the server's credentials API exchanges, as it has the client's
+// secret, and stores
+func signInWithBrowser(ctx context.Context, api *credentialclient.Client, signIn authclient.SignIn, noBrowser bool) error {
 	if signIn.Server.Issuer != google.Google.Issuer {
 		return gofiler.ErrNotImplemented.Withf("signing in with %q", signIn.Server.Issuer)
 	}
@@ -63,15 +64,16 @@ func signInWithBrowser(ctx context.Context, api *httpclient.Client, signIn authc
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Signed in, as", response.Credential)
+	fmt.Fprintln(os.Stderr, "Signed in, as", response.Key)
 	return nil
 }
 
-// newSignInClient returns a client of the API, which sends the code of a
+// newSignInClient returns a client of the server's credentials API, which
+// sends the code of a
 // sign-in, and its verifier: it has the command's tracer, which records
 // the URL, but not the trace to stderr, of --debug or --verbose, which
 // writes the request's body
-func newSignInClient(ctx server.Cmd) (*httpclient.Client, error) {
+func newSignInClient(ctx server.Cmd) (*credentialclient.Client, error) {
 	endpoint, _, err := ctx.ClientEndpoint()
 	if err != nil {
 		return nil, err
@@ -80,7 +82,7 @@ func newSignInClient(ctx server.Cmd) (*httpclient.Client, error) {
 	if tracer := ctx.Tracer(); tracer != nil {
 		opts = append(opts, client.OptTracer(tracer))
 	}
-	return httpclient.New(endpoint, opts...)
+	return credentialclient.New(endpoint, opts...)
 }
 
 // openBrowser opens the URL in the person's browser
