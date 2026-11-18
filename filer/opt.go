@@ -8,6 +8,7 @@ import (
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
+	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
 )
@@ -19,6 +20,7 @@ import (
 type Opt func(*opt) error
 
 type opt struct {
+	broadcaster *broadcaster.Broadcaster
 	tracer      trace.Tracer
 	meter       metric.Meter
 	clientopts  []client.ClientOpt
@@ -76,6 +78,20 @@ func WithDebounce(delay time.Duration) Opt {
 			return gofiler.ErrBadParameter.Withf("the debounce can't be negative: %v", delay)
 		}
 		o.debounce = delay
+		return nil
+	}
+}
+
+// WithBroadcaster sets the broadcaster which the changes to the volumes are
+// published to, which is shared, such as with other modules of a server, and
+// which its owner runs, and serves. Without it, the registry has its own,
+// which Run runs.
+func WithBroadcaster(b *broadcaster.Broadcaster) Opt {
+	return func(o *opt) error {
+		if b == nil {
+			return gofiler.ErrBadParameter.With("the broadcaster can't be nil")
+		}
+		o.broadcaster = b
 		return nil
 	}
 }

@@ -114,8 +114,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/mutablelogic/go-client v1.4.14 h1:+LFkuiCsQw0VldaXlMZS3qKB/ISKBQbcxD3W+zmf/Fc=
 github.com/mutablelogic/go-client v1.4.14/go.mod h1:tyoLKaQYbdgnGUOkfpcXkA+HD90lL1sOq+X+kI8fU4Q=
-github.com/mutablelogic/go-server v1.8.18 h1:cghlzMdVO+xlgDmTPbNB73y5SykrmJxkzGOqE09YB2Y=
-github.com/mutablelogic/go-server v1.8.18/go.mod h1:DW4VbzzqehnccxhQvsihpGtbPZmVeACwwS+n2/NjHgE=
+github.com/mutablelogic/go-server v1.8.19-0.20261118153343-f28cc212e54f h1:/Ogwy51ziTQX94tnl63NI4cYw/nFjEpSP/BhEOYUBlA=
+github.com/mutablelogic/go-server v1.8.19-0.20261118153343-f28cc212e54f/go.mod h1:DW4VbzzqehnccxhQvsihpGtbPZmVeACwwS+n2/NjHgE=
 github.com/mutablelogic/go-tokenizer v0.0.3 h1:6oaa80TaAl+nVpd+M9QhlJPbP7y5/thq4d0dKjreiLs=
 github.com/mutablelogic/go-tokenizer v0.0.3/go.mod h1:zdAyIhfqUKxFXb8MwChbXNwMOZt/5NlUylmx6Qjr4v8=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=

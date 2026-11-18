@@ -17,6 +17,7 @@ import (
 	fs "github.com/mutablelogic/go-filer/filer/fs"
 	s3 "github.com/mutablelogic/go-filer/filer/s3"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -28,10 +29,12 @@ type Registry struct {
 	opt
 	backend map[string]*entry
 
-	// The calls to WatchObjects, which Run sends the changes to the volumes
-	// to, the channel which tells Run a volume is added or updated, and
-	// whether Run is running
-	broadcaster *broadcaster
+	// The broadcaster, which Run publishes the changes to the volumes to,
+	// and whether it's shared, with WithBroadcaster, rather than the
+	// registry's own, which Run runs, the channel which tells Run a volume is
+	// added or updated, and whether Run is running
+	broadcaster *broadcaster.Broadcaster
+	shared      bool
 	changed     chan struct{}
 	running     atomic.Bool
 
@@ -104,16 +107,22 @@ var schemes = []string{schema.SchemeFile, schema.SchemeS3}
 // New creates a registry of the backends of volumes
 func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	self := &Registry{
-		backend:     make(map[string]*entry),
-		broadcaster: newBroadcaster(),
-		changed:     make(chan struct{}, 1),
-		teardown:    make(map[*entry]struct{}),
-		done:        make(chan struct{}),
+		backend:  make(map[string]*entry),
+		changed:  make(chan struct{}, 1),
+		teardown: make(map[*entry]struct{}),
+		done:     make(chan struct{}),
 	}
 
 	// Apply options
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
+	}
+
+	// The broadcaster, which is shared, or else the registry's own
+	if self.opt.broadcaster != nil {
+		self.broadcaster, self.shared = self.opt.broadcaster, true
+	} else {
+		self.broadcaster = broadcaster.New()
 	}
 
 	// Register the metrics, with the meter
@@ -136,10 +145,13 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 func (self *Registry) Close() error {
 	var result error
 
-	// Stop Run, and end the subscriptions, and those made later
+	// Stop Run, and its broadcaster, when it's the registry's own, so its
+	// watches end, and those made later
 	self.closeOnce.Do(func() {
 		close(self.done)
-		self.broadcaster.end(true)
+		if !self.shared {
+			stopBroadcaster(self.broadcaster)
+		}
 	})
 
 	// Remove all the backends, and close those which aren't already being

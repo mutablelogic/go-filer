@@ -35,8 +35,8 @@ type Flags struct {
 // meter, and credentials from its environment, such as S3_SECRET, which are
 // the placeholders of a volume's credentials, such as ${S3_SECRET}, and
 // those which are stored while it runs, and the flags' worker, when it's
-// set, and then the options, runs it, so the changes to its volumes are sent
-// to the calls to WatchObjects, adds the volumes of the flags, registers its
+// set, and then the options, runs it, so the changes to its volumes are
+// published to its broadcaster, adds the volumes of the flags, registers its
 // HTTP handlers with the server, when there is one, and then calls the
 // function with the registry. A volume which can't be added is an error.
 // The registry, and its volumes, are closed when the function returns.

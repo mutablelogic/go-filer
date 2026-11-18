@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
+	changesclient "github.com/mutablelogic/go-server/broadcaster/httpclient"
+	changes "github.com/mutablelogic/go-server/broadcaster/schema"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -154,10 +157,20 @@ func (cmd *VolumeUpdateCmd) Run(ctx server.Cmd) error {
 	})
 }
 
+// Run watches the changes to the objects of the volumes, or of every volume,
+// with go-server's /changes, of the filer schema
 func (cmd *VolumeWatchCmd) Run(ctx server.Cmd) error {
 	debug := ctx.IsDebug()
-	return withClient(ctx, "filer.VolumeWatchCmd", func(ctx context.Context, client *httpclient.Client) error {
-		return client.WatchObjects(ctx, cmd.Name, func(event schema.Event) error {
+	filter := changes.ChangeFilter{Schema: schema.ChangeSchema}
+	if len(cmd.Name) == 1 {
+		filter.Table = cmd.Name[0]
+	}
+	return withChangesClient(ctx, "filer.VolumeWatchCmd", func(ctx context.Context, client *changesclient.Client) error {
+		return client.WatchChanges(ctx, filter, func(change changes.Change) error {
+			event, ok := schema.ChangeEvent(change)
+			if !ok || (len(cmd.Name) > 1 && !slices.Contains(cmd.Name, event.Name)) {
+				return nil
+			}
 			if debug {
 				fmt.Println(types.Stringify(event))
 			} else {
