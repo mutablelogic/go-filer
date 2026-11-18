@@ -41,8 +41,6 @@ func newClient(t *testing.T) (*httpclient.Client, func() string) {
 	base := t.TempDir()
 	registry, err := filer.New(context.Background(), filer.WithDebounce(0))
 	require.NoError(t, err)
-	t.Cleanup(func() { registry.Close() })
-
 	// Run the registry, so the changes to its volumes are watched
 	ctx, cancel := context.WithCancel(context.Background())
 	running := make(chan error, 1)

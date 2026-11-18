@@ -23,7 +23,7 @@ func Test_Registry_Metrics(t *testing.T) {
 	dir := t.TempDir()
 	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
 
 	// The changes are counted, by their volumes and types
@@ -77,7 +77,7 @@ func Test_Registry_NoMetrics(t *testing.T) {
 	// Without a meter, there are no metrics, which aren't counted
 	r, err := New(context.Background())
 	require.NoError(t, err)
-	defer r.Close()
+	defer r.close()
 	assert.Nil(t, r.metrics)
 	r.metrics.event(context.Background(), schema.Event{})
 }
@@ -89,11 +89,11 @@ func Test_Registry_Worker(t *testing.T) {
 	require.NoError(t, err)
 	r, err := New(context.Background())
 	require.NoError(t, err)
-	defer r.Close()
+	defer r.close()
 	assert.Equal(t, hostname, r.worker)
 	r, err = New(context.Background(), WithWorker(" worker-2 "))
 	require.NoError(t, err)
-	defer r.Close()
+	defer r.close()
 	assert.Equal(t, "worker-2", r.worker)
 	_, err = New(context.Background(), WithWorker(" "))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)

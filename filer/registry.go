@@ -87,7 +87,6 @@ type usingKey struct {
 }
 
 // Ensure Registry implements io.Closer, and is a filer of every volume
-var _ io.Closer = (*Registry)(nil)
 var _ gofiler.Filer = (*Registry)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -124,13 +123,13 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	return self, nil
 }
 
-// Close removes and closes all the backends, cancelling and waiting for any
-// calls to With which are using them, and stopping watching them, and
-// waiting for those which Del is closing. Calls to WatchObjects return, and
-// backends cannot be added after the registry is closed. Close can't be
-// called from a function passed to With, as it would wait for the function
-// to return.
-func (self *Registry) Close() error {
+// close removes and closes all the backends, cancelling and waiting for any
+// calls to With which are using them, and waiting for those which Del is
+// closing, once Run has stopped watching them. Calls to WatchObjects return,
+// and backends cannot be added after the registry is closed. Run calls it
+// when its context is cancelled, which isn't from a function passed to
+// With, as it would wait for the function to return.
+func (self *Registry) close() error {
 	var result error
 
 	// Stop Run, and the calls to WatchObjects, and those made later
@@ -260,7 +259,7 @@ func (self *Registry) Validate(ctx context.Context, url *url.URL) (*url.URL, err
 
 	// Get the URL, and then close the backend
 	result := backend.URL()
-	if err := backend.Close(); err != nil {
+	if err := closeFiler(backend); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -333,9 +332,9 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 	if err != nil {
 		return nil, err
 	} else if name := VolumeName(clone.URL()); name != volume {
-		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", clone.URL(), volume), clone.Close())
+		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", clone.URL(), volume), closeFiler(clone))
 	} else if err := ctx.Err(); err != nil {
-		return nil, errors.Join(err, clone.Close())
+		return nil, errors.Join(err, closeFiler(clone))
 	}
 
 	// Close the backend, keeping its name, unless it's changed meanwhile
@@ -343,10 +342,10 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 	self.Lock()
 	if self.backend == nil {
 		self.Unlock()
-		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), clone.Close())
+		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), closeFiler(clone))
 	} else if current, exists := self.backend[volume]; !exists || current != e || e.closing {
 		self.Unlock()
-		return nil, errors.Join(gofiler.ErrNotFound.Withf("volume %q is not mounted", volume), clone.Close())
+		return nil, errors.Join(gofiler.ErrNotFound.Withf("volume %q is not mounted", volume), closeFiler(clone))
 	}
 	self.startClose(e, volume)
 	self.backend[volume] = pending
@@ -483,7 +482,7 @@ func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.
 	if err != nil {
 		return nil, err
 	} else if name := VolumeName(b.URL()); name != volume {
-		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", b.URL(), volume), b.Close())
+		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", b.URL(), volume), closeFiler(b))
 	}
 	return self.register(e, volume, b, rescan)
 }
@@ -495,7 +494,7 @@ func (self *Registry) register(e *entry, volume string, b gofiler.Filer, rescan 
 	self.Lock()
 	defer self.Unlock()
 	if self.backend == nil {
-		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), b.Close())
+		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), closeFiler(b))
 	}
 	e.Filer, e.ready, e.rescan = b, true, rescan
 	e.ctx, e.cancel = context.WithCancel(context.Background())
@@ -523,7 +522,7 @@ func (self *Registry) startClose(e *entry, volume string) {
 	self.teardown[e] = struct{}{}
 	go func() {
 		e.wg.Wait()
-		e.err = e.Filer.Close()
+		e.err = closeFiler(e.Filer)
 		self.Lock()
 		if self.backend != nil && self.backend[volume] == e {
 			delete(self.backend, volume)
@@ -532,4 +531,12 @@ func (self *Registry) startClose(e *entry, volume string) {
 		self.Unlock()
 		close(e.closed)
 	}()
+}
+
+// closeFiler closes a filer, when it holds resources, which it releases
+func closeFiler(f gofiler.Filer) error {
+	if closer, ok := f.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }

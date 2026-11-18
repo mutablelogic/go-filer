@@ -38,7 +38,7 @@ type Flags struct {
 // the placeholders of a volume's credentials, such as ${S3_SECRET}, and
 // those which are stored while it runs, and the flags' worker, when it's
 // set, and then the options, runs it, so the changes to its volumes are
-// published to the broadcaster, adds the volumes of the flags, registers its
+// published to the broadcaster, and it's closed when the function returns, adds the volumes of the flags, registers its
 // HTTP handlers with the server, when there is one, and then calls the
 // function with the registry. The broadcaster is one a server shares with
 // its other modules, which it runs and serves, or, when it's nil, one which
@@ -74,27 +74,18 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 		return err
 	}
 
-	// Close the registry as soon as the server is stopping, which ends the
-	// streams of changes, and interrupts transfers to clients which are slow,
-	// so the server isn't kept waiting for them. Its error is returned, as
-	// it's only returned by the call which closes the volumes.
-	closed := make(chan error, 1)
-	stop := context.AfterFunc(ctx.Context(), func() { closed <- registry.Close() })
-	defer func() {
-		if !stop() {
-			err = errors.Join(err, <-closed)
-		}
-		err = errors.Join(err, registry.Close())
-	}()
-
-	// Run the registry, which sends the changes to the volumes to the
-	// subscriptions, until it's closed, which is waited for
+	// Run the registry, which publishes the changes to the volumes, until
+	// the function returns, or the server is stopping, which cancels it, when
+	// it closes the volumes, so streams end, and transfers to clients which
+	// are slow are interrupted, so the server isn't kept waiting for them.
+	runCtx, cancel := context.WithCancel(ctx.Context())
 	running := make(chan error, 1)
 	go func() {
-		running <- registry.Run(ctx.Context(), ctx.Logger())
+		running <- registry.Run(runCtx, ctx.Logger())
 	}()
 	defer func() {
-		err = errors.Join(err, registry.Close(), <-running)
+		cancel()
+		err = errors.Join(err, <-running)
 	}()
 
 	// Add the volumes, whose names are their name options, or the hosts of

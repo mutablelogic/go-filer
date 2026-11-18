@@ -151,7 +151,7 @@ func Test_Clone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clone.Close()
+	defer clone.(io.Closer).Close()
 	if got, want := clone.URL().Query(), (url.Values{"skip": {"^x"}, "readonly": {"true"}}); got.Encode() != want.Encode() {
 		t.Errorf("clone: got %q, want %q", got, want)
 	} else if clone.URL().Path != self.URL().Path {

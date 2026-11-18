@@ -45,12 +45,27 @@ var (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Run processes events on the runloop, until the context is cancelled
-func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
+// Run watches the volumes, and publishes their changes, until the context
+// is cancelled, when it stops watching them, and closes the registry: it
+// removes and closes the volumes, cancelling and waiting for the calls to
+// With which are using them, and returns their errors. The registry can't
+// be used, or run, once it's closed, which is fs.ErrClosed.
+func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) {
 	if !self.running.CompareAndSwap(false, true) {
 		return gofiler.ErrConflict.With("registry is already running")
 	}
 	defer self.running.Store(false)
+	select {
+	case <-self.done:
+		return fs.ErrClosed
+	default:
+	}
+
+	// Close the registry once it's stopped watching the volumes, which is
+	// deferred first, so it's done last
+	defer func() {
+		err = errors.Join(err, self.close())
+	}()
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -96,8 +111,6 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-self.done:
 			return nil
 		case <-self.changed:
 			self.startWatches(watches, events, ended)
