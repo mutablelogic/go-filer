@@ -10,6 +10,7 @@ import (
 	"path"
 
 	// Packages
+	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	filer "github.com/mutablelogic/go-filer/filer"
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
@@ -68,12 +69,14 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 
 	// The backends' clients, such as of Google's APIs, have the command's
 	// client options: its trace, with --debug, or --verbose, which redacts
-	// headers' secrets, its tracer, and its timeout
-	if _, clientopts, err := ctx.ClientEndpoint(); err != nil {
+	// headers' secrets, its tracer, and its timeout, and its user agent, of
+	// its name and version
+	_, clientopts, err := ctx.ClientEndpoint()
+	if err != nil {
 		return err
-	} else if len(clientopts) > 0 {
-		defaults = append(defaults, filer.WithClientOpts(clientopts...))
 	}
+	clientopts = append(clientopts, client.OptUserAgent(ctx.Name()+"/"+ctx.Version()))
+	defaults = append(defaults, filer.WithClientOpts(clientopts...))
 	if flags.Worker != "" {
 		defaults = append(defaults, filer.WithWorker(flags.Worker))
 	}

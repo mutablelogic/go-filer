@@ -438,7 +438,7 @@ func Test_Registry_Keys(t *testing.T) {
 
 func Test_Registry_Schemes(t *testing.T) {
 	r, dir := newRegistry(t)
-	assert.Equal(t, []string{"file", "gtasks", "s3"}, r.Schemes())
+	assert.Equal(t, []string{"file", "gcontacts", "gtasks", "s3"}, r.Schemes())
 
 	// Each scheme can be validated, and an unsupported one can't
 	for _, u := range []*url.URL{fileURL(t, dir, "media"), mustURL(t, "s3://bucket/photos?name=media&endpoint="+url.QueryEscape(fakeS3(t)))} {
@@ -452,7 +452,7 @@ func Test_Registry_Schemes(t *testing.T) {
 
 	// The schemes can be changed without changing the registry
 	r.Schemes()[0] = "changed"
-	assert.Equal(t, []string{"file", "gtasks", "s3"}, r.Schemes())
+	assert.Equal(t, []string{"file", "gcontacts", "gtasks", "s3"}, r.Schemes())
 }
 
 func Test_Registry_S3(t *testing.T) {
