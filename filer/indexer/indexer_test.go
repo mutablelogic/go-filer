@@ -82,7 +82,7 @@ func folders(t *testing.T, i *indexer.Indexer, path string, recursive bool) []st
 func count(t *testing.T, object *schema.Object) string {
 	t.Helper()
 	for _, m := range object.Meta {
-		if m.Namespace == indexer.FolderNamespace && m.Key == "children-count" {
+		if m.Namespace == schema.FolderNamespace && m.Key == "children-count" {
 			return string(m.Value)
 		}
 	}

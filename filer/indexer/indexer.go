@@ -7,11 +7,9 @@ package indexer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
-	"strconv"
 	"sync"
 	"time"
 
@@ -46,11 +44,6 @@ var _ gofiler.Filer = (*Indexer)(nil)
 // GLOBALS
 
 const (
-	// FolderNamespace is the namespace of a folder's metadata, which the
-	// indexer adds, when the backend doesn't: "children", whether it has
-	// any objects, and "children-count", how many
-	FolderNamespace = "folder"
-
 	// listPage is how many objects of the index are read at a time
 	listPage = 1000
 )
@@ -468,14 +461,11 @@ func dirPath(folder string) string {
 // metadata of the folder namespace, unless the backend has it
 func withCount(object *schema.Object, count int) *schema.Object {
 	for _, m := range object.Meta {
-		if m.Namespace == FolderNamespace && m.Key == "children-count" {
+		if m.Namespace == schema.FolderNamespace && m.Key == "children-count" {
 			return object
 		}
 	}
-	object.Meta = append(object.Meta,
-		schema.Meta{Namespace: FolderNamespace, Key: "children", Value: json.RawMessage(strconv.FormatBool(count > 0))},
-		schema.Meta{Namespace: FolderNamespace, Key: "children-count", Value: json.RawMessage(strconv.Itoa(count))},
-	)
+	object.Meta = append(object.Meta, schema.FolderMeta(count)...)
 	return object
 }
 
@@ -483,12 +473,12 @@ func withCount(object *schema.Object, count int) *schema.Object {
 // its objects which the index has, until it's indexed again
 func mergeCount(meta, indexed []schema.Meta) []schema.Meta {
 	for _, m := range meta {
-		if m.Namespace == FolderNamespace && m.Key == "children-count" {
+		if m.Namespace == schema.FolderNamespace && m.Key == "children-count" {
 			return meta
 		}
 	}
 	for _, m := range indexed {
-		if m.Namespace == FolderNamespace && (m.Key == "children" || m.Key == "children-count") {
+		if m.Namespace == schema.FolderNamespace && (m.Key == "children" || m.Key == "children-count") {
 			meta = append(meta, m)
 		}
 	}

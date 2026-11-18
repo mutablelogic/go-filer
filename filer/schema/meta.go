@@ -3,6 +3,7 @@ package schema
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 )
@@ -79,4 +80,22 @@ func ASCIIJSON(value string) string {
 		}
 	}
 	return b.String()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// FOLDERS
+
+const (
+	// FolderNamespace is the namespace of the metadata of a folder: its
+	// "children", whether it has objects, and "children-count", how many,
+	// which are those it lists
+	FolderNamespace = "folder"
+)
+
+// FolderMeta returns the metadata of a folder, of how many objects it has
+func FolderMeta(count int) []Meta {
+	return []Meta{
+		{Namespace: FolderNamespace, Key: "children", Value: json.RawMessage(strconv.FormatBool(count > 0))},
+		{Namespace: FolderNamespace, Key: "children-count", Value: json.RawMessage(strconv.Itoa(count))},
+	}
 }
