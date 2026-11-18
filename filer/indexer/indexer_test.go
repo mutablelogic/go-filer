@@ -325,3 +325,36 @@ func Test_Bucket(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, object.IsDir)
 }
+
+func Test_RunStuckWatcher(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	i, err := indexer.New("media", backend, memory.New())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- i.Run(ctx) }()
+
+	// A watcher which doesn't read its changes, but isn't cancelled
+	stuck := make(chan schema.Event)
+	watchCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go func() { _ = i.WatchObjects(watchCtx, stuck) }()
+	require.Eventually(t, func() bool {
+		state, err := i.State(context.Background())
+		return err == nil && state.Status == indexer.StatusReady
+	}, 10*time.Second, 5*time.Millisecond)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "d"), 0o755))
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancelling Run returns, though the watcher isn't reading
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run waited for a watcher which doesn't read its changes")
+	}
+}

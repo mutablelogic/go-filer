@@ -78,6 +78,12 @@ type entry struct {
 	// failed, until it's opened again. It's only read or set with the
 	// registry locked.
 	offline error
+
+	// forget is true when the volume's index is removed, once its backend
+	// is closed, and before its name is released, as it's deleted, or isn't
+	// indexed any more. It's only set with the registry locked, before it's
+	// closed.
+	forget bool
 }
 
 // usingKey is the key of the value in the context which With passes to its
@@ -382,6 +388,11 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 		self.Unlock()
 		return nil, errors.Join(gofiler.ErrNotFound.Withf("volume %q is not mounted", volume), closeFiler(clone))
 	}
+	// A volume which isn't indexed any more doesn't keep its index, which
+	// is removed once it's closed, while the pending entry has its name
+	_, wasIndexed := e.Filer.(*indexer.Indexer)
+	_, indexed := clone.(*indexer.Indexer)
+	e.forget = wasIndexed && !indexed
 	self.startClose(e, volume)
 	self.backend[volume] = pending
 	self.Unlock()
@@ -392,12 +403,6 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 	if _, err := self.register(pending, volume, clone); err != nil {
 		self.unreserve(pending, volume)
 		return nil, err
-	}
-
-	// A volume which isn't indexed any more doesn't keep its index
-	_, wasIndexed := e.Filer.(*indexer.Indexer)
-	if _, indexed := clone.(*indexer.Indexer); wasIndexed && !indexed {
-		self.forget(ctx, volume)
 	}
 
 	// Return the volume, which isn't offline, as it's opened again
@@ -423,6 +428,9 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 		return gofiler.ErrConflict.Withf("volume %q can't be removed by a function which is using it", volume)
 	}
 	if exists = exists && e.state != stateAdding; exists && e.state == stateReady {
+		// Its index is removed, once it's closed, before its name is
+		// released
+		_, e.forget = e.Filer.(*indexer.Indexer)
 		self.startClose(e, volume)
 	}
 	self.Unlock()
@@ -430,12 +438,8 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 		return nil
 	}
 
-	// Once it's closed, its index is removed, when it's indexed
 	select {
 	case <-e.closed:
-		if _, indexed := e.Filer.(*indexer.Indexer); indexed {
-			self.forget(ctx, volume)
-		}
 		return e.err
 	case <-ctx.Done():
 		return ctx.Err()
@@ -681,6 +685,13 @@ func (self *Registry) startClose(e *entry, volume string) {
 	go func() {
 		e.wg.Wait()
 		e.err = closeFiler(e.Filer)
+
+		// Its index is removed, when it's deleted, or isn't indexed any
+		// more, once its indexer has stopped, and before its name is
+		// released, with a context which outlives the request
+		if e.forget {
+			self.forget(context.Background(), volume)
+		}
 		self.Lock()
 		if self.backend != nil && self.backend[volume] == e {
 			delete(self.backend, volume)
