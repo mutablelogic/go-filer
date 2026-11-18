@@ -61,11 +61,6 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 	default:
 	}
 
-	// Close the registry once it's stopped watching the volumes, which is
-	// deferred first, so it's done last
-	defer func() {
-		err = errors.Join(err, self.close())
-	}()
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -89,8 +84,12 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 	watches := make(map[*entry]context.CancelFunc)
 	events, ended := make(chan schema.Event), make(chan watched)
 	defer func() {
-		// Stop watching, and wait for the watches to end, and end the
-		// subscriptions, as there are no more changes
+		// Close the registry, which cancels the calls to With, and the
+		// watches, at once, rather than once the watches end, as one can be
+		// slow to, such as while it reads a directory. It waits for them, so
+		// the watches are drained meanwhile, and stopped.
+		closed := make(chan error, 1)
+		go func() { closed <- self.close() }()
 		for _, cancel := range watches {
 			cancel()
 		}
@@ -102,6 +101,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 			}
 		}
 		publish(debouncer.due(time.Now(), true))
+		err = errors.Join(err, <-closed)
 	}()
 
 	// Watch the volumes, and send their changes, until it's stopped
