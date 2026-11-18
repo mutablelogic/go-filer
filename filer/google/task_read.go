@@ -301,8 +301,8 @@ func validId(id string) bool {
 
 // googleId returns true when a name of a path, which is asked for, can be
 // an id of Google's, which is base64url, with or without padding, so one
-// which can't, such as ~new, isn't found, rather than asked for, which Google refuses as a bad
-// request
+// which can't, such as ~new, isn't found, rather than asked for, which
+// Google refuses as a bad request
 func googleId(id string) bool {
 	if !validId(id) {
 		return false
