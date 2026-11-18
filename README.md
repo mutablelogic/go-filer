@@ -14,6 +14,8 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/filer/schema` | The objects, requests and events |
 | `github.com/mutablelogic/go-filer/filer/fs` | The filesystem backend, for any `fs.FS`, and writable for a directory |
 | `github.com/mutablelogic/go-filer/filer/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
+| `github.com/mutablelogic/go-filer/filer/google` | Backends of Google's services: Google Tasks, so far |
+| `github.com/mutablelogic/go-filer/filer/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 
 ## Usage
 
@@ -73,6 +75,26 @@ The options of the filesystem backend are passed to `New` and `NewFS` as `url.Va
 | `readonly` | Whether objects can only be read, and not created or deleted, even when the filesystem is writable: `true`, `false`, or empty, which is `true`. A filesystem which isn't writable is read-only whatever it's set to | `false` |
 
 An unknown option, an expression which doesn't compile, or a `readonly` which isn't a boolean, is `filer.ErrBadParameter`.
+
+## Google Tasks
+
+`google.NewTaskFiler` returns a filer of a person's Google Tasks:
+
+* **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata.
+* **Tasks** are Markdown files, named by their ids, such as `/MTA3NjI/Q2xvdWQ.md`, so a path stays the same when a task is renamed.
+* **Content:** YAML front matter, of the task's id, list, status, due date, completion, update time, parent, links and URL, then its title as a heading, and its notes.
+
+```go
+filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}},
+  client.OptReqToken(client.Token{Scheme: "Bearer", Value: token}),
+)
+```
+
+* **Client options:** go-client's, such as the token, a tracer, or a trace.
+* **Signing in:** a request which isn't authorized is go-auth's `AuthError`, with Google's challenge, so the caller knows to sign in. The token needs the `tasks.readonly` or `tasks` scope.
+* **`readonly`:** true by default. Creating and deleting tasks isn't implemented yet.
+* **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
+* **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.
 
 ## Object Model
 

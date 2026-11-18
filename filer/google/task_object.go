@@ -1,0 +1,203 @@
+package google
+
+import (
+	"bytes"
+	"encoding/json"
+	"io/fs"
+	"path"
+	"strings"
+	"time"
+
+	// Packages
+	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
+	types "github.com/mutablelogic/go-server/pkg/types"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// taskPath is a path of a task filer: the root, a list, or a task of a list
+type taskPath struct {
+	list string // The list's id, or empty, of the root
+	task string // The task's id, or empty, of the root or a list
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+const (
+	// MarkdownType is the content type of a task's file
+	MarkdownType = "text/markdown"
+
+	// TaskNamespace is the namespace of the metadata of tasks and lists
+	TaskNamespace = "task"
+
+	// taskExt is the extension of a task's file
+	taskExt = ".md"
+
+	// dateFormat is the format of a task's due date, which has no time
+	dateFormat = "2006-01-02"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// PATHS
+
+// parseTaskPath returns the path of the root, "/", a list, "/<list>", or a
+// task, "/<list>/<task>.md", which isn't a directory, of a path which
+// doesn't end with "/". Returns fs.ErrNotExist of any other path.
+func parseTaskPath(op, p string) (taskPath, error) {
+	rel := strings.Trim(path.Clean("/"+p), "/")
+	if rel == "" {
+		return taskPath{}, nil
+	}
+	parts := strings.Split(rel, "/")
+	switch {
+	case len(parts) == 1:
+		return taskPath{list: parts[0]}, nil
+	case len(parts) == 2 && !strings.HasSuffix(p, "/") && strings.HasSuffix(parts[1], taskExt) && len(parts[1]) > len(taskExt):
+		return taskPath{list: parts[0], task: strings.TrimSuffix(parts[1], taskExt)}, nil
+	default:
+		return taskPath{}, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
+	}
+}
+
+// listPath and taskFilePath return the paths of a list and a task
+func listPath(list string) string {
+	return "/" + list
+}
+
+func taskFilePath(list, task string) string {
+	return "/" + list + "/" + task + taskExt
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// OBJECTS
+
+// rootObject returns the root, which is a directory
+func rootObject() *schema.Object {
+	return &schema.Object{
+		ObjectKey:  schema.ObjectKey{Path: "/"},
+		ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType},
+		ObjectAttr: schema.ObjectAttr{IsDir: true},
+	}
+}
+
+// listObject returns a list, which is a directory, with its title
+func (self *TaskFiler) listObject(list *httpclient.TaskList) *schema.Object {
+	object := &schema.Object{
+		ObjectKey:  schema.ObjectKey{Name: self.name, Path: listPath(list.Id)},
+		ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType},
+		ObjectAttr: schema.ObjectAttr{IsDir: true, ModTime: list.Updated},
+	}
+	if list.ETag != "" {
+		object.ETag = types.Ptr(list.ETag)
+	}
+	object.Meta = appendMeta(object.Meta, "title", list.Title)
+	return object
+}
+
+// taskObject returns a task, which is a file, of its Markdown, with its
+// metadata, and its content
+func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.Object, []byte) {
+	content := taskMarkdown(list, task)
+	object := &schema.Object{
+		ObjectKey:  schema.ObjectKey{Name: self.name, Path: taskFilePath(list, task.Id)},
+		ObjectMeta: schema.ObjectMeta{ContentType: MarkdownType},
+		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: task.Updated},
+	}
+	if task.ETag != "" {
+		object.ETag = types.Ptr(task.ETag)
+	}
+	object.Meta = appendMeta(object.Meta, "title", task.Title)
+	object.Meta = appendMeta(object.Meta, "status", task.Status)
+	if task.Due != nil {
+		object.Meta = appendMeta(object.Meta, "due", task.Due.UTC().Format(dateFormat))
+	}
+	if task.Completed != nil {
+		object.Meta = appendMeta(object.Meta, "completed", task.Completed.UTC().Format(time.RFC3339))
+	}
+	object.Meta = appendMeta(object.Meta, "parent", task.Parent)
+	return object, content
+}
+
+// appendMeta appends metadata of the task namespace, unless its value is
+// empty
+func appendMeta(meta []schema.Meta, key, value string) []schema.Meta {
+	if value == "" {
+		return meta
+	}
+	return append(meta, schema.Meta{Namespace: TaskNamespace, Key: key, Value: json.RawMessage(quote(value))})
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// MARKDOWN
+
+// taskMarkdown returns a task as Markdown: its metadata as YAML front
+// matter, then its title, as a heading, and its notes. Strings are quoted
+// as JSON, which is YAML.
+func taskMarkdown(list string, task *httpclient.Task) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("---\n")
+	field(&buf, "id", quote(task.Id))
+	field(&buf, "list", quote(list))
+	field(&buf, "status", quote(task.Status))
+	if task.Due != nil {
+		field(&buf, "due", task.Due.UTC().Format(dateFormat))
+	}
+	if task.Completed != nil {
+		field(&buf, "completed", task.Completed.UTC().Format(time.RFC3339))
+	}
+	if !task.Updated.IsZero() {
+		field(&buf, "updated", task.Updated.UTC().Format(time.RFC3339))
+	}
+	if task.Parent != "" {
+		field(&buf, "parent", quote(task.Parent))
+	}
+	if task.Hidden {
+		field(&buf, "hidden", "true")
+	}
+	if task.WebViewLink != "" {
+		field(&buf, "url", quote(task.WebViewLink))
+	}
+	if len(task.Links) > 0 {
+		buf.WriteString("links:\n")
+		for _, link := range task.Links {
+			buf.WriteString("  - type: " + quote(link.Type) + "\n")
+			if link.Description != "" {
+				buf.WriteString("    description: " + quote(link.Description) + "\n")
+			}
+			buf.WriteString("    link: " + quote(link.Link) + "\n")
+		}
+	}
+	buf.WriteString("---\n")
+
+	// The title, on one line, and the notes
+	if title := strings.Join(strings.Fields(task.Title), " "); title != "" {
+		buf.WriteString("# " + title + "\n")
+	}
+	if notes := strings.TrimSpace(task.Notes); notes != "" {
+		buf.WriteString("\n" + notes + "\n")
+	}
+	return buf.Bytes()
+}
+
+// field writes a field of the front matter, unless its value is empty
+func field(buf *bytes.Buffer, key, value string) {
+	if value == "" || value == `""` {
+		return
+	}
+	buf.WriteString(key + ": " + value + "\n")
+}
+
+// quote returns a string quoted as JSON, which is a YAML string, without
+// escaping <, > and &
+func quote(value string) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(value); err != nil {
+		return `""`
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
+}
