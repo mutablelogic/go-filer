@@ -7,7 +7,6 @@ import (
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	filer "github.com/mutablelogic/go-filer/filer"
 	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
-	memory "github.com/mutablelogic/go-filer/filer/indexer/memory"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	server "github.com/mutablelogic/go-server"
 	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
@@ -29,6 +28,7 @@ type ServerCommands struct {
 type RunServer struct {
 	Filer       filercmd.Flags  `embed:""`
 	Credentials CredentialFlags `embed:""`
+	Indexer     IndexerFlags    `embed:""`
 	servercmd.RunServer
 }
 
@@ -50,12 +50,17 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// the filer command's credential-set, and listed, without their values
 	runner.RunServer.Register(credentialhandler.RegisterManagerHandlers(credentials, false, credentialhandler.WithSignIn(google.SignInPrefix, google.Google, google.ClientCredential)))
 
+	// The store of the indexes of volumes with the index option, which make's
+	// INDEXER_BACKEND chooses: sqlite, by default, memory or pg
+	store, err := runner.Indexer.store(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
-	// when the registry, and its volumes, are closed. A volume with the
-	// index option is indexed in memory, so it's scanned again when the
-	// server starts.
+	// when the registry, and its volumes, are closed
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, nil, func(*filer.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, filer.WithCredentials(credentials), filer.WithIndexerStore(memory.New()))
+	}, filer.WithCredentials(credentials), filer.WithIndexerStore(store))
 }

@@ -19,6 +19,14 @@ BUILD_LD_FLAGS += -X $(VERSION_PKG).GitTag=$(shell git describe --tags --always)
 BUILD_LD_FLAGS += -X $(VERSION_PKG).GitBranch=$(shell git name-rev HEAD --name-only --always)
 BUILD_FLAGS = -ldflags "-s -w ${BUILD_LD_FLAGS}"
 
+# The store of the indexes of volumes, of the server: sqlite, which is the
+# default, memory, or pg, as the build tag indexer_<backend>
+INDEXER_BACKEND ?= sqlite
+ifeq ($(filter $(INDEXER_BACKEND),memory sqlite pg),)
+$(error INDEXER_BACKEND is memory, sqlite or pg, not "$(INDEXER_BACKEND)")
+endif
+BUILD_TAGS = indexer_$(INDEXER_BACKEND)
+
 # The platforms the packages are vetted for, as each has its own way of
 # watching files, and only some are tested
 VET_PLATFORMS ?= darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 freebsd/amd64
@@ -38,8 +46,8 @@ all: build
 build: tidy $(CMD_DIR)
 
 $(CMD_DIR): go-dep mkdir
-	@echo Build $(notdir $@) GOOS=${OS} GOARCH=${ARCH}
-	@GOWORK=${GOWORK} GOOS=${OS} GOARCH=${ARCH} CGO_ENABLED=1 ${GO} build ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
+	@echo Build $(notdir $@) GOOS=${OS} GOARCH=${ARCH} INDEXER_BACKEND=${INDEXER_BACKEND}
+	@GOWORK=${GOWORK} GOOS=${OS} GOARCH=${ARCH} CGO_ENABLED=1 ${GO} build -tags ${BUILD_TAGS} ${BUILD_FLAGS} -o ${BUILD_DIR}/$(notdir $@) ./$@
 
 # Build the client, which is the filer command without the server, with the
 # "client" tag, and without cgo. It's built as build/filer, in place of the
