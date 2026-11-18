@@ -69,6 +69,11 @@ func (self *TaskFiler) CreateObject(ctx context.Context, req schema.CreateObject
 		return nil, err
 	}
 
+	// One write at a time, through telling the watches, so they're told in
+	// the order Google made them
+	self.writes.Lock()
+	defer self.writes.Unlock()
+
 	// Create, or update, the task
 	var task *httpclient.Task
 	eventType := schema.EventTypeUpdated
@@ -202,7 +207,9 @@ func taskProperties(data []byte) (map[string]string, error) {
 			switch {
 			case len(stack) == 0 && component != "VCALENDAR":
 				return nil, gofiler.ErrBadParameter.With("a task is written as an iCalendar, of one VTODO")
-			case component == "VTODO" && len(stack) == 1:
+			case component == "VTODO" && len(stack) != 1:
+				return nil, gofiler.ErrBadParameter.With("a task's VTODO must be in its VCALENDAR, rather than in another component")
+			case component == "VTODO":
 				todos++
 			case component == "VEVENT", component == "VJOURNAL", component == "VFREEBUSY":
 				return nil, gofiler.ErrBadParameter.Withf("a task is written as an iCalendar, of one VTODO, without a %s", component)
