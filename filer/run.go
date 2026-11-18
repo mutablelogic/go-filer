@@ -45,12 +45,22 @@ var (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Run processes events on the runloop, until the context is cancelled
-func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
+// Run watches the volumes, and publishes their changes, until the context
+// is cancelled, when it stops watching them, and closes the registry: it
+// removes and closes the volumes, cancelling and waiting for the calls to
+// With which are using them, and returns their errors. The registry can't
+// be used, or run, once it's closed, which is fs.ErrClosed.
+func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) {
 	if !self.running.CompareAndSwap(false, true) {
 		return gofiler.ErrConflict.With("registry is already running")
 	}
 	defer self.running.Store(false)
+	select {
+	case <-self.done:
+		return fs.ErrClosed
+	default:
+	}
+
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -74,8 +84,12 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 	watches := make(map[*entry]context.CancelFunc)
 	events, ended := make(chan schema.Event), make(chan watched)
 	defer func() {
-		// Stop watching, and wait for the watches to end, and end the
-		// subscriptions, as there are no more changes
+		// Close the registry, which cancels the calls to With, and the
+		// watches, at once, rather than once the watches end, as one can be
+		// slow to, such as while it reads a directory. It waits for them, so
+		// the watches are drained meanwhile, and stopped.
+		closed := make(chan error, 1)
+		go func() { closed <- self.close() }()
 		for _, cancel := range watches {
 			cancel()
 		}
@@ -87,6 +101,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 			}
 		}
 		publish(debouncer.due(time.Now(), true))
+		err = errors.Join(err, <-closed)
 	}()
 
 	// Watch the volumes, and send their changes, until it's stopped
@@ -96,8 +111,6 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-self.done:
 			return nil
 		case <-self.changed:
 			self.startWatches(watches, events, ended)
@@ -184,7 +197,7 @@ func (self *Registry) startWatches(watches map[*entry]context.CancelFunc, events
 	self.Lock()
 	defer self.Unlock()
 	for volume, e := range self.backend {
-		if _, exists := watches[e]; exists || !e.ready || e.closing {
+		if _, exists := watches[e]; exists || e.state != stateReady {
 			continue
 		}
 		ctx, cancel := context.WithCancel(e.ctx)
@@ -265,7 +278,7 @@ func (self *Registry) reopen(e *entry, volume string) {
 func (self *Registry) registered(e *entry, volume string) bool {
 	self.RLock()
 	defer self.RUnlock()
-	return self.backend != nil && self.backend[volume] == e && !e.closing
+	return self.backend != nil && self.backend[volume] == e && e.state != stateClosing
 }
 
 // rescanEvent returns a rescan of the volume, whose changes may have been

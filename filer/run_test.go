@@ -21,7 +21,7 @@ func Test_Registry_Run(t *testing.T) {
 	dir := t.TempDir()
 	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
-	defer r.Close()
+	defer r.close()
 	assert.False(t, r.Running())
 
 	// A volume added before it runs, and a watch made before it runs, which
@@ -56,37 +56,31 @@ func Test_Registry_Run(t *testing.T) {
 		assert.NotEqual(t, "/gone.txt", (<-ch).Path)
 	}
 
-	// When it stops, the watches go on, as the broadcaster is its owner's
+	// When it's cancelled, it closes the registry: its volumes are removed,
+	// and closed, and its watches end, and those made later
 	cancel()
-	assert.NoError(t, <-running)
-	assert.False(t, r.Running())
-	select {
-	case err := <-done:
-		t.Fatalf("the watch ended when the registry stopped: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	// And when the registry is closed, it stops
-	go func() { running <- r.Run(context.Background(), nil) }()
-	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
-	require.NoError(t, r.Close())
 	select {
 	case err := <-running:
 		assert.NoError(t, err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("run didn't stop")
 	}
-
-	// And its watches end, and those made later
+	assert.False(t, r.Running())
+	assert.Empty(t, r.Keys())
 	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
 	assert.ErrorIs(t, r.WatchObjects(context.Background(), ch), fs.ErrClosed)
+
+	// And it can't be used, or run, again
+	_, err = r.Add(context.Background(), "again", fileURL(t, dir, "again"))
+	assert.Error(t, err)
+	assert.ErrorIs(t, r.Run(context.Background(), nil), fs.ErrClosed)
 }
 
 func Test_Registry_RunDebounce(t *testing.T) {
 	dir := t.TempDir()
 	r, err := New(context.Background(), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { r.close() })
 	assert.Equal(t, debounceDelay, r.debounce)
 	runRegistry(t, r)
 	u := fileURL(t, dir, "media")
@@ -180,7 +174,7 @@ func Test_Registry_Broadcaster(t *testing.T) {
 	}, 10*time.Second, time.Millisecond)
 
 	// Closing the registry doesn't stop the broadcaster, which is its owner's
-	require.NoError(t, r.Close())
+	require.NoError(t, r.close())
 	other := make(chan changes.Change, 1)
 	_, err = b.Watch(ctx, changes.ChangeFilter{}, other)
 	assert.NoError(t, err)
@@ -191,7 +185,7 @@ func Test_Registry_Broadcaster(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	without, err := New(context.Background())
 	require.NoError(t, err)
-	defer without.Close()
+	defer without.close()
 	assert.ErrorIs(t, without.WatchObjects(context.Background(), make(chan schema.Event)), gofiler.ErrNotImplemented)
 }
 

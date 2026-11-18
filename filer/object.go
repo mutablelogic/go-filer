@@ -149,7 +149,7 @@ func (self *Registry) use(volume string) (*entry, error) {
 	self.RLock()
 	defer self.RUnlock()
 	e, exists := self.backend[volume]
-	if !exists || !e.ready || e.closing {
+	if !exists || e.state != stateReady {
 		return nil, gofiler.ErrNotFound.Withf("volume %q is not mounted", volume)
 	}
 	e.wg.Add(1)

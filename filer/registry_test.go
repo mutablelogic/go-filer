@@ -79,7 +79,7 @@ func newRegistry(t *testing.T) (*Registry, string) {
 	dir := t.TempDir()
 	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
 	return r, dir
 }
@@ -176,7 +176,7 @@ func Test_Registry_Close(t *testing.T) {
 	require.NoError(t, err)
 
 	// Closing the registry closes every backend
-	require.NoError(t, r.Close())
+	require.NoError(t, r.close())
 	for _, b := range []gofiler.Filer{a, b} {
 		_, err := b.GetObject(context.Background(), schema.GetObjectRequest{
 			ObjectKey: schema.ObjectKey{Path: "/"},
@@ -281,7 +281,7 @@ func Test_Registry_With(t *testing.T) {
 		<-entered
 
 		// Closing the registry stops the call and waits for it to finish
-		require.NoError(t, r.Close())
+		require.NoError(t, r.close())
 		select {
 		case <-finished:
 		default:
@@ -363,42 +363,6 @@ func Test_Registry_AddConcurrent(t *testing.T) {
 	assert.Equal(t, []string{"media"}, names(r))
 }
 
-func Test_Registry_DelWithin(t *testing.T) {
-	r, dir := newRegistry(t)
-	_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
-	require.NoError(t, err)
-
-	// Removing the volume from a function using it doesn't wait for the
-	// function, which can still use the backend, and the backend is closed
-	// once it returns
-	var used gofiler.Filer
-	done := make(chan error, 1)
-	go func() {
-		done <- r.With(context.Background(), "media", func(ctx context.Context, b gofiler.Filer) error {
-			used = b
-			if err := r.Del(ctx, "media"); err != nil {
-				return err
-			}
-			select {
-			case <-ctx.Done():
-			case <-time.After(10 * time.Second):
-				return errors.New("the context wasn't cancelled")
-			}
-			_, err := b.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
-			return err
-		})
-	}()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("removing the volume from a function using it didn't return")
-	}
-	require.Eventually(t, func() bool { return get(r, "media") == nil }, 10*time.Second, 10*time.Millisecond)
-	_, err = used.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
-	assert.ErrorIs(t, err, fs.ErrClosed)
-}
-
 func Test_Registry_DelCancelled(t *testing.T) {
 	r, dir := newRegistry(t)
 	_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
@@ -420,7 +384,7 @@ func Test_Registry_DelCancelled(t *testing.T) {
 
 	// It's still being removed, and Close waits for it
 	closed := make(chan error, 1)
-	go func() { closed <- r.Close() }()
+	go func() { closed <- r.close() }()
 	select {
 	case <-closed:
 		t.Fatal("Close returned before the volume which Del is removing was closed")
@@ -468,7 +432,7 @@ func Test_Registry_Keys(t *testing.T) {
 	assert.Equal(t, []string{"audiobooks", "podcasts"}, r.Keys())
 
 	// A closed registry has none
-	require.NoError(t, r.Close())
+	require.NoError(t, r.close())
 	assert.Empty(t, r.Keys())
 }
 
@@ -571,7 +535,7 @@ func Test_Registry_Credentials(t *testing.T) {
 	// can't be without one
 	r, err := New(context.Background(), WithCredentials(credentials{}))
 	require.NoError(t, err)
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { r.close() })
 	_, err = r.Add(context.Background(), "bucket", u)
 	require.NoError(t, err)
 	r2, _ := newRegistry(t)
@@ -711,7 +675,7 @@ func Test_Registry_WatchObjects(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- r.WatchObjects(context.Background(), make(chan schema.Event)) }()
 	time.Sleep(50 * time.Millisecond)
-	require.NoError(t, r.Close())
+	require.NoError(t, r.close())
 	select {
 	case err := <-done:
 		assert.ErrorIs(t, err, fs.ErrClosed)
@@ -969,12 +933,15 @@ func Test_Registry_Update(t *testing.T) {
 	_, err = r.Update(ctx, "missing", url.Values{"readonly": {"true"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 
-	// A volume can't be updated from a function using it, which it'd wait for
+	// A volume can't be updated from a function using it, which it'd wait
+	// for, nor removed
 	require.NoError(t, r.With(ctx, "media", func(ctx context.Context, _ gofiler.Filer) error {
 		_, err := r.Update(ctx, "media", url.Values{"readonly": {"true"}})
 		assert.ErrorIs(t, err, gofiler.ErrConflict)
+		assert.ErrorIs(t, r.Del(ctx, "media"), gofiler.ErrConflict)
 		return nil
 	}))
+	assert.Contains(t, r.Keys(), "media", "it isn't removed")
 
 	// Updating waits for the calls using the volume, which are cancelled,
 	// and the volume can't be added meanwhile
@@ -1043,7 +1010,7 @@ func Test_Registry_CloseWaitsForUpdate(t *testing.T) {
 	go r.Update(ctx, "media", url.Values{"readonly": {"true"}})
 	require.Eventually(t, func() bool { return !slices.Contains(r.Keys(), "media") }, 10*time.Second, 10*time.Millisecond)
 	closed := make(chan error, 1)
-	go func() { closed <- r.Close() }()
+	go func() { closed <- r.close() }()
 	select {
 	case <-closed:
 		t.Fatal("Close returned before the backend which Update is closing was closed")

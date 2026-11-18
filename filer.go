@@ -21,10 +21,11 @@ import (
 // error opening or closing the object.
 type ReadObjectFunc func(context.Context, func(io.Reader) error) error
 
-// Filer is the interface for storing files and objects.
+// Filer is the interface for storing files and objects. A filer which
+// holds resources, such as a client, or a watch, also implements io.Closer,
+// which its owner, such as the registry, calls, rather than those it's given
+// to.
 type Filer interface {
-	io.Closer
-
 	// URL returns the filer URL. The scheme, host (bucket/name),
 	// and path (prefix/directory) identify the storage location. Query
 	// parameters carry useful non-credential details: region, endpoint, anonymous, readonly, etc.
