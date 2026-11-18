@@ -215,7 +215,7 @@ func Test_WatchObjectsShared(t *testing.T) {
 	backend, err := New("test", dir, nil, filer.Opts{})
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	before := watching.Load()
+	before := noWatches(t)
 
 	// watch watches the backend, until it's stopped, once its first change,
 	// a rescan of the root, says it's watching
@@ -276,7 +276,7 @@ func Test_WatchObjectsRejoin(t *testing.T) {
 	backend, err := New("test", dir, nil, filer.Opts{})
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	before := watching.Load()
+	before := noWatches(t)
 
 	// A call which leaves, and one which then joins, at once, doesn't start
 	// another watch until the last ends, so the directory is watched once
@@ -305,4 +305,13 @@ func Test_WatchObjectsRejoin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	assert.ErrorIs(t, backend.WatchObjects(ctx, make(chan schema.Event)), context.Canceled)
+}
+
+// noWatches waits for the watches of the tests before, which stop after
+// their calls return, such as on Linux, to end, so the watches of a test
+// are counted from none
+func noWatches(t *testing.T) int32 {
+	t.Helper()
+	require.Eventually(t, func() bool { return watching.Load() == 0 }, 10*time.Second, 10*time.Millisecond, "the watches of the tests before didn't stop")
+	return 0
 }
