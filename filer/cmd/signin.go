@@ -9,9 +9,9 @@ import (
 
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
+	credentialclient "github.com/mutablelogic/go-auth/credential/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
-	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	oauth2 "golang.org/x/oauth2"
 )
 
@@ -21,8 +21,9 @@ import (
 // signInWithBrowser signs in, of what the server needs: the person signs in
 // with Google, in the browser, at the URL, which is printed, and opened,
 // unless noBrowser, which redirects to a loopback address, with the code,
-// which the server exchanges, as it has the client's secret, and stores
-func signInWithBrowser(ctx context.Context, client *httpclient.Client, signIn authclient.SignIn, noBrowser bool) error {
+// which the server's credentials API exchanges, as it has the client's
+// secret, and stores
+func signInWithBrowser(ctx context.Context, client *credentialclient.Client, signIn authclient.SignIn, noBrowser bool) error {
 	if signIn.Server.Issuer != google.Google.Issuer {
 		return gofiler.ErrNotImplemented.Withf("signing in with %q", signIn.Server.Issuer)
 	}
@@ -61,7 +62,7 @@ func signInWithBrowser(ctx context.Context, client *httpclient.Client, signIn au
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Signed in, as", response.Credential)
+	fmt.Fprintln(os.Stderr, "Signed in, as", response.Key)
 	return nil
 }
 

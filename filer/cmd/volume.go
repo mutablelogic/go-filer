@@ -13,6 +13,7 @@ import (
 	"time"
 
 	// Packages
+	credentialclient "github.com/mutablelogic/go-auth/credential/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
@@ -182,10 +183,20 @@ func (cmd *VolumeCreateGTasksCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
+
+	// The server's credentials API, which stores the sign-in
+	endpoint, opts, err := ctx.ClientEndpoint()
+	if err != nil {
+		return err
+	}
+	credentials, err := credentialclient.New(endpoint, opts...)
+	if err != nil {
+		return err
+	}
 	return withClient(ctx, "filer.VolumeCreateGTasksCmd", func(ctx context.Context, client *httpclient.Client) error {
 		created, err := client.CreateVolume(ctx, volume)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
-			if err := signInWithBrowser(ctx, client, *signIn, cmd.NoBrowser); err != nil {
+			if err := signInWithBrowser(ctx, credentials, *signIn, cmd.NoBrowser); err != nil {
 				return err
 			}
 			created, err = client.CreateVolume(ctx, volume)

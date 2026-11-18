@@ -12,6 +12,7 @@ import (
 	// Packages
 	auth "github.com/mutablelogic/go-auth"
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
+	credential "github.com/mutablelogic/go-auth/credential"
 	gofiler "github.com/mutablelogic/go-filer"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	oauth2 "golang.org/x/oauth2"
@@ -89,29 +90,6 @@ func newTokens(ctx context.Context, credentials gofiler.CredentialProvider, key 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// ParseClient returns the client of the JSON, which has its client_id, and
-// client_secret, or has them in "installed" or "web", as the file Google's
-// console downloads for a client does
-func ParseClient(data []byte) (*authclient.Registration, error) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(data, &object); err != nil || object == nil {
-		return nil, gofiler.ErrBadParameter.Withf("credential %q is not a JSON object, of the client_id and client_secret of a Google OAuth client", ClientCredential)
-	}
-	for _, kind := range []string{"installed", "web"} {
-		if nested, exists := object[kind]; exists {
-			data = nested
-			break
-		}
-	}
-	var client authclient.Registration
-	if err := json.Unmarshal(data, &client); err != nil {
-		return nil, gofiler.ErrBadParameter.Withf("credential %q: %v", ClientCredential, err)
-	} else if strings.TrimSpace(client.ClientID) == "" {
-		return nil, gofiler.ErrBadParameter.Withf("credential %q has no client_id", ClientCredential)
-	}
-	return &authclient.Registration{ClientID: client.ClientID, ClientSecret: client.ClientSecret}, nil
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -152,7 +130,7 @@ func (self *tokens) token(ctx context.Context) (string, error) {
 
 	// Store it, unless it was replaced meanwhile, under the key's lock,
 	// which every volume, and sign-in, of the key shares
-	unlock := lockCredential(self.key)
+	unlock := credential.Lock(self.key)
 	defer unlock()
 	if latest, err := self.read(ctx); err != nil {
 		return "", err
@@ -242,28 +220,11 @@ func readClient(ctx context.Context, credentials gofiler.CredentialProvider) (*a
 	} else if err != nil {
 		return nil, err
 	}
-	var value string
-	if json.Unmarshal(data, &value) == nil {
-		// A credential which is a string of JSON, such as one which is
-		// stored from a file, or the environment
-		data = []byte(value)
+	client, err := authclient.ParseRegistration(data)
+	if err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("credential %q: %v", ClientCredential, err)
 	}
-	return ParseClient(data)
-}
-
-// credentialLocks are the locks of the keys of sign-ins, which every volume,
-// and sign-in, of a key, in the process, shares, so a refresh doesn't
-// replace a sign-in which was stored after it was read. A credential which
-// is stored by another process, or the credentials API, isn't locked, as
-// the provider can't store one only when it hasn't changed.
-var credentialLocks sync.Map
-
-// lockCredential locks the key, and returns the function which unlocks it
-func lockCredential(key string) func() {
-	value, _ := credentialLocks.LoadOrStore(key, new(sync.Mutex))
-	mu := value.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	return client, nil
 }
 
 // sameToken returns true when two tokens are the same
