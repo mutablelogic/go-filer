@@ -24,12 +24,6 @@ type watched struct {
 	err    error
 }
 
-// readyWatcher is a backend which reports when it's watching, so the
-// changes after it are sent
-type readyWatcher interface {
-	WatchObjectsReady(context.Context, chan<- schema.Event, func()) error
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
@@ -237,8 +231,7 @@ func (self *Registry) startWatches(watches map[*entry]context.CancelFunc, events
 
 // watch watches the volume, sending each change to events, with the name of
 // its volume, until watching fails, or the context is cancelled. With
-// rescan, a rescan of the volume is sent first, once it's watched, or when
-// it starts, for a backend which doesn't report when it's watching.
+// rescan, a rescan of the volume is sent first, as watching starts.
 func (self *Registry) watch(ctx context.Context, e *entry, volume string, rescan bool, events chan<- schema.Event) error {
 	send := func(event schema.Event) {
 		event.Name = volume
@@ -247,19 +240,12 @@ func (self *Registry) watch(ctx context.Context, e *entry, volume string, rescan
 		case <-ctx.Done():
 		}
 	}
-	ready := func() {
-		if rescan {
-			send(rescanEvent(volume))
-		}
+	if rescan {
+		send(rescanEvent(volume))
 	}
 	changes, done := make(chan schema.Event), make(chan error, 1)
 	go func() {
-		if b, ok := e.Filer.(readyWatcher); ok {
-			done <- b.WatchObjectsReady(ctx, changes, ready)
-		} else {
-			ready()
-			done <- e.WatchObjects(ctx, changes)
-		}
+		done <- e.WatchObjects(ctx, changes)
 	}()
 	for {
 		select {
