@@ -21,7 +21,7 @@ func Test_Registry_Metrics(t *testing.T) {
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer provider.Shutdown(context.Background())
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"), WithDebounce(0))
+	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.Close() })
 	runRegistry(t, r)

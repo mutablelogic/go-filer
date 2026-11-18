@@ -77,7 +77,7 @@ func get(r *Registry, volume string) gofiler.Filer {
 func newRegistry(t *testing.T) (*Registry, string) {
 	t.Helper()
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithDebounce(0))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.Close() })
 	runRegistry(t, r)

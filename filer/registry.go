@@ -28,12 +28,10 @@ type Registry struct {
 	opt
 	backend map[string]*entry
 
-	// The calls to WatchObjects, which Run sends the changes to the volumes
-	// to, the channel which tells Run a volume is added or updated, and
-	// whether Run is running
-	broadcaster *broadcaster
-	changed     chan struct{}
-	running     atomic.Bool
+	// The channel which tells Run a volume is added or updated, and whether
+	// Run is running
+	changed chan struct{}
+	running atomic.Bool
 
 	// The metrics, which Run counts the changes with, or nil, without a
 	// meter
@@ -104,11 +102,10 @@ var schemes = []string{schema.SchemeFile, schema.SchemeS3}
 // New creates a registry of the backends of volumes
 func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 	self := &Registry{
-		backend:     make(map[string]*entry),
-		broadcaster: newBroadcaster(),
-		changed:     make(chan struct{}, 1),
-		teardown:    make(map[*entry]struct{}),
-		done:        make(chan struct{}),
+		backend:  make(map[string]*entry),
+		changed:  make(chan struct{}, 1),
+		teardown: make(map[*entry]struct{}),
+		done:     make(chan struct{}),
 	}
 
 	// Apply options
@@ -136,10 +133,9 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 func (self *Registry) Close() error {
 	var result error
 
-	// Stop Run, and end the subscriptions, and those made later
+	// Stop Run, and the calls to WatchObjects, and those made later
 	self.closeOnce.Do(func() {
 		close(self.done)
-		self.broadcaster.end(true)
 	})
 
 	// Remove all the backends, and close those which aren't already being

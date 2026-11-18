@@ -15,6 +15,8 @@ import (
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	server "github.com/mutablelogic/go-server"
+	broadcaster "github.com/mutablelogic/go-server/broadcaster"
+	changes "github.com/mutablelogic/go-server/broadcaster/httphandler"
 	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -35,14 +37,34 @@ type Flags struct {
 // meter, and credentials from its environment, such as S3_SECRET, which are
 // the placeholders of a volume's credentials, such as ${S3_SECRET}, and
 // those which are stored while it runs, and the flags' worker, when it's
-// set, and then the options, runs it, so the changes to its volumes are sent
-// to the calls to WatchObjects, adds the volumes of the flags, registers its
+// set, and then the options, runs it, so the changes to its volumes are
+// published to the broadcaster, adds the volumes of the flags, registers its
 // HTTP handlers with the server, when there is one, and then calls the
-// function with the registry. A volume which can't be added is an error.
-// The registry, and its volumes, are closed when the function returns.
-// Returns any error.
-func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, fn func(*filer.Registry) error, opts ...filer.Opt) (err error) {
-	defaults := []filer.Opt{filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter()), filer.WithCredentials(newEnvCredentials())}
+// function with the registry. The broadcaster is one a server shares with
+// its other modules, which it runs and serves, or, when it's nil, one which
+// is created, served as go-server's /changes, and run until the function
+// returns. A volume which can't be added is an error. The registry, and its
+// volumes, are closed when the function returns. Returns any error.
+func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *broadcaster.Broadcaster, fn func(*filer.Registry) error, opts ...filer.Opt) (err error) {
+	if b == nil {
+		b = broadcaster.New()
+		if srv != nil {
+			srv.Register(func(router *httprouter.Router) error {
+				return changes.RegisterHandlers(b, router)
+			})
+		}
+		runCtx, cancel := context.WithCancel(ctx.Context())
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			_ = b.Run(runCtx)
+		}()
+		defer func() {
+			cancel()
+			<-stopped
+		}()
+	}
+	defaults := []filer.Opt{filer.WithBroadcaster(b), filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter()), filer.WithCredentials(newEnvCredentials())}
 	if flags.Worker != "" {
 		defaults = append(defaults, filer.WithWorker(flags.Worker))
 	}

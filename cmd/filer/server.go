@@ -38,7 +38,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
 	// when the registry, and its volumes, are closed
-	return runner.Filer.WithRegistry(ctx, &runner.RunServer, func(*filer.Registry) error {
+	return runner.Filer.WithRegistry(ctx, &runner.RunServer, nil, func(*filer.Registry) error {
 		return runner.RunServer.Run(ctx)
 	})
 }

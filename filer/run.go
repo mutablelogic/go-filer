@@ -3,12 +3,14 @@ package filer
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	changes "github.com/mutablelogic/go-server/broadcaster/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -21,21 +23,16 @@ type watched struct {
 	err    error
 }
 
-// readyWatcher is a backend which reports when it's watching, so the
-// changes after it are sent
-type readyWatcher interface {
-	WatchObjectsReady(context.Context, chan<- schema.Event, func()) error
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
 var (
-	// watchQueue is how many changes can wait for each call to WatchObjects
+	// watchQueue is how many changes can wait for each call to WatchObjects,
+	// after which it's sent a rescan of their volumes
 	watchQueue = 1024
 
-	// rescanInterval is how often the rescans which subscribers are owed are
-	// sent, when there are no changes to send them with
+	// rescanInterval is how often the changes which are held, until their
+	// objects are quiet, are checked for those which are due
 	rescanInterval = 100 * time.Millisecond
 
 	// watchRetry is how long to wait before opening a volume again, when
@@ -59,13 +56,15 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	// The changes, which are held until their objects are quiet, and are
-	// counted, and sent to the calls to WatchObjects
+	// counted, and published to the broadcaster, when there is one
 	debouncer := newDebouncer(self.debounce)
 	publish := func(events []schema.Event) {
 		for _, event := range events {
 			self.metrics.event(ctx, event)
-			if dropped := self.broadcaster.publish(event); dropped > 0 {
-				logger.DebugContext(ctx, "subscribers were slow, so a change was dropped, and they'll be sent a rescan", "volume", event.Name, "subscribers", dropped)
+			if self.broadcaster == nil {
+				continue
+			} else if missed := self.broadcaster.Publish(event.Change()); missed > 0 {
+				logger.DebugContext(ctx, "watchers were slow, so they missed a change, and they'll be sent a rescan", "volume", event.Name, "watchers", missed)
 			}
 		}
 	}
@@ -88,7 +87,6 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 			}
 		}
 		publish(debouncer.due(time.Now(), true))
-		self.broadcaster.end(false)
 	}()
 
 	// Watch the volumes, and send their changes, until it's stopped
@@ -115,15 +113,58 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 			}
 		case <-ticker.C:
 			publish(debouncer.due(time.Now(), false))
-			self.broadcaster.flush()
 		}
 	}
 }
 
 // WatchObjects sends each change to the objects of every volume to the
-// channel
+// channel, of the broadcaster's changes, until the context is cancelled. A
+// call which falls behind is sent a rescan of each volume it missed a change
+// of. Returns ErrNotImplemented without a broadcaster, as the changes
+// aren't published, and fs.ErrClosed when the registry is closed, or the
+// broadcaster stops running.
 func (self *Registry) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	return self.broadcaster.watch(ctx, ch, watchQueue)
+	select {
+	case <-self.done:
+		return fs.ErrClosed
+	default:
+	}
+	if self.broadcaster == nil {
+		return gofiler.ErrNotImplemented.With("the changes aren't published, without a broadcaster")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	queue := make(chan changes.Change, watchQueue)
+	done, err := self.broadcaster.Watch(ctx, changes.ChangeFilter{Schema: schema.ChangeSchema}, queue)
+	if err != nil {
+		return fs.ErrClosed
+	}
+	ended := func(err error) error {
+		if err != nil {
+			return fs.ErrClosed
+		}
+		return nil
+	}
+	for {
+		select {
+		case err := <-done:
+			return ended(err)
+		case <-self.done:
+			return fs.ErrClosed
+		case change := <-queue:
+			event, ok := schema.ChangeEvent(change)
+			if !ok {
+				continue
+			}
+			select {
+			case ch <- event:
+			case err := <-done:
+				return ended(err)
+			case <-self.done:
+				return fs.ErrClosed
+			}
+		}
+	}
 }
 
 // Running returns true when Run is running
@@ -160,8 +201,7 @@ func (self *Registry) startWatches(watches map[*entry]context.CancelFunc, events
 
 // watch watches the volume, sending each change to events, with the name of
 // its volume, until watching fails, or the context is cancelled. With
-// rescan, a rescan of the volume is sent first, once it's watched, or when
-// it starts, for a backend which doesn't report when it's watching.
+// rescan, a rescan of the volume is sent first, as watching starts.
 func (self *Registry) watch(ctx context.Context, e *entry, volume string, rescan bool, events chan<- schema.Event) error {
 	send := func(event schema.Event) {
 		event.Name = volume
@@ -170,19 +210,12 @@ func (self *Registry) watch(ctx context.Context, e *entry, volume string, rescan
 		case <-ctx.Done():
 		}
 	}
-	ready := func() {
-		if rescan {
-			send(rescanEvent(volume))
-		}
+	if rescan {
+		send(rescanEvent(volume))
 	}
 	changes, done := make(chan schema.Event), make(chan error, 1)
 	go func() {
-		if b, ok := e.Filer.(readyWatcher); ok {
-			done <- b.WatchObjectsReady(ctx, changes, ready)
-		} else {
-			ready()
-			done <- e.WatchObjects(ctx, changes)
-		}
+		done <- e.WatchObjects(ctx, changes)
 	}()
 	for {
 		select {
@@ -233,4 +266,10 @@ func (self *Registry) registered(e *entry, volume string) bool {
 	self.RLock()
 	defer self.RUnlock()
 	return self.backend != nil && self.backend[volume] == e && !e.closing
+}
+
+// rescanEvent returns a rescan of the volume, whose changes may have been
+// missed
+func rescanEvent(volume string) schema.Event {
+	return schema.Event{EventType: schema.EventTypeRescan, ObjectKey: schema.ObjectKey{Name: volume, Path: "/"}}
 }

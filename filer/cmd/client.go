@@ -7,6 +7,7 @@ import (
 	otel "github.com/mutablelogic/go-client/pkg/otel"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	server "github.com/mutablelogic/go-server"
+	changesclient "github.com/mutablelogic/go-server/broadcaster/httpclient"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -29,6 +30,24 @@ func withClient(ctx server.Cmd, span string, fn func(context.Context, *httpclien
 		return err
 	}
 	client, err := httpclient.New(endpoint, opts...)
+	if err != nil {
+		return err
+	}
+
+	// The span ends with the named error, which is the function's
+	spanCtx, endfn := otel.StartSpan(ctx.Tracer(), ctx.Context(), span)
+	defer func() { endfn(err) }()
+	return fn(spanCtx, client)
+}
+
+// withChangesClient calls the function with a client of go-server's
+// /changes, of the server, within a span of the name
+func withChangesClient(ctx server.Cmd, span string, fn func(context.Context, *changesclient.Client) error) (err error) {
+	endpoint, opts, err := ctx.ClientEndpoint()
+	if err != nil {
+		return err
+	}
+	client, err := changesclient.New(endpoint, opts...)
 	if err != nil {
 		return err
 	}
