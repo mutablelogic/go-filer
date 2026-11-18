@@ -162,7 +162,7 @@ func Test_Scan(t *testing.T) {
 	assert.Equal(t, []string{"/a", "/c"}, folders(t, i, "/", false))
 	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
 	assert.Equal(t, []string{"/a/b"}, folders(t, i, "/a/", false))
-	object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
+	object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
 	require.NoError(t, err)
 	assert.True(t, object.IsDir)
 	assert.Equal(t, "media", object.Name)
@@ -213,7 +213,7 @@ func Test_Write(t *testing.T) {
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/f/g/z.txt"}, Body: strings.NewReader("z")})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/a", "/a/b", "/c", "/f", "/f/g"}, folders(t, i, "/", true))
-	object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/f/g"}})
+	object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/f/g/"}})
 	require.NoError(t, err)
 	assert.Equal(t, "1", count(t, object))
 
@@ -255,4 +255,73 @@ func Test_Retry(t *testing.T) {
 	state, err := i.State(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, state.Error, "the scan once it's watched clears it")
+}
+
+func Test_Symlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic links need privileges on Windows")
+	}
+	backend, dir := newBackend(t)
+	require.NoError(t, os.Symlink(".", filepath.Join(dir, "a", "loop")))
+
+	// A link to a directory, which the backend lists, but doesn't descend
+	// into, as it could loop, is a folder, which isn't descended into
+	i, err := indexer.New("media", &unwatched{Filer: backend}, memory.New(), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	assert.Equal(t, []string{"/a", "/a/b", "/a/loop", "/c"}, folders(t, i, "/", true))
+}
+
+func Test_DeleteParents(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+	i, err := indexer.New("media", backend, memory.New())
+	require.NoError(t, err)
+	run(t, i)
+
+	// The last file of folders, which the backend removes, when it's
+	// deleted, removes them from the index, and the root's count changes
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/p/q/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a", "/a/b", "/c", "/p", "/p/q"}, folders(t, i, "/", true))
+	_, err = i.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/p/q/z.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
+	root, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+	require.NoError(t, err)
+	assert.Equal(t, "3", count(t, root), "a, c and x.txt")
+}
+
+func Test_Bucket(t *testing.T) {
+	// A bucket, whose file, /a, is beside a folder of the same name, /a/
+	b := newBucket("a", "a/b/c.txt", "x.txt")
+	i, err := indexer.New("media", b, memory.New(), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	assert.Equal(t, []string{"/a", "/a/b"}, folders(t, i, "/", true))
+
+	// The path of the file is the backend's, which is the file, and the
+	// folder's, with a "/" after it, is the index's
+	object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
+	require.NoError(t, err)
+	assert.False(t, object.IsDir, "the file")
+	object, err = i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
+	require.NoError(t, err)
+	assert.True(t, object.IsDir, "the folder")
+
+	// Writing the file doesn't remove the folder beside it, with what's
+	// beneath it
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}, Body: strings.NewReader("a")})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a", "/a/b"}, folders(t, i, "/", true))
+
+	// Deleting the folder's last file removes it, but not the file
+	_, err = i.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/b/c.txt"}})
+	require.NoError(t, err)
+	assert.Empty(t, folders(t, i, "/", true))
+	object, err = i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
+	require.NoError(t, err)
+	assert.False(t, object.IsDir)
 }

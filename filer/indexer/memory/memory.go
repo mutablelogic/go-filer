@@ -134,11 +134,14 @@ func (self *Store) SetState(ctx context.Context, volume string, state indexer.St
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// clone returns a copy of an object, so what's stored isn't changed by its
-// caller
+// clone returns a copy of an object, with its metadata's values, so what's
+// stored isn't changed by its caller
 func clone(object *schema.Object) *schema.Object {
 	result := *object
 	result.Meta = slices.Clone(object.Meta)
+	for i := range result.Meta {
+		result.Meta[i].Value = slices.Clone(result.Meta[i].Value)
+	}
 	if object.Size != nil {
 		size := *object.Size
 		result.Size = &size

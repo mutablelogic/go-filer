@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,10 @@ var _ gofiler.Filer = (*Indexer)(nil)
 const (
 	// listPage is how many objects of the index are read at a time
 	listPage = 1000
+
+	// progressEvery is how many folders a scan lists between storing its
+	// progress
+	progressEvery = 100
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -105,9 +110,12 @@ func (self *Indexer) State(ctx context.Context) (State, error) {
 }
 
 // GetObject returns an object, which is a folder of the index, once it's
-// ready, or otherwise the backend's
+// ready, when the path is a folder's, which ends with "/", or is the root,
+// or otherwise the backend's, which resolves a path without one, which can
+// be a file, and a folder, of a bucket
 func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
-	if len(req.IfNoneMatch) == 0 && req.IfModifiedSince.IsZero() && self.ready(ctx) {
+	isFolder := strings.HasSuffix(req.Path, "/") || folderPath(req.Path) == "/"
+	if isFolder && len(req.IfNoneMatch) == 0 && req.IfModifiedSince.IsZero() && self.ready(ctx) {
 		if object, err := self.store.Get(ctx, self.name, folderPath(req.Path)); err == nil && object.IsDir {
 			object.Name = self.name
 			return object, nil
@@ -244,16 +252,27 @@ func (self *Indexer) ready(ctx context.Context) bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS - SCANNING
 
-// scan indexes the folder, and every folder beneath it, a folder at a time,
-// reconciling each folder's folders with the index, so those which aren't
-// there any more are removed, with what's beneath them. The root's scan is
-// the whole volume's, whose state is scanning, and then ready.
+// tree is a folder's subtree, of the backend: the folder, and the folders
+// beneath it, by their paths, with how many objects each lists
+type tree struct {
+	root    *schema.Object
+	folders map[string]*schema.Object
+	counts  map[string]int
+}
+
+// scan indexes the folder, and every folder beneath it, of one recursive
+// listing, so the backend decides which folders are descended into, as it
+// does for its own, such as a filesystem's link to a directory, which
+// isn't. The index's folders beneath it, which aren't there any more, are
+// removed. The root's scan is the whole volume's, whose state is scanning,
+// and then ready.
 func (self *Indexer) scan(ctx context.Context, root string) error {
 	whole := root == "/"
 	state, err := self.store.State(ctx, self.name)
 	if err != nil {
 		return err
 	}
+	var progress func(int)
 	if whole {
 		// A volume which is ready is listed from its index while it's
 		// scanned again
@@ -264,63 +283,128 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		if err := self.store.SetState(ctx, self.name, state); err != nil {
 			return err
 		}
+		progress = func(folders int) {
+			state.Folders = uint64(folders)
+			_ = self.store.SetState(ctx, self.name, state)
+		}
 	}
 
-	// A folder at a time, from the root
-	queue := []string{root}
-	for len(queue) > 0 {
-		folder := queue[0]
-		queue = queue[1:]
-		self.mu.Lock()
-		folders, err := self.index(ctx, folder)
-		self.mu.Unlock()
-		if errors.Is(err, fs.ErrNotExist) {
-			// It's gone since it was found
-			continue
-		} else if err != nil {
-			return err
-		}
-		queue = append(queue, folders...)
-		if whole {
-			state.Folders++
-			if err := self.store.SetState(ctx, self.name, state); err != nil {
-				return err
-			}
-		}
+	// List it, then change the index, which is locked only while it's
+	// changed
+	t, err := self.list(ctx, root, progress)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	self.mu.Lock()
+	err = self.replace(ctx, root, t)
+	self.mu.Unlock()
+	if err != nil {
+		return err
 	}
 	if whole {
-		state.Status, state.Scanned = StatusReady, time.Now()
+		state.Status, state.Folders, state.Scanned = StatusReady, uint64(len(t.folders)+1), time.Now()
 		return self.store.SetState(ctx, self.name, state)
 	}
 	return nil
 }
 
-// index indexes a folder: the folder, of the backend, with the count of its
-// objects, and its folders, which replace those the index has, and returns
-// their paths. It's called with the indexer locked.
-func (self *Indexer) index(ctx context.Context, folder string) ([]string, error) {
-	object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: folder}})
+// list returns a folder's subtree, of one recursive listing of the backend,
+// reporting how many folders it's listed every so often, or fs.ErrNotExist,
+// with an empty subtree, when the folder isn't there
+func (self *Indexer) list(ctx context.Context, root string, progress func(int)) (tree, error) {
+	t := tree{folders: make(map[string]*schema.Object), counts: map[string]int{root: 0}}
+	object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: dirPath(root)}})
 	if err != nil {
-		return nil, err
+		return t, err
 	} else if !object.IsDir {
-		// A folder which is now a file isn't a folder of the index
-		return nil, errors.Join(self.store.Delete(ctx, self.name, folder), &fs.PathError{Op: "index", Path: folder, Err: fs.ErrNotExist})
+		return t, &fs.PathError{Op: "index", Path: root, Err: fs.ErrNotExist}
+	}
+	t.root = object
+	iter, err := self.Filer.ListObjects(ctx, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: dirPath(root)}, Recursive: true})
+	if err != nil {
+		return t, err
+	}
+	defer iter.Close()
+	for {
+		child, err := iter.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			return t, nil
+		} else if err != nil {
+			return t, err
+		}
+		t.counts[Parent(child.Path)]++
+		if child.IsDir {
+			t.folders[child.Path] = child
+			if _, exists := t.counts[child.Path]; !exists {
+				t.counts[child.Path] = 0
+			}
+			if progress != nil && len(t.folders)%progressEvery == 0 {
+				progress(len(t.folders))
+			}
+		}
+	}
+}
+
+// replace replaces the index's subtree of a folder with the backend's,
+// removing the folders which aren't there any more, with what's beneath
+// them, or the whole subtree, when the folder isn't there. It's called with
+// the indexer locked.
+func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
+	if t.root == nil {
+		return self.store.Delete(ctx, self.name, root)
+	}
+	indexed, err := self.beneath(ctx, root)
+	if err != nil {
+		return err
+	}
+	for _, object := range indexed {
+		if _, exists := t.folders[object.Path]; !exists && object.IsDir {
+			if err := self.store.Delete(ctx, self.name, object.Path); err != nil {
+				return err
+			}
+		}
+	}
+	objects := make([]*schema.Object, 0, len(t.folders)+1)
+	t.root.Path = root
+	objects = append(objects, withCount(t.root, t.counts[root]))
+	for p, folder := range t.folders {
+		objects = append(objects, withCount(folder, t.counts[p]))
+	}
+	for _, object := range objects {
+		object.Name = ""
+	}
+	return self.store.Put(ctx, self.name, objects...)
+}
+
+// index indexes a folder again, which isn't descended into: the folder,
+// with how many objects it lists, and its folders, which replace those the
+// index has. A folder which isn't there any more is removed, with what's
+// beneath it, which is fs.ErrNotExist. It's called with the indexer locked.
+func (self *Indexer) index(ctx context.Context, folder string) error {
+	object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: dirPath(folder)}})
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && !object.IsDir) {
+		if err := self.store.Delete(ctx, self.name, folder); err != nil {
+			return err
+		}
+		return &fs.PathError{Op: "index", Path: folder, Err: fs.ErrNotExist}
+	} else if err != nil {
+		return err
 	}
 
 	// Its objects, of which its folders are indexed
 	iter, err := self.Filer.ListObjects(ctx, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: dirPath(folder)}})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer iter.Close()
-	var count int
+	count := 0
 	folders := make(map[string]*schema.Object)
 	for {
 		child, err := iter.Next(ctx)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
-			return nil, err
+			return err
 		}
 		count++
 		if child.IsDir {
@@ -328,46 +412,46 @@ func (self *Indexer) index(ctx context.Context, folder string) ([]string, error)
 		}
 	}
 
-	// The folders the index has, which aren't there any more, are removed,
-	// with what's beneath them
+	// Its folders which aren't there any more are removed, and those which
+	// are keep the counts the index has of them, until they're indexed
 	indexed, err := self.children(ctx, folder)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	counts := make(map[string][]schema.Meta)
 	for _, child := range indexed {
 		if _, exists := folders[child.Path]; !exists && child.IsDir {
 			if err := self.store.Delete(ctx, self.name, child.Path); err != nil {
-				return nil, err
+				return err
 			}
+		} else {
+			counts[child.Path] = child.Meta
 		}
 	}
-
-	// The folder, with the count of its objects, and its folders, which are
-	// replaced with what's listed, keeping those the index has of their own
-	// counts until they're indexed
+	object.Path = folder
 	objects := []*schema.Object{withCount(object, count)}
-	result := make([]string, 0, len(folders))
 	for p, child := range folders {
-		if existing, err := self.store.Get(ctx, self.name, p); err == nil {
-			child.Meta = mergeCount(child.Meta, existing.Meta)
-		}
+		child.Meta = mergeCount(child.Meta, counts[p])
 		objects = append(objects, child)
-		result = append(result, p)
 	}
 	for _, object := range objects {
 		object.Name = ""
 	}
-	return result, self.store.Put(ctx, self.name, objects...)
+	return self.store.Put(ctx, self.name, objects...)
 }
 
 // refresh changes the index, of an object which is created, updated or
-// deleted: a folder which is created is indexed, with the folders beneath
-// it, a folder which isn't there any more is removed, and the folder it's
-// in is indexed again, as its count of objects, or its folders, changed.
-// It's called with the indexer locked.
+// deleted, of its folder's path, which is a folder, of the backend, or
+// isn't: a folder which is there, and is created, or isn't indexed, is
+// indexed, with the folders beneath it, and a folder which isn't there any
+// more is removed. Then the folders above it are indexed again, as their
+// counts, or folders, changed, up to the first which is there, and was
+// indexed, removing those which aren't there any more. It's called with the
+// indexer locked.
 func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.EventType) error {
 	if p != "/" {
-		object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
+		object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: dirPath(p)}})
+		_, indexErr := self.store.Get(ctx, self.name, p)
 		switch {
 		case errors.Is(err, fs.ErrNotExist) || (err == nil && !object.IsDir):
 			// It isn't a folder, or isn't there any more
@@ -376,21 +460,25 @@ func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.Eve
 			}
 		case err != nil:
 			return err
-		case eventType == schema.EventTypeCreated:
+		case eventType == schema.EventTypeCreated || errors.Is(indexErr, gofiler.ErrNotFound):
 			// A folder which is created, which can have folders, such as one
 			// which is moved here
-			if err := self.subtree(ctx, p); err != nil {
+			t, err := self.list(ctx, p, nil)
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			} else if err := self.replace(ctx, p, t); err != nil {
 				return err
 			}
 		}
 	}
-
-	// Its folder, and the folders above it, which aren't indexed, such as
-	// those created for it
 	for parent := Parent(p); parent != ""; parent = Parent(parent) {
 		_, err := self.store.Get(ctx, self.name, parent)
 		indexed := err == nil
-		if _, err := self.index(ctx, parent); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := self.index(ctx, parent); errors.Is(err, fs.ErrNotExist) {
+			// It isn't there any more, such as an empty folder which the
+			// backend removes, so its parent is indexed again
+			continue
+		} else if err != nil {
 			return err
 		}
 		if indexed {
@@ -400,34 +488,26 @@ func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.Eve
 	return nil
 }
 
-// subtree indexes a folder, and every folder beneath it. It's called with
-// the indexer locked.
-func (self *Indexer) subtree(ctx context.Context, root string) error {
-	queue := []string{root}
-	for len(queue) > 0 {
-		folders, err := self.index(ctx, queue[0])
-		queue = queue[1:]
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		queue = append(queue, folders...)
-	}
-	return nil
-}
-
 // children returns every object of a folder of the index
 func (self *Indexer) children(ctx context.Context, folder string) ([]*schema.Object, error) {
+	return self.all(ctx, ListRequest{Parent: folder, Limit: listPage})
+}
+
+// beneath returns every object beneath a folder of the index
+func (self *Indexer) beneath(ctx context.Context, folder string) ([]*schema.Object, error) {
+	return self.all(ctx, ListRequest{Parent: folder, Recursive: true, Limit: listPage})
+}
+
+// all returns every object of a listing of the index, a page at a time
+func (self *Indexer) all(ctx context.Context, req ListRequest) ([]*schema.Object, error) {
 	var result []*schema.Object
-	req := ListRequest{Parent: folder, Limit: listPage}
 	for {
 		page, err := self.store.List(ctx, self.name, req)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, page...)
-		if len(page) < listPage {
+		if len(page) < req.Limit {
 			return result, nil
 		}
 		req.After = Key(page[len(page)-1])

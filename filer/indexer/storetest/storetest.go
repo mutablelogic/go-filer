@@ -78,11 +78,14 @@ func testGet(t *testing.T, store indexer.Store) {
 	// The object which was put isn't changed by changing what's returned,
 	// or what was put
 	got.Path, *got.ETag = "/changed", "changed"
+	got.Meta[0].Value[1] = 'X'
 	*put.ETag = "changed"
+	put.Meta[0].Value[1] = 'Y'
 	again, err := store.Get(ctx, "media", "/a")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", again.Path)
 	assert.Equal(t, "etag-1", *again.ETag)
+	assert.JSONEq(t, `"A"`, string(again.Meta[0].Value), "nor are its metadata's values")
 
 	// It's replaced when it's put again
 	replaced := folder("/a")
