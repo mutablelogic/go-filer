@@ -71,7 +71,7 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 func (self *TaskFiler) snapshot(ctx context.Context) (taskSnapshot, error) {
 	lists, err := self.client.TaskLists(ctx)
 	if err != nil {
-		return nil, apiError("watch", "/", err)
+		return nil, self.apiError("watch", "/", err)
 	}
 	snapshot := make(taskSnapshot)
 	for _, list := range lists {
@@ -80,7 +80,7 @@ func (self *TaskFiler) snapshot(ctx context.Context) (taskSnapshot, error) {
 		}
 		tasks, err := self.client.Tasks(ctx, list.Id)
 		if err != nil {
-			return nil, apiError("watch", listPath(list.Id), err)
+			return nil, self.apiError("watch", listPath(list.Id), err)
 		}
 
 		// A list's directory is updated when the count of its tasks, of its

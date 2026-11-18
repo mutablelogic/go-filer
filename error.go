@@ -33,6 +33,7 @@ const (
 	ErrCreated              // not a failure: the object was created, rather than replaced
 	ErrPreconditionFailed   // a condition of the request isn't met, such as replacing an object which doesn't exist
 	ErrUnprocessableContent // the request can't be processed, such as creating an object whose name is skipped
+	ErrNotAuthorized        // the backend needs its user to sign in, such as to their Google account
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -64,6 +65,8 @@ func (e Err) Error() string {
 		return "precondition failed"
 	case ErrUnprocessableContent:
 		return "unprocessable content"
+	case ErrNotAuthorized:
+		return "not authorized"
 	}
 	return fmt.Sprintf("error code %d", int(e))
 }
@@ -103,6 +106,8 @@ func (e Err) HTTP() httpresponse.Err {
 		return httpresponse.Err(http.StatusPreconditionFailed)
 	case ErrUnprocessableContent:
 		return httpresponse.Err(http.StatusUnprocessableEntity)
+	case ErrNotAuthorized:
+		return httpresponse.Err(http.StatusUnauthorized)
 	default:
 		return httpresponse.ErrInternalError
 	}

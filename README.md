@@ -84,14 +84,16 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 * **Tasks** are Markdown files, named by their ids, such as `/MTA3NjI/Q2xvdWQ.md`, so a path stays the same when a task is renamed.
 * **Content:** YAML front matter, of the task's id, list, status, due date, completion, update time, parent, links and URL, then its title as a heading, and its notes.
 
+In the registry, its URL is `gtasks://<name>`, such as `gtasks://tasks?readonly=false`, and its sign-in is of the registry's credentials (`filer.WithCredentials`):
+
 ```go
-filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}},
-  client.OptReqToken(client.Token{Scheme: "Bearer", Value: token}),
-)
+filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}, credentials)
 ```
 
-* **Client options:** go-client's, such as the token, a tracer, or a trace.
-* **Signing in:** a request which isn't authorized is go-auth's `AuthError`, with Google's challenge, so the caller knows to sign in. The token needs the `tasks.readonly` or `tasks` scope.
+* **`GOOGLE_CLIENT`:** the credential of the OAuth client, a desktop app's, as the JSON of its `client_id` and `client_secret`, or the file Google's console downloads for it.
+* **`GOOGLE_TOKEN`:** the credential of the user's sign-in, a go-auth `Grant`, or another, of the `credential` parameter. It must be for `GOOGLE_CLIENT`'s client, and have the `tasks.readonly` or `tasks` scope, or `tasks`, when it isn't read-only. Its token is refreshed, with the client's secret, and stored again, when it expires.
+* **Signing in:** when there's no sign-in, or it's for another client, or doesn't have the scopes, or is revoked, it's go-auth's `SignInError`, with how to sign in: Google's server, the client's ID, the scopes, and the credential. The HTTP API returns it as 401, with its `detail`, without the client's secret.
+* **Client options:** go-client's, such as a tracer, or a trace.
 * **`readonly`:** true by default. Creating and deleting tasks isn't implemented yet.
 * **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
 * **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.
