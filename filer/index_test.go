@@ -15,6 +15,7 @@ import (
 	fsevents "github.com/mutablelogic/go-filer/filer/fs/fsevents"
 	indexer "github.com/mutablelogic/go-filer/filer/indexer"
 	memory "github.com/mutablelogic/go-filer/filer/indexer/memory"
+	sqlite "github.com/mutablelogic/go-filer/filer/indexer/sqlite"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -244,4 +245,23 @@ func Test_Registry_DelCancelledIndex(t *testing.T) {
 	assert.Equal(t, indexer.StatusNone, state.Status, "its index is removed before its name is released")
 	_, err = store.Get(context.Background(), "media", "/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
+}
+
+func Test_Registry_IndexStoreError(t *testing.T) {
+	// A store whose state can't be read, such as one which isn't
+	// implemented, is why the volume isn't indexed, in its index
+	store, err := sqlite.New("index.sqlite")
+	require.NoError(t, err)
+	dir := t.TempDir()
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(store))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	runRegistry(t, r)
+	_, err = r.Add(context.Background(), "media", indexedURL(t, dir, "media", "folders"))
+	require.NoError(t, err)
+	v, err := r.Volume("media")
+	require.NoError(t, err)
+	require.NotNil(t, v.Index)
+	assert.Equal(t, "folders", v.Index.Mode)
+	assert.Contains(t, v.Index.Error, "isn't implemented")
 }

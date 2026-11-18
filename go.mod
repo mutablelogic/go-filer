@@ -11,6 +11,7 @@ require (
 	github.com/mutablelogic/go-auth v0.0.20
 	github.com/mutablelogic/go-client v1.4.14
 	github.com/mutablelogic/go-metadata v1.1.5
+	github.com/mutablelogic/go-pg v1.5.1
 	github.com/mutablelogic/go-server v1.8.20
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.47.0
@@ -72,7 +73,6 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
-	github.com/mutablelogic/go-pg v1.5.1 // indirect
 	github.com/mutablelogic/go-tokenizer v0.0.3 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

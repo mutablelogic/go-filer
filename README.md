@@ -255,3 +255,11 @@ The packages are vetted and tested with `make`, with `GOWORK=off`:
 | `make clean` | Remove `build/` |
 
 The test workflow vets the packages, and runs the race tests on Linux, macOS and Windows, for pull requests and pushes to `main`.
+
+`make` builds the `filer` server with the store of its indexes chosen by `INDEXER_BACKEND`, as the build tag `indexer_<backend>`:
+
+* **`sqlite`**, the default, is a SQLite database, `<name>-index.db`, such as `filer-index.db`, in the user's cache folder.
+* **`memory`** keeps them in memory, so volumes are scanned again when the server starts.
+* **`pg`** is a Postgres database, of go-pg's flags, `--pg.url` and `--pg.password`, or `PG_URL` and `PG_PASSWORD`.
+
+The SQLite and Postgres stores aren't implemented yet (#71, #72), so their volumes' indexes fail with `ErrNotImplemented`, until they are. `make INDEXER_BACKEND=memory` indexes volumes now.
