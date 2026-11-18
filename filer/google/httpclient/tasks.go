@@ -152,13 +152,15 @@ func (c *TasksClient) TaskList(ctx context.Context, id string) (*TaskList, error
 }
 
 // Tasks returns all of the tasks of a list, a page at a time, including
-// those which are completed, and hidden, but not those which are deleted
+// those which are completed, hidden, or assigned, such as from Docs or Chat
+// spaces, but not those which are deleted
 func (c *TasksClient) Tasks(ctx context.Context, list string) ([]Task, error) {
 	var result []Task
 	query := url.Values{
 		"maxResults":    {strconv.Itoa(pageSize)},
 		"showCompleted": {"true"},
 		"showHidden":    {"true"},
+		"showAssigned":  {"true"},
 	}
 	for range maxPages {
 		var page tasks

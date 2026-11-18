@@ -38,6 +38,7 @@ type fakeTasks struct {
 	lists    []httpclient.TaskList
 	tasks    map[string][]httpclient.Task // By their lists' ids
 	requests int
+	queries  []url.Values // Of the requests for tasks
 }
 
 const token = "secret"
@@ -74,6 +75,7 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound)
 			return
 		}
+		f.queries = append(f.queries, r.URL.Query())
 		writePage(w, r, f.tasks[parts[1]])
 	case len(parts) == 4 && parts[0] == "lists" && parts[2] == "tasks":
 		for _, task := range f.tasks[parts[1]] {
@@ -445,4 +447,73 @@ func Test_TaskWatch(t *testing.T) {
 	// Without a refresh interval, it isn't watched
 	unwatched := newFiler(t, endpoint, url.Values{"refresh_interval": {"0"}})
 	assert.ErrorIs(t, unwatched.WatchObjects(t.Context(), events), gofiler.ErrNotImplemented)
+}
+
+func Test_TaskListOrder(t *testing.T) {
+	fake, endpoint := newFake(t)
+
+	// Ids whose order changes once a "/", or ".md", follows them, which are
+	// listed in the order of their paths, so a page, of one object, which
+	// starts after the last, misses none
+	fake.addList("A", "")
+	fake.addList("A-", "")
+	fake.addTask("A", httpclient.Task{Id: "T"})
+	fake.addTask("A", httpclient.Task{Id: "T-"})
+	filer := newFiler(t, endpoint, nil)
+	want := []string{"/A-", "/A", "/A/T-.md", "/A/T.md"}
+	assert.Equal(t, want, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	var paged []string
+	after := ""
+	for {
+		iter, err := filer.ListObjects(t.Context(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: after})
+		require.NoError(t, err)
+		object, err := iter.Next(t.Context())
+		require.NoError(t, iter.Close())
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		paged = append(paged, object.Path)
+		after = object.Path
+		if object.IsDir {
+			after += "/"
+		}
+	}
+	assert.Equal(t, want, paged)
+
+	// Tasks which are assigned, such as from Docs, are asked for
+	fake.Lock()
+	defer fake.Unlock()
+	require.NotEmpty(t, fake.queries)
+	for _, query := range fake.queries {
+		assert.Equal(t, "true", query.Get("showAssigned"))
+	}
+}
+
+func Test_TaskReadCancelled(t *testing.T) {
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "")
+	fake.addTask("L1", httpclient.Task{Id: "T1", Title: "A task", Notes: strings.Repeat("notes ", 100)})
+	filer := newFiler(t, endpoint, nil)
+	read, _, err := filer.ReadObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.md"}})
+	require.NoError(t, err)
+
+	// It can seek, so it's read in ranges, until the context is cancelled,
+	// when the rest of it isn't read
+	ctx, cancel := context.WithCancel(t.Context())
+	err = read(ctx, func(r io.Reader) error {
+		seeker, ok := r.(io.Seeker)
+		require.True(t, ok)
+		_, err := seeker.Seek(4, io.SeekStart)
+		require.NoError(t, err)
+		buf := make([]byte, 10)
+		_, err = r.Read(buf)
+		require.NoError(t, err)
+		_, isWriterTo := r.(io.WriterTo)
+		assert.False(t, isWriterTo, "it isn't copied without the context being checked")
+		cancel()
+		_, err = io.ReadAll(r)
+		return err
+	})
+	assert.ErrorIs(t, err, context.Canceled)
 }

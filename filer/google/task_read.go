@@ -69,7 +69,7 @@ func (self *TaskFiler) ReadObject(ctx context.Context, req schema.GetObjectReque
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return fn(bytes.NewReader(content))
+		return fn(&contentReader{ctx: ctx, r: bytes.NewReader(content)})
 	}, object, nil
 }
 
@@ -105,7 +105,11 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		if err != nil {
 			return nil, apiError("list", "/", err)
 		}
-		slices.SortFunc(lists, func(a, b httpclient.TaskList) int { return strings.Compare(a.Id, b.Id) })
+		// In the order of their directories' keys, which a page's last is
+		// where the next starts after
+		slices.SortFunc(lists, func(a, b httpclient.TaskList) int {
+			return strings.Compare(listPath(a.Id)+"/", listPath(b.Id)+"/")
+		})
 		for i := range lists {
 			if !validId(lists[i].Id) {
 				continue
@@ -194,7 +198,11 @@ func (self *taskIterator) readList(ctx context.Context, list string) error {
 	if err != nil {
 		return apiError("list", listPath(list), err)
 	}
-	slices.SortFunc(tasks, func(a, b httpclient.Task) int { return strings.Compare(a.Id, b.Id) })
+	// In the order of their files' paths, which a page's last is where the
+	// next starts after
+	slices.SortFunc(tasks, func(a, b httpclient.Task) int {
+		return strings.Compare(taskFilePath(list, a.Id), taskFilePath(list, b.Id))
+	})
 	var items []listItem
 	for i := range tasks {
 		if !tasks[i].Deleted && validId(tasks[i].Id) {
@@ -213,6 +221,31 @@ func (self *taskIterator) add(object *schema.Object) {
 	if sortKey(object) > self.after {
 		self.pending = append(self.pending, listItem{object: object})
 	}
+}
+
+// contentReader reads a task's content, and seeks, so it can be read in
+// ranges, until the context is cancelled, when it returns the context's
+// error. It has no other methods, such as WriteTo, which would copy the
+// content without the context being checked.
+type contentReader struct {
+	ctx context.Context
+	r   *bytes.Reader
+}
+
+var _ io.ReadSeeker = (*contentReader)(nil)
+
+func (c *contentReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+func (c *contentReader) Seek(offset int64, whence int) (int64, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Seek(offset, whence)
 }
 
 // sortKey returns the key an object sorts by: its path, followed by "/",
