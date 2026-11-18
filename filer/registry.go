@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"net/url"
 	"path/filepath"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	fs "github.com/mutablelogic/go-filer/filer/fs"
 	google "github.com/mutablelogic/go-filer/filer/google"
+	indexer "github.com/mutablelogic/go-filer/filer/indexer"
 	s3 "github.com/mutablelogic/go-filer/filer/s3"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -204,7 +206,7 @@ func (self *Registry) Volumes() []schema.Volume {
 	volumes := make([]schema.Volume, 0, len(self.backend))
 	for name, e := range self.backend {
 		if e.state == stateReady {
-			volumes = append(volumes, volumeOf(name, e))
+			volumes = append(volumes, self.volumeOf(name, e))
 		}
 	}
 	slices.SortFunc(volumes, func(a, b schema.Volume) int {
@@ -222,7 +224,7 @@ func (self *Registry) Volume(name string) (*schema.Volume, error) {
 	if e, exists := self.backend[name]; !exists || e.state != stateReady {
 		return nil, gofiler.ErrNotFound.Withf("volume %q is not mounted", name)
 	} else {
-		return types.Ptr(volumeOf(name, e)), nil
+		return types.Ptr(self.volumeOf(name, e)), nil
 	}
 }
 
@@ -240,15 +242,28 @@ func VolumeName(u *url.URL) string {
 }
 
 // volumeOf returns the volume of an entry, with the URL of its backend,
-// whether it's read-only, when the backend says, and why it's offline,
-// when it is. The registry must be locked.
-func volumeOf(name string, e *entry) schema.Volume {
-	volume := schema.Volume{Name: name, URL: e.URL().String()}
+// whether it's read-only, when the backend says, why it's offline, when it
+// is, and its index's state, when it's indexed. With the registry's store,
+// a volume which isn't indexed has index=none. The registry must be locked.
+func (self *Registry) volumeOf(name string, e *entry) schema.Volume {
+	u := e.URL()
+	if _, indexed := e.Filer.(*indexer.Indexer); !indexed && self.indexStore != nil {
+		query := u.Query()
+		query.Set(indexer.IndexParam, string(indexer.ModeNone))
+		u.RawQuery = query.Encode()
+	}
+	volume := schema.Volume{Name: name, URL: u.String()}
 	if b, ok := e.Filer.(interface{ Readonly() bool }); ok {
 		volume.Readonly = b.Readonly()
 	}
 	if e.offline != nil {
 		volume.Offline = e.offline.Error()
+	}
+	if i, ok := e.Filer.(*indexer.Indexer); ok {
+		volume.Index = &schema.VolumeIndex{Mode: string(indexer.ModeFolders)}
+		if state, err := i.State(context.Background()); err == nil {
+			volume.Index.Status, volume.Index.Folders, volume.Index.Started, volume.Index.Scanned, volume.Index.Error = string(state.Status), state.Folders, state.Started, state.Scanned, state.Error
+		}
 	}
 	return volume
 }
@@ -348,7 +363,7 @@ func (self *Registry) Update(ctx context.Context, volume string, patch url.Value
 func (self *Registry) update(ctx context.Context, e *entry, volume string, patch url.Values) (*schema.Volume, error) {
 	// Clone the backend with the options, which checks them, while it's still
 	// used, so it isn't changed when they're invalid, or would rename it
-	clone, err := e.Clone(ctx, patch)
+	clone, err := self.clone(ctx, volume, e.Filer, patch)
 	if err != nil {
 		return nil, err
 	} else if name := VolumeName(clone.URL()); name != volume {
@@ -379,10 +394,16 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 		return nil, err
 	}
 
+	// A volume which isn't indexed any more doesn't keep its index
+	_, wasIndexed := e.Filer.(*indexer.Indexer)
+	if _, indexed := clone.(*indexer.Indexer); wasIndexed && !indexed {
+		self.forget(ctx, volume)
+	}
+
 	// Return the volume, which isn't offline, as it's opened again
 	self.RLock()
 	defer self.RUnlock()
-	return types.Ptr(volumeOf(volume, pending)), nil
+	return types.Ptr(self.volumeOf(volume, pending)), nil
 }
 
 // Del removes the backend for the specified volume from the registry, and
@@ -409,11 +430,23 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 		return nil
 	}
 
+	// Once it's closed, its index is removed, when it's indexed
 	select {
 	case <-e.closed:
+		if _, indexed := e.Filer.(*indexer.Indexer); indexed {
+			self.forget(ctx, volume)
+		}
 		return e.err
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// forget removes a volume's index, and its state, from the registry's store
+func (self *Registry) forget(ctx context.Context, volume string) {
+	if self.indexStore != nil {
+		_ = self.indexStore.Delete(ctx, volume, "/")
+		_ = self.indexStore.SetState(ctx, volume, indexer.State{})
 	}
 }
 
@@ -446,9 +479,85 @@ func (self *Registry) With(ctx context.Context, volume string, fn func(context.C
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// new creates a backend from a URL, whose path must be absolute. The caller
-// must close it.
+// new creates a backend from a URL, whose path must be absolute, which is
+// indexed, of its index option, such as index=folders, which is the
+// registry's, so the backend doesn't see it. The caller must close it.
 func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error) {
+	if u == nil {
+		return nil, gofiler.ErrBadParameter.With("url is nil")
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("invalid options: %v", err)
+	}
+	mode, err := self.indexMode(query)
+	if err != nil {
+		return nil, err
+	}
+	stripped := *u
+	query.Del(indexer.IndexParam)
+	stripped.RawQuery = query.Encode()
+	b, err := self.newBackend(ctx, &stripped)
+	if err != nil {
+		return nil, err
+	}
+	return self.indexed(VolumeName(u), b, mode)
+}
+
+// indexMode returns what's indexed of a volume, of its options, which must
+// be ModeNone without the registry's store
+func (self *Registry) indexMode(query url.Values) (indexer.Mode, error) {
+	if !query.Has(indexer.IndexParam) {
+		return indexer.ModeNone, nil
+	}
+	mode, err := indexer.ParseMode(query.Get(indexer.IndexParam))
+	if err != nil {
+		return mode, err
+	} else if mode != indexer.ModeNone && self.indexStore == nil {
+		return mode, gofiler.ErrBadParameter.Withf("%s=%s needs the registry's indexer store", indexer.IndexParam, mode)
+	}
+	return mode, nil
+}
+
+// indexed returns the backend of a volume, which is indexed, unless the
+// mode is ModeNone, and is closed when it can't be
+func (self *Registry) indexed(volume string, b gofiler.Filer, mode indexer.Mode) (gofiler.Filer, error) {
+	if mode == indexer.ModeNone {
+		return b, nil
+	}
+	i, err := indexer.New(volume, b, self.indexStore)
+	if err != nil {
+		return nil, errors.Join(err, closeFiler(b))
+	}
+	return i, nil
+}
+
+// clone returns a clone of a volume's backend, with the patch, which can
+// change its index option, so the backend which is indexed is cloned, and
+// then indexed, or not
+func (self *Registry) clone(ctx context.Context, volume string, b gofiler.Filer, patch url.Values) (gofiler.Filer, error) {
+	idx, indexed := b.(*indexer.Indexer)
+	mode := indexer.ModeNone
+	if indexed {
+		mode, b = indexer.ModeFolders, idx.Backend()
+	}
+	if patch.Has(indexer.IndexParam) {
+		var err error
+		if mode, err = self.indexMode(url.Values{indexer.IndexParam: patch[indexer.IndexParam]}); err != nil {
+			return nil, err
+		}
+		patch = maps.Clone(patch)
+		delete(patch, indexer.IndexParam)
+	}
+	clone, err := b.Clone(ctx, patch)
+	if err != nil {
+		return nil, err
+	}
+	return self.indexed(volume, clone, mode)
+}
+
+// newBackend creates a backend from a URL, without the registry's options
+func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	} else if u == nil {
@@ -536,6 +645,15 @@ func (self *Registry) register(e *entry, volume string, b gofiler.Filer) (gofile
 	}
 	e.Filer, e.state = b, stateReady
 	e.ctx, e.cancel = context.WithCancel(context.Background())
+
+	// An indexed volume is indexed until it's removed, which waits for it
+	if i, ok := b.(*indexer.Indexer); ok {
+		e.wg.Add(1)
+		go func(ctx context.Context) {
+			defer e.wg.Done()
+			_ = i.Run(ctx)
+		}(e.ctx)
+	}
 	self.changedVolumes()
 	return b, nil
 }

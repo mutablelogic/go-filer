@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"time"
 
 	// Packages
 	tui "github.com/mutablelogic/go-server/pkg/tui"
@@ -36,10 +37,21 @@ const (
 // Volume is a volume which is registered, with the URL of its backend, which
 // it can be added again from
 type Volume struct {
-	Name     string `json:"name" help:"Volume name"`
-	URL      string `json:"url" help:"URL of the volume's backend, with each of its options, defaults too, but without secrets"`
-	Readonly bool   `json:"readonly,omitempty" readonly:"" help:"Objects can't be created or deleted, by its options, or as its backend can't be written"`
-	Offline  string `json:"offline,omitempty" readonly:"" help:"Why the volume's backend isn't working, when watching it failed, until it's opened again, such as when its user needs to sign in again, which volume-update does"`
+	Name     string       `json:"name" help:"Volume name"`
+	URL      string       `json:"url" help:"URL of the volume's backend, with each of its options, defaults too, but without secrets"`
+	Readonly bool         `json:"readonly,omitempty" readonly:"" help:"Objects can't be created or deleted, by its options, or as its backend can't be written"`
+	Offline  string       `json:"offline,omitempty" readonly:"" help:"Why the volume's backend isn't working, when watching it failed, until it's opened again, such as when its user needs to sign in again, which volume-update does"`
+	Index    *VolumeIndex `json:"index,omitempty" readonly:"" help:"The volume's index, when it's indexed, of its index option, such as index=folders"`
+}
+
+// VolumeIndex is the state of a volume's index
+type VolumeIndex struct {
+	Mode    string    `json:"mode" help:"What's indexed, such as folders"`
+	Status  string    `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
+	Folders uint64    `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
+	Started time.Time `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
+	Scanned time.Time `json:"scanned,omitzero" help:"When the last scan which finished did"`
+	Error   string    `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`
 }
 
 // VolumeList is the volumes which are registered, in order of their names,

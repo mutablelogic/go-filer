@@ -6,7 +6,7 @@ A volume is a backend which stores objects, which is registered with a `name`, a
 
 ### GET /volume
 
-List the volumes which are registered, in order of their names, with the `url` of each one's backend, which includes each of its options, defaults too, such as `readonly=false`, but no secrets, and which a volume can be added from again. A volume which is being added or removed isn't listed. A volume whose watch failed has `offline`, with why, until it's opened again: one whose user needs to sign in again stays offline until `PATCH /volume/{name}` opens it, and others are opened again by the server, after a while. `schemes` is the schemes of the URLs which volumes can be added from, such as `file` and `s3`.
+List the volumes which are registered, in order of their names, with the `url` of each one's backend, which includes each of its options, defaults too, such as `readonly=false`, but no secrets, and which a volume can be added from again. A volume which is being added or removed isn't listed. A volume which is indexed, with the `index=folders` option, has `index`, with its `mode`, its `status`, `scanning` or `ready`, the `folders` its scan has indexed, when it `started` and was `scanned`, and its last `error`. A volume whose watch failed has `offline`, with why, until it's opened again: one whose user needs to sign in again stays offline until `PATCH /volume/{name}` opens it, and others are opened again by the server, after a while. `schemes` is the schemes of the URLs which volumes can be added from, such as `file` and `s3`.
 
 ### POST /volume
 

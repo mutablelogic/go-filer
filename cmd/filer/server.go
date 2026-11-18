@@ -7,6 +7,7 @@ import (
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	filer "github.com/mutablelogic/go-filer/filer"
 	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
+	memory "github.com/mutablelogic/go-filer/filer/indexer/memory"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	server "github.com/mutablelogic/go-server"
 	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
@@ -51,8 +52,10 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
-	// when the registry, and its volumes, are closed
+	// when the registry, and its volumes, are closed. A volume with the
+	// index option is indexed in memory, so it's scanned again when the
+	// server starts.
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, nil, func(*filer.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, filer.WithCredentials(credentials))
+	}, filer.WithCredentials(credentials), filer.WithIndexerStore(memory.New()))
 }

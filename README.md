@@ -129,6 +129,15 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **`State`** is the index's status (never indexed, scanning, or ready), how many folders the scan has indexed, when it started and finished, and why it last failed.
 * **Stores:** `indexer/memory` so far. SQLite and Postgres stores come next, and every store passes `indexer/storetest`.
 
+In the registry, `filer.WithIndexerStore(store)` lets volumes be indexed, of their `index` option:
+
+* **`index=folders`** indexes a volume's folders, and `index=none`, or no option, doesn't. The registry takes it off the URL before the backend sees it.
+* **Running:** the registry runs each indexer until the volume is removed. Its watchers get the backend's changes through the indexer, so the backend is watched once.
+* **`Update`** turns it on, or off, which removes the index, and keeps it through other changes.
+* **`Del`** removes the volume's index.
+* **The volume** has `index`, with its mode, status, folders scanned, and last error, and its URL has `index=folders`, or `index=none`, when it isn't indexed.
+* **The `filer` server** keeps its indexes in memory, so they're scanned again when it starts.
+
 ## Object Model
 
 - An object is a file, identified by its path within the volume, which starts with `/`. The root of the volume is `/`.
