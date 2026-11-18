@@ -61,3 +61,35 @@ func Test_FormatSize(t *testing.T) {
 		}
 	}
 }
+
+func Test_MatchType(t *testing.T) {
+	dir := &Object{ObjectAttr: ObjectAttr{IsDir: true}}
+	typed := &Object{ObjectMeta: ObjectMeta{ContentType: "inode/directory"}, ObjectAttr: ObjectAttr{IsDir: true}}
+	task := &Object{ObjectMeta: ObjectMeta{ContentType: "text/calendar; component=VTODO"}}
+	image := &Object{ObjectMeta: ObjectMeta{ContentType: "image/png"}}
+	untyped := &Object{}
+	for _, test := range []struct {
+		object *Object
+		t      string
+		want   bool
+	}{
+		{dir, "", true},
+		{dir, "inode/directory", true},
+		{dir, "inode", true},
+		{typed, "INODE/Directory", true},
+		{dir, "image", false},
+		{task, "text/calendar", true},
+		{task, "text", true},
+		{task, "text/plain", false},
+		{image, "image", true},
+		{image, "image/png", true},
+		{image, "image/jpeg", false},
+		{image, "inode", false},
+		{untyped, "inode", false},
+		{untyped, "", true},
+	} {
+		if got := MatchType(test.object, test.t); got != test.want {
+			t.Errorf("%q of %+v: got %v, want %v", test.t, test.object.ObjectMeta, got, test.want)
+		}
+	}
+}

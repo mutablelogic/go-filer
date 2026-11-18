@@ -602,3 +602,24 @@ func TestObjectMeta(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status)
 	assert.Len(t, result.Body, 1)
 }
+
+func TestObjectListType(t *testing.T) {
+	server, dir := newServer(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "a", "b"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a", "photo.png"), []byte("png"), 0o644))
+
+	// Only the objects of the type, or of its major type
+	paths := func(query string) []string {
+		t.Helper()
+		var list schema.ObjectList
+		require.Equal(t, http.StatusOK, get(t, server, "object/media?recursive=true&"+query, &list))
+		result := []string{}
+		for _, object := range list.Body {
+			result = append(result, object.Path)
+		}
+		return result
+	}
+	assert.Equal(t, []string{"/a", "/a/b"}, paths("type=inode"))
+	assert.Equal(t, []string{"/a", "/a/b"}, paths("type=inode%2Fdirectory"))
+	assert.Equal(t, []string{"/a/photo.png"}, paths("type=image"))
+}

@@ -175,3 +175,43 @@ func Test_Registry_IndexedWatch(t *testing.T) {
 		return len(folders) == 3 && folders[2] == "/c"
 	}, 10*time.Second, 10*time.Millisecond, "the index has /c")
 }
+
+func Test_Registry_ListType(t *testing.T) {
+	r, _, dir := newIndexedRegistry(t)
+	list := func(volume, typ string) []string {
+		t.Helper()
+		iter, err := r.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Name: volume, Path: "/"}, Recursive: true, Type: typ})
+		require.NoError(t, err)
+		defer iter.Close()
+		result := []string{}
+		for {
+			object, err := iter.Next(context.Background())
+			if errors.Is(err, io.EOF) {
+				return result
+			}
+			require.NoError(t, err)
+			result = append(result, object.Path)
+		}
+	}
+
+	// A listing of a type, of a volume which isn't indexed, is filtered, of
+	// a media type, or of its major type
+	u := indexedURL(t, dir, "plain", "")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.FromSlash(u.Path), "a", "photo.png"), []byte("png"), 0o644))
+	_, err := r.Add(context.Background(), "plain", u)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a", "/a/b"}, list("plain", "inode/directory"))
+	assert.Equal(t, []string{"/a", "/a/b"}, list("plain", "inode"))
+	assert.Equal(t, []string{"/a/photo.png"}, list("plain", "image"))
+	assert.Equal(t, []string{"/a", "/a/b", "/a/photo.png"}, list("plain", ""))
+
+	// Of folders, of an indexed volume, it's its index's, once it's ready,
+	// which has a folder the backend doesn't, until it's watched
+	_, err = r.Add(context.Background(), "media", indexedURL(t, dir, "media", "folders"))
+	require.NoError(t, err)
+	ready(t, r, "media")
+	store := r.indexStore
+	require.NoError(t, store.Put(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
+	assert.Equal(t, []string{"/a", "/a/b", "/only-in-the-index"}, list("media", "inode"))
+	assert.Equal(t, []string{"/a", "/a/b"}, list("media", ""), "every object is the backend's")
+}

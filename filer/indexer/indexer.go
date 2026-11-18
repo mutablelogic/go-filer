@@ -238,6 +238,18 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 	return &folderIterator{indexer: self, req: ListRequest{Parent: parent, Recursive: req.Recursive, After: after, Limit: listPage}}, nil
 }
 
+// ListObjects lists objects of the backend, or, when the request is only
+// for folders, of their type, inode/directory, or inode, the folders of the
+// index, once it's ready
+func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	folder := &schema.Object{ObjectAttr: schema.ObjectAttr{IsDir: true}}
+	file := &schema.Object{ObjectMeta: schema.ObjectMeta{ContentType: "application/octet-stream"}}
+	if req.Type != "" && schema.MatchType(folder, req.Type) && !schema.MatchType(file, req.Type) && self.ready(ctx) {
+		return self.ListFolders(ctx, req)
+	}
+	return self.Filer.ListObjects(ctx, req)
+}
+
 // CreateObject writes an object to the backend, and updates the index, of
 // its folder, and of a folder which is created for it
 func (self *Indexer) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {

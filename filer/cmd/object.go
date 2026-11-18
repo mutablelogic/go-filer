@@ -78,6 +78,7 @@ type ObjectListCmd struct {
 	Recursive  bool    `name:"recursive" short:"r" help:"List every object beneath the directory."`
 	StartAfter string  `name:"start-after" help:"Return objects whose keys sort after this key, which is the next key of the previous page."`
 	Limit      *uint64 `name:"limit" help:"Maximum number of objects to return, which defaults to and is capped at 100."`
+	Type       string  `name:"type" placeholder:"TYPE" help:"Only objects of this type, such as inode/directory, or of the major type, such as inode, or image. Folders of an indexed volume are listed from its index."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -498,7 +499,7 @@ func (cmd *ObjectDeleteCmd) Run(ctx server.Cmd) error {
 func (cmd *ObjectListCmd) request() schema.ObjectListRequest {
 	var req schema.ObjectListRequest
 	req.Name, req.Path = cmd.Name, cmd.Path
-	req.Recursive, req.StartAfter, req.Limit = cmd.Recursive, cmd.StartAfter, cmd.Limit
+	req.Recursive, req.StartAfter, req.Limit, req.Type = cmd.Recursive, cmd.StartAfter, cmd.Limit, cmd.Type
 	return req
 }
 

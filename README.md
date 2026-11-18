@@ -136,6 +136,7 @@ In the registry, `filer.WithIndexerStore(store)` lets volumes be indexed, of the
 * **`Update`** turns it on, or off, which removes the index, and keeps it through other changes.
 * **`Del`** removes the volume's index.
 * **The volume** has `index`, with its mode, status, folders scanned, and last error, and its URL has `index=folders`, or `index=none`, when it isn't indexed.
+* **Listing folders:** `ListObjects` with `Type: "inode/directory"`, or `inode`, which is `GET /object/{name}?type=inode`, or `filer objects --type inode`, lists an indexed volume's folders from its index, once it's ready. A listing of a type is filtered for every volume.
 * **The `filer` server** keeps its indexes in memory, so they're scanned again when it starts.
 
 ## Object Model

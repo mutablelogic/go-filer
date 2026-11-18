@@ -5,6 +5,7 @@ package schema
 import (
 	"context"
 	"io"
+	"mime"
 	"net/url"
 	"slices"
 	"strconv"
@@ -84,6 +85,7 @@ type ListObjectsRequest struct {
 	ObjectKey
 	Recursive  bool   `json:"recursive,omitempty"`
 	StartAfter string `json:"start_after,omitempty" help:"Return objects after this path"`
+	Type       string `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or of the major type, such as inode, or image"`
 }
 
 // ObjectListRequest lists the objects beneath a path in a volume, a page at
@@ -161,6 +163,9 @@ func (r ObjectListRequest) Query() url.Values {
 	}
 	if r.Limit != nil {
 		values.Set("limit", strconv.FormatUint(*r.Limit, 10))
+	}
+	if r.Type != "" {
+		values.Set("type", r.Type)
 	}
 	return values
 }
@@ -250,4 +255,27 @@ func FormatSize(size int64) string {
 		value, prefix = value/unit, prefix+1
 	}
 	return strconv.FormatFloat(value, 'f', 1, 64) + " " + string("KMGT"[prefix]) + "iB"
+}
+
+// MatchType returns true when an object is of the type, which is a media
+// type, such as inode/directory, without its parameters, or a major type,
+// such as image, or empty, which every object is. A directory is of
+// DirectoryType, when it has no type of its own.
+func MatchType(object *Object, t string) bool {
+	if t = strings.ToLower(strings.TrimSpace(t)); t == "" {
+		return true
+	}
+	contentType := object.ContentType
+	if contentType == "" && object.IsDir {
+		contentType = DirectoryType
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	if strings.Contains(t, "/") {
+		return mediaType == t
+	}
+	major, _, _ := strings.Cut(mediaType, "/")
+	return major == t
 }
