@@ -190,3 +190,18 @@ func (c *TasksClient) Task(ctx context.Context, list, id string) (*Task, error) 
 	}
 	return &result, nil
 }
+
+// DeleteTask deletes a task of a list, by their ids, and its subtasks,
+// which are kept, and say they're deleted
+func (c *TasksClient) DeleteTask(ctx context.Context, list, id string) error {
+	return c.DoAuthWithContext(ctx, client.MethodDelete, nil,
+		client.OptPath("lists", list, "tasks", id),
+	)
+}
+
+// DeleteTaskList deletes a task list, and its tasks, by its id
+func (c *TasksClient) DeleteTaskList(ctx context.Context, id string) error {
+	return c.DoAuthWithContext(ctx, client.MethodDelete, nil,
+		client.OptPath("users", "@me", "lists", id),
+	)
+}

@@ -43,6 +43,7 @@ type fakeTasks struct {
 	requests  int
 	refreshes int          // Of the requests to the token endpoint
 	queries   []url.Values // Of the requests for tasks
+	deletes   []string     // The paths which are deleted
 }
 
 const (
@@ -145,6 +146,10 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if r.Method == http.MethodDelete {
+		f.delete(w, parts)
+		return
+	}
 	switch {
 	case len(parts) == 3 && parts[0] == "users" && parts[2] == "lists":
 		writePage(w, r, f.lists)
@@ -172,6 +177,42 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound)
 	}
+}
+
+// delete deletes a list, with its tasks, or a task, with its subtasks, which
+// are kept, as Google does, and say they're deleted, with new entity tags
+func (f *fakeTasks) delete(w http.ResponseWriter, parts []string) {
+	f.deletes = append(f.deletes, "/"+strings.Join(parts, "/"))
+	switch {
+	case len(parts) == 4 && parts[0] == "users" && parts[2] == "lists":
+		for i := range f.lists {
+			if f.lists[i].Id == parts[3] {
+				f.lists = append(f.lists[:i], f.lists[i+1:]...)
+				delete(f.tasks, parts[3])
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+	case len(parts) == 4 && parts[0] == "lists" && parts[2] == "tasks":
+		tasks := f.tasks[parts[1]]
+		ids := map[string]bool{parts[3]: true}
+		found := false
+		for changed := true; changed; {
+			changed = false
+			for i := range tasks {
+				if (ids[tasks[i].Id] || ids[tasks[i].Parent]) && !tasks[i].Deleted {
+					found = found || tasks[i].Id == parts[3]
+					tasks[i].Deleted, tasks[i].ETag = true, tasks[i].Id+"-deleted"
+					ids[tasks[i].Id], changed = true, true
+				}
+			}
+		}
+		if found {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound)
 }
 
 func (f *fakeTasks) list(id string) *httpclient.TaskList {
@@ -823,4 +864,136 @@ func Test_TaskListValidators(t *testing.T) {
 	fake.Lock()
 	assert.Equal(t, before+1, fake.requests, "only the list, which is checked")
 	fake.Unlock()
+}
+
+func Test_TaskDelete(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addList("L2", "Work")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Parent"})
+	fake.addTask("L1", httpclient.Task{Id: "B", Title: "Child", Parent: "A"})
+	fake.addTask("L1", httpclient.Task{Id: "C", Title: "Other"})
+	fake.addTask("L1", httpclient.Task{Id: "D", Title: "Grandchild", Parent: "B"})
+	fake.addTask("L1", httpclient.Task{Id: "E", Title: "Deleted child", Parent: "A", Deleted: true})
+	fake.addTask("L2", httpclient.Task{Id: "X"})
+	fake.addTask("L2", httpclient.Task{Id: "Y", Deleted: true})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}})
+	paths := func(resp *schema.DeleteObjectsResponse) []string {
+		var result []string
+		for _, object := range resp.Body {
+			result = append(result, object.Path)
+		}
+		return result
+	}
+
+	// A task is deleted, with its subtasks, as Google does, which aren't
+	// listed, nor found
+	resp, err := filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/L1/A.ics", "/L1/B.ics", "/L1/D.ics"}, paths(resp), "with its subtasks, and theirs, but not those already deleted")
+	assert.Equal(t, []string{"/L1/C.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/"}}))
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/B.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	fake.Lock()
+	assert.Equal(t, []string{"/lists/L1/tasks/A"}, fake.deletes, "Google deletes the subtasks")
+	fake.Unlock()
+
+	// A task which is deleted, or doesn't exist, or a path of a task which is
+	// a directory's, isn't found
+	for _, path := range []string{"/L1/A.ics", "/L1/Z.ics", "/L2/Y.ics", "/L1/C.ics/", "/L9/X.ics"} {
+		_, err := filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		assert.ErrorIs(t, err, fs.ErrNotExist, path)
+	}
+
+	// A list is deleted, with its tasks, which aren't deleted, only when the
+	// request is recursive, and the root isn't
+	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2"}})
+	assert.ErrorIs(t, err, gofiler.ErrConflict)
+	resp, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2/"}, Recursive: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/L2/X.ics", "/L2"}, paths(resp), "its tasks, and then the list")
+	assert.True(t, resp.Body[1].IsDir)
+	assert.Equal(t, []string{"/L1", "/L1/C.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2"}, Recursive: true})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	for _, path := range []string{"/L2", "/L9"} {
+		_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		assert.ErrorIs(t, err, fs.ErrNotExist, "a list which doesn't exist isn't found, rather than a conflict: %s", path)
+	}
+	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+
+	// An empty list is deleted too, which is returned
+	fake.addList("L3", "Empty")
+	resp, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L3"}, Recursive: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/L3"}, paths(resp))
+}
+
+func Test_TaskWatchDeleted(t *testing.T) {
+	// watchEvents watches the filer, once it's read what's there, and
+	// returns its events, after its rescan
+	watchEvents := func(t *testing.T, filer *google.TaskFiler) <-chan schema.Event {
+		t.Helper()
+		ctx, cancel := context.WithCancel(t.Context())
+		events, done := make(chan schema.Event, 16), make(chan error, 1)
+		go func() { done <- filer.WatchObjects(ctx, events) }()
+		t.Cleanup(func() { cancel(); <-done })
+		select {
+		case event := <-events:
+			require.Equal(t, schema.Rescan("tasks"), event)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no rescan")
+		}
+		return events
+	}
+	next := func(t *testing.T, events <-chan schema.Event) string {
+		t.Helper()
+		select {
+		case event := <-events:
+			return event.EventType.String() + " " + event.Path
+		case <-time.After(5 * time.Second):
+			t.Fatal("no event")
+			return ""
+		}
+	}
+
+	// What the filer deletes is sent as it's deleted, without waiting to
+	// refresh: a task, with its subtask, and a list, with its tasks, and
+	// then the list
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addList("L2", "Work")
+	fake.addTask("L1", httpclient.Task{Id: "A"})
+	fake.addTask("L1", httpclient.Task{Id: "B", Parent: "A"})
+	fake.addTask("L2", httpclient.Task{Id: "X"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	events := watchEvents(t, filer)
+	_, err := filer.DeleteObjects(t.Context(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	assert.Equal(t, "deleted /L1/A.ics", next(t, events))
+	assert.Equal(t, "deleted /L1/B.ics", next(t, events))
+	_, err = filer.DeleteObjects(t.Context(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2"}, Recursive: true})
+	require.NoError(t, err)
+	assert.Equal(t, "deleted /L2/X.ics", next(t, events))
+	assert.Equal(t, "deleted /L2", next(t, events))
+
+	// And isn't sent again when it's refreshed, though the list whose task
+	// is deleted is updated, as its count of tasks is
+	fake, endpoint = newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A"})
+	fake.addTask("L1", httpclient.Task{Id: "C"})
+	filer = newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"50ms"}})
+	events = watchEvents(t, filer)
+	_, err = filer.DeleteObjects(t.Context(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	assert.Equal(t, "deleted /L1/A.ics", next(t, events))
+	assert.Equal(t, "updated /L1", next(t, events))
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected %s %s", event.EventType.String(), event.Path)
+	case <-time.After(300 * time.Millisecond):
+	}
 }

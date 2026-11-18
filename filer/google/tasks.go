@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	// Packages
@@ -37,6 +38,11 @@ type TaskFiler struct {
 	tokens      *tokens
 	clientopts  []client.ClientOpt
 	client      *httpclient.TasksClient
+
+	// The watches, which are sent the paths which the filer deletes, so
+	// they're sent their deletions without waiting to refresh
+	mu      sync.Mutex
+	watches map[chan []string]struct{}
 }
 
 // taskOpt are the options of a task filer, of its parameters
@@ -219,14 +225,6 @@ func (self *TaskFiler) CreateObject(context.Context, schema.CreateObjectRequest)
 		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
 	}
 	return nil, gofiler.ErrNotImplemented.With("writing tasks isn't implemented yet")
-}
-
-// DeleteObjects deletes a task, or a list, which isn't implemented yet
-func (self *TaskFiler) DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	if self.readonly {
-		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
-	}
-	return nil, gofiler.ErrNotImplemented.With("deleting tasks isn't implemented yet")
 }
 
 ////////////////////////////////////////////////////////////////////////////////

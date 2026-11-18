@@ -136,9 +136,11 @@ type DeleteObjectsRequest struct {
 }
 
 // DeleteObjectsResponse is the objects which were deleted, which is the
-// object, or the objects beneath a directory, but not directories
+// object, or the objects beneath a directory, but not directories, unless
+// they're objects of their own, such as a Google Tasks list, rather than
+// there while objects are beneath them
 type DeleteObjectsResponse struct {
-	Body []*Object `json:"body" readonly:"" help:"Objects deleted, not including directories"`
+	Body []*Object `json:"body" readonly:"" help:"Objects deleted, not including directories, unless they're objects of their own, such as a task list"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -19,18 +19,31 @@ import (
 type taskSnapshot map[string]string
 
 ////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+// deletedBuffer is how many deletions a watch keeps, which it hasn't sent,
+// beyond which they're sent when it refreshes
+const deletedBuffer = 16
+
+////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
 // WatchObjects polls the lists and tasks, at the refresh interval, and sends
 // the changes, until the context is cancelled: a list or task which is
 // created, or whose entity tag changes, or which is deleted. A list which is
-// deleted is the deletion of each of its tasks, and of the list. Returns
+// deleted is the deletion of each of its tasks, and of the list. What the
+// filer deletes is sent as it's deleted, rather than when it's refreshed,
+// and isn't sent again when it is. Returns
 // ErrNotImplemented when the refresh interval is zero, and the error of
 // reading them, such as an AuthError, when a sign-in is needed.
 func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	if self.refreshInterval == 0 {
 		return gofiler.ErrNotImplemented.Withf("volume %q isn't watched, as its %s is zero", self.name, paramRefreshInterval)
 	}
+
+	// The paths the filer deletes, from when it's watching
+	deleted := self.watch()
+	defer self.unwatch(deleted)
 
 	// What's there is read, and then the first change is a rescan of the
 	// root, so a change after it is sent
@@ -49,6 +62,21 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case paths := <-deleted:
+			// What the filer deleted, which the snapshot had, is sent now,
+			// and isn't sent again when it's refreshed
+			for _, path := range paths {
+				if _, exists := last[path]; !exists {
+					continue
+				}
+				delete(last, path)
+				select {
+				case ch <- self.event(schema.EventTypeDeleted, path):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			continue
 		case <-ticker.C:
 		}
 		next, err := self.snapshot(ctx)
@@ -63,6 +91,38 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 			}
 		}
 		last = next
+	}
+}
+
+// watch returns the channel of a watch, which is sent the paths the filer
+// deletes, until unwatch removes it
+func (self *TaskFiler) watch() chan []string {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	if self.watches == nil {
+		self.watches = make(map[chan []string]struct{})
+	}
+	ch := make(chan []string, deletedBuffer)
+	self.watches[ch] = struct{}{}
+	return ch
+}
+
+func (self *TaskFiler) unwatch(ch chan []string) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	delete(self.watches, ch)
+}
+
+// deleted sends the paths the filer deleted to its watches, without
+// waiting, so a watch which is behind is told when it refreshes instead
+func (self *TaskFiler) deleted(paths []string) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	for ch := range self.watches {
+		select {
+		case ch <- paths:
+		default:
+		}
 	}
 }
 
