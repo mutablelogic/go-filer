@@ -20,8 +20,15 @@ import (
 // clones fail with it too, until it's nil, when they're the backend's
 type failingFiler struct {
 	gofiler.Filer
-	err    atomic.Pointer[error]
-	clones atomic.Int32
+	err     atomic.Pointer[error]
+	clones  atomic.Int32
+	watches atomic.Int32
+}
+
+// Close closes the backend, which the registry closes, when it's replaced,
+// or closed, as Close isn't of the Filer interface, which it embeds
+func (f *failingFiler) Close() error {
+	return closeFiler(f.Filer)
 }
 
 func (f *failingFiler) failWith(err error) { f.err.Store(&err) }
@@ -34,6 +41,7 @@ func (f *failingFiler) failure() error {
 }
 
 func (f *failingFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
+	f.watches.Add(1)
 	if err := f.failure(); err != nil {
 		return err
 	}
@@ -65,12 +73,24 @@ func addFailing(t *testing.T, r *Registry, dir, volume string, err error) *faili
 	return f
 }
 
-// offline returns why the volume is offline, or empty
+// offline returns why the volume is offline, or empty, which is empty too
+// while it's being opened again, when it isn't found
 func offline(t *testing.T, r *Registry, volume string) string {
 	t.Helper()
-	v, err := r.Volume(volume)
-	require.NoError(t, err)
-	return v.Offline
+	r.RLock()
+	defer r.RUnlock()
+	if e, exists := r.backend[volume]; exists && e.offline != nil {
+		return e.offline.Error()
+	}
+	return ""
+}
+
+// online returns true when the volume is ready, and isn't offline
+func online(r *Registry, volume string) bool {
+	r.RLock()
+	defer r.RUnlock()
+	e, exists := r.backend[volume]
+	return exists && e.state == stateReady && e.offline == nil
 }
 
 func Test_Registry_OfflineSignIn(t *testing.T) {
@@ -88,10 +108,18 @@ func Test_Registry_OfflineSignIn(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	assert.Zero(t, f.clones.Load(), "it isn't opened again")
 
+	// Nor is it watched again, when another volume is added
+	watches := f.watches.Load()
+	_, err := r.Add(context.Background(), "other", fileURL(t, dir, "other"))
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, watches, f.watches.Load(), "it isn't watched again")
+	assert.NotEmpty(t, offline(t, r, "tasks"))
+
 	// It's still listed, and used, offline
-	list := r.Volumes()
-	require.Len(t, list, 1)
-	assert.NotEmpty(t, list[0].Offline)
+	v, err := r.Volume("tasks")
+	require.NoError(t, err)
+	assert.NotEmpty(t, v.Offline)
 
 	// Updating it, once its user has signed in, opens it again, which isn't
 	// offline
@@ -116,7 +144,7 @@ func Test_Registry_OfflineRetry(t *testing.T) {
 	require.Eventually(t, func() bool { return f.clones.Load() > 1 }, 5*time.Second, time.Millisecond, "it's opened again, until it can be")
 	assert.Contains(t, offline(t, r, "down"), "server is down")
 	f.failWith(nil)
-	require.Eventually(t, func() bool { return offline(t, r, "down") == "" }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return online(r, "down") }, 5*time.Second, time.Millisecond)
 
 	// Once it's opened again, it needs a sign-in, when it stays offline
 	r2, dir2 := newRegistry(t)

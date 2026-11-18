@@ -217,7 +217,9 @@ func (self *Registry) startWatches(watches map[*entry]context.CancelFunc, events
 	self.Lock()
 	defer self.Unlock()
 	for volume, e := range self.backend {
-		if _, exists := watches[e]; exists || e.state != stateReady {
+		// An offline volume isn't watched again until it's opened again,
+		// with a new entry, by Update, or reopen
+		if _, exists := watches[e]; exists || e.state != stateReady || e.offline != nil {
 			continue
 		}
 		ctx, cancel := context.WithCancel(e.ctx)
