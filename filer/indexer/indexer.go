@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,19 @@ type Indexer struct {
 	// mu serialises changes to the index, of Run, and of writes and
 	// deletes, so a folder isn't reconciled with two listings at once
 	mu sync.Mutex
+
+	// The calls to WatchObjects, which are sent the backend's changes, once
+	// they're indexed, so the backend is watched once
+	smu      sync.Mutex
+	watchers map[*watcher]struct{}
+}
+
+// watcher is a call to WatchObjects, which is sent changes, until it's
+// cancelled, or the backend's watch fails, when it's sent why
+type watcher struct {
+	ctx    context.Context
+	ch     chan<- schema.Event
+	failed chan error
 }
 
 var _ gofiler.Filer = (*Indexer)(nil)
@@ -95,6 +109,7 @@ func (self *Indexer) Run(ctx context.Context) error {
 			return self.poll(ctx)
 		}
 		self.failed(ctx, err)
+		self.fail(err)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -107,6 +122,80 @@ func (self *Indexer) Run(ctx context.Context) error {
 // State returns the state of the index
 func (self *Indexer) State(ctx context.Context) (State, error) {
 	return self.store.State(ctx, self.name)
+}
+
+// Backend returns the filer which is indexed
+func (self *Indexer) Backend() gofiler.Filer {
+	return self.Filer
+}
+
+// URL returns the backend's URL, with index=folders, as its folders are
+// indexed
+func (self *Indexer) URL() *url.URL {
+	u := self.Filer.URL()
+	query := u.Query()
+	query.Set(IndexParam, string(ModeFolders))
+	u.RawQuery = query.Encode()
+	return u
+}
+
+// Clone returns an indexer of a clone of the backend, with the patch, of
+// the same store, and options, which scans it, when it's run, as an
+// indexer of a backend which is opened again does
+func (self *Indexer) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
+	backend, err := self.Filer.Clone(ctx, patch)
+	if err != nil {
+		return nil, err
+	}
+	return &Indexer{Filer: backend, opt: self.opt, name: self.name, store: self.store}, nil
+}
+
+// Readonly returns true when the backend says its objects can't be written
+func (self *Indexer) Readonly() bool {
+	if b, ok := self.Filer.(interface{ Readonly() bool }); ok {
+		return b.Readonly()
+	}
+	return false
+}
+
+// Close closes the backend, when it holds resources, which its owner, such
+// as the registry, calls, once Run has returned
+func (self *Indexer) Close() error {
+	if closer, ok := self.Filer.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+// WatchObjects sends the backend's changes, once they're indexed, so the
+// backend is watched once, by Run, until the context is cancelled, or the
+// backend's watch fails, which is its error, so the caller can open it
+// again. The first change is a rescan of the root, and a backend which
+// can't be watched sends one each time it's scanned again.
+func (self *Indexer) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
+	w := &watcher{ctx: ctx, ch: ch, failed: make(chan error, 1)}
+	self.smu.Lock()
+	if self.watchers == nil {
+		self.watchers = make(map[*watcher]struct{})
+	}
+	self.watchers[w] = struct{}{}
+	self.smu.Unlock()
+	defer func() {
+		self.smu.Lock()
+		delete(self.watchers, w)
+		self.smu.Unlock()
+	}()
+	select {
+	case ch <- schema.Rescan(self.name):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-w.failed:
+		return err
+	}
 }
 
 // GetObject returns an object, which is a folder of the index, once it's
@@ -147,6 +236,18 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 		after = req.StartAfter
 	}
 	return &folderIterator{indexer: self, req: ListRequest{Parent: parent, Recursive: req.Recursive, After: after, Limit: listPage}}, nil
+}
+
+// ListObjects lists objects of the backend, or, when the request is only
+// for folders, of their type, inode/directory, or inode, the folders of the
+// index, once it's ready
+func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	folder := &schema.Object{ObjectAttr: schema.ObjectAttr{IsDir: true}}
+	file := &schema.Object{ObjectMeta: schema.ObjectMeta{ContentType: "application/octet-stream"}}
+	if req.Type != "" && schema.MatchType(folder, req.Type) && !schema.MatchType(file, req.Type) && self.ready(ctx) {
+		return self.ListFolders(ctx, req)
+	}
+	return self.Filer.ListObjects(ctx, req)
 }
 
 // CreateObject writes an object to the backend, and updates the index, of
@@ -200,6 +301,7 @@ func (self *Indexer) watch(ctx context.Context) error {
 			if err := self.apply(ctx, event); err != nil {
 				return err
 			}
+			self.forward(ctx, event)
 		}
 	}
 }
@@ -210,6 +312,10 @@ func (self *Indexer) poll(ctx context.Context) error {
 	for {
 		if err := self.scan(ctx, "/"); err != nil && ctx.Err() == nil {
 			self.failed(ctx, err)
+		} else if err == nil {
+			// Its watchers compare what they know with it, as its changes
+			// aren't known
+			self.forward(ctx, schema.Rescan(self.name))
 		}
 		select {
 		case <-ctx.Done():
@@ -232,6 +338,38 @@ func (self *Indexer) apply(ctx context.Context, event schema.Event) error {
 		return self.refresh(ctx, folderPath(event.Path), event.EventType)
 	default:
 		return nil
+	}
+}
+
+// forward sends a change, which is indexed, to the watchers, each until it's
+// sent, or the watcher, or Run, is cancelled, so a watcher which doesn't
+// read its changes doesn't hold Run up, once it's cancelled
+func (self *Indexer) forward(ctx context.Context, event schema.Event) {
+	self.smu.Lock()
+	watchers := make([]*watcher, 0, len(self.watchers))
+	for w := range self.watchers {
+		watchers = append(watchers, w)
+	}
+	self.smu.Unlock()
+	for _, w := range watchers {
+		select {
+		case w.ch <- event:
+		case <-w.ctx.Done():
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// fail tells the watchers the backend's watch failed, with why
+func (self *Indexer) fail(err error) {
+	self.smu.Lock()
+	defer self.smu.Unlock()
+	for w := range self.watchers {
+		select {
+		case w.failed <- err:
+		default:
+		}
 	}
 }
 

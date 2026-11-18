@@ -65,6 +65,15 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 		}()
 	}
 	defaults := []filer.Opt{filer.WithBroadcaster(b), filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter())}
+
+	// The backends' clients, such as of Google's APIs, have the command's
+	// client options: its trace, with --debug, or --verbose, which redacts
+	// headers' secrets, its tracer, and its timeout
+	if _, clientopts, err := ctx.ClientEndpoint(); err != nil {
+		return err
+	} else if len(clientopts) > 0 {
+		defaults = append(defaults, filer.WithClientOpts(clientopts...))
+	}
 	if flags.Worker != "" {
 		defaults = append(defaults, filer.WithWorker(flags.Worker))
 	}

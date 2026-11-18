@@ -115,6 +115,12 @@ func (self *Registry) ListObjects(ctx context.Context, req schema.ListObjectsReq
 		return nil, err
 	}
 
+	// Only the objects of the type, which a backend can do itself, such as
+	// an indexer of folders, and otherwise they're filtered
+	if req.Type != "" {
+		inner = &typeIterator{ListObjectsIterator: inner, t: req.Type}
+	}
+
 	// Close the iterator when the volume is removed
 	iter := &listIterator{ListObjectsIterator: inner, ctx: e.ctx, name: req.Name, release: e.wg.Done}
 	iter.Lock()
@@ -191,4 +197,19 @@ func (self *listIterator) Close() error {
 	err := self.ListObjectsIterator.Close()
 	self.release()
 	return err
+}
+
+// typeIterator returns the objects of a listing which are of a type
+type typeIterator struct {
+	schema.ListObjectsIterator
+	t string
+}
+
+func (self *typeIterator) Next(ctx context.Context) (*schema.Object, error) {
+	for {
+		obj, err := self.ListObjectsIterator.Next(ctx)
+		if err != nil || schema.MatchType(obj, self.t) {
+			return obj, err
+		}
+	}
 }

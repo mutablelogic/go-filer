@@ -8,6 +8,7 @@ import (
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
+	indexer "github.com/mutablelogic/go-filer/filer/indexer"
 	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
@@ -25,6 +26,7 @@ type opt struct {
 	meter       metric.Meter
 	clientopts  []client.ClientOpt
 	credentials gofiler.CredentialProvider
+	indexStore  indexer.Store // where the indexes of volumes with the index option are kept
 	worker      string        // the name of the worker, which is in the metrics
 	debounce    time.Duration // how long a change is held, until its object is quiet
 }
@@ -123,7 +125,9 @@ func WithCredentials(credentials gofiler.CredentialProvider) Opt {
 }
 
 // WithClientOpts sets the client options of the backends which call other
-// services over HTTP
+// services over HTTP, such as a command's, of server.Cmd's ClientEndpoint,
+// with its trace, tracer and timeout. Without them, the backends' clients
+// have the registry's tracer.
 func WithClientOpts(clientopts ...client.ClientOpt) Opt {
 	return func(o *opt) error {
 		o.clientopts = clientopts
@@ -150,4 +154,17 @@ func defaultWorker() string {
 		return hostname
 	}
 	return "unknown"
+}
+
+// WithIndexerStore sets the store of the indexes of volumes, which a volume
+// with the index option, such as index=folders, is indexed in, by the
+// volume's name. Without it, a volume can't be indexed.
+func WithIndexerStore(store indexer.Store) Opt {
+	return func(o *opt) error {
+		if store == nil {
+			return gofiler.ErrBadParameter.With("the indexer's store can't be nil")
+		}
+		o.indexStore = store
+		return nil
+	}
 }

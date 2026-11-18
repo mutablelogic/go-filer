@@ -186,6 +186,11 @@ func Test_VolumeCreateFSCmd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "file://media/mnt/media?package=&readonly=true&skip=%5E%28a%2Cb%29%24&skip=%5E%5C.", u)
 
+	// Another option, which no flag sets, and one which replaces a flag's
+	u, err = volume("media", "/mnt/media", "--readonly", "-o", "index=folders", "-o", "readonly=false")
+	require.NoError(t, err)
+	assert.Equal(t, "file://media/mnt/media?index=folders&readonly=false", u)
+
 	// A directory on Windows, with a drive, and one on Unix, whose name has
 	// a backslash, and a space, which are kept
 	u, err = volume("media", `C:\media`)
@@ -227,6 +232,9 @@ func Test_VolumeCreateS3Cmd(t *testing.T) {
 	u, err := volume("photos", "photos")
 	require.NoError(t, err)
 	assert.Equal(t, "s3://photos", u)
+	u, err = volume("photos", "photos", "-o", "index=folders")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://photos?index=folders", u)
 	u, err = volume("photos", "my.bucket/photos/2026/")
 	require.NoError(t, err)
 	assert.Equal(t, "s3://my.bucket/photos/2026?name=photos", u)
@@ -284,6 +292,14 @@ func Test_VolumeCreateGTasksCmd(t *testing.T) {
 	u, err = volume("work", "--writable", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "--hidden")
 	require.NoError(t, err)
 	assert.Equal(t, "gtasks://work?credential=GOOGLE_WORK&hidden=true&quota=60&readonly=false&refresh_interval=5m0s", u)
+
+	// Another option, which no flag sets, such as index, and one which
+	// replaces a flag's, and an option without a key isn't one
+	u, err = volume("tasks", "--quota", "60", "--opt", "index=folders", "-o", "quota=30")
+	require.NoError(t, err)
+	assert.Equal(t, "gtasks://tasks?index=folders&quota=30", u)
+	_, err = volume("tasks", "-o", "=folders")
+	assert.Error(t, err)
 
 	// A name which isn't an identifier, or a credential which isn't a key
 	_, err = volume("not-a-name!")

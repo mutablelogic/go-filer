@@ -66,6 +66,7 @@ type objectListQuery struct {
 	Recursive  bool    `json:"recursive,omitempty" help:"List every object beneath the directory"`
 	StartAfter string  `json:"start_after,omitempty" help:"Return objects whose keys sort after this key"`
 	Limit      *uint64 `json:"limit,omitempty" help:"Maximum number of objects to return, which defaults to and is capped at 100"`
+	Type       string  `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -200,7 +201,7 @@ func objectListHandlers(registry *filer.Registry, router *httprouter.Router, doc
 				}
 				req := schema.ObjectListRequest{Limit: query.Limit}
 				req.Name, req.Path = r.PathValue("name"), key
-				req.Recursive, req.StartAfter = query.Recursive, query.StartAfter
+				req.Recursive, req.StartAfter, req.Type = query.Recursive, query.StartAfter, query.Type
 				if list, err := registry.List(r.Context(), req); err != nil {
 					httpresponse.Error(w, gofiler.HTTPErr(err), req.Name+req.Path)
 				} else if acceptsHTML(r) {
