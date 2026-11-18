@@ -75,20 +75,22 @@ type VolumeCreateFSCmd struct {
 	Readonly bool     `name:"readonly" help:"Files can only be read, and not created or deleted."`
 	Skip     []string `name:"skip" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of files and directories which aren't listed, such as '^\\.', which can be repeated, and replaces the defaults. An empty one, --skip '', lists every name."`
 	Package  []string `name:"package" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of directories which are packages, listed as files, such as '\\.bundle$', which can be repeated, and replaces the defaults. An empty one, --package '', has no packages."`
+	Opt      []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
 }
 
 type VolumeCreateS3Cmd struct {
-	Name         string `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Bucket       string `arg:"" name:"bucket" help:"Bucket, and optionally a prefix of its keys, such as my.bucket or my.bucket/photos."`
-	Region       string `name:"region" help:"Region of the bucket, which is its own, when it's not set."`
-	Endpoint     string `name:"endpoint" placeholder:"URL" help:"URL of a service which is compatible with S3, such as http://localhost:9000 for MinIO."`
-	Profile      string `name:"profile" help:"Profile of the server's shared AWS configuration, whose credentials are used."`
-	AccessKey    string `name:"access-key-credential" placeholder:"NAME" help:"Name of the server's credential of the access key ID, such as S3_KEY, of its environment, which it looks up, so the key isn't sent, or stored."`
-	SecretKey    string `name:"secret-key-credential" placeholder:"NAME" help:"Name of the server's credential of the secret access key, such as S3_SECRET, which it looks up, so the secret isn't sent, or stored."`
-	SessionToken string `name:"session-token-credential" placeholder:"NAME" help:"Name of the server's credential of the session token, such as S3_TOKEN, which it looks up."`
-	Anonymous    bool   `name:"anonymous" help:"Requests aren't signed, so they're without credentials, and the volume is read-only."`
-	Readonly     bool   `name:"readonly" help:"Objects can only be read, and not created or deleted."`
-	SeaweedFS    string `name:"seaweedfs-filer-grpc" placeholder:"HOST:PORT" help:"gRPC service of the SeaweedFS filer whose S3 gateway the endpoint is, such as 192.168.86.21:18888, so the bucket's objects are watched."`
+	Name         string   `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Bucket       string   `arg:"" name:"bucket" help:"Bucket, and optionally a prefix of its keys, such as my.bucket or my.bucket/photos."`
+	Region       string   `name:"region" help:"Region of the bucket, which is its own, when it's not set."`
+	Endpoint     string   `name:"endpoint" placeholder:"URL" help:"URL of a service which is compatible with S3, such as http://localhost:9000 for MinIO."`
+	Profile      string   `name:"profile" help:"Profile of the server's shared AWS configuration, whose credentials are used."`
+	AccessKey    string   `name:"access-key-credential" placeholder:"NAME" help:"Name of the server's credential of the access key ID, such as S3_KEY, of its environment, which it looks up, so the key isn't sent, or stored."`
+	SecretKey    string   `name:"secret-key-credential" placeholder:"NAME" help:"Name of the server's credential of the secret access key, such as S3_SECRET, which it looks up, so the secret isn't sent, or stored."`
+	SessionToken string   `name:"session-token-credential" placeholder:"NAME" help:"Name of the server's credential of the session token, such as S3_TOKEN, which it looks up."`
+	Anonymous    bool     `name:"anonymous" help:"Requests aren't signed, so they're without credentials, and the volume is read-only."`
+	Readonly     bool     `name:"readonly" help:"Objects can only be read, and not created or deleted."`
+	SeaweedFS    string   `name:"seaweedfs-filer-grpc" placeholder:"HOST:PORT" help:"gRPC service of the SeaweedFS filer whose S3 gateway the endpoint is, such as 192.168.86.21:18888, so the bucket's objects are watched."`
+	Opt          []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
 }
 
 type VolumeCreateGTasksCmd struct {
@@ -99,6 +101,7 @@ type VolumeCreateGTasksCmd struct {
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
 	Hidden          bool           `name:"hidden" help:"Include tasks which are hidden, as they're completed, and cleared from their list, which aren't, unless it's set."`
 	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
+	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -349,12 +352,12 @@ func (cmd *VolumeCreateCmd) volume() (schema.Volume, error) {
 	if err != nil {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid options of url %q: %v", cmd.URL, err)
 	}
-	for _, opt := range cmd.Opt {
-		key, value, _ := strings.Cut(opt, "=")
-		if key = strings.TrimSpace(key); key == "" {
-			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid option: %q", opt)
-		}
-		query.Add(key, value)
+	opts, err := parseOpts(cmd.Opt)
+	if err != nil {
+		return schema.Volume{}, err
+	}
+	for key, values := range opts {
+		query[key] = append(query[key], values...)
 	}
 
 	// The name of a file volume is the URL's host, unless it's set, when the
@@ -425,6 +428,9 @@ func (cmd *VolumeCreateFSCmd) volume() (schema.Volume, error) {
 	for _, pkg := range cmd.Package {
 		query.Add("package", pkg)
 	}
+	if err := setOpts(query, cmd.Opt); err != nil {
+		return schema.Volume{}, err
+	}
 	u := url.URL{Scheme: schema.SchemeFile, Host: cmd.Name, Path: path, RawQuery: query.Encode()}
 	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
 }
@@ -475,6 +481,9 @@ func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 	if cmd.Readonly {
 		query.Set("readonly", "true")
 	}
+	if err := setOpts(query, cmd.Opt); err != nil {
+		return schema.Volume{}, err
+	}
 	u := url.URL{Scheme: schema.SchemeS3, Host: bucket, RawQuery: query.Encode()}
 	if prefix != "" {
 		u.Path = "/" + prefix
@@ -515,6 +524,35 @@ func (cmd *VolumeCreateGTasksCmd) volume() (schema.Volume, error) {
 	if cmd.Hidden {
 		query.Set("hidden", "true")
 	}
+	if err := setOpts(query, cmd.Opt); err != nil {
+		return schema.Volume{}, err
+	}
 	u := url.URL{Scheme: google.TasksScheme, Host: cmd.Name, RawQuery: query.Encode()}
 	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
+}
+
+// parseOpts returns the options of --opt, each of which is KEY=VALUE, or a
+// key without a value, which is empty, and can be repeated
+func parseOpts(opts []string) (url.Values, error) {
+	result := url.Values{}
+	for _, opt := range opts {
+		key, value, _ := strings.Cut(opt, "=")
+		if key = strings.TrimSpace(key); key == "" {
+			return nil, gofiler.ErrBadParameter.Withf("invalid option: %q", opt)
+		}
+		result.Add(key, value)
+	}
+	return result, nil
+}
+
+// setOpts sets the options of --opt, which replace those of a flag
+func setOpts(query url.Values, opts []string) error {
+	values, err := parseOpts(opts)
+	if err != nil {
+		return err
+	}
+	for key, v := range values {
+		query[key] = v
+	}
+	return nil
 }
