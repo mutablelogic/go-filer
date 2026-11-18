@@ -27,13 +27,15 @@ type taskSnapshot map[string]string
 // ErrNotImplemented when the refresh interval is zero, and the error of
 // reading them, such as an AuthError, when a sign-in is needed.
 func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	return self.WatchObjectsReady(ctx, ch, nil)
+	return self.watchObjects(ctx, ch, nil)
 }
 
-// WatchObjectsReady watches the changes, as WatchObjects does, and calls
-// ready, when it's set, once what's there is read, so a change after it is
-// sent
-func (self *TaskFiler) WatchObjectsReady(ctx context.Context, ch chan<- schema.Event, ready func()) error {
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// watchObjects watches the changes, as WatchObjects does, and calls ready,
+// when it's set, once what's there is read, so a change after it is sent
+func (self *TaskFiler) watchObjects(ctx context.Context, ch chan<- schema.Event, ready func()) error {
 	if self.refreshInterval == 0 {
 		return gofiler.ErrNotImplemented.Withf("volume %q isn't watched, as its %s is zero", self.name, paramRefreshInterval)
 	}
@@ -66,9 +68,6 @@ func (self *TaskFiler) WatchObjectsReady(ctx context.Context, ch chan<- schema.E
 		last = next
 	}
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
 
 // snapshot returns the entity tags of the lists, and of their tasks, by
 // their paths
