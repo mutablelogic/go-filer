@@ -13,24 +13,17 @@ import (
 )
 
 // IndexerFlags are the flags of the store of the indexes of volumes, which
-// is a SQLite database, of make INDEXER_BACKEND=sqlite, which is the default
-type IndexerFlags struct {
-	IndexerPath string `name:"indexer.path" env:"${ENV_NAME}_INDEXER_PATH" placeholder:"FILE" help:"SQLite database of the indexes of volumes, which is index.sqlite, in the command's folder of the user's cache, unless it's set."`
-}
+// is a SQLite database, of make INDEXER_BACKEND=sqlite, which is the
+// default, <name>-index.db in the user's cache folder, which has none
+type IndexerFlags struct{}
 
-// indexerFile is the file of the indexes, in the command's folder of the
-// user's cache, without --indexer.path
-const indexerFile = "index.sqlite"
-
-// store returns the store of the indexes of volumes
-func (flags IndexerFlags) store(ctx server.Cmd) (indexer.Store, error) {
-	path := flags.IndexerPath
-	if path == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return nil, err
-		}
-		path = filepath.Join(cache, ctx.Name(), indexerFile)
+// store returns the store of the indexes of volumes, and the function
+// which closes it, when the server stops
+func (IndexerFlags) store(ctx server.Cmd) (indexer.Store, func(), error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return nil, nil, err
 	}
-	return sqlite.New(path)
+	store, err := sqlite.New(filepath.Join(cache, ctx.Name()+"-index.db"))
+	return store, func() {}, err
 }

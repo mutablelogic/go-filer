@@ -52,10 +52,11 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 
 	// The store of the indexes of volumes with the index option, which make's
 	// INDEXER_BACKEND chooses: sqlite, by default, memory or pg
-	store, err := runner.Indexer.store(ctx)
+	store, closeStore, err := runner.Indexer.store(ctx)
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,

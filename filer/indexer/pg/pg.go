@@ -4,20 +4,20 @@ package pg
 
 import (
 	"context"
-	"strings"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	indexer "github.com/mutablelogic/go-filer/filer/indexer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	pg "github.com/mutablelogic/go-pg"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// Store is an index in a Postgres database
+// Store is an index in a Postgres database, of a pool of its connections
 type Store struct {
-	url string
+	conn pg.PoolConn
 }
 
 var _ indexer.Store = (*Store)(nil)
@@ -25,12 +25,14 @@ var _ indexer.Store = (*Store)(nil)
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-// New returns an index store of the URL of its database, such as postgres://localhost/filer
-func New(url string) (*Store, error) {
-	if strings.TrimSpace(url) == "" {
-		return nil, gofiler.ErrBadParameter.With("the Postgres index store needs its url")
+// New returns an index store of a pool of connections to its database,
+// such as go-pg's pkg/cmd PostgresFlags' Connect returns, which its owner
+// closes
+func New(conn pg.PoolConn) (*Store, error) {
+	if conn == nil {
+		return nil, gofiler.ErrBadParameter.With("the Postgres index store needs a connection to its database")
 	}
-	return &Store{url: url}, nil
+	return &Store{conn: conn}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

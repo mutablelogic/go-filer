@@ -14,7 +14,8 @@ import (
 // again when the server starts
 type IndexerFlags struct{}
 
-// store returns the store of the indexes of volumes
-func (IndexerFlags) store(server.Cmd) (indexer.Store, error) {
-	return memory.New(), nil
+// store returns the store of the indexes of volumes, and the function
+// which closes it, when the server stops
+func (IndexerFlags) store(server.Cmd) (indexer.Store, func(), error) {
+	return memory.New(), func() {}, nil
 }
