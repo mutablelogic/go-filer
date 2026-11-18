@@ -24,6 +24,7 @@ import (
 	google "github.com/mutablelogic/go-filer/filer/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 	oauth2 "golang.org/x/oauth2"
@@ -650,6 +651,16 @@ func Test_TaskReadCancelled(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+// status returns the HTTP status of an error, as the root's HTTPErr maps
+// it, of go-filer's errors, or go-auth's
+func status(err error) int {
+	var code httpresponse.Err
+	if errors.As(gofiler.HTTPErr(err), &code) {
+		return int(code)
+	}
+	return 0
+}
+
 func Test_TaskSignIn(t *testing.T) {
 	ctx := t.Context()
 	fake, endpoint := newFake(t)
@@ -663,7 +674,7 @@ func Test_TaskSignIn(t *testing.T) {
 	}
 	signIn := func(t *testing.T, err error) *authclient.SignIn {
 		t.Helper()
-		require.ErrorIs(t, err, gofiler.ErrNotAuthorized)
+		require.Equal(t, http.StatusUnauthorized, status(err))
 		signIn := authclient.SignInOf(err)
 		require.NotNil(t, signIn)
 		assert.Equal(t, google.Google, signIn.Server)
@@ -681,9 +692,9 @@ func Test_TaskSignIn(t *testing.T) {
 	creds = newCredentials(t, endpoint, nil)
 	delete(creds.values, google.ClientCredential)
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), creds)
-	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable, "no one can sign in, without a client")
+	assert.Equal(t, http.StatusServiceUnavailable, status(err), "no one can sign in, without a client")
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), nil)
-	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Equal(t, http.StatusServiceUnavailable, status(err))
 
 	// Of another credential, which is the parameter's
 	creds = newCredentials(t, endpoint, nil)
@@ -727,7 +738,7 @@ func Test_TaskSignIn(t *testing.T) {
 	wrong := newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.Expiry = time.Now().Add(-time.Minute) })
 	wrong.values[google.ClientCredential] = json.RawMessage(`{"client_id":"` + clientID + `","client_secret":"wrong-secret"}`)
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), wrong)
-	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.Equal(t, http.StatusServiceUnavailable, status(err))
 	assert.Nil(t, authclient.SignInOf(err), "it isn't signed in to again")
 
 	// Whose refresh token is revoked
@@ -740,7 +751,7 @@ func Test_TaskSignIn(t *testing.T) {
 	bad := newCredentials(t, endpoint, nil)
 	bad.values[google.ClientCredential] = json.RawMessage(`{"installed":{}}`)
 	_, err = google.NewTaskFiler(ctx, "tasks", params(), bad)
-	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.Equal(t, http.StatusBadRequest, status(err))
 }
 
 func Test_TaskSignInOptions(t *testing.T) {
