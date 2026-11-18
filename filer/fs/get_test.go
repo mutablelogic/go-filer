@@ -137,3 +137,50 @@ func Test_GetObjectConditional(t *testing.T) {
 		t.Error("other etag")
 	}
 }
+
+func Test_GetObjectChildren(t *testing.T) {
+	self, err := NewFS("test", fstest.MapFS{
+		"music/song.mp3":               {Data: []byte("abc")},
+		"music/album/track.mp3":        {Data: []byte("t")},
+		"music/.DS_Store":              {Data: []byte("x")},
+		"music/Disk.sparsebundle/band": {Data: []byte("d")},
+		"empty":                        {Mode: fs.ModeDir},
+	}, nil, filer.Opts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	children := func(path string) map[string]string {
+		t.Helper()
+		obj, err := self.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := make(map[string]string)
+		for _, m := range obj.Meta {
+			if m.Namespace == schema.FolderNamespace {
+				result[m.Key] = string(m.Value)
+			}
+		}
+		return result
+	}
+
+	// A directory has the count of the objects it lists: its file, its
+	// directory, and its package, which is a file, but not a name it skips
+	if got := children("/music"); got["children"] != "true" || got["children-count"] != "3" {
+		t.Errorf("music: %v", got)
+	}
+	if got := children("/"); got["children-count"] != "2" {
+		t.Errorf("root: %v", got)
+	}
+	if got := children("/empty"); got["children"] != "false" || got["children-count"] != "0" {
+		t.Errorf("empty: %v", got)
+	}
+
+	// A file, and a package, which is a file, don't
+	if got := children("/music/song.mp3"); len(got) != 0 {
+		t.Errorf("file: %v", got)
+	}
+	if got := children("/music/Disk.sparsebundle"); len(got) != 0 {
+		t.Errorf("package: %v", got)
+	}
+}

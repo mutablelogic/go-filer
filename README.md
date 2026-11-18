@@ -16,6 +16,9 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/filer/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
 | `github.com/mutablelogic/go-filer/filer/google` | Backends of Google's services: Google Tasks, so far |
 | `github.com/mutablelogic/go-filer/filer/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
+| `github.com/mutablelogic/go-filer/filer/indexer` | A filer which wraps a backend, and keeps an index of its folders in a `Store`, which follows its changes |
+| `github.com/mutablelogic/go-filer/filer/indexer/memory` | An index store in memory |
+| `github.com/mutablelogic/go-filer/filer/indexer/storetest` | The conformance tests every index store runs |
 
 ## Usage
 
@@ -111,6 +114,20 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
 * **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.
 * **`hidden`:** include tasks which are hidden, as they're completed, and cleared from their list, which are left out unless it's `true`.
+
+## Indexer
+
+`indexer.New(name, backend, store)` returns a filer of a backend whose folders are indexed, in a `Store`, so its folder tree is listed from the index rather than the backend, which can be slow, such as a bucket or a network mount.
+
+* **`Run(ctx)`** indexes it, until the context is cancelled. It watches the backend, and scans it once it's watching, a folder at a time, so a change during the scan isn't missed.
+* **Following changes:** a rescan event scans that folder again. A folder which is created, or deleted, is indexed, or removed, with what's beneath it.
+* **Backends which can't be watched**, such as a bucket without SeaweedFS, are scanned again at the rescan interval, 15 minutes by default (`WithRescanInterval`).
+* **A watch which fails** is watched, and scanned, again after a while, which doubles each time, up to a minute. Why it failed is in the state.
+* **`ListFolders`** lists a folder's folders, or every folder beneath it, with `Recursive`, in the order a backend lists them. **`GetObject`** of a folder is the index's, with `folder:children` and `folder:children-count`. Until the first scan finishes, both are the backend's.
+* **Writes and deletes** through it update the index as they're made.
+* **Everything else**, such as files, is the backend's. Files are indexed later.
+* **`State`** is the index's status (never indexed, scanning, or ready), how many folders the scan has indexed, when it started and finished, and why it last failed.
+* **Stores:** `indexer/memory` so far. SQLite and Postgres stores come next, and every store passes `indexer/storetest`.
 
 ## Object Model
 

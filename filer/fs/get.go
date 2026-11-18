@@ -33,12 +33,39 @@ func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *
 		return nil, err
 	}
 
-	// Return the object, unless it hasn't changed
+	// Return the object, unless it hasn't changed, with the count of a
+	// directory's objects, which are those it lists
 	obj := self.objectFromInfo(name, info, objectType(name))
 	if obj.NotModified(req) {
 		return nil, filer.ErrNotModified.Withf("%q", obj.Path)
 	}
+	if obj.IsDir {
+		count, err := self.children(name)
+		if err != nil {
+			return nil, err
+		}
+		obj.Meta = append(obj.Meta, schema.FolderMeta(count)...)
+	}
 	return obj, nil
+}
+
+// children returns how many objects a directory lists: its files, its
+// directories, and its packages, but not the names it skips, nor what isn't
+// an object, such as a socket. A symbolic link is counted, as it's checked
+// once it's resolved, when it's listed.
+func (self *FS) children(name string) (int, error) {
+	entries, err := fs.ReadDir(self.fs, name)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, entry := range entries {
+		if self.skip(entry.Name()) || (entry.Type()&fs.ModeSymlink == 0 && !isObject(entry.Type())) {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
