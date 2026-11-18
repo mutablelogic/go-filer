@@ -72,8 +72,8 @@ github.com/charmbracelet/x/ansi v0.11.10 h1:GjcX3+rAk+8wDX/jY0XwrZstxkjRcLkYU3Tv
 github.com/charmbracelet/x/ansi v0.11.10/go.mod h1:DG/hpOnaI2QJ/KMMqLL2h0KVhluuJLazf8973P+Vy5w=
 github.com/charmbracelet/x/cellbuf v0.0.15 h1:ur3pZy0o6z/R7EylET877CBxaiE1Sp1GMxoFPAIztPI=
 github.com/charmbracelet/x/cellbuf v0.0.15/go.mod h1:J1YVbR7MUuEGIFPCaaZ96KDl5NoS0DAWkskup+mOY+Q=
-github.com/charmbracelet/x/exp/golden v0.0.0-20260430013151-79116d1f37bd h1:N0gYk0lh6dfeb7iztIhDdLtg6ZGrFIAkDLD0mKoJwLM=
-github.com/charmbracelet/x/exp/golden v0.0.0-20260430013151-79116d1f37bd/go.mod h1:6fMpcW6iwN/kX+xJ52eqVWsDiBTe0UJD24JLoHFe+P0=
+github.com/charmbracelet/x/exp/golden v0.1.0 h1:qgUxGaHX4I8Fg077vD+54+qFmDWrgO19lTCQLblHWko=
+github.com/charmbracelet/x/exp/golden v0.1.0/go.mod h1:6fMpcW6iwN/kX+xJ52eqVWsDiBTe0UJD24JLoHFe+P0=
 github.com/charmbracelet/x/exp/slice v0.1.0 h1:m46dwuDf3M5SFYMRhxYkLC6z9WnENGVKbcbJlp13/og=
 github.com/charmbracelet/x/exp/slice v0.1.0/go.mod h1:vqEfX6xzqW1pKKZUUiFOKg0OQ7bCh54Q2vR/tserrRA=
 github.com/charmbracelet/x/term v0.2.2 h1:xVRT/S2ZcKdhhOuSP4t5cLi5o+JxklsoEObBSgfgZRk=
@@ -181,6 +181,10 @@ github.com/mutablelogic/go-auth v0.0.20 h1:PvQOx35wjQtcSNbaeZm15xP8liEU+nq7hAuJv
 github.com/mutablelogic/go-auth v0.0.20/go.mod h1:E8HtK4VMt9cvUob+oeZ/yCk1UCG/DQnKbGNH22hxMoQ=
 github.com/mutablelogic/go-client v1.4.14 h1:+LFkuiCsQw0VldaXlMZS3qKB/ISKBQbcxD3W+zmf/Fc=
 github.com/mutablelogic/go-client v1.4.14/go.mod h1:tyoLKaQYbdgnGUOkfpcXkA+HD90lL1sOq+X+kI8fU4Q=
+github.com/mutablelogic/go-media v1.11.4 h1:U1yIHMW/Apc/cHSeagkTuwcnPkYtI9Gk/zsD9o4VVlw=
+github.com/mutablelogic/go-media v1.11.4/go.mod h1:YsHBSCO3JV782+JNDmn1nyLgm5r2BSi1J2/kbHxJtKI=
+github.com/mutablelogic/go-metadata v1.1.5 h1:gGLvHvoNpIlB55mwOeAnHSqJ/2EyHN4KGXo8PbjirFw=
+github.com/mutablelogic/go-metadata v1.1.5/go.mod h1:oAK6X11F4kt0GTfhGuYxrSVk5XUgJBP1w/dJkidBzps=
 github.com/mutablelogic/go-pg v1.5.1 h1:a7fbAvrm9t7OO6suxKfZ3A8ui3xxMhQTUi8cQzFKthA=
 github.com/mutablelogic/go-pg v1.5.1/go.mod h1:5X2kRfnnvBzwNhZysUr4JTjwV/OwGXNumiRbDEeMzlM=
 github.com/mutablelogic/go-server v1.8.20 h1:h5RCNMOmQ7k6iqvu6G8zeAQt9zvPZdlCGuUFb/AGdf8=
