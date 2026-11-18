@@ -138,11 +138,11 @@ func objectHandler(registry *filer.Registry, router *httprouter.Router, document
 		path.Delete(func(w http.ResponseWriter, r *http.Request) {
 			var query objectDeleteQuery
 			if key, err := objectKeyFromRequest(r); err != nil {
-				httpError(w, err, r.PathValue("name")+"/"+r.PathValue("path"))
+				httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("name")+"/"+r.PathValue("path"))
 			} else if err := httprequest.Query(r.URL.Query(), &query); err != nil {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%w", err))
 			} else if deleted, err := registry.DeleteObjects(r.Context(), schema.DeleteObjectsRequest{ObjectKey: key, Recursive: query.Recursive}); err != nil {
-				httpError(w, err, key.Name+key.Path)
+				httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 			} else {
 				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), deleted)
 			}
@@ -161,11 +161,11 @@ func objectHandler(registry *filer.Registry, router *httprouter.Router, document
 		path.Head(func(w http.ResponseWriter, r *http.Request) {
 			key, err := objectKeyFromRequest(r)
 			if err != nil {
-				httpError(w, err, r.PathValue("name")+"/"+r.PathValue("path"))
+				httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("name")+"/"+r.PathValue("path"))
 			} else if object, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: key}); err != nil {
-				httpError(w, err, key.Name+key.Path)
+				httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 			} else if err := objectBinary(object).Write(w, r, nil); err != nil {
-				httpError(w, err, key.Name+key.Path)
+				httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 			}
 		}, func(op httprequest.PathOperation) {
 			op.Summary("Get Object Metadata")
@@ -191,7 +191,7 @@ func objectListHandlers(registry *filer.Registry, router *httprouter.Router, doc
 			if err := httprequest.Query(r.URL.Query(), &query); err != nil {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%w", err))
 			} else if key, err := cleanPath(query.Path); err != nil {
-				httpError(w, err, r.PathValue("name")+"/"+query.Path)
+				httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("name")+"/"+query.Path)
 			} else {
 				// A path which ends with "/" is a directory, which is kept, as a
 				// bucket can have an object of the directory's name
@@ -202,7 +202,7 @@ func objectListHandlers(registry *filer.Registry, router *httprouter.Router, doc
 				req.Name, req.Path = r.PathValue("name"), key
 				req.Recursive, req.StartAfter = query.Recursive, query.StartAfter
 				if list, err := registry.List(r.Context(), req); err != nil {
-					httpError(w, err, req.Name+req.Path)
+					httpresponse.Error(w, gofiler.HTTPErr(err), req.Name+req.Path)
 				} else if acceptsHTML(r) {
 					if err := writeListHTML(w, r, list, readonly(registry, req.Name)); err != nil {
 						httpresponse.Error(w, httpresponse.ErrInternalError.Withf("%v", err), req.Name+req.Path)
@@ -235,7 +235,7 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 	var query objectGetQuery
 	key, err := objectKeyFromRequest(r)
 	if err != nil {
-		httpError(w, err, r.PathValue("name")+"/"+r.PathValue("path"))
+		httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("name")+"/"+r.PathValue("path"))
 		return
 	} else if err := httprequest.Query(r.URL.Query(), &query); err != nil {
 		httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%w", err))
@@ -258,7 +258,7 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if err != nil {
-		httpError(w, err, key.Name+key.Path)
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 		return
 	}
 
@@ -267,7 +267,7 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 	binary.Disposition = disposition(query.Download)
 	if binary.NotModified(r) {
 		if err := binary.Write(w, r, nil); err != nil {
-			httpError(w, err, key.Name+key.Path)
+			httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 		}
 		return
 	}
@@ -282,7 +282,7 @@ func objectGet(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 		})
 	})
 	if err != nil && !tw.written {
-		httpError(w, err, key.Name+key.Path)
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 	}
 }
 
@@ -344,7 +344,7 @@ func readonly(registry *filer.Registry, name string) bool {
 func objectPut(registry *filer.Registry, w http.ResponseWriter, r *http.Request) {
 	key, err := objectKeyFromRequest(r)
 	if err != nil {
-		httpError(w, err, r.PathValue("name")+"/"+r.PathValue("path"))
+		httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("name")+"/"+r.PathValue("path"))
 		return
 	} else if key.Path == "/" {
 		httpresponse.Error(w, httpresponse.ErrBadRequest.With("the root of a volume is a directory, which can't be uploaded to"), key.Name+key.Path)
@@ -382,7 +382,7 @@ func objectPut(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 	switch {
 	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		// The volume isn't mounted, or the path is invalid
-		httpError(w, err, key.Name+key.Path)
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 		return
 	case exists && existing.IsDir:
 		httpresponse.Error(w, httpresponse.ErrConflict.Withf("%q is a directory", key.Path), key.Name+key.Path)
@@ -407,7 +407,7 @@ func objectPut(registry *filer.Registry, w http.ResponseWriter, r *http.Request)
 	case ifNotExists && errors.Is(err, gofiler.ErrConflict), errors.Is(err, gofiler.ErrPreconditionFailed):
 		httpresponse.Error(w, httpresponse.Err(http.StatusPreconditionFailed), key.Name+key.Path)
 	case err != nil:
-		httpError(w, err, key.Name+key.Path)
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 	case exists:
 		httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), object)
 	default:
@@ -429,7 +429,7 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 	var query objectUploadQuery
 	key, err := objectKeyFromRequest(r)
 	if err != nil {
-		httpError(w, err, r.PathValue("name")+"/"+r.PathValue("path"))
+		httpresponse.Error(w, gofiler.HTTPErr(err), r.PathValue("name")+"/"+r.PathValue("path"))
 		return
 	} else if err := httprequest.Query(r.URL.Query(), &query); err != nil {
 		httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%w", err))
@@ -447,7 +447,7 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 
 	// The directory, which is created, when it doesn't exist, isn't a file
 	if dir, err := registry.GetObject(r.Context(), schema.GetObjectRequest{ObjectKey: key}); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		httpError(w, err, key.Name+key.Path)
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
 		return
 	} else if err == nil && !dir.IsDir {
 		httpresponse.Error(w, httpresponse.ErrConflict.Withf("%q is a file, not a directory", key.Path), key.Name+key.Path)
@@ -530,7 +530,7 @@ func objectUpload(registry *filer.Registry, w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}); err != nil {
-		httpError(w, err, key.Name+failed)
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+failed)
 		return
 	}
 
