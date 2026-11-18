@@ -910,16 +910,17 @@ func Test_TaskDelete(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 	resp, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2/"}, Recursive: true})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/L2/X.ics"}, paths(resp))
+	assert.Equal(t, []string{"/L2/X.ics", "/L2"}, paths(resp), "its tasks, and then the list")
+	assert.True(t, resp.Body[1].IsDir)
 	assert.Equal(t, []string{"/L1", "/L1/C.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
 	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L2"}, Recursive: true})
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
-	// An empty list is deleted too
+	// An empty list is deleted too, which is returned
 	fake.addList("L3", "Empty")
 	resp, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L3"}, Recursive: true})
 	require.NoError(t, err)
-	assert.Empty(t, resp.Body)
+	assert.Equal(t, []string{"/L3"}, paths(resp))
 }

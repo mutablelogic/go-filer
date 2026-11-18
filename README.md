@@ -84,7 +84,7 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 * **Tasks** are iCalendar files, `text/calendar; component=VTODO`, named by their ids, such as `/MTA3NjI/Q2xvdWQ.ics`, so a path stays the same when a task is renamed.
 * **Content:** one `VTODO`, which calendar and task apps can import: the task's id as its `UID`, its title, notes, due date, status, completion, parent as `RELATED-TO`, URL, and update time.
 * **Metadata:** `task:title`, `status`, `due`, `completed` and `parent`, and what iCalendar can't have, `task:hidden`, of a completed task cleared from its list, and `task:links`, such as to the email a task was created from.
-* **Writing:** a volume with `readonly=false`, which asks for write access when its user signs in, can delete a task, with its subtasks, as Google does, or a list, with its tasks, with `recursive`. Creating and changing tasks isn't implemented yet.
+* **Writing:** a volume with `readonly=false`, which asks for write access when its user signs in, can delete a task, with its subtasks, as Google does, or a list, with its tasks, with `recursive`, which returns the list too, after its tasks, as it's an object of its own. Creating and changing tasks isn't implemented yet.
 
 To set it up, with the `filer` command, store the OAuth client, a desktop app's, which Google's console downloads, as the server's credential, and create a volume, which signs in with Google, in the browser:
 

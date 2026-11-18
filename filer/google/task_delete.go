@@ -15,7 +15,8 @@ import (
 
 // DeleteObjects deletes a task, with its subtasks, as Google does, or a list,
 // with its tasks, when the request is recursive, and returns the tasks which
-// were deleted. The root can't be deleted, which is ErrBadParameter, nor a
+// were deleted, and the list, after them, as a list is an object of its own,
+// rather than a directory which is there while it has tasks. The root can't be deleted, which is ErrBadParameter, nor a
 // list which isn't recursive, which is ErrConflict, as a directory isn't.
 func (self *TaskFiler) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	if self.readonly {
@@ -41,10 +42,14 @@ func (self *TaskFiler) DeleteObjects(ctx context.Context, req schema.DeleteObjec
 // PRIVATE METHODS
 
 // deleteList deletes a list, and its tasks, which the request must be
-// recursive for
+// recursive for, and returns its tasks, and then the list
 func (self *TaskFiler) deleteList(ctx context.Context, list string, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	if !req.Recursive {
 		return nil, gofiler.ErrConflict.Withf("Cannot delete directory %q unless recursive", req.Path)
+	}
+	meta, err := self.client.TaskList(ctx, list)
+	if err != nil {
+		return nil, self.apiError("delete", req.Path, err)
 	}
 	tasks, err := self.client.Tasks(ctx, list)
 	if err != nil {
@@ -60,6 +65,7 @@ func (self *TaskFiler) deleteList(ctx context.Context, list string, req schema.D
 	if err := self.client.DeleteTaskList(ctx, list); err != nil {
 		return nil, self.apiError("delete", req.Path, err)
 	}
+	result.Body = append(result.Body, self.listObject(meta, tasks))
 	return result, nil
 }
 
