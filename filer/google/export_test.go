@@ -8,3 +8,11 @@ func SetEndpoint(t testing.TB, endpoint string) {
 	tasksEndpoint = endpoint
 	t.Cleanup(func() { tasksEndpoint = previous })
 }
+
+// SetPeopleEndpoint sets the endpoint of the People API, which is a test's,
+// until it ends
+func SetPeopleEndpoint(t testing.TB, endpoint string) {
+	previous := peopleEndpoint
+	peopleEndpoint = endpoint
+	t.Cleanup(func() { peopleEndpoint = previous })
+}

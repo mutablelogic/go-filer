@@ -103,7 +103,7 @@ var _ gofiler.Filer = (*Registry)(nil)
 // GLOBALS
 
 // schemes are the schemes of the URLs which backends are created from
-var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme}
+var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme, google.ContactsScheme}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -611,6 +611,20 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 			opts = append(opts, client.OptTracer(self.tracer))
 		}
 		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.credentials, opts...); err != nil {
+			return nil, err
+		} else {
+			return b, nil
+		}
+	case google.ContactsScheme:
+		// The contacts of a Google account, of its sign-in, as for tasks
+		if u.Path != "" && u.Path != "/" {
+			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Contacts has no path: %q", u.Path)
+		}
+		opts := slices.Clone(self.clientopts)
+		if len(opts) == 0 && self.tracer != nil {
+			opts = append(opts, client.OptTracer(self.tracer))
+		}
+		if b, err := google.NewContactFiler(ctx, u.Host, query, self.credentials, opts...); err != nil {
 			return nil, err
 		} else {
 			return b, nil

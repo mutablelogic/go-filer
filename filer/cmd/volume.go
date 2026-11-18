@@ -13,6 +13,7 @@ import (
 	"time"
 
 	// Packages
+	credentialclient "github.com/mutablelogic/go-auth/credential/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/filer/google"
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
@@ -28,16 +29,17 @@ import (
 // TYPES
 
 type VolumeCommands struct {
-	VolumeList         VolumeListCmd         `cmd:"" name:"volumes" help:"List volumes, with the URLs of their backends." group:"VOLUME"`
-	VolumeGet          VolumeGetCmd          `cmd:"" name:"volume" help:"Get a volume by its name, with the URL of its backend." group:"VOLUME"`
-	VolumeSchemes      VolumeSchemesCmd      `cmd:"" name:"volume-schemes" help:"List the schemes of the URLs which volumes can be created from." group:"VOLUME"`
-	VolumeCreate       VolumeCreateCmd       `cmd:"" name:"volume-create" help:"Create a volume from the URL of its backend, or a directory." group:"VOLUME"`
-	VolumeCreateFS     VolumeCreateFSCmd     `cmd:"" name:"volume-create-fs" help:"Create a volume of a directory on the server." group:"VOLUME"`
-	VolumeCreateS3     VolumeCreateS3Cmd     `cmd:"" name:"volume-create-s3" help:"Create a volume of an S3 bucket, or one which is compatible, such as MinIO's or SeaweedFS's." group:"VOLUME"`
-	VolumeCreateGTasks VolumeCreateGTasksCmd `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
-	VolumeUpdate       VolumeUpdateCmd       `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
-	VolumeDelete       VolumeDeleteCmd       `cmd:"" name:"volume-delete" help:"Delete a volume by its name, without deleting its files." group:"VOLUME"`
-	VolumeWatch        VolumeWatchCmd        `cmd:"" name:"volume-watch" help:"Show the changes to the objects of volumes, as they happen, until it's interrupted." group:"VOLUME"`
+	VolumeList            VolumeListCmd            `cmd:"" name:"volumes" help:"List volumes, with the URLs of their backends." group:"VOLUME"`
+	VolumeGet             VolumeGetCmd             `cmd:"" name:"volume" help:"Get a volume by its name, with the URL of its backend." group:"VOLUME"`
+	VolumeSchemes         VolumeSchemesCmd         `cmd:"" name:"volume-schemes" help:"List the schemes of the URLs which volumes can be created from." group:"VOLUME"`
+	VolumeCreate          VolumeCreateCmd          `cmd:"" name:"volume-create" help:"Create a volume from the URL of its backend, or a directory." group:"VOLUME"`
+	VolumeCreateFS        VolumeCreateFSCmd        `cmd:"" name:"volume-create-fs" help:"Create a volume of a directory on the server." group:"VOLUME"`
+	VolumeCreateS3        VolumeCreateS3Cmd        `cmd:"" name:"volume-create-s3" help:"Create a volume of an S3 bucket, or one which is compatible, such as MinIO's or SeaweedFS's." group:"VOLUME"`
+	VolumeCreateGTasks    VolumeCreateGTasksCmd    `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
+	VolumeCreateGContacts VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts" help:"Create a volume of a Google account's contacts, as vCards, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
+	VolumeUpdate          VolumeUpdateCmd          `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
+	VolumeDelete          VolumeDeleteCmd          `cmd:"" name:"volume-delete" help:"Delete a volume by its name, without deleting its files." group:"VOLUME"`
+	VolumeWatch           VolumeWatchCmd           `cmd:"" name:"volume-watch" help:"Show the changes to the objects of volumes, as they happen, until it's interrupted." group:"VOLUME"`
 }
 
 type VolumeListCmd struct{}
@@ -91,6 +93,15 @@ type VolumeCreateS3Cmd struct {
 	Readonly     bool     `name:"readonly" help:"Objects can only be read, and not created or deleted."`
 	SeaweedFS    string   `name:"seaweedfs-filer-grpc" placeholder:"HOST:PORT" help:"gRPC service of the SeaweedFS filer whose S3 gateway the endpoint is, such as 192.168.86.21:18888, so the bucket's objects are watched."`
 	Opt          []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+}
+
+type VolumeCreateGContactsCmd struct {
+	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
+	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
+	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
+	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
+	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
 }
 
 type VolumeCreateGTasksCmd struct {
@@ -193,10 +204,29 @@ func (cmd *VolumeCreateGTasksCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
-	return withClient(ctx, "filer.VolumeCreateGTasksCmd", func(ctx context.Context, client *httpclient.Client) error {
+	return createSignedIn(ctx, "filer.VolumeCreateGTasksCmd", volume, signInClient, cmd.NoBrowser)
+}
+
+// Run creates a volume of contacts, as a volume of tasks is created
+func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
+	volume, err := cmd.volume()
+	if err != nil {
+		return err
+	}
+	signInClient, err := newSignInClient(ctx)
+	if err != nil {
+		return err
+	}
+	return createSignedIn(ctx, "filer.VolumeCreateGContactsCmd", volume, signInClient, cmd.NoBrowser)
+}
+
+// createSignedIn creates a volume, and, when its user needs to sign in,
+// signs in with Google, in the browser, and creates it again, and prints it
+func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInClient *credentialclient.Client, noBrowser bool) error {
+	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
 		created, err := client.CreateVolume(ctx, volume)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
-			if err := signInWithBrowser(ctx, signInClient, *signIn, cmd.NoBrowser); err != nil {
+			if err := signInWithBrowser(ctx, signInClient, *signIn, noBrowser); err != nil {
 				return err
 			}
 			created, err = client.CreateVolume(ctx, volume)
@@ -501,6 +531,30 @@ var (
 
 // volume returns the volume of Google Tasks, whose URL is gtasks://<name>,
 // with its parameters, of the flags which are set
+func (cmd *VolumeCreateGContactsCmd) volume() (schema.Volume, error) {
+	if !types.IsIdentifier(cmd.Name) {
+		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
+	}
+	query := url.Values{}
+	if cmd.Credential != "" {
+		if !credentialName.MatchString(cmd.Credential) {
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid key of a credential: %q", cmd.Credential)
+		}
+		query.Set("credential", cmd.Credential)
+	}
+	if cmd.Quota != nil {
+		query.Set("quota", strconv.FormatUint(uint64(*cmd.Quota), 10))
+	}
+	if cmd.RefreshInterval != nil {
+		query.Set("refresh_interval", cmd.RefreshInterval.String())
+	}
+	if err := setOpts(query, cmd.Opt); err != nil {
+		return schema.Volume{}, err
+	}
+	u := url.URL{Scheme: google.ContactsScheme, Host: cmd.Name, RawQuery: query.Encode()}
+	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
+}
+
 func (cmd *VolumeCreateGTasksCmd) volume() (schema.Volume, error) {
 	if !types.IsIdentifier(cmd.Name) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)

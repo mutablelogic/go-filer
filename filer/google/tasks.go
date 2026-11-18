@@ -255,6 +255,12 @@ func (self *TaskFiler) params() url.Values {
 // fs.ErrNotExist when it isn't found, a context's error, as it is, or else
 // ErrServiceUnavailable
 func (self *TaskFiler) apiError(op, path string, err error) error {
+	return apiError(self.tokens, self.credential, op, path, err)
+}
+
+// apiError returns the error of a request of a backend of Google's, of its
+// sign-in, and the key of its credential, as TaskFiler's apiError does
+func apiError(tokens *tokens, credential, op, path string, err error) error {
 	var authErr *authclient.AuthError
 	switch {
 	case err == nil:
@@ -262,7 +268,7 @@ func (self *TaskFiler) apiError(op, path string, err error) error {
 	case authclient.SignInOf(err) != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	case errors.As(err, &authErr):
-		return self.tokens.signInAgain(gofiler.ErrNotAuthorized.Withf("Google didn't accept sign-in %q, so sign in with Google again: %v", self.credential, err))
+		return tokens.signInAgain(gofiler.ErrNotAuthorized.Withf("Google didn't accept sign-in %q, so sign in with Google again: %v", credential, err))
 	case errors.Is(err, httpresponse.Err(http.StatusNotFound)):
 		return &fs.PathError{Op: op, Path: path, Err: fs.ErrNotExist}
 	case errors.Is(err, httpresponse.Err(http.StatusForbidden)):
