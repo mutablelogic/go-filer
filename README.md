@@ -132,7 +132,7 @@ Object metadata isn't stored yet, so `CreateObject` with metadata is `filer.ErrN
 
 ## Watching
 
-`WatchObjects` sends each change to an object to a channel, until the context is cancelled or the filer is closed. A change is an object which is created, updated or deleted, or a directory which should be rescanned, as its changes may have been missed. Changes to files which aren't objects aren't sent, and a change within a package is an update to the package.
+`WatchObjects` sends each change to an object to a channel, until the context is cancelled or the filer is closed. The first change is a rescan of the root, once the objects are watched, so a caller which lists them then misses no change. A change is an object which is created, updated or deleted, or a directory which should be rescanned, as its changes may have been missed. Changes to files which aren't objects aren't sent, and a change within a package is an update to the package.
 
 Directories are watched with the `fsevents` package, using the efficient mechanism of each platform:
 

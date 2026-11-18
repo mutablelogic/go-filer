@@ -65,10 +65,6 @@ type entry struct {
 	// or set with the registry locked.
 	state entryState
 
-	// Set when the volume is updated, or opened again, so it's sent a rescan
-	// once Run watches it, as its changes may have been missed
-	rescan bool
-
 	// closed is closed once the backend is closed, and removed from the
 	// registry, when err is why it couldn't be closed
 	closed chan struct{}
@@ -293,7 +289,7 @@ func (self *Registry) Add(ctx context.Context, volume string, url *url.URL) (gof
 
 	// Create the backend, and register it, or unregister the volume when it
 	// can't be
-	b, err := self.open(ctx, e, volume, url, false)
+	b, err := self.open(ctx, e, volume, url)
 	if err != nil {
 		self.unreserve(e, volume)
 		return nil, err
@@ -360,7 +356,7 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 
 	// Register the clone in its place, which only fails when the registry is
 	// closed in the meantime
-	b, err := self.register(pending, volume, clone, true)
+	b, err := self.register(pending, volume, clone)
 	if err != nil {
 		self.unreserve(pending, volume)
 		return nil, err
@@ -480,29 +476,30 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 
 // open creates the backend of the volume, which is registered with the
 // entry, and checks it's for the volume, and registers it, and watches it
-// until it's removed, with a rescan once it's watched, when rescan is set. The volume is still registered when it can't be, so
+// until it's removed. The volume is still registered when it can't be, so
 // the caller can open it again, or unreserve it. Returns ErrServiceUnavailable
 // when the registry was closed meanwhile.
-func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.URL, rescan bool) (gofiler.Filer, error) {
+func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.URL) (gofiler.Filer, error) {
 	b, err := self.new(ctx, u)
 	if err != nil {
 		return nil, err
 	} else if name := VolumeName(b.URL()); name != volume {
 		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", b.URL(), volume), closeFiler(b))
 	}
-	return self.register(e, volume, b, rescan)
+	return self.register(e, volume, b)
 }
 
 // register registers the backend with the entry of the volume, unless the
 // registry was closed in the meantime, when it's closed, and watches it until
-// it's removed, with a rescan first, when rescan is set
-func (self *Registry) register(e *entry, volume string, b gofiler.Filer, rescan bool) (gofiler.Filer, error) {
+// it's removed. Its watch sends a rescan first, once it's watching, as its
+// changes may have been missed, such as when it's updated, or opened again.
+func (self *Registry) register(e *entry, volume string, b gofiler.Filer) (gofiler.Filer, error) {
 	self.Lock()
 	defer self.Unlock()
 	if self.backend == nil {
 		return nil, errors.Join(gofiler.ErrServiceUnavailable.With("registry is closed"), closeFiler(b))
 	}
-	e.Filer, e.state, e.rescan = b, stateReady, rescan
+	e.Filer, e.state = b, stateReady
 	e.ctx, e.cancel = context.WithCancel(context.Background())
 	self.changedVolumes()
 	return b, nil

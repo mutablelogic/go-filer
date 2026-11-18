@@ -165,18 +165,18 @@ func (self *S3) Readonly() bool {
 // prefix, to the channel, until the context is cancelled, when the endpoint
 // is a SeaweedFS filer's, whose gRPC service is the seaweedfs-filer-grpc
 // option, and otherwise it's ErrNotImplemented, as a bucket of S3 needs its
-// event notifications, and a queue
+// event notifications, and a queue. The first change is a rescan of the
+// root, once the objects are watched.
 func (self *S3) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	return self.WatchObjectsReady(ctx, ch, nil)
-}
-
-// WatchObjectsReady watches the changes, as WatchObjects does, and calls
-// ready, when it's set, once they're watched
-func (self *S3) WatchObjectsReady(ctx context.Context, ch chan<- schema.Event, ready func()) error {
 	if self.watcher == nil {
 		return gofiler.ErrNotImplemented.With("a bucket can't be watched, without the seaweedfs-filer-grpc option")
 	}
-	return self.watcher.Watch(ctx, ch, ready)
+	return self.watcher.Watch(ctx, ch, func() {
+		select {
+		case ch <- schema.Rescan(""):
+		case <-ctx.Done():
+		}
+	})
 }
 
 ////////////////////////////////////////////////////////////////////////////////

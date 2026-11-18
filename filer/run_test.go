@@ -41,11 +41,15 @@ func Test_Registry_Run(t *testing.T) {
 	assert.ErrorIs(t, r.Run(context.Background(), nil), gofiler.ErrConflict)
 
 	// The volumes are watched, which are added before it runs, and after
-	waitFor(t, ch, filepath.FromSlash(before.Path), func(event schema.Event) bool { return event.Name == "before" })
+	waitFor(t, ch, filepath.FromSlash(before.Path), func(event schema.Event) bool {
+		return event.Name == "before" && event.EventType != schema.EventTypeRescan
+	})
 	after := fileURL(t, dir, "after")
 	_, err = r.Add(context.Background(), "after", after)
 	require.NoError(t, err)
-	waitFor(t, ch, filepath.FromSlash(after.Path), func(event schema.Event) bool { return event.Name == "after" })
+	waitFor(t, ch, filepath.FromSlash(after.Path), func(event schema.Event) bool {
+		return event.Name == "after" && event.EventType != schema.EventTypeRescan
+	})
 
 	// A volume which is removed isn't watched, as its watch ends before it's
 	// removed
@@ -96,6 +100,10 @@ func Test_Registry_RunDebounce(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(path, "a.txt"), []byte{byte(i)}, 0o600))
 	}
 	event := next(t, events)
+	for event.EventType == schema.EventTypeRescan {
+		// The rescans of the volume, once it's watched
+		event = next(t, events)
+	}
 	assert.Equal(t, "/a.txt", event.Path)
 	assert.Equal(t, schema.EventTypeCreated, event.EventType)
 	assert.GreaterOrEqual(t, time.Since(start), debounceDelay)

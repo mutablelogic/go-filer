@@ -706,18 +706,22 @@ func Test_Registry_WatchSlow(t *testing.T) {
 	_, err := r.Add(context.Background(), "slow", u)
 	require.NoError(t, err)
 	path := filepath.FromSlash(u.Path)
-	waitFor(t, fast, path, func(event schema.Event) bool { return event.Name == "slow" })
+	waitFor(t, fast, path, func(event schema.Event) bool {
+		return event.Name == "slow" && event.EventType != schema.EventTypeRescan
+	})
 	for i := range 50 {
 		require.NoError(t, os.WriteFile(filepath.Join(path, fmt.Sprintf("%d.txt", i)), nil, 0o600))
 	}
 	time.Sleep(500 * time.Millisecond)
 
-	// The slow caller gets some changes, then a rescan
-	rescan := false
+	// The slow caller gets some changes, then a rescan, after its first
+	// rescan, which is the volume's once it's watched
+	rescan, changed := false, false
 	for deadline := time.After(10 * time.Second); !rescan; {
 		select {
 		case event := <-slow:
-			rescan = event.EventType == schema.EventTypeRescan && event.Name == "slow" && event.Path == "/"
+			changed = changed || (event.Name == "slow" && event.EventType != schema.EventTypeRescan)
+			rescan = changed && event.EventType == schema.EventTypeRescan && event.Name == "slow" && event.Path == "/"
 		case <-deadline:
 			t.Fatal("no rescan once changes were dropped")
 		}
@@ -752,7 +756,9 @@ func Test_Registry_WatchRestart(t *testing.T) {
 	_, err := r.Add(context.Background(), "restart", u)
 	require.NoError(t, err)
 	path := filepath.FromSlash(u.Path)
-	waitFor(t, events, path, func(event schema.Event) bool { return event.Name == "restart" })
+	waitFor(t, events, path, func(event schema.Event) bool {
+		return event.Name == "restart" && event.EventType != schema.EventTypeRescan
+	})
 
 	// Remove the directory, which stops watching it, and put it back
 	require.NoError(t, os.RemoveAll(path))
@@ -1067,6 +1073,17 @@ func Test_Registry_UpdateRescan(t *testing.T) {
 	events := watchAll(t, r, 1024)
 	_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
 	require.NoError(t, err)
+	for deadline := time.After(10 * time.Second); ; {
+		select {
+		case event := <-events:
+			if event.EventType != schema.EventTypeRescan || event.Name != "media" {
+				continue
+			}
+		case <-deadline:
+			t.Fatal("no rescan once the volume was watched")
+		}
+		break
+	}
 	_, err = r.Update(context.Background(), "media", url.Values{"skip": {""}})
 	require.NoError(t, err)
 	for deadline := time.After(10 * time.Second); ; {

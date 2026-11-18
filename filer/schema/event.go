@@ -33,6 +33,15 @@ const (
 )
 
 ////////////////////////////////////////////////////////////////////////////////
+// PUBLIC FUNCTIONS
+
+// Rescan returns a rescan of the root of a volume, which WatchObjects sends
+// first, once the objects are watched
+func Rescan(name string) Event {
+	return Event{EventType: EventTypeRescan, ObjectKey: ObjectKey{Name: name, Path: "/"}}
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // STRINGIFY
 
 func (t EventType) String() string {

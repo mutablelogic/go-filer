@@ -33,6 +33,10 @@ type FS struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	closeErr  error
+
+	// The watch of the directory, which calls to WatchObjects share, or nil
+	watchMu sync.Mutex
+	watcher *watcher
 }
 
 var _ filer.Filer = (*FS)(nil)

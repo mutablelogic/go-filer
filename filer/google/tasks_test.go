@@ -401,9 +401,15 @@ func Test_TaskWatch(t *testing.T) {
 	// Watching, once what's there is read
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	events, done, ready := make(chan schema.Event, 16), make(chan error, 1), make(chan struct{})
-	go func() { done <- filer.WatchObjectsReady(ctx, events, func() { close(ready) }) }()
-	<-ready
+	// The first change is a rescan of the root, once what's there is read
+	events, done := make(chan schema.Event, 16), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(ctx, events) }()
+	select {
+	case event := <-events:
+		assert.Equal(t, schema.Rescan("tasks"), event)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no rescan")
+	}
 
 	// A task which is created, one which is updated, one which is deleted,
 	// and a list which is created, with a task

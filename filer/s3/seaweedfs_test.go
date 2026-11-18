@@ -51,11 +51,18 @@ func Test_S3_WatchSeaweedFS(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, listener.Addr().String(), b.URL().Query().Get("seaweedfs-filer-grpc"))
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, ready, done := make(chan schema.Event, 1), make(chan struct{}), make(chan error, 1)
+	ch, done := make(chan schema.Event, 1), make(chan error, 1)
 	go func() {
-		done <- b.WatchObjectsReady(ctx, ch, func() { close(ready) })
+		done <- b.WatchObjects(ctx, ch)
 	}()
-	<-ready
+
+	// The first change is a rescan of the root, once it's watched
+	select {
+	case event := <-ch:
+		assert.Equal(t, schema.Rescan(""), event)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no rescan")
+	}
 	select {
 	case event := <-ch:
 		assert.Equal(t, schema.Event{EventType: schema.EventTypeCreated, ObjectKey: schema.ObjectKey{Path: "/dir/a.jpg"}}, event)

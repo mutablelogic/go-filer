@@ -27,24 +27,20 @@ type taskSnapshot map[string]string
 // ErrNotImplemented when the refresh interval is zero, and the error of
 // reading them, such as an AuthError, when a sign-in is needed.
 func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	return self.watchObjects(ctx, ch, nil)
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS
-
-// watchObjects watches the changes, as WatchObjects does, and calls ready,
-// when it's set, once what's there is read, so a change after it is sent
-func (self *TaskFiler) watchObjects(ctx context.Context, ch chan<- schema.Event, ready func()) error {
 	if self.refreshInterval == 0 {
 		return gofiler.ErrNotImplemented.Withf("volume %q isn't watched, as its %s is zero", self.name, paramRefreshInterval)
 	}
+
+	// What's there is read, and then the first change is a rescan of the
+	// root, so a change after it is sent
 	last, err := self.snapshot(ctx)
 	if err != nil {
 		return err
 	}
-	if ready != nil {
-		ready()
+	select {
+	case ch <- schema.Rescan(self.name):
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	ticker := time.NewTicker(self.refreshInterval)
 	defer ticker.Stop()
