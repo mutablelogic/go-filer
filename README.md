@@ -14,7 +14,7 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/filer/schema` | The objects, requests and events |
 | `github.com/mutablelogic/go-filer/filer/fs` | The filesystem backend, for any `fs.FS`, and writable for a directory |
 | `github.com/mutablelogic/go-filer/filer/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
-| `github.com/mutablelogic/go-filer/filer/google` | Backends of Google's services: Google Tasks, so far |
+| `github.com/mutablelogic/go-filer/filer/google` | Backends of Google's services: Google Tasks and Google Contacts |
 | `github.com/mutablelogic/go-filer/filer/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 | `github.com/mutablelogic/go-filer/filer/indexer` | A filer which wraps a backend, and keeps an index of its folders in a `Store`, which follows its changes |
 | `github.com/mutablelogic/go-filer/filer/indexer/memory` | An index store in memory |
@@ -114,6 +114,18 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
 * **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.
 * **`hidden`:** include tasks which are hidden, as they're completed, and cleared from their list, which are left out unless it's `true`.
+
+## Google Contacts
+
+`google.NewContactFiler` returns a filer of a person's Google Contacts, of the People API, with the same Google sign-in as Google Tasks, which asks for the `contacts.readonly` scope, keeping the scopes it has, so one sign-in can have both:
+
+* **Contacts** are vCard files, `text/vcard`, at the root, named by their ids, such as `/c123.vcf`, with `dc:title` and `contact:name`, of their names.
+* **Content:** written with go-metadata's `pkg/vcard`: names, nicknames, emails, phones, URLs, addresses, organisations, titles, birthday, notes, a photo, as a link, but not Google's default one, of initials, and when it was updated, as `REV`. A primary value is preferred.
+* **No birthdays as objects**, nor calendars, only contacts.
+* **Options:** `quota`, `refresh_interval` and `credential`, as Google Tasks has. It's read-only, so far: `readonly=false` isn't implemented.
+* **Watching** polls the contacts' entity tags, at the refresh interval.
+
+In the registry, its URL is `gcontacts://<name>`, and the `filer` command creates one with `volume-create-gcontacts`, signing in with Google, in the browser, when it needs to.
 
 ## Indexer
 
