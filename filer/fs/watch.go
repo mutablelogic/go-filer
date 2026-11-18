@@ -44,7 +44,10 @@ func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error 
 
 	// Share the directory's watch with the other calls, which starts it,
 	// when there's none
-	w := self.join(fsys.Path())
+	w, err := self.join(ctx, fsys.Path())
+	if err != nil {
+		return nil
+	}
 	defer self.leave(w)
 	return self.subscribe(ctx, w, ch)
 }

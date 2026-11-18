@@ -267,3 +267,42 @@ func Test_WatchObjectsShared(t *testing.T) {
 	receive(t, c, "/c.txt")
 	require.NoError(t, stopC())
 }
+
+func Test_WatchObjectsRejoin(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	dir := t.TempDir()
+	backend, err := New("test", dir, nil, filer.Opts{})
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+	before := watching.Load()
+
+	// A call which leaves, and one which then joins, at once, doesn't start
+	// another watch until the last ends, so the directory is watched once
+	for range 20 {
+		ctx, cancel := context.WithCancel(context.Background())
+		events, done := make(chan schema.Event, 16), make(chan error, 1)
+		go func() { done <- backend.WatchObjects(ctx, events) }()
+		select {
+		case event := <-events:
+			require.Equal(t, schema.Rescan(""), event)
+		case <-time.After(10 * time.Second):
+			t.Fatal("watching wasn't ready")
+		}
+		assert.Equal(t, before+1, watching.Load(), "one watch of the directory")
+		cancel()
+		select {
+		case err := <-done:
+			assert.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("a call which was cancelled didn't return")
+		}
+	}
+	require.Eventually(t, func() bool { return watching.Load() == before }, 10*time.Second, 10*time.Millisecond)
+
+	// A call whose context is cancelled already isn't made
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.ErrorIs(t, backend.WatchObjects(ctx, make(chan schema.Event)), context.Canceled)
+}
