@@ -29,9 +29,10 @@ type taskPath struct {
 // GLOBALS
 
 const (
-	// CalendarType is the content type of a task's file, which is an
-	// iCalendar of its VTODO
-	CalendarType = "text/calendar"
+	// TaskType is the content type of a task's file, which is an iCalendar
+	// of its VTODO, whose component parameter, of RFC 5545, says it's a
+	// task, rather than an event, or a calendar
+	TaskType = "text/calendar; component=VTODO"
 
 	// ProdID is the product which writes a task's iCalendar
 	ProdID = "-//mutablelogic//go-filer//EN"
@@ -134,7 +135,7 @@ func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.O
 	content := taskCalendar(task)
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: self.name, Path: taskFilePath(list, task.Id)},
-		ObjectMeta: schema.ObjectMeta{ContentType: CalendarType},
+		ObjectMeta: schema.ObjectMeta{ContentType: TaskType},
 		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: task.Updated},
 	}
 	if task.ETag != "" {

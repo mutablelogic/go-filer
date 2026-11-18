@@ -81,7 +81,7 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 `google.NewTaskFiler` returns a filer of a person's Google Tasks:
 
 * **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata, as `task:title` and `dc:title`, and `folder:children` and `folder:children-count`, whether they have tasks, and how many. The API doesn't count them, so they're read: one request a list, for each 100 tasks.
-* **Tasks** are iCalendar files, `text/calendar`, named by their ids, such as `/MTA3NjI/Q2xvdWQ.ics`, so a path stays the same when a task is renamed.
+* **Tasks** are iCalendar files, `text/calendar; component=VTODO`, named by their ids, such as `/MTA3NjI/Q2xvdWQ.ics`, so a path stays the same when a task is renamed.
 * **Content:** one `VTODO`, which calendar and task apps can import: the task's id as its `UID`, its title, notes, due date, status, completion, parent as `RELATED-TO`, URL, and update time.
 * **Metadata:** `task:title`, `status`, `due`, `completed` and `parent`, and what iCalendar can't have, `task:hidden`, of a completed task cleared from its list, and `task:links`, such as to the email a task was created from.
 
