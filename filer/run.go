@@ -10,7 +10,6 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	changes "github.com/mutablelogic/go-server/broadcaster/schema"
 )
 
@@ -56,28 +55,15 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 		logger = slog.Default()
 	}
 
-	// The registry's own broadcaster runs while it does, which sends the
-	// rescans its watches are owed, and ends them when it stops
-	if !self.shared {
-		runCtx, cancel := context.WithCancel(ctx)
-		stopped := make(chan struct{})
-		go func() {
-			defer close(stopped)
-			_ = self.broadcaster.Run(runCtx)
-		}()
-		defer func() {
-			cancel()
-			<-stopped
-		}()
-	}
-
 	// The changes, which are held until their objects are quiet, and are
-	// counted, and published to the broadcaster
+	// counted, and published to the broadcaster, when there is one
 	debouncer := newDebouncer(self.debounce)
 	publish := func(events []schema.Event) {
 		for _, event := range events {
 			self.metrics.event(ctx, event)
-			if missed := self.broadcaster.Publish(event.Change()); missed > 0 {
+			if self.broadcaster == nil {
+				continue
+			} else if missed := self.broadcaster.Publish(event.Change()); missed > 0 {
 				logger.DebugContext(ctx, "watchers were slow, so they missed a change, and they'll be sent a rescan", "volume", event.Name, "watchers", missed)
 			}
 		}
@@ -134,13 +120,17 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) error {
 // WatchObjects sends each change to the objects of every volume to the
 // channel, of the broadcaster's changes, until the context is cancelled. A
 // call which falls behind is sent a rescan of each volume it missed a change
-// of. Returns fs.ErrClosed when the registry is closed, or the broadcaster
-// stops running.
+// of. Returns ErrNotImplemented without a broadcaster, as the changes
+// aren't published, and fs.ErrClosed when the registry is closed, or the
+// broadcaster stops running.
 func (self *Registry) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	select {
 	case <-self.done:
 		return fs.ErrClosed
 	default:
+	}
+	if self.broadcaster == nil {
+		return gofiler.ErrNotImplemented.With("the changes aren't published, without a broadcaster")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -175,26 +165,6 @@ func (self *Registry) WatchObjects(ctx context.Context, ch chan<- schema.Event) 
 			}
 		}
 	}
-}
-
-// Broadcaster returns the broadcaster which the changes to the volumes are
-// published to, which is watched, and served, as go-server's /changes
-func (self *Registry) Broadcaster() *broadcaster.Broadcaster {
-	return self.broadcaster
-}
-
-// Shared returns true when the broadcaster is shared, with WithBroadcaster,
-// so its owner runs, and serves, it, rather than the registry
-func (self *Registry) Shared() bool {
-	return self.shared
-}
-
-// stopBroadcaster stops a broadcaster, so its watches end, and those made
-// later, as running it with a context which is cancelled does
-func stopBroadcaster(b *broadcaster.Broadcaster) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_ = b.Run(ctx)
 }
 
 // Running returns true when Run is running

@@ -19,7 +19,7 @@ import (
 
 func Test_Registry_Run(t *testing.T) {
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithDebounce(0))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
 	defer r.Close()
 	assert.False(t, r.Running())
@@ -56,11 +56,15 @@ func Test_Registry_Run(t *testing.T) {
 		assert.NotEqual(t, "/gone.txt", (<-ch).Path)
 	}
 
-	// When it stops, every watch ends
+	// When it stops, the watches go on, as the broadcaster is its owner's
 	cancel()
 	assert.NoError(t, <-running)
-	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
 	assert.False(t, r.Running())
+	select {
+	case err := <-done:
+		t.Fatalf("the watch ended when the registry stopped: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
 
 	// And when the registry is closed, it stops
 	go func() { running <- r.Run(context.Background(), nil) }()
@@ -72,12 +76,15 @@ func Test_Registry_Run(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("run didn't stop")
 	}
+
+	// And its watches end, and those made later
+	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
 	assert.ErrorIs(t, r.WatchObjects(context.Background(), ch), fs.ErrClosed)
 }
 
 func Test_Registry_RunDebounce(t *testing.T) {
 	dir := t.TempDir()
-	r, err := New(context.Background())
+	r, err := New(context.Background(), WithBroadcaster(newBroadcaster(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.Close() })
 	assert.Equal(t, debounceDelay, r.debounce)
@@ -145,13 +152,11 @@ func ended(t *testing.T, done <-chan error) error {
 	}
 }
 
-func Test_Registry_SharedBroadcaster(t *testing.T) {
+func Test_Registry_Broadcaster(t *testing.T) {
 	dir := t.TempDir()
-	b := broadcaster.New()
+	b := newBroadcaster(t)
 	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(b))
 	require.NoError(t, err)
-	assert.True(t, r.Shared())
-	assert.Same(t, b, r.Broadcaster())
 
 	// The changes to the volumes are published to it, as changes of the
 	// filer schema, of the volume, as the table, and the path, as the row
@@ -174,13 +179,35 @@ func Test_Registry_SharedBroadcaster(t *testing.T) {
 		}
 	}, 10*time.Second, time.Millisecond)
 
-	// Closing the registry doesn't stop a broadcaster which is shared
+	// Closing the registry doesn't stop the broadcaster, which is its owner's
 	require.NoError(t, r.Close())
 	other := make(chan changes.Change, 1)
 	_, err = b.Watch(ctx, changes.ChangeFilter{}, other)
 	assert.NoError(t, err)
 
-	// A broadcaster which is nil isn't one
+	// A broadcaster which is nil isn't one, and without one, the changes
+	// aren't published, so they can't be watched
 	_, err = New(context.Background(), WithBroadcaster(nil))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	without, err := New(context.Background())
+	require.NoError(t, err)
+	defer without.Close()
+	assert.ErrorIs(t, without.WatchObjects(context.Background(), make(chan schema.Event)), gofiler.ErrNotImplemented)
+}
+
+// newBroadcaster returns a broadcaster, which runs until the test ends
+func newBroadcaster(t *testing.T) *broadcaster.Broadcaster {
+	t.Helper()
+	b := broadcaster.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = b.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return b
 }

@@ -82,10 +82,10 @@ func WithDebounce(delay time.Duration) Opt {
 	}
 }
 
-// WithBroadcaster sets the broadcaster which the changes to the volumes are
-// published to, which is shared, such as with other modules of a server, and
-// which its owner runs, and serves. Without it, the registry has its own,
-// which Run runs.
+// WithBroadcaster sets the broadcaster which Run publishes the changes to
+// the volumes to, which its owner runs, and serves, such as a server, which
+// can share it with its other modules. Without it, the changes aren't
+// published, and WatchObjects is ErrNotImplemented.
 func WithBroadcaster(b *broadcaster.Broadcaster) Opt {
 	return func(o *opt) error {
 		if b == nil {

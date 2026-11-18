@@ -76,7 +76,7 @@ Delete the file at `path` in the volume `name`, or a directory, with `recursive=
 
 ## Changes
 
-The changes to the objects of the volumes are streamed as they happen, as server-sent events, by go-server's `GET /changes`, as changes of the `filer` schema, unless the server shares its broadcaster with other modules, which serve it.
+The changes to the objects of the volumes are streamed as they happen, as server-sent events, by go-server's `GET /changes`, as changes of the `filer` schema. The server serves it, or, when it shares its broadcaster with other modules, the module which owns it does.
 
 - **A change** is `{"action":"create","schema":"filer","table":"media","row":"/music/a.mp3"}`: its action, which is `create`, `update` or `delete`, the volume, as the table, and the object's path, as the row.
 - **Filtering:** `?schema=filer&table=media` streams the changes of one volume.
