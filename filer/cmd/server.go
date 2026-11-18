@@ -34,10 +34,10 @@ type Flags struct {
 // PUBLIC METHODS
 
 // WithRegistry creates a registry of volumes, with the server's tracer and
-// meter, and credentials from its environment, such as S3_SECRET, which are
-// the placeholders of a volume's credentials, such as ${S3_SECRET}, and
-// those which are stored while it runs, and the flags' worker, when it's
-// set, and then the options, runs it, so the changes to its volumes are
+// meter, and the flags' worker, when it's set, and then the options, such as
+// the provider of the volumes' credentials (filer.WithCredentials), whose
+// placeholders, such as ${S3_SECRET}, it expands, and which stores those
+// which aren't placeholders, and runs it, so the changes to its volumes are
 // published to the broadcaster, and it's closed when the function returns, adds the volumes of the flags, registers its
 // HTTP handlers with the server, when there is one, and then calls the
 // function with the registry. The broadcaster is one a server shares with
@@ -64,7 +64,7 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 			<-stopped
 		}()
 	}
-	defaults := []filer.Opt{filer.WithBroadcaster(b), filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter()), filer.WithCredentials(newEnvCredentials())}
+	defaults := []filer.Opt{filer.WithBroadcaster(b), filer.WithTracer(ctx.Tracer()), filer.WithMeter(ctx.Meter())}
 	if flags.Worker != "" {
 		defaults = append(defaults, filer.WithWorker(flags.Worker))
 	}
