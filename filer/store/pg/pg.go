@@ -84,6 +84,10 @@ func (self *Store) Pending(context.Context, string, string) (bool, error) {
 	return false, errNotImplemented
 }
 
+func (self *Store) PendingBeneath(context.Context, string, string) (bool, error) {
+	return false, errNotImplemented
+}
+
 func (self *Store) Get(context.Context, string, string) (*schema.Object, error) {
 	return nil, errNotImplemented
 }

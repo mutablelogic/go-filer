@@ -23,15 +23,15 @@ DELETE FROM volume WHERE name = @name RETURNING name, url, enabled, created_at, 
 
 -- volume.state
 -- Its state, whose NULLs are its zero values
-SELECT coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), index_started, index_timestamp, coalesce(error, '')
+SELECT coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coalesce(scan_mode, ''), index_started, index_timestamp, coalesce(error, '')
 FROM volume WHERE name = @name;
 
 -- volume.set_state
 UPDATE volume SET
-  status = nullif(@status, ''), folders = nullif(@folders, 0), files = nullif(@files, 0),
+  status = nullif(@status, ''), folders = nullif(@folders, 0), files = nullif(@files, 0), scan_mode = nullif(@mode, ''),
   index_started = @started, index_timestamp = @scanned, error = nullif(@error, '')
 WHERE name = @name
-RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), index_started, index_timestamp, coalesce(error, '');
+RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coalesce(scan_mode, ''), index_started, index_timestamp, coalesce(error, '');
 
 -- object.put
 -- An object, which replaces the one at its path, and its metadata, of a
@@ -143,10 +143,11 @@ RETURNING path, kind, after, attempts, coalesce(error, ''), leased_until;
 -- queue.pending
 -- Whether a path has work which would change its index: an index or a
 -- rescan of it, or of a folder above it, which can remove what's beneath
--- it, queued, or claimed
+-- it, queued, or claimed, or, of a listing, of a path beneath it
 SELECT EXISTS (
   SELECT 1 FROM object_state
   WHERE volume = @volume AND kind IN ('index', 'rescan') AND (
-    path IN (SELECT value FROM json_each(@ancestors))
+    path IN (SELECT value FROM json_each(@ancestors)) OR
+    (@beneath AND path >= @lower AND path < @upper)
   )
 );

@@ -94,6 +94,7 @@ func (state VolumeState) Update(bind *sqlite.Bind) error {
 	bind.Set("status", string(state.Status))
 	bind.Set("folders", state.Folders)
 	bind.Set("files", state.Files)
+	bind.Set("mode", state.Mode)
 	bind.Set("started", state.Started)
 	bind.Set("scanned", state.Scanned)
 	bind.Set("error", state.Error)
@@ -113,5 +114,5 @@ func (list *VolumeList) Scan(row sqlite.Row) error {
 }
 
 func (state *VolumeState) Scan(row sqlite.Row) error {
-	return row.Scan(&state.Status, &state.Folders, &state.Files, &state.Started, &state.Scanned, &state.Error)
+	return row.Scan(&state.Status, &state.Folders, &state.Files, &state.Mode, &state.Started, &state.Scanned, &state.Error)
 }

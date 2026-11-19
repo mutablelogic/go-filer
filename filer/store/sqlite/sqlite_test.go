@@ -106,7 +106,8 @@ func attrs(span sdktrace.ReadOnlySpan) map[string]string {
 
 func Test_Migrate(t *testing.T) {
 	// A database of version 1, which had volumes, without how many files
-	// were indexed, and not objects, gets them, and keeps its volumes
+	// were indexed, or what the last scan indexed, and not objects, gets
+	// them, and keeps its volumes
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "index.db")
 	db, err := ncruces.Open(ctx, path)
@@ -132,11 +133,13 @@ func Test_Migrate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(3), state.Folders)
 	assert.Zero(t, state.Files)
-	state.Files = 7
+	assert.Empty(t, state.Mode, "so it's scanned again before its files are listed from the index")
+	state.Files, state.Mode = 7, "objects"
 	require.NoError(t, s.SetState(ctx, "media", state))
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Equal(t, uint64(7), state.Files)
+	assert.Equal(t, "objects", state.Mode)
 	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
 	_, err = s.Get(ctx, "media", "/a")
 	assert.NoError(t, err)

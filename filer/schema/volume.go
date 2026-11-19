@@ -126,6 +126,7 @@ type IndexState struct {
 	Status  IndexStatus `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
 	Folders uint64      `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
 	Files   uint64      `json:"files,omitempty" help:"How many files the last scan indexed, of a volume whose files are indexed"`
+	Mode    string      `json:"mode,omitempty" help:"What the last scan which finished indexed: folders, or objects"`
 	Started time.Time   `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
 	Scanned time.Time   `json:"scanned,omitzero" help:"When the last scan which finished did"`
 	Error   string      `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`

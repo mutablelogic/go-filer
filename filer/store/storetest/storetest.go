@@ -37,6 +37,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueueOrder", func(t *testing.T) { testQueueOrder(t, withVolumes(t, newStore(t))) })
 	t.Run("QueueLease", func(t *testing.T) { testQueueLease(t, withVolumes(t, newStore(t))) })
 	t.Run("QueuePending", func(t *testing.T) { testQueuePending(t, withVolumes(t, newStore(t))) })
+	t.Run("QueuePendingBeneath", func(t *testing.T) { testQueuePendingBeneath(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -407,13 +408,14 @@ func testState(t *testing.T, s store.Store) {
 
 	// Its state is stored, of each volume
 	started := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Files: 34, Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
+	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Files: 34, Mode: "objects", Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
 	require.NoError(t, s.SetState(ctx, "media", want))
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Equal(t, want.Status, state.Status)
 	assert.Equal(t, want.Folders, state.Folders)
 	assert.Equal(t, want.Files, state.Files)
+	assert.Equal(t, want.Mode, state.Mode)
 	assert.True(t, want.Started.Equal(state.Started))
 	assert.True(t, want.Scanned.Equal(state.Scanned))
 	assert.Equal(t, want.Error, state.Error)
@@ -618,6 +620,53 @@ func testQueueLease(t *testing.T, s store.Store) {
 	require.NoError(t, s.Push(ctx, "media", index("/b")))
 	_, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /b"}, paths, "the second claim is done")
+}
+
+func testQueuePendingBeneath(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	pending := func(folder string) bool {
+		t.Helper()
+		result, err := s.PendingBeneath(ctx, "media", folder)
+		require.NoError(t, err)
+		return result
+	}
+	done := func() {
+		t.Helper()
+		work, _ := claimed(t, s, all, 10)
+		require.NoError(t, s.Done(ctx, "media", work...))
+	}
+
+	// A folder's listing has work pending when a path beneath it is indexed,
+	// or rescanned, whether the work is queued, or claimed, until it's done
+	assert.False(t, pending("/a"))
+	require.NoError(t, s.Push(ctx, "media", index("/a/b/c.txt")))
+	assert.True(t, pending("/a"), "of a file beneath it")
+	assert.True(t, pending("/a/b"), "of a file in it")
+	assert.True(t, pending("/"), "of the root")
+	assert.False(t, pending("/a/b/c"), "of a folder beneath it")
+	assert.False(t, pending("/ab"), "of a folder whose path only starts with it")
+	assert.False(t, pending("/a/bc"), "of another folder")
+	work, _ := claimed(t, s, all, 10)
+	assert.True(t, pending("/a"), "while it's claimed")
+	require.NoError(t, s.Done(ctx, "media", work...))
+	assert.False(t, pending("/a"))
+
+	// Or of a rescan beneath it, and of the work Pending is of: an index, or
+	// a rescan, of it, or of a folder above it
+	require.NoError(t, s.Push(ctx, "media", rescan("/a/b")))
+	assert.True(t, pending("/a"), "of a rescan beneath it")
+	done()
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	assert.True(t, pending("/a"), "of an index of it")
+	assert.True(t, pending("/a/b"), "of an index above it")
+	assert.False(t, pending("/c"))
+	done()
+	require.NoError(t, s.Push(ctx, "media", rescan("/")))
+	assert.True(t, pending("/a/b"), "of a rescan above it")
+	done()
+	assert.False(t, pending("/"))
+	_, err := s.PendingBeneath(ctx, "media", "a")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
 func testQueuePending(t *testing.T, s store.Store) {

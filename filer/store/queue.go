@@ -43,6 +43,12 @@ type QueueStore interface {
 	// would change its index: an index, or a rescan, of it, or of a folder
 	// above it, so the index of it can be out of date
 	Pending(ctx context.Context, volume, path string) (bool, error)
+
+	// PendingBeneath returns true when the folder has work queued, or
+	// claimed, which would change its listing: work which Pending is true
+	// of, or an index, or a rescan, of a path beneath it, so the index of
+	// what's beneath it can be out of date
+	PendingBeneath(ctx context.Context, volume, folder string) (bool, error)
 }
 
 // Kind is a kind of work
