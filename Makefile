@@ -68,7 +68,7 @@ GO_TAGS = libfvad,chromaprint
 # isn't a problem.
 BREW ?= $(if $(filter darwin,$(OS)),$(shell command -v brew 2>/dev/null))
 BREW_LIB_DIRS := $(if $(BREW),$(wildcard $(foreach f,gettext libpng lame,$(shell $(BREW) --prefix $(f) 2>/dev/null)/lib)))
-CGO_LDFLAGS_MEDIA = -lstdc++ $(foreach d,$(BREW_LIB_DIRS),-L$(d)) $(if $(filter darwin,$(OS)),-Wl,-no_warn_duplicate_libraries)
+CGO_LDFLAGS_MEDIA = -lstdc++ $(foreach d,$(BREW_LIB_DIRS),-L$(d)) $(if $(filter darwin,$(OS)),-Wl$(comma)-no_warn_duplicate_libraries)
 CGO_ENV = PKG_CONFIG_PATH="$(abspath $(GO_MEDIA_PREFIX))/lib/pkgconfig" CGO_CFLAGS_ALLOW="-Xpreprocessor|-(W|D).*" CGO_LDFLAGS_ALLOW="-Xpreprocessor|-(W|D).*" CGO_LDFLAGS="$(strip $(CGO_LDFLAGS) $(CGO_LDFLAGS_MEDIA))"
 
 # Download and unpack the archive of go-media's libraries, for the version in

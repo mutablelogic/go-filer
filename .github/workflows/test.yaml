@@ -37,6 +37,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The libraries which go-media's link with, on Linux, which its
+      # etc/docker/packages.sh lists, of the LGPL build
+      - name: Install go-media's dependencies
+        run: sudo apt-get -y update && sudo apt-get -y install --no-install-recommends pkg-config libde265-dev libaom-dev libdav1d-dev libxml2-dev liblzma-dev zlib1g-dev libssl-dev libzstd-dev
+
       - name: Vet
         run: make vet
 
@@ -101,8 +106,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # make, and gcc and pkg-config for cgo and the race detector, and curl
-      # and unzip, which download go-media's libraries. Keeps the Go
+      # make, and gcc and pkg-config for cgo and the race detector, curl and
+      # unzip, which download go-media's libraries, and the libraries they
+      # link with, as go-media's own tests install. Keeps the Go
       # toolchain, which is installed outside MSYS2, visible in the msys2
       # shell.
       - name: Setup MSYS2 (Windows)
@@ -112,7 +118,13 @@ jobs:
           msystem: MINGW64
           update: false
           path-type: inherit
-          install: make curl unzip mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf
+          install: make curl unzip mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf mingw-w64-x86_64-zlib mingw-w64-x86_64-libde265 mingw-w64-x86_64-aom mingw-w64-x86_64-dav1d
+
+      # The libraries which go-media's link with, on Linux, which its
+      # etc/docker/packages.sh lists, of the LGPL build
+      - name: Install go-media's dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get -y update && sudo apt-get -y install --no-install-recommends pkg-config libde265-dev libaom-dev libdav1d-dev libxml2-dev liblzma-dev zlib1g-dev libssl-dev libzstd-dev
 
       # go-media's libraries, of its release, which link Homebrew's packages
       # on macOS, which its Brewfile lists
