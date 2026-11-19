@@ -45,6 +45,8 @@ Get the volume `name`, as `GET /volume` lists it. Returns 404 if the volume isn'
 
 Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept, and so are its credentials' placeholders. A backend is created with the options, which checks them, so the volume isn't changed when they're invalid. The volume is stored, and the server mounts it again, shortly after this returns.
 
+With `enabled=false` in the query, the volume is disabled, so the server unmounts it, keeping it, and its index, and with `enabled=true` it's enabled, so it's mounted. Without it, whether it's enabled is kept.
+
 Without any options, `{}`, the volume is opened again, as it is. That brings an offline volume back, such as one whose user signed in again. Returns 401, with how to sign in as its `detail`, as `POST /volume` does, when its user needs to sign in, such as when their sign-in is revoked.
 
 ### DELETE /volume/{name}

@@ -248,7 +248,7 @@ func TestUpdateVolume(t *testing.T) {
 
 	// An option is set, and one is removed, so it's the default, and the
 	// others are kept
-	volume, err := client.UpdateVolume(ctx, "media", schema.VolumePatch{"skip": json.RawMessage(`["\\.tmp$"]`), "readonly": json.RawMessage(`null`)})
+	volume, err := client.UpdateVolume(ctx, "media", schema.VolumePatch{"skip": json.RawMessage(`["\\.tmp$"]`), "readonly": json.RawMessage(`null`)}, nil)
 	require.NoError(t, err)
 	u, err = url.Parse(volume.URL)
 	require.NoError(t, err)
@@ -257,9 +257,9 @@ func TestUpdateVolume(t *testing.T) {
 	assert.Equal(t, want, u.Query())
 
 	// Errors are returned with their status
-	_, err = client.UpdateVolume(ctx, "media", schema.VolumePatch{"unknown": json.RawMessage(`1`)})
+	_, err = client.UpdateVolume(ctx, "media", schema.VolumePatch{"unknown": json.RawMessage(`1`)}, nil)
 	assert.Equal(t, http.StatusBadRequest, status(err), err)
-	_, err = client.UpdateVolume(ctx, "missing", schema.VolumePatch{"readonly": json.RawMessage(`true`)})
+	_, err = client.UpdateVolume(ctx, "missing", schema.VolumePatch{"readonly": json.RawMessage(`true`)}, nil)
 	assert.Equal(t, http.StatusNotFound, status(err), err)
 }
 

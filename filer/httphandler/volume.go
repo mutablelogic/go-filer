@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
@@ -16,6 +17,14 @@ import (
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
 	openapi "github.com/mutablelogic/go-server/pkg/openapi"
 )
+
+///////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// volumeUpdateQuery is the query for updating a volume
+type volumeUpdateQuery struct {
+	Enabled *bool `json:"enabled,omitempty" help:"Enable the volume, so it's mounted, or disable it, so it's unmounted, which is kept as it is without it"`
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
@@ -55,7 +64,9 @@ func volumeGetDeleteHandlers(registry *filer.Registry, router *httprouter.Router
 				httpresponse.Error(w, err)
 			} else if values, err := patch.Values(); err != nil {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%v", err), name)
-			} else if volume, err := updateVolume(r, registry, name, values); err != nil {
+			} else if enabled, err := enabledOf(r); err != nil {
+				httpresponse.Error(w, err, name)
+			} else if volume, err := updateVolume(r, registry, name, values, enabled); err != nil {
 				// A backend whose user needs to sign in again is 401, with
 				// how they sign in
 				if signIn := authclient.SignInOf(err); signIn != nil {
@@ -68,6 +79,7 @@ func volumeGetDeleteHandlers(registry *filer.Registry, router *httprouter.Router
 			}
 		}, func(op httprequest.PathOperation) {
 			op.Summary("Update Volume")
+			op.Query(jsonschema.MustFor[volumeUpdateQuery]())
 			op.Description(documentation.Section(3, "PATCH /volume/{name}").Body)
 			op.RequestBody(jsonschema.MustFor[schema.VolumePatch]())
 			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Volume](), "Updated volume, with the URL of its backend")
@@ -144,9 +156,22 @@ func volumeListHandlers(registry *filer.Registry, router *httprouter.Router, doc
 	})
 }
 
+// enabledOf returns the enabled query parameter, which is true or false, or
+// nil when there's none
+func enabledOf(r *http.Request) (*bool, error) {
+	if !r.URL.Query().Has("enabled") {
+		return nil, nil
+	}
+	enabled, err := strconv.ParseBool(r.URL.Query().Get("enabled"))
+	if err != nil {
+		return nil, httpresponse.ErrBadRequest.Withf("invalid enabled: %q", r.URL.Query().Get("enabled"))
+	}
+	return &enabled, nil
+}
+
 // updateVolume patches the options of a stored volume's URL, and updates it,
-// keeping whether it's enabled
-func updateVolume(r *http.Request, registry *filer.Registry, name string, patch url.Values) (*schema.Volume, error) {
+// and whether it's enabled, when it isn't nil, or else keeps it
+func updateVolume(r *http.Request, registry *filer.Registry, name string, patch url.Values, enabled *bool) (*schema.Volume, error) {
 	volume, err := registry.GetVolume(r.Context(), name)
 	if err != nil {
 		return nil, err
@@ -156,6 +181,10 @@ func updateVolume(r *http.Request, registry *filer.Registry, name string, patch 
 		return nil, err
 	}
 	// It's enabled when it's stored enabled, which it is when it's offline,
-	// which is Enabled false, with why
-	return registry.UpdateVolume(r.Context(), schema.VolumeMeta{Name: name, URL: u, Enabled: volume.Enabled || volume.Error != ""})
+	// which is Enabled false, with why, unless it's changed
+	meta := schema.VolumeMeta{Name: name, URL: u, Enabled: volume.Enabled || volume.Error != ""}
+	if enabled != nil {
+		meta.Enabled = *enabled
+	}
+	return registry.UpdateVolume(r.Context(), meta)
 }

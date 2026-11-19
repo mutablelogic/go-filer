@@ -47,7 +47,7 @@ const (
 type VolumeMeta struct {
 	Name    string `json:"name" help:"Volume name"`
 	URL     string `json:"url" help:"URL of the volume's backend, with each of its options, defaults too, such as index, but without secrets"`
-	Enabled bool   `json:"enabled,omitempty" help:"Whether the volume is mounted, when the server starts"`
+	Enabled bool   `json:"enabled" help:"Whether the volume is mounted, when the server starts"`
 }
 
 // VolumeCreateRequest is a volume to create, which is enabled, unless it
