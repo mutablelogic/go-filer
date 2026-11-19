@@ -21,7 +21,7 @@ func Test_Registry_Metrics(t *testing.T) {
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer provider.Shutdown(context.Background())
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
+	r, err := New(context.Background(), WithMeter(provider.Meter("test")), WithWorker("worker-1"), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -31,7 +31,7 @@ func Test_Registry_Metrics(t *testing.T) {
 	received := map[string]int64{}
 	for _, volume := range []string{"media", "photos"} {
 		u := fileURL(t, dir, volume)
-		_, err := r.Add(context.Background(), volume, u)
+		_, err := add(t, r, volume, u)
 		require.NoError(t, err)
 		waitFor(t, events, filepath.FromSlash(u.Path), func(event schema.Event) bool {
 			received[event.Name+"/"+event.EventType.String()]++
@@ -75,7 +75,7 @@ func Test_Registry_Metrics(t *testing.T) {
 
 func Test_Registry_NoMetrics(t *testing.T) {
 	// Without a meter, there are no metrics, which aren't counted
-	r, err := New(context.Background())
+	r, err := New(context.Background(), WithStore(newStore(t)))
 	require.NoError(t, err)
 	defer r.close()
 	assert.Nil(t, r.metrics)
@@ -87,14 +87,14 @@ func Test_Registry_Worker(t *testing.T) {
 	// empty
 	hostname, err := os.Hostname()
 	require.NoError(t, err)
-	r, err := New(context.Background())
+	r, err := New(context.Background(), WithStore(newStore(t)))
 	require.NoError(t, err)
 	defer r.close()
 	assert.Equal(t, hostname, r.worker)
-	r, err = New(context.Background(), WithWorker(" worker-2 "))
+	r, err = New(context.Background(), WithWorker(" worker-2 "), WithStore(newStore(t)))
 	require.NoError(t, err)
 	defer r.close()
 	assert.Equal(t, "worker-2", r.worker)
-	_, err = New(context.Background(), WithWorker(" "))
+	_, err = New(context.Background(), WithWorker(" "), WithStore(newStore(t)))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }

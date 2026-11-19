@@ -328,10 +328,10 @@ func (w *trackingWriter) Unwrap() http.ResponseWriter {
 }
 
 // readonly returns true when the volume is read-only, so its objects can't
-// be uploaded or deleted, or it isn't mounted
+// be uploaded or deleted, or it isn't enabled, or mounted
 func readonly(registry *filer.Registry, name string) bool {
-	volume, err := registry.Volume(name)
-	if err != nil {
+	volume, err := registry.GetVolume(context.Background(), name)
+	if err != nil || !volume.Enabled {
 		return true
 	}
 	readonly, err := volume.Readonly()

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,9 @@ import (
 	filer "github.com/mutablelogic/go-filer/filer"
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -32,7 +35,7 @@ import (
 func newServer(t *testing.T, opts ...filer.Opt) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
-	registry, err := filer.New(context.Background(), opts...)
+	registry, err := filer.New(context.Background(), append([]filer.Opt{filer.WithStore(newStore(t))}, opts...)...)
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	running := make(chan error, 1)
@@ -41,8 +44,7 @@ func newServer(t *testing.T, opts ...filer.Opt) (*httptest.Server, string) {
 		cancel()
 		<-running
 	})
-	_, err = registry.Add(context.Background(), "media", &url.URL{Scheme: "file", Host: "media", Path: filepath.ToSlash(dir)})
-	require.NoError(t, err)
+	mount(t, registry, "media", &url.URL{Scheme: "file", Host: "media", Path: filepath.ToSlash(dir)})
 
 	mux := http.NewServeMux()
 	router, err := httprouter.NewRouter(context.Background(), mux, "/api", "", "test", "0.0.0")
@@ -51,6 +53,32 @@ func newServer(t *testing.T, opts ...filer.Opt) (*httptest.Server, string) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, dir
+}
+
+// newStore returns a store of a SQLite database in memory
+func newStore(t *testing.T) *sqlite.Store {
+	t.Helper()
+	s, err := sqlite.New(context.Background(), gosqlite.Memory)
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+// mount creates a volume, enabled, and waits for the registry to mount it
+func mount(t *testing.T, registry *filer.Registry, name string, u *url.URL) {
+	t.Helper()
+	_, err := registry.CreateVolume(context.Background(), schema.VolumeMeta{Name: name, URL: u.String(), Enabled: true})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return slices.Contains(registry.Keys(), name) }, 10*time.Second, time.Millisecond, "volume %q isn't mounted", name)
+}
+
+// readonly waits for the volume media to be mounted again, read-only, once
+// it's updated, which is once a file can't be written to it
+func readonly(t *testing.T, server *httptest.Server) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return put(t, server, "object/media/.readonly", strings.NewReader("x"), nil, nil) == http.StatusForbidden
+	}, 10*time.Second, 5*time.Millisecond, "the volume isn't mounted read-only")
 }
 
 // get requests the path, and decodes the response into v when it's 200
@@ -371,6 +399,7 @@ func TestObjectDelete(t *testing.T) {
 
 	// A volume which is read-only can't be deleted from
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": true}`, nil))
+	readonly(t, server)
 	assert.Equal(t, http.StatusForbidden, del(t, server, "object/media/keep/d.txt", nil))
 	assert.True(t, exists("keep/d.txt"))
 }
@@ -453,6 +482,7 @@ func TestObjectPut(t *testing.T) {
 
 	// A volume which is read-only can't be uploaded to
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": true}`, nil))
+	readonly(t, server)
 	assert.Equal(t, http.StatusForbidden, put(t, server, "object/media/h.txt", strings.NewReader("x"), nil, nil))
 }
 
@@ -544,6 +574,7 @@ func TestObjectUpload(t *testing.T) {
 	resp2.Body.Close()
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": true}`, nil))
+	readonly(t, server)
 	assert.Equal(t, http.StatusForbidden, upload(t, server, "object/media/music", [][2]string{{"e.mp3", "x"}}, nil))
 }
 

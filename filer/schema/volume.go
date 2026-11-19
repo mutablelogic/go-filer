@@ -50,6 +50,19 @@ type VolumeMeta struct {
 	Enabled bool   `json:"enabled,omitempty" help:"Whether the volume is mounted, when the server starts"`
 }
 
+// VolumeCreateRequest is a volume to create, which is enabled, unless it
+// says it isn't
+type VolumeCreateRequest struct {
+	Name    string `json:"name" help:"Volume name"`
+	URL     string `json:"url" help:"URL of the volume's backend, with its options"`
+	Enabled *bool  `json:"enabled,omitempty" help:"Whether the volume is mounted, which it is by default"`
+}
+
+// Meta returns what's stored of the volume to create
+func (r VolumeCreateRequest) Meta() VolumeMeta {
+	return VolumeMeta{Name: r.Name, URL: r.URL, Enabled: r.Enabled == nil || *r.Enabled}
+}
+
 // Volume is a volume which is registered, or stored
 type Volume struct {
 	VolumeMeta

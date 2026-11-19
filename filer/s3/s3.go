@@ -139,6 +139,13 @@ func (self *S3) URL() *url.URL {
 	return self.url(false)
 }
 
+// URLWithCredentials returns the URL of the bucket, with each of its options,
+// and its credentials, which are placeholders, so it can be created again
+// from it, such as from the store of volumes
+func (self *S3) URLWithCredentials() *url.URL {
+	return self.url(true)
+}
+
 // Clone returns a new filer of the bucket, with the options, including the
 // placeholders of the credentials, changed by the patch, which is checked as
 // New does, and stores credentials of the patch which aren't placeholders

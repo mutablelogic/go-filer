@@ -22,9 +22,11 @@ import (
 	httpclient "github.com/mutablelogic/go-filer/filer/httpclient"
 	httphandler "github.com/mutablelogic/go-filer/filer/httphandler"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -39,7 +41,10 @@ import (
 func newClient(t *testing.T) (*httpclient.Client, func() string) {
 	t.Helper()
 	base := t.TempDir()
-	registry, err := filer.New(context.Background(), filer.WithDebounce(0))
+	store, err := sqlite.New(context.Background(), gosqlite.Memory)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	registry, err := filer.New(context.Background(), filer.WithDebounce(0), filer.WithStore(store))
 	require.NoError(t, err)
 	// Run the registry, so the changes to its volumes are watched
 	ctx, cancel := context.WithCancel(context.Background())
@@ -65,6 +70,16 @@ func newClient(t *testing.T) (*httpclient.Client, func() string) {
 		require.NoError(t, err)
 		return dir
 	}
+}
+
+// mounted waits for the volume to be mounted, once it's created, which is
+// once its root can be read
+func mounted(t *testing.T, client *httpclient.Client, name string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, err := client.HeadObject(context.Background(), name, "/")
+		return err == nil
+	}, 10*time.Second, 5*time.Millisecond, "volume %q isn't mounted", name)
 }
 
 // fileURL returns the URL of a volume for the directory
@@ -123,6 +138,7 @@ func TestListObjects(t *testing.T) {
 	}
 	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 	keys := func(list *schema.ObjectList) []string {
 		result := []string{}
 		for _, obj := range list.Body {
@@ -176,6 +192,7 @@ func TestGetVolume(t *testing.T) {
 	ctx := context.Background()
 	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 
 	// The volume is returned as it was created
 	volume, err := client.GetVolume(ctx, "media")
@@ -192,6 +209,7 @@ func TestDeleteVolume(t *testing.T) {
 	ctx := context.Background()
 	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 
 	// The volume is deleted, and returned as it was created, and isn't
 	// listed
@@ -212,6 +230,7 @@ func TestUpdateVolume(t *testing.T) {
 	ctx := context.Background()
 	created, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", tempDir(), "readonly=true")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 	u, err := url.Parse(created.URL)
 	require.NoError(t, err)
 	want := u.Query()
@@ -241,6 +260,7 @@ func TestHeadObject(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "music", "a b.mp3"), []byte("abc"), 0o644))
 	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 
 	// A file, with a name which is escaped, a directory, and the root
 	object, err := client.HeadObject(ctx, "media", "/music/a b.mp3")
@@ -283,6 +303,7 @@ func TestGetObject(t *testing.T) {
 	require.NoError(t, os.Chtimes(filepath.Join(dir, "music", "a b.mp3"), modtime, modtime))
 	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 	key := func(path string) schema.GetObjectRequest {
 		return schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: path}}
 	}
@@ -332,6 +353,7 @@ func TestDeleteObjects(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "music", "sub", "c.txt"), []byte("c"), 0o644))
 	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 	req := func(path string, recursive bool) schema.DeleteObjectsRequest {
 		return schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: path}, Recursive: recursive}
 	}
@@ -364,6 +386,7 @@ func TestPutObject(t *testing.T) {
 	dir := tempDir()
 	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 	modtime := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	req := func(path, body string) schema.CreateObjectRequest {
 		return schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: path}, Body: strings.NewReader(body)}
@@ -412,6 +435,7 @@ func TestUploadObjects(t *testing.T) {
 	dir := tempDir()
 	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 	file := func(path, content string) httpclient.UploadFile {
 		return httpclient.UploadFile{Path: path, Open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(content)), nil }}
 	}
@@ -459,6 +483,7 @@ func TestUploadObjectsNames(t *testing.T) {
 	dir := tempDir()
 	_, err := client.CreateVolume(ctx, schema.Volume{Name: "media", URL: fileURL("media", dir, "")})
 	require.NoError(t, err)
+	mounted(t, client, "media")
 
 	// A name with characters which are quoted, or escaped, is the name
 	for _, name := range []string{"a\tb.txt", `say "hi".txt`, "naïve café.txt", `back\slash/x.txt`} {
