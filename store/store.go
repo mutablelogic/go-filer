@@ -84,15 +84,18 @@ type ObjectStore interface {
 // the same namespace and key
 type MetadataStore interface {
 	// SetMetadata replaces the metadata of the object of the volume of the key,
-	// of the source, which is a task's kind, such as metadata, or returns
-	// ErrNotFound when the object isn't indexed. When of isn't nil, it's of
-	// the version of the object which the task read, its attributes, so a
-	// task which is superseded, as the object changed since, returns
-	// ErrPreconditionFailed, rather than replacing what a later one found.
-	SetMetadata(ctx context.Context, volume, key, source string, of *schema.ObjectAttr, meta []schema.Meta) error
+	// of the source, which is a task's kind, such as metadata, and the
+	// shapes of where it is, of the source, or returns ErrNotFound when the
+	// object isn't indexed, or ErrBadParameter when a shape isn't valid. A
+	// shape which is the same as another is stored once. When of isn't nil,
+	// it's of the version of the object which the task read, its
+	// attributes, so a task which is superseded, as the object changed
+	// since, returns ErrPreconditionFailed, rather than replacing what a
+	// later one found.
+	SetMetadata(ctx context.Context, volume, key, source string, of *schema.ObjectAttr, meta []schema.Meta, geo []schema.Geometry) error
 
 	// DeleteMetadata removes the metadata of the source, a task's kind, of
-	// every object of the volume, and the state of its task: its work, and
+	// every object of the volume, and its shapes, and the state of its task: its work, and
 	// the revisions it was done of, so it's done of every file again, when
 	// it's done again, such as when a volume isn't enriched any more
 	DeleteMetadata(ctx context.Context, volume, source string) error

@@ -58,6 +58,7 @@ type Object struct {
 	ObjectKey
 	ObjectMeta
 	ObjectAttr
+	Geo []Geometry `json:"geo,omitempty" readonly:"" help:"Where it is, such as where a photo was taken, of the shapes which its index found of it, of GeoJSON"`
 }
 
 // Create an object in the filesystem

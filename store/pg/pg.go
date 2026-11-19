@@ -136,7 +136,7 @@ func (self *Store) PutObject(context.Context, string, ...*schema.Object) error {
 	return errNotImplemented
 }
 
-func (self *Store) SetMetadata(context.Context, string, string, string, *schema.ObjectAttr, []schema.Meta) error {
+func (self *Store) SetMetadata(context.Context, string, string, string, *schema.ObjectAttr, []schema.Meta, []schema.Geometry) error {
 	return errNotImplemented
 }
 
