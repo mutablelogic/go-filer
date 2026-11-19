@@ -647,14 +647,16 @@ func Test_GetFileUnwatched(t *testing.T) {
 	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
 
 	// A file of a volume which is polled, rather than watched, is the
-	// index's too, as of its last scan
+	// index's too, as of its last scan, between its scans, while none is
+	// queued
 	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(50*time.Millisecond), indexer.WithRescanMinInterval(0), indexer.WithDebounce(0))
 	require.NoError(t, err)
 	run(t, i)
 	files(t, s, "/a/y.txt", "/x.txt")
-	n, object := gets(t, i, &c.counting, x)
-	assert.Zero(t, n, "it's the index's")
-	assert.Equal(t, int64(len("x.txt")), *object.Size)
+	require.Eventually(t, func() bool {
+		n, object := gets(t, i, &c.counting, x)
+		return n == 0 && *object.Size == int64(len("x.txt"))
+	}, 10*time.Second, time.Millisecond, "it's the index's")
 
 	// One which changed is the index's once it's scanned again
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("longer"), 0o644))
