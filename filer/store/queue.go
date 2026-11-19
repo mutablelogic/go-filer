@@ -20,8 +20,11 @@ type QueueStore interface {
 	// which is pushed again and again isn't put off, and an index of a key,
 	// or a rescan, beneath a rescan of a folder which is queued isn't, as
 	// the rescan does it, and a rescan of a folder replaces the index and
-	// rescan work beneath it. Returns ErrNotFound when the volume isn't
-	// stored.
+	// rescan work beneath it. A rescan of the root is a catch-up, of changes
+	// which can have been missed, which doesn't hold up reads (see Pending),
+	// so it doesn't replace work beneath it, nor is work of it, as the index
+	// of a change, and a rescan of a folder, which can have absorbed one, do.
+	// Returns ErrNotFound when the volume isn't stored.
 	Push(ctx context.Context, volume string, work ...Work) error
 
 	// Claim leases, until the lease has passed, the work of the volume, of the
@@ -39,7 +42,9 @@ type QueueStore interface {
 
 	// Pending returns true when the key has work queued, or claimed, which
 	// would change its index: an index, or a rescan, of it, or of a folder
-	// above it, so the index of it can be out of date
+	// above it, so the index of it can be out of date, but not a rescan of
+	// the root, which is a catch-up, which the index is served while it's
+	// done
 	Pending(ctx context.Context, volume, key string) (bool, error)
 
 	// PendingBeneath returns true when the folder's key has work queued, or

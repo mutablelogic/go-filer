@@ -617,11 +617,30 @@ func testQueueCoalesce(t *testing.T, s store.Store) {
 	_, paths = claimed(t, s, all, 10)
 	assert.Empty(t, paths)
 
-	// A rescan of the root replaces all the work
+	// A rescan of the root, which is a catch-up, doesn't replace the work
+	// beneath it, nor is work of it, as the index of a change, and a rescan
+	// of a folder, which can have absorbed one, hold up reads, and a
+	// catch-up doesn't
 	require.NoError(t, s.Push(ctx, "media", index("/x"), rescan("/y/")))
 	require.NoError(t, s.Push(ctx, "media", rescan("/")))
-	work, paths := claimed(t, s, all, 10)
-	assert.Equal(t, []string{"rescan /"}, paths)
+	require.NoError(t, s.Push(ctx, "media", index("/z"), rescan("/w/")))
+	_, paths = claimed(t, s, []store.Kind{store.KindIndex}, 10)
+	assert.ElementsMatch(t, []string{"index /x", "index /z"}, paths)
+	var work []store.Work
+	rescans := []string{}
+	for {
+		claim, paths := claimed(t, s, []store.Kind{store.KindRescan}, 10)
+		if len(paths) == 0 {
+			break
+		}
+		rescans = append(rescans, paths...)
+		if paths[0] == "rescan /" {
+			work = claim
+		} else {
+			require.NoError(t, s.Done(ctx, "media", claim...))
+		}
+	}
+	assert.ElementsMatch(t, []string{"rescan /y/", "rescan /", "rescan /w/"}, rescans)
 
 	// Work beneath a rescan which is claimed is queued, as the rescan can
 	// have passed it, and isn't done with it
@@ -742,8 +761,12 @@ func testQueuePendingBeneath(t *testing.T, s store.Store) {
 	require.NoError(t, s.Push(ctx, "media", index("/a")))
 	assert.False(t, pending("/a/"), "of a file of its path")
 	done()
-	require.NoError(t, s.Push(ctx, "media", rescan("/")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/a/")))
 	assert.True(t, pending("/a/b/"), "of a rescan above it")
+	done()
+	require.NoError(t, s.Push(ctx, "media", rescan("/")))
+	assert.False(t, pending("/a/b/"), "but not of the root, which is a catch-up")
+	assert.False(t, pending("/"), "nor of the root's own")
 	done()
 	assert.False(t, pending("/"))
 
@@ -784,6 +807,28 @@ func testQueuePending(t *testing.T, s store.Store) {
 	require.NoError(t, s.Push(ctx, "media", index("/a/")))
 	assert.True(t, pending("/a/b.txt"), "of an index of a folder above it")
 	assert.False(t, pending("/"), "of the folder above the folder")
+	work, _ = claimed(t, s, all, 10)
+	require.NoError(t, s.Done(ctx, "media", work...))
+
+	// But not of a rescan of the root, which is a catch-up, which the index
+	// is served while it's done, while a change of it, while it's queued, is
+	require.NoError(t, s.Push(ctx, "media", rescan("/")))
+	assert.False(t, pending("/a/b.txt"), "of a catch-up")
+	require.NoError(t, s.Push(ctx, "media", index("/a/b.txt")))
+	assert.True(t, pending("/a/b.txt"), "of a change, while a catch-up is queued")
+	work, _ = claimed(t, s, all, 10)
+	require.NoError(t, s.Done(ctx, "media", work...))
+	for len(work) > 0 {
+		work, _ = claimed(t, s, all, 10)
+		require.NoError(t, s.Done(ctx, "media", work...))
+	}
+
+	// Nor is a change, which a rescan of its folder absorbed, forgotten, of a
+	// rescan of the root which is pushed after it
+	require.NoError(t, s.Push(ctx, "media", index("/a/b.txt")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/a/")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/")))
+	assert.True(t, pending("/a/b.txt"), "of the rescan of its folder")
 	_, err := s.Pending(ctx, "media", "a/b")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }

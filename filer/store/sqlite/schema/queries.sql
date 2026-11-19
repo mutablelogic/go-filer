@@ -74,16 +74,18 @@ DELETE FROM object
 WHERE volume = @volume AND (key = @key OR (@folder AND key > @lower AND key < @upper));
 
 -- queue.push_index
--- The index of a key, unless a rescan of it, or a folder above it, is
--- queued, and isn't claimed, as a rescan which is claimed can have passed
--- it, which is due at the earlier of the two, so work which is pushed again
--- and again isn't put off, or, when it's claimed, is claimed again, when
--- the push is due
+-- The index of a key, unless a rescan of it, or a folder above it, but the
+-- root, is queued, and isn't claimed, as a rescan which is claimed can have
+-- passed it, and a rescan of the root is a catch-up, of changes which can
+-- have been missed, which doesn't hold up reads, so the index of a change,
+-- which does, isn't of it, which is due at the earlier of the two, so work
+-- which is pushed again and again isn't put off, or, when it's claimed, is
+-- claimed again, when the push is due
 INSERT INTO object_state (volume, key, kind, after)
 SELECT @volume, @key, @kind, @after
 WHERE NOT EXISTS (
   SELECT 1 FROM object_state
-  WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors))
+  WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors)) AND key <> '/'
     AND (leased_until IS NULL OR julianday(leased_until) <= julianday('now'))
 )
 ON CONFLICT (volume, key, kind) DO UPDATE SET
@@ -96,19 +98,24 @@ ON CONFLICT (volume, key, kind) DO UPDATE SET
 
 -- queue.push_rescan
 -- The rescan of a folder, which replaces the index and rescan work beneath
--- it, unless a rescan of a folder above it is queued, and isn't claimed
+-- it, unless a rescan of a folder above it, but the root, is queued, and
+-- isn't claimed. A rescan of the root is a catch-up, which doesn't hold up
+-- reads, so it doesn't replace work, nor is a rescan of a folder of it, as
+-- the index of a change, and a rescan of a folder, which can have absorbed
+-- one, do.
 DELETE FROM object_state
 WHERE volume = @volume AND kind IN ('index', 'rescan') AND (key > @lower AND key < @upper OR (key = @key AND kind = 'index'))
+AND @key <> '/'
 AND NOT EXISTS (
   SELECT 1 FROM object_state AS above
-  WHERE above.volume = @volume AND above.kind = 'rescan' AND above.key IN (SELECT value FROM json_each(@ancestors))
+  WHERE above.volume = @volume AND above.kind = 'rescan' AND above.key IN (SELECT value FROM json_each(@ancestors)) AND above.key <> '/'
     AND (above.leased_until IS NULL OR julianday(above.leased_until) <= julianday('now'))
 );
 INSERT INTO object_state (volume, key, kind, after)
 SELECT @volume, @key, @kind, @after
 WHERE NOT EXISTS (
   SELECT 1 FROM object_state
-  WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors))
+  WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors)) AND key <> '/'
     AND (leased_until IS NULL OR julianday(leased_until) <= julianday('now'))
 )
 ON CONFLICT (volume, key, kind) DO UPDATE SET
@@ -146,10 +153,14 @@ RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until;
 -- queue.pending
 -- Whether a key has work which would change its index: an index or a
 -- rescan of it, or of a folder above it, which can remove what's beneath
--- it, queued, or claimed, or, of a folder's listing, of a key beneath it
+-- it, queued, or claimed, or, of a folder's listing, of a key beneath it,
+-- but not a rescan of the root, which is a catch-up, of changes which can
+-- have been missed, such as while the server wasn't running, which the index
+-- is served while it's done, as it would be, had it not missed them
 SELECT EXISTS (
   SELECT 1 FROM object_state
   WHERE volume = @volume AND key IN (SELECT value FROM json_each(@ancestors)) AND kind IN ('index', 'rescan')
+    AND NOT (kind = 'rescan' AND key = '/')
 ) OR (@beneath AND EXISTS (
   SELECT 1 FROM object_state
   WHERE volume = @volume AND key > @lower AND key < @upper AND kind IN ('index', 'rescan')
