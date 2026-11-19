@@ -374,5 +374,5 @@ WHERE object.volume = @volume AND object.key >= @from AND object.key < @to;
 SELECT object.key FROM object_search
 JOIN object ON object.rowid = object_search.rowid
 WHERE object_search MATCH @match AND object.volume = @volume
-ORDER BY bm25(object_search, 10.0, 8.0, 5.0, 4.0, 3.0, 2.0), object.key
+ORDER BY bm25(object_search, 10.0, 8.0, 5.0, 4.0, 3.0, 4.0), object.key
 LIMIT @limit;
