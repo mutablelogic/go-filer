@@ -18,10 +18,14 @@ import (
 // which mounts those which are enabled. It's safe to use from more than one
 // goroutine.
 type VolumeStore interface {
-	// PutVolume stores a volume, or replaces its URL, and whether it's
-	// enabled, keeping its index, and returns it, with when it was created,
-	// and modified
-	PutVolume(ctx context.Context, volume schema.VolumeMeta) (*schema.Volume, error)
+	// CreateVolume stores a new volume, and returns it, with when it was
+	// created, or returns ErrConflict when a volume of its name is stored
+	CreateVolume(ctx context.Context, volume schema.VolumeMeta) (*schema.Volume, error)
+
+	// UpdateVolume replaces a stored volume's URL, and whether it's enabled,
+	// keeping its index, and returns it, or returns ErrNotFound when it
+	// isn't stored. It's only modified when they change.
+	UpdateVolume(ctx context.Context, volume schema.VolumeMeta) (*schema.Volume, error)
 
 	// GetVolume returns a volume, or ErrNotFound
 	GetVolume(ctx context.Context, name string) (*schema.Volume, error)
@@ -35,7 +39,7 @@ type VolumeStore interface {
 
 // Store is where volumes, and their indexes, are kept: the objects of
 // volumes, by their paths, and the state of each volume's index. A volume's
-// objects, and its state, are stored once it's been put. It's safe to use
+// objects, and its state, are stored once it's been created. It's safe to use
 // from more than one goroutine. Folders are indexed first, and their files
 // later, so an object is a folder, or a file.
 type Store interface {
@@ -46,7 +50,7 @@ type Store interface {
 	Get(ctx context.Context, volume, path string) (*schema.Object, error)
 
 	// Put stores the objects of the volume, replacing those at their paths,
-	// or returns ErrNotFound when the volume hasn't been put
+	// or returns ErrNotFound when the volume isn't stored
 	Put(ctx context.Context, volume string, objects ...*schema.Object) error
 
 	// Delete removes the object of the volume at the path, and every object
@@ -63,7 +67,7 @@ type Store interface {
 	State(ctx context.Context, volume string) (schema.IndexState, error)
 
 	// SetState stores the state of the volume's index, or returns
-	// ErrNotFound when the volume hasn't been put
+	// ErrNotFound when the volume isn't stored
 	SetState(ctx context.Context, volume string, state schema.IndexState) error
 }
 

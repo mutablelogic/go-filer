@@ -40,6 +40,12 @@ var (
 	// watchRetryMax
 	watchRetry    = time.Second
 	watchRetryMax = time.Minute
+
+	// syncInterval is how often Run syncs every volume with the store, as
+	// changes of other processes, such as another server of the same SQLite
+	// database, aren't published to its broadcaster, and reading the store
+	// can fail
+	syncInterval = time.Minute
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -127,6 +133,8 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 	// Watch the volumes, and send their changes, until it's stopped
 	ticker := time.NewTicker(rescanInterval)
 	defer ticker.Stop()
+	resync := time.NewTicker(syncInterval)
+	defer resync.Stop()
 	self.startWatches(watches, events, ended)
 	for {
 		select {
@@ -140,6 +148,8 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 			} else {
 				self.sync(change.Row, false)
 			}
+		case <-resync.C:
+			self.syncAll(ctx, logger)
 		case <-self.changed:
 			self.startWatches(watches, events, ended)
 		case event := <-events:

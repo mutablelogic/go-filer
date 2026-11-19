@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -57,9 +58,6 @@ type Registry struct {
 	syncs   syncs
 	workers sync.WaitGroup
 
-	// createMu is held while a volume is created, so it's created once
-	createMu sync.Mutex
-
 	// opener creates the backends which Run mounts, in place of openURL, in
 	// tests, which set it before it runs
 	opener func(ctx context.Context, name, volumeURL string) (gofiler.Filer, error)
@@ -94,10 +92,15 @@ type entry struct {
 	offline error
 
 	// forget is true when the volume's index is removed, once its backend
-	// is closed, and before its name is released, as it's deleted, or isn't
-	// indexed any more. It's only set with the registry locked, before it's
-	// closed.
+	// is closed, and before its name is released, as it isn't indexed any
+	// more, or its backend is another. It's only set with the registry
+	// locked, before it's closed.
 	forget bool
+
+	// created is when the stored volume which the backend was mounted from
+	// was created, so a volume which is deleted, and created again, of the
+	// same URL, is mounted again. It's only set before it's registered.
+	created time.Time
 }
 
 // entryState is how far a backend is added, or removed
@@ -261,10 +264,13 @@ func (self *Registry) Schemes() []string {
 }
 
 // forget removes a volume's index, and its state, from the registry's store,
-// when it isn't indexed any more
+// when it isn't indexed any more, or its backend is another, which doesn't
+// write the state when there's none
 func (self *Registry) forget(ctx context.Context, volume string) {
 	_ = self.store.Delete(ctx, volume, "/")
-	_ = self.store.SetState(ctx, volume, schema.IndexState{})
+	if state, err := self.store.State(ctx, volume); err == nil && state != (schema.IndexState{}) {
+		_ = self.store.SetState(ctx, volume, schema.IndexState{})
+	}
 }
 
 // With calls fn with the backend for the specified volume, or returns an error

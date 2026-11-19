@@ -22,20 +22,18 @@ import (
 // ErrConflict when the volume is stored already, and ErrBadParameter when its
 // name isn't an identifier, or its URL's, or the backend can't be created.
 func (self *Registry) CreateVolume(ctx context.Context, volume schema.VolumeMeta) (*schema.Volume, error) {
+	// The store creates it once, of the registries which create it at once,
+	// and checking it exists first saves validating a volume which does
+	if _, err := self.store.GetVolume(ctx, volume.Name); err == nil {
+		return nil, gofiler.ErrConflict.Withf("volume already exists: %q", volume.Name)
+	} else if !errors.Is(err, gofiler.ErrNotFound) {
+		return nil, err
+	}
 	meta, err := self.validate(ctx, volume)
 	if err != nil {
 		return nil, err
 	}
-
-	// It's created once, of the volumes which are created at once
-	self.createMu.Lock()
-	defer self.createMu.Unlock()
-	if _, err := self.store.GetVolume(ctx, meta.Name); err == nil {
-		return nil, gofiler.ErrConflict.Withf("volume already exists: %q", meta.Name)
-	} else if !errors.Is(err, gofiler.ErrNotFound) {
-		return nil, err
-	}
-	stored, err := self.store.PutVolume(ctx, meta)
+	stored, err := self.store.CreateVolume(ctx, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -46,20 +44,29 @@ func (self *Registry) CreateVolume(ctx context.Context, volume schema.VolumeMeta
 // UpdateVolume stores a volume's URL, and whether it's enabled, which Run
 // mounts again, or unmounts, and returns it, before it's mounted. Its
 // backend is created from its URL first, which checks it, as CreateVolume
-// does. A volume which is offline is opened again, even when it isn't
-// changed, such as once its user has signed in again. Returns ErrNotFound
-// when the volume isn't stored.
+// does. A volume whose backend is another, of its scheme, host or path,
+// doesn't keep its index. A volume which is offline is opened again, even
+// when it isn't changed, such as once its user has signed in again. Returns
+// ErrNotFound when the volume isn't stored, or is deleted meanwhile.
 func (self *Registry) UpdateVolume(ctx context.Context, volume schema.VolumeMeta) (*schema.Volume, error) {
-	if _, err := self.store.GetVolume(ctx, volume.Name); err != nil {
+	current, err := self.store.GetVolume(ctx, volume.Name)
+	if err != nil {
 		return nil, err
 	}
 	meta, err := self.validate(ctx, volume)
 	if err != nil {
 		return nil, err
 	}
-	stored, err := self.store.PutVolume(ctx, meta)
+	stored, err := self.store.UpdateVolume(ctx, meta)
 	if err != nil {
 		return nil, err
+	}
+
+	// The index of another backend is removed now, in case the volume isn't
+	// mounted, and once the backend which is mounted is closed, in case its
+	// indexer writes to it meanwhile
+	if !sameBackend(current.URL, stored.URL) {
+		self.forget(ctx, stored.Name)
 	}
 	self.sync(meta.Name, true)
 	return self.view(stored), nil
@@ -123,6 +130,29 @@ func PatchURL(volumeURL string, patch url.Values) (string, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
+
+// sameBackend returns true when the URLs are of the same backend, of their
+// scheme, host and path, whatever their options, so its index is kept
+func sameBackend(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return ua.Scheme == ub.Scheme && ua.Host == ub.Host && ua.Path == ub.Path
+}
+
+// indexOf returns what's indexed of a volume, of its stored URL
+func indexOf(volumeURL string) indexer.Mode {
+	u, err := url.Parse(volumeURL)
+	if err != nil {
+		return indexer.ModeNone
+	}
+	if mode, err := indexer.ParseMode(u.Query().Get(indexer.IndexParam)); err == nil {
+		return mode
+	}
+	return indexer.ModeNone
+}
 
 // validate returns what's stored of a volume, once its backend is created
 // from its URL, which checks it, and closed: its URL is the backend's, with

@@ -11,6 +11,7 @@ import (
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	indexer "github.com/mutablelogic/go-filer/filer/indexer"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -136,25 +137,31 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 	if e != nil && e.state != stateReady {
 		e = nil
 	}
-	current, offline := "", error(nil)
+	current, offline, created := "", error(nil), time.Time{}
 	if e != nil {
-		current, offline = self.metaOf(name, e.Filer).URL, e.offline
+		current, offline, created = self.metaOf(name, e.Filer).URL, e.offline, e.created
 	}
 	self.RUnlock()
 
-	// A volume which isn't stored, or enabled, is unmounted
+	// A volume which isn't stored, or enabled, is unmounted, and one which
+	// is stored, but isn't indexed, doesn't keep an index, once its indexer
+	// has stopped
 	if stored == nil || !stored.Enabled {
 		self.setFailed(name, nil)
 		if e != nil {
 			self.unmount(name, e)
 			logger.InfoContext(ctx, "unmounted volume", "volume", name)
 		}
+		if stored != nil && indexOf(stored.URL) == indexer.ModeNone {
+			self.forget(ctx, name)
+		}
 		return
 	}
 
-	// One which is mounted as it's stored is left as it is, unless it's
-	// offline, and forced
-	if e != nil && current == stored.URL && (offline == nil || !force) {
+	// One which is mounted as it's stored, of the same stored volume, rather
+	// than one which was deleted, and created again, is left as it is, unless
+	// it's offline, and forced
+	if e != nil && current == stored.URL && created.Equal(stored.Created) && (offline == nil || !force) {
 		return
 	}
 
@@ -171,7 +178,7 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 		self.retry(ctx, logger, name, err)
 		return
 	}
-	if err := self.mount(name, e, b); err != nil {
+	if err := self.mount(ctx, name, e, b, stored); err != nil {
 		return
 	}
 	self.setFailed(name, nil)
@@ -208,12 +215,13 @@ func (self *Registry) openURL(ctx context.Context, name, volumeURL string) (gofi
 	return b, nil
 }
 
-// mount registers the backend of the volume, in place of the entry, which is
-// mounted, or nil, which is closed first, keeping the volume's name. A
-// volume which isn't indexed any more doesn't keep its index. Returns
+// mount registers the backend of the stored volume, in place of the entry,
+// which is mounted, or nil, which is closed first, keeping the volume's
+// name. A volume which isn't indexed, or whose backend is another, doesn't
+// keep its index. Returns
 // ErrServiceUnavailable, closing the backend, when the registry is closed.
-func (self *Registry) mount(name string, old *entry, b gofiler.Filer) error {
-	pending := &entry{closed: make(chan struct{})}
+func (self *Registry) mount(ctx context.Context, name string, old *entry, b gofiler.Filer, stored *schema.Volume) error {
+	pending := &entry{closed: make(chan struct{}), created: stored.Created}
 	self.Lock()
 	for {
 		// A volume which is being closed keeps its name until it's closed,
@@ -229,10 +237,12 @@ func (self *Registry) mount(name string, old *entry, b gofiler.Filer) error {
 		}
 		break
 	}
+	// The index of the backend which is mounted is removed, once it's
+	// closed, when it isn't indexed any more, or the backend is another
+	_, indexed := b.(*indexer.Indexer)
 	if old != nil && self.backend[name] == old && old.state == stateReady {
 		_, wasIndexed := old.Filer.(*indexer.Indexer)
-		_, indexed := b.(*indexer.Indexer)
-		old.forget = wasIndexed && !indexed
+		old.forget = wasIndexed && (!indexed || !sameBackend(self.metaOf(name, old.Filer).URL, stored.URL))
 		self.startClose(old, name)
 	} else {
 		old = nil
@@ -241,6 +251,10 @@ func (self *Registry) mount(name string, old *entry, b gofiler.Filer) error {
 	self.Unlock()
 	if old != nil {
 		<-old.closed
+	} else if !indexed {
+		// A volume which isn't indexed doesn't keep an index, of when it was
+		// indexed, before it was unmounted
+		self.forget(ctx, name)
 	}
 	if _, err := self.register(pending, name, b); err != nil {
 		self.unreserve(pending, name)

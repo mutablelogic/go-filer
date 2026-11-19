@@ -224,12 +224,13 @@ func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
 // signs in with Google, in the browser, and creates it again, and prints it
 func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInClient *credentialclient.Client, noBrowser bool) error {
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
-		created, err := client.CreateVolume(ctx, volume)
+		req := schema.VolumeCreateRequest{Name: volume.Name, URL: volume.URL}
+		created, err := client.CreateVolume(ctx, req)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
 			if err := signInWithBrowser(ctx, signInClient, *signIn, noBrowser); err != nil {
 				return err
 			}
-			created, err = client.CreateVolume(ctx, volume)
+			created, err = client.CreateVolume(ctx, req)
 		}
 		if err != nil {
 			return err
@@ -242,7 +243,7 @@ func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInCli
 // createVolume creates the volume, and prints it
 func createVolume(ctx server.Cmd, span string, volume schema.Volume) error {
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
-		volume, err := client.CreateVolume(ctx, volume)
+		volume, err := client.CreateVolume(ctx, schema.VolumeCreateRequest{Name: volume.Name, URL: volume.URL})
 		if err != nil {
 			return err
 		}

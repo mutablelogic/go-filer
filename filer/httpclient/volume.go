@@ -70,9 +70,9 @@ func (c *Client) DeleteVolume(ctx context.Context, name string) (*schema.Volume,
 }
 
 // CreateVolume creates a volume with a name, from the URL of its backend,
-// and returns it, with the URL of its backend, which has each of its
-// options, defaults too
-func (c *Client) CreateVolume(ctx context.Context, volume schema.Volume) (*schema.Volume, error) {
+// which is enabled, unless its Enabled is false, and returns it, with the
+// URL of its backend, which has each of its options, defaults too
+func (c *Client) CreateVolume(ctx context.Context, volume schema.VolumeCreateRequest) (*schema.Volume, error) {
 	req, err := client.NewJSONRequest(volume)
 	if err != nil {
 		return nil, err

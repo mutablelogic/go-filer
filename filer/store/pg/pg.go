@@ -43,7 +43,11 @@ func New(conn pg.PoolConn, opts ...store.Opt) (*Store, error) {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-func (self *Store) PutVolume(context.Context, schema.VolumeMeta) (*schema.Volume, error) {
+func (self *Store) CreateVolume(context.Context, schema.VolumeMeta) (*schema.Volume, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) UpdateVolume(context.Context, schema.VolumeMeta) (*schema.Volume, error) {
 	return nil, errNotImplemented
 }
 

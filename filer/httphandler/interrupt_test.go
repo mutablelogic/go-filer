@@ -52,6 +52,10 @@ func removed(t *testing.T, registry *filer.Registry, dir string) {
 	t.Helper()
 	volume, err := registry.DeleteVolume(context.Background(), "media")
 	require.NoError(t, err)
+
+	// It's unmounted, which it is once it can't be used, and then a volume
+	// of its name is mounted once it's closed
+	require.Eventually(t, func() bool { return !slices.Contains(registry.Keys(), "media") }, 10*time.Second, time.Millisecond, "the volume isn't unmounted")
 	_, err = registry.CreateVolume(context.Background(), schema.VolumeMeta{Name: "media", URL: volume.URL, Enabled: true})
 	require.NoError(t, err)
 	assert.Eventually(t, func() bool { return slices.Contains(registry.Keys(), "media") }, 10*time.Second, time.Millisecond, "removing the volume waited for a client which stalled")

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -310,4 +311,108 @@ func Test_Registry_StoredVolumes(t *testing.T) {
 	require.NoError(t, del(t, r, "media"))
 	_, err = s.GetVolume(ctx, "media")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
+}
+
+func Test_Registry_RecreateVolume(t *testing.T) {
+	r, dir := newRegistry(t)
+	u := fileURL(t, dir, "media")
+	_, err := add(t, r, "media", u)
+	require.NoError(t, err)
+	r.RLock()
+	old := r.backend["media"]
+	r.RUnlock()
+
+	// A volume which is deleted, and created again, of the same URL, before
+	// it's synced, such as by another process, whose changes are one sync, is
+	// mounted again, as it's another stored volume
+	stored, err := r.GetVolume(context.Background(), "media")
+	require.NoError(t, err)
+	require.NoError(t, r.store.DeleteVolume(context.Background(), "media"))
+	time.Sleep(time.Millisecond)
+	_, err = r.store.CreateVolume(context.Background(), stored.VolumeMeta)
+	require.NoError(t, err)
+	r.sync("media", false)
+	_, err = mounted(t, r, "media", old)
+	require.NoError(t, err)
+	select {
+	case <-old.closed:
+	case <-time.After(mountTimeout):
+		t.Fatal("the old backend isn't closed")
+	}
+}
+
+func Test_Registry_AnotherBackend(t *testing.T) {
+	r, s, dir := newIndexedRegistry(t)
+	ctx := context.Background()
+	_, err := add(t, r, "media", indexedURL(t, dir, "media", "folders"))
+	require.NoError(t, err)
+	ready(t, r, "media")
+	require.Equal(t, []string{"/a", "/a/b"}, indexedFolders(t, r, "media"))
+
+	// A volume whose backend is another, of its path, doesn't keep the old
+	// backend's index, which is scanned again
+	other := fileURL(t, dir, "media")
+	require.NoError(t, os.MkdirAll(filepath.Join(filepath.FromSlash(other.Path), "c"), 0o755))
+	other.RawQuery = url.Values{indexer.IndexParam: {"folders"}}.Encode()
+	r.RLock()
+	old := r.backend["media"]
+	r.RUnlock()
+	_, err = r.UpdateVolume(ctx, schema.VolumeMeta{Name: "media", URL: other.String(), Enabled: true})
+	require.NoError(t, err)
+	_, err = mounted(t, r, "media", old)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		v, err := r.GetVolume(ctx, "media")
+		return err == nil && v.Index != nil && v.Index.Status == schema.IndexStatusReady && slices.Equal([]string{"/c"}, indexedFolders(t, r, "media"))
+	}, mountTimeout, 5*time.Millisecond, "the index is of the new backend")
+
+	// Nor does one which isn't mounted, when its backend is another
+	disabled := schema.VolumeMeta{Name: "media", URL: other.String(), Enabled: false}
+	_, err = r.UpdateVolume(ctx, disabled)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return get(r, "media") == nil }, mountTimeout, 5*time.Millisecond)
+	third := indexedURL(t, dir, "media", "folders")
+	disabled.URL = third.String()
+	_, err = r.UpdateVolume(ctx, disabled)
+	require.NoError(t, err)
+	_, err = s.Get(ctx, "media", "/c")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound, "the old backend's index is removed")
+}
+
+func Test_Registry_DisabledIndex(t *testing.T) {
+	r, s, dir := newIndexedRegistry(t)
+	ctx := context.Background()
+	u := indexedURL(t, dir, "media", "folders")
+	_, err := add(t, r, "media", u)
+	require.NoError(t, err)
+	ready(t, r, "media")
+
+	// A volume which is disabled, and isn't indexed any more, doesn't keep
+	// its index, once it's unmounted
+	u.RawQuery = url.Values{indexer.IndexParam: {"none"}}.Encode()
+	_, err = r.UpdateVolume(ctx, schema.VolumeMeta{Name: "media", URL: u.String(), Enabled: false})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		state, err := s.State(ctx, "media")
+		if err != nil || state.Status != schema.IndexStatusNone {
+			return false
+		}
+		_, err = s.Get(ctx, "media", "/a")
+		return errors.Is(err, gofiler.ErrNotFound) && get(r, "media") == nil
+	}, mountTimeout, 5*time.Millisecond, "its index is removed")
+}
+
+func Test_Registry_Resync(t *testing.T) {
+	interval := syncInterval
+	syncInterval = 20 * time.Millisecond
+	t.Cleanup(func() { syncInterval = interval })
+
+	// A volume which is deleted from the store, by another process, whose
+	// changes aren't published to the registry's broadcaster, is unmounted,
+	// once the registry syncs every volume
+	r, s, dir := newIndexedRegistry(t)
+	_, err := add(t, r, "media", indexedURL(t, dir, "media", ""))
+	require.NoError(t, err)
+	require.NoError(t, s.DeleteVolume(context.Background(), "media"))
+	require.Eventually(t, func() bool { return get(r, "media") == nil }, mountTimeout, 5*time.Millisecond, "it's unmounted")
 }

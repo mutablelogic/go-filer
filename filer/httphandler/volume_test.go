@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	// Packages
 	auth "github.com/mutablelogic/go-auth"
@@ -81,10 +82,10 @@ func TestVolumeCreate(t *testing.T) {
 		assert.Equal(t, volume, list.Body[1])
 	}
 
-	// Its objects can be listed
+	// Its objects can be listed, once it's mounted
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "song.mp3"), nil, 0o644))
 	var objects schema.ObjectList
-	require.Equal(t, http.StatusOK, get(t, server, "object/music", &objects))
+	require.Eventually(t, func() bool { return get(t, server, "object/music", &objects) == http.StatusOK }, 10*time.Second, 5*time.Millisecond, "the volume isn't mounted")
 	if assert.Len(t, objects.Body, 1) {
 		assert.Equal(t, "/song.mp3", objects.Body[0].Path)
 	}

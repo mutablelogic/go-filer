@@ -81,33 +81,46 @@ func (self *Store) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - VOLUMES
 
-// PutVolume stores a volume, or replaces its URL, and whether it's enabled,
-// keeping its index, and returns it
-func (self *Store) PutVolume(ctx context.Context, volume filer.VolumeMeta) (_ *filer.Volume, err error) {
-	ctx, end := self.span(ctx, "PutVolume", attribute.String("arg.volume", types.Stringify(volume)))
+// CreateVolume stores a new volume, and returns it, or returns ErrConflict
+// when a volume of its name is stored
+func (self *Store) CreateVolume(ctx context.Context, volume filer.VolumeMeta) (_ *filer.Volume, err error) {
+	ctx, end := self.span(ctx, "CreateVolume", attribute.String("arg.volume", types.Stringify(volume)))
 	defer func() { end(err) }()
 	if err := store.ValidateVolume(volume); err != nil {
 		return nil, err
 	}
-
-	// It's created, when it isn't stored, or updated, when it's modified, or
-	// else it's unchanged, and isn't published
-	var existing, result schema.VolumeList
-	if err := self.conn.Tx(ctx, func(conn sqlite.Conn) error {
-		if err := conn.Get(ctx, &existing, schema.VolumeName(volume.Name)); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
-			return err
-		}
-		if err := conn.Insert(ctx, nil, schema.VolumePut(volume)); err != nil {
-			return err
-		}
-		return conn.Get(ctx, &result, schema.VolumeName(volume.Name))
-	}); err != nil {
+	var result schema.VolumeList
+	if err := self.conn.Insert(ctx, &result, schema.VolumePut(volume)); errors.Is(err, sqlite.ErrConflict) {
+		return nil, gofiler.ErrConflict.Withf("volume already exists: %q", volume.Name)
+	} else if err != nil {
 		return nil, storeErr(err)
 	}
-	switch {
-	case len(existing) == 0:
-		self.opts.Publish(changes.ChangeCreate, result[0])
-	case !existing[0].Modified.Equal(result[0].Modified):
+	self.opts.Publish(changes.ChangeCreate, result[0])
+	return result[0], nil
+}
+
+// UpdateVolume replaces a stored volume's URL, and whether it's enabled,
+// keeping its index, and returns it, or returns ErrNotFound when it isn't
+// stored. It's only modified, and published, when they change.
+func (self *Store) UpdateVolume(ctx context.Context, volume filer.VolumeMeta) (_ *filer.Volume, err error) {
+	ctx, end := self.span(ctx, "UpdateVolume", attribute.String("arg.volume", types.Stringify(volume)))
+	defer func() { end(err) }()
+	if err := store.ValidateVolume(volume); err != nil {
+		return nil, err
+	}
+	var result schema.VolumeList
+	changed := true
+	if err := self.conn.Tx(ctx, func(conn sqlite.Conn) error {
+		err := conn.Update(ctx, &result, schema.VolumeName(volume.Name), schema.VolumePut(volume))
+		if !errors.Is(err, sqlite.ErrNotFound) {
+			return err
+		}
+		changed = false
+		return conn.Get(ctx, &result, schema.VolumeName(volume.Name))
+	}); err != nil {
+		return nil, volumeErr(err, volume.Name)
+	}
+	if changed {
 		self.opts.Publish(changes.ChangeUpdate, result[0])
 	}
 	return result[0], nil
@@ -234,7 +247,7 @@ func (self *Store) List(ctx context.Context, volume string, req store.ListReques
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// span starts a span of a method of the store, such as filer.store.sqlite.PutVolume,
+// span starts a span of a method of the store, such as filer.store.sqlite.CreateVolume,
 // with its arguments, when there's a tracer, and returns the function which
 // ends it, with the method's error. The spans of its queries are within it.
 func (self *Store) span(ctx context.Context, method string, attrs ...attribute.KeyValue) (context.Context, func(error)) {
