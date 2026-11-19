@@ -64,10 +64,10 @@ func testChanges(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) st
 		}
 	}
 
-	// A volume which is put is created, and then updated, when it changes,
-	// but not when it doesn't
+	// A volume is created, and then updated, when it changes, but not when
+	// it doesn't
 	volume := schema.VolumeMeta{Name: "media", URL: "file://media/tmp/media?index=folders", Enabled: true}
-	_, err = s.PutVolume(ctx, volume)
+	_, err = s.CreateVolume(ctx, volume)
 	require.NoError(t, err)
 	change := next()
 	require.NotNil(t, change)
@@ -77,21 +77,26 @@ func testChanges(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) st
 	var data schema.Volume
 	require.NoError(t, json.Unmarshal(change.Data, &data))
 	assert.Equal(t, volume, data.VolumeMeta)
-	_, err = s.PutVolume(ctx, volume)
+	_, err = s.UpdateVolume(ctx, volume)
 	require.NoError(t, err)
 	assert.Nil(t, next(), "it's unchanged")
 	volume.Enabled = false
-	_, err = s.PutVolume(ctx, volume)
+	_, err = s.UpdateVolume(ctx, volume)
 	require.NoError(t, err)
 	if change := next(); assert.NotNil(t, change) {
 		assert.Equal(t, changes.ChangeUpdate, change.Action)
 		assert.Equal(t, "media", change.Row)
 	}
 
-	// Its state isn't a change of it, and nor is a put which fails
+	// Its state isn't a change of it, and nor is a create, or an update,
+	// which fails
 	require.NoError(t, s.SetState(ctx, "media", schema.IndexState{Status: schema.IndexStatusReady}))
-	_, err = s.PutVolume(ctx, schema.VolumeMeta{Name: "not a name", URL: "file://x/tmp"})
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "not a name", URL: "file://x/tmp"})
 	assert.Error(t, err)
+	_, err = s.CreateVolume(ctx, volume)
+	assert.ErrorIs(t, err, gofiler.ErrConflict)
+	_, err = s.UpdateVolume(ctx, schema.VolumeMeta{Name: "missing", URL: "file://missing/tmp"})
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	assert.Nil(t, next())
 
 	// It's deleted, which is published, without its data, but not a volume
@@ -110,7 +115,7 @@ func testChanges(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) st
 func withVolumes(t *testing.T, s store.Store) store.Store {
 	t.Helper()
 	for _, name := range []string{"media", "photos"} {
-		_, err := s.PutVolume(context.Background(), schema.VolumeMeta{Name: name, URL: "file://" + name + "/tmp/" + name + "?index=folders", Enabled: true})
+		_, err := s.CreateVolume(context.Background(), schema.VolumeMeta{Name: name, URL: "file://" + name + "/tmp/" + name + "?index=folders", Enabled: true})
 		require.NoError(t, err)
 	}
 	return s
@@ -148,15 +153,21 @@ func testVolume(t *testing.T, s store.Store) {
 	require.NoError(t, err)
 	assert.Empty(t, volumes)
 
-	// A volume needs a name, which is an identifier, and a URL
+	// A volume needs a name, which is an identifier, and a URL, and one
+	// which isn't stored can't be updated
 	for _, bad := range []schema.VolumeMeta{{URL: "file://x/tmp"}, {Name: "not a name", URL: "file://x/tmp"}, {Name: "media"}} {
-		_, err := s.PutVolume(ctx, bad)
+		_, err := s.CreateVolume(ctx, bad)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
+		_, err = s.UpdateVolume(ctx, bad)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
 	}
+	_, err = s.UpdateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media"})
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 
-	// It's stored, as it's put, when it's created, and not modified
+	// It's stored, as it's created, and not modified, and can't be created
+	// again
 	put := schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?readonly=true", Enabled: true}
-	created, err := s.PutVolume(ctx, put)
+	created, err := s.CreateVolume(ctx, put)
 	require.NoError(t, err)
 	assert.Equal(t, put.Name, created.Name)
 	assert.Equal(t, put.URL, created.URL)
@@ -167,15 +178,20 @@ func testVolume(t *testing.T, s store.Store) {
 	require.NoError(t, err)
 	assert.Equal(t, created.URL, got.URL)
 	assert.True(t, created.Created.Equal(got.Created))
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/elsewhere"})
+	assert.ErrorIs(t, err, gofiler.ErrConflict)
+	got, err = s.GetVolume(ctx, "media")
+	require.NoError(t, err)
+	assert.Equal(t, put.URL, got.URL, "it isn't replaced")
 
-	// Putting it again, as it is, doesn't modify it, and changing it does,
-	// but keeps when it was created, and its state
+	// Updating it, as it is, doesn't modify it, and changing it does, but
+	// keeps when it was created, and its state
 	require.NoError(t, s.SetState(ctx, "media", schema.IndexState{Status: schema.IndexStatusReady}))
-	again, err := s.PutVolume(ctx, put)
+	again, err := s.UpdateVolume(ctx, put)
 	require.NoError(t, err)
 	assert.True(t, again.Modified.IsZero())
 	put.Enabled, put.URL = false, "file://media/mnt/media?index=folders"
-	updated, err := s.PutVolume(ctx, put)
+	updated, err := s.UpdateVolume(ctx, put)
 	require.NoError(t, err)
 	assert.False(t, updated.Enabled)
 	assert.Equal(t, put.URL, updated.URL)
@@ -186,7 +202,7 @@ func testVolume(t *testing.T, s store.Store) {
 	assert.Equal(t, schema.IndexStatusReady, state.Status, "its state is kept")
 
 	// The volumes are listed in the order of their names
-	_, err = s.PutVolume(ctx, schema.VolumeMeta{Name: "audio", URL: "file://audio/mnt/audio"})
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "audio", URL: "file://audio/mnt/audio"})
 	require.NoError(t, err)
 	volumes, err = s.ListVolumes(ctx)
 	require.NoError(t, err)
@@ -196,14 +212,17 @@ func testVolume(t *testing.T, s store.Store) {
 	}
 	assert.Equal(t, []string{"audio", "media"}, names)
 
-	// A volume is deleted, with its state, and put again, without it
+	// A volume is deleted, with its state, and can't be updated, but is
+	// created again, without it
 	require.NoError(t, s.DeleteVolume(ctx, "media"))
 	_, err = s.GetVolume(ctx, "media")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Equal(t, schema.IndexStatusNone, state.Status)
-	_, err = s.PutVolume(ctx, put)
+	_, err = s.UpdateVolume(ctx, put)
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
+	_, err = s.CreateVolume(ctx, put)
 	require.NoError(t, err)
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
@@ -213,15 +232,15 @@ func testVolume(t *testing.T, s store.Store) {
 func testIndex(t *testing.T, s store.Store) {
 	ctx := context.Background()
 
-	// A volume's objects are stored once it's been put, and kept when it's
-	// put again
+	// A volume's objects are stored once it's been created, and kept when
+	// it's updated
 	assert.ErrorIs(t, s.Put(ctx, "media", folder("/a")), gofiler.ErrNotFound)
 	volume := schema.VolumeMeta{Name: "media", URL: "file://media/tmp/media", Enabled: true}
-	_, err := s.PutVolume(ctx, volume)
+	_, err := s.CreateVolume(ctx, volume)
 	require.NoError(t, err)
 	require.NoError(t, s.Put(ctx, "media", folder("/a")))
 	volume.Enabled = false
-	_, err = s.PutVolume(ctx, volume)
+	_, err = s.UpdateVolume(ctx, volume)
 	require.NoError(t, err)
 	_, err = s.Get(ctx, "media", "/a")
 	assert.NoError(t, err, "its index is kept")
@@ -245,8 +264,8 @@ func testDeleteVolume(t *testing.T, s store.Store) {
 	_, err = s.Get(ctx, "photos", "/b")
 	assert.NoError(t, err)
 
-	// Put again, it has no index, or state
-	_, err = s.PutVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/tmp/media"})
+	// Created again, it has no index, or state
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/tmp/media"})
 	require.NoError(t, err)
 	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)

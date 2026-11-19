@@ -88,5 +88,5 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// when the registry, and its volumes, are closed
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*filer.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, filer.WithCredentials(credentials), filer.WithIndexerStore(s))
+	}, filer.WithCredentials(credentials), filer.WithStore(s))
 }

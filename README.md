@@ -142,15 +142,20 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **`State`** is the index's status (never indexed, scanning, or ready), how many folders the scan has indexed, when it started and finished, and why it last failed.
 * **Stores:** `store/sqlite`, in a file, or in memory with `sqlite.Memory`. Postgres comes later (#72). Every store passes `store/storetest`.
 
-In the registry, `filer.WithIndexerStore(store)` lets volumes be indexed, of their `index` option:
+## Registry
 
-* **`index=folders`** indexes a volume's folders, and `index=none`, or no option, doesn't. The registry takes it off the URL before the backend sees it.
-* **Running:** the registry runs each indexer until the volume is removed. Its watchers get the backend's changes through the indexer, so the backend is watched once.
-* **`Update`** turns it on, or off, which removes the index, and keeps it through other changes.
-* **`Del`** removes the volume, with its index, from the store.
-* **Stored volumes:** each volume is put in the store when it's added, or updated: its URL, with `index`, and `enabled`. Mounting the enabled volumes when the server starts comes next (#101).
+`filer.New(ctx, filer.WithStore(store), ...)` returns the registry of volumes. The store is required: it's the volumes, and their indexes.
+
+* **The store is the source of truth.** `CreateVolume`, `UpdateVolume` and `DeleteVolume` validate a volume, by creating its backend and closing it, and write the store. They return before it's mounted.
+* **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
+* **Creating and updating are atomic in the store:** a volume is created once, of the servers which create it at once, and an update of one which is deleted meanwhile is `ErrNotFound`.
+* **Enabled:** a volume which isn't enabled is stored, with its index, but isn't mounted. `filer volume-unmount NAME` disables one, `filer volume-mount NAME` enables it, and `filer volume-update NAME --[no-]enabled` does either, with its options. Over HTTP, it's `PATCH /volume/{name}?enabled=false`.
+* **`GetVolume` and `ListVolumes`** return the stored volumes, which includes those which aren't enabled. A volume which is enabled, but offline, or can't be mounted, is `enabled: false`, with its `error`.
+* **Offline volumes** are opened again, after a while, which doubles, up to a minute. One whose user needs to sign in again isn't, until it's updated, such as with `volume-update`, which opens it again even when nothing changed.
+* **URLs** have each of the backend's options, its `index` option, and the placeholders of its credentials, such as `access-key-id=${ID}`, so it's created again from the store, but not the credentials.
+* **`--volume`** creates a volume when the server starts, or updates the stored one of the same name.
+* **Indexing:** `index=folders` indexes a volume's folders, and `index=none`, or no option, doesn't. The registry runs each indexer while the volume is mounted. Turning it off removes the index, whether the volume is mounted or not, and so does pointing it at another backend, of its scheme, host or path. Deleting a volume deletes its index too.
 * **Volume changes:** with `store.WithBroadcaster`, a store publishes a change when a volume is created, updated or deleted, of schema `store`, table `volume`, whose row is the volume's name, and whose data is the volume. The `filer` server serves them on `/changes`, with its objects' changes.
-* **The volume** has `index`, with its mode, status, folders scanned, and last error, and its URL has `index=folders`, or `index=none`, when it isn't indexed.
 * **Listing folders:** `ListObjects` with `Type` `inode/directory`, `inode`, or `directory`, which is `GET /object/{name}?type=directory`, or `filer objects --type directory`, lists an indexed volume's folders from its index, once it's ready. A listing of a type is filtered for every volume.
 * **The `filer` server** keeps its store in `<name>-index.db`, in the user's cache folder, with `make INDEXER_BACKEND=sqlite`, the default.
 

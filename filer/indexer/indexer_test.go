@@ -368,7 +368,7 @@ func newStore(t *testing.T) *sqlite.Store {
 	s, err := sqlite.New(context.Background(), gosqlite.Memory)
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
-	_, err = s.PutVolume(context.Background(), schema.VolumeMeta{Name: "media", URL: "file://media/tmp?index=folders", Enabled: true})
+	_, err = s.CreateVolume(context.Background(), schema.VolumeMeta{Name: "media", URL: "file://media/tmp?index=folders", Enabled: true})
 	require.NoError(t, err)
 	return s
 }

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	// Packages
-	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	changes "github.com/mutablelogic/go-server/broadcaster/schema"
@@ -80,17 +79,32 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 		}
 	}
 
+	// The changes of the store's volumes, of the broadcaster, when there's
+	// one, which are those of other processes too, such as another server
+	// of the same store
+	var stored chan changes.Change
+	if self.broadcaster != nil {
+		stored = make(chan changes.Change, watchQueue)
+		if _, err := self.broadcaster.Watch(ctx, changes.ChangeFilter{Schema: schema.StoreChangeSchema, Table: schema.VolumeChangeTable}, stored); err != nil {
+			logger.WarnContext(ctx, "the store's changes can't be watched", "error", err.Error())
+		}
+	}
+
 	// The watches of the volumes, which send their changes, and when they
 	// end, to Run
 	watches := make(map[*entry]context.CancelFunc)
 	events, ended := make(chan schema.Event), make(chan watched)
 	defer func() {
-		// Close the registry, which cancels the calls to With, and the
-		// watches, at once, rather than once the watches end, as one can be
-		// slow to, such as while it reads a directory. It waits for them, so
-		// the watches are drained meanwhile, and stopped.
+		// Stop syncing the volumes, whose workers are cancelled, and close the
+		// registry, which cancels the calls to With, and the watches, at
+		// once, rather than once the watches end, as one can be slow to, such
+		// as while it reads a directory. It waits for them, so the watches
+		// are drained meanwhile, and stopped.
 		closed := make(chan error, 1)
-		go func() { closed <- self.close() }()
+		go func() {
+			self.stopSyncs()
+			closed <- self.close()
+		}()
 		for _, cancel := range watches {
 			cancel()
 		}
@@ -105,6 +119,28 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 		err = errors.Join(err, <-closed)
 	}()
 
+	// Mount the store's volumes, which are enabled, and sync them, and those
+	// which are asked to be, until it's stopped
+	self.startSyncs(ctx, logger)
+	relist := make(chan struct{}, 1)
+	var listRetry time.Duration
+	list := func() {
+		// The volumes of the store are listed again, after a while, which
+		// doubles, when they can't be, until they are
+		if err := self.syncAll(ctx, logger); err == nil {
+			listRetry = 0
+			return
+		}
+		listRetry = min(max(watchRetry, listRetry*2), watchRetryMax)
+		time.AfterFunc(listRetry, func() {
+			select {
+			case relist <- struct{}{}:
+			default:
+			}
+		})
+	}
+	list()
+
 	// Watch the volumes, and send their changes, until it's stopped
 	ticker := time.NewTicker(rescanInterval)
 	defer ticker.Stop()
@@ -113,6 +149,16 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 		select {
 		case <-ctx.Done():
 			return nil
+		case change := <-stored:
+			// A change of a volume, or of every volume, when it's a rescan, as
+			// changes were missed
+			if change.Row == "" {
+				list()
+			} else {
+				self.sync(change.Row, false)
+			}
+		case <-relist:
+			list()
 		case <-self.changed:
 			self.startWatches(watches, events, ended)
 		case event := <-events:
@@ -125,12 +171,8 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 			delete(watches, w.e)
 			if w.err != nil && !errors.Is(w.err, gofiler.ErrNotImplemented) && w.e.ctx.Err() == nil {
 				self.setOffline(w.e, w.err)
-				if authclient.SignInOf(w.err) != nil {
-					logger.WarnContext(ctx, "a volume is offline, until its user signs in again, with volume-update", "volume", w.volume, "error", w.err.Error())
-				} else {
-					logger.WarnContext(ctx, "watching a volume failed, opening it again", "volume", w.volume, "error", w.err.Error())
-					go self.reopen(w.e, w.volume)
-				}
+				logger.WarnContext(ctx, "watching a volume failed", "volume", w.volume, "error", w.err.Error())
+				self.retry(ctx, logger, w.volume, w.err)
 			}
 		case <-ticker.C:
 			publish(debouncer.due(time.Now(), false))
@@ -268,39 +310,4 @@ func (self *Registry) changedVolumes() {
 	case self.changed <- struct{}{}:
 	default:
 	}
-}
-
-// reopen opens the volume again, after a while, until it can be, which
-// doubles each time it can't, or the volume is removed, or changed, or its
-// user needs to sign in again, when it stays offline, with why
-func (self *Registry) reopen(e *entry, volume string) {
-	retry := watchRetry
-	for {
-		select {
-		case <-time.After(retry):
-		case <-e.ctx.Done():
-			return
-		}
-		// Opening it again ends when it's opened, or the volume isn't the
-		// entry's, as it's removed, or changed, or the registry is closed,
-		// but not when its backend is unavailable, such as a server which is
-		// down, which it's tried again for
-		_, err := self.update(context.Background(), e, volume, nil)
-		if err == nil || !self.registered(e, volume) {
-			return
-		}
-		self.setOffline(e, err)
-		if authclient.SignInOf(err) != nil {
-			return
-		}
-		retry = min(retry*2, watchRetryMax)
-	}
-}
-
-// registered returns true when the volume is the entry's, which isn't being
-// removed, and the registry isn't closed
-func (self *Registry) registered(e *entry, volume string) bool {
-	self.RLock()
-	defer self.RUnlock()
-	return self.backend != nil && self.backend[volume] == e && e.state != stateClosing
 }

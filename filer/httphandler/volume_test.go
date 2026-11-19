@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	// Packages
 	auth "github.com/mutablelogic/go-auth"
@@ -69,7 +70,7 @@ func TestVolumeCreate(t *testing.T) {
 	// A volume is created, with the URL of its backend, which has its
 	// options, and is listed
 	var volume schema.Volume
-	require.Equal(t, http.StatusCreated, post(t, server, "volume", schema.Volume{Name: "music", URL: fileURL("music", dir, "readonly=true&package=")}, &volume))
+	require.Equal(t, http.StatusCreated, post(t, server, "volume", schema.VolumeCreateRequest{Name: "music", URL: fileURL("music", dir, "readonly=true&package=")}, &volume))
 	assert.Equal(t, "music", volume.Name)
 	u, err := url.Parse(volume.URL)
 	require.NoError(t, err)
@@ -81,10 +82,10 @@ func TestVolumeCreate(t *testing.T) {
 		assert.Equal(t, volume, list.Body[1])
 	}
 
-	// Its objects can be listed
+	// Its objects can be listed, once it's mounted
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "song.mp3"), nil, 0o644))
 	var objects schema.ObjectList
-	require.Equal(t, http.StatusOK, get(t, server, "object/music", &objects))
+	require.Eventually(t, func() bool { return get(t, server, "object/music", &objects) == http.StatusOK }, 10*time.Second, 5*time.Millisecond, "the volume isn't mounted")
 	if assert.Len(t, objects.Body, 1) {
 		assert.Equal(t, "/song.mp3", objects.Body[0].Path)
 	}
@@ -95,15 +96,15 @@ func TestVolumeCreate(t *testing.T) {
 		want int
 	}{
 		"Exists":        {schema.Volume{Name: "music", URL: fileURL("music", dir, "")}, http.StatusConflict},
-		"NoURL":         {schema.Volume{Name: "other"}, http.StatusBadRequest},
-		"BadURL":        {schema.Volume{Name: "other", URL: "file://other/%zz"}, http.StatusBadRequest},
-		"OtherName":     {schema.Volume{Name: "other", URL: fileURL("music", dir, "")}, http.StatusBadRequest},
+		"NoURL":         {schema.VolumeCreateRequest{Name: "other"}, http.StatusBadRequest},
+		"BadURL":        {schema.VolumeCreateRequest{Name: "other", URL: "file://other/%zz"}, http.StatusBadRequest},
+		"OtherName":     {schema.VolumeCreateRequest{Name: "other", URL: fileURL("music", dir, "")}, http.StatusBadRequest},
 		"BadName":       {schema.Volume{Name: "not a name", URL: fileURL("not a name", dir, "")}, http.StatusBadRequest},
-		"Scheme":        {schema.Volume{Name: "other", URL: "ftp://other/data"}, http.StatusBadRequest},
-		"NoPath":        {schema.Volume{Name: "other", URL: "file://other"}, http.StatusBadRequest},
-		"Missing":       {schema.Volume{Name: "other", URL: fileURL("other", filepath.Join(dir, "missing"), "")}, http.StatusBadRequest},
-		"UnknownOption": {schema.Volume{Name: "other", URL: fileURL("other", dir, "unknown=1")}, http.StatusBadRequest},
-		"BadOption":     {schema.Volume{Name: "other", URL: fileURL("other", dir, "readonly=maybe")}, http.StatusBadRequest},
+		"Scheme":        {schema.VolumeCreateRequest{Name: "other", URL: "ftp://other/data"}, http.StatusBadRequest},
+		"NoPath":        {schema.VolumeCreateRequest{Name: "other", URL: "file://other"}, http.StatusBadRequest},
+		"Missing":       {schema.VolumeCreateRequest{Name: "other", URL: fileURL("other", filepath.Join(dir, "missing"), "")}, http.StatusBadRequest},
+		"UnknownOption": {schema.VolumeCreateRequest{Name: "other", URL: fileURL("other", dir, "unknown=1")}, http.StatusBadRequest},
+		"BadOption":     {schema.VolumeCreateRequest{Name: "other", URL: fileURL("other", dir, "readonly=maybe")}, http.StatusBadRequest},
 		"Body":          {"not a volume", http.StatusBadRequest},
 	} {
 		assert.Equal(t, test.want, post(t, server, "volume", test.body, nil), name)
@@ -154,7 +155,7 @@ func TestVolumeDelete(t *testing.T) {
 	var list schema.VolumeList
 	require.Equal(t, http.StatusOK, get(t, server, "volume", &list))
 	assert.Empty(t, list.Body)
-	assert.Equal(t, http.StatusNotFound, get(t, server, "object/media", nil))
+	require.Eventually(t, func() bool { return get(t, server, "object/media", nil) == http.StatusNotFound }, 10*time.Second, 5*time.Millisecond, "its objects aren't listed, once it's unmounted")
 	_, err := os.Stat(filepath.Join(dir, "a.txt"))
 	assert.NoError(t, err)
 
@@ -228,8 +229,21 @@ func TestVolumeUpdate(t *testing.T) {
 		assert.Equal(t, want, patch(t, server, "volume/media", body, nil), body)
 	}
 	assert.Equal(t, http.StatusNotFound, patch(t, server, "volume/missing", `{"readonly": true}`, nil))
+	assert.Equal(t, http.StatusBadRequest, patch(t, server, "volume/media?enabled=maybe", `{}`, nil))
 	require.Equal(t, http.StatusOK, get(t, server, "volume/media", &volume))
 	assert.Equal(t, with("readonly", "true"), options(volume))
+
+	// It's disabled, which unmounts it, keeping its options, and enabled
+	// again, which mounts it
+	require.Equal(t, http.StatusOK, patch(t, server, "volume/media?enabled=false", `{}`, &volume))
+	assert.False(t, volume.Enabled)
+	assert.Equal(t, with("readonly", "true"), options(volume))
+	require.Eventually(t, func() bool { return get(t, server, "object/media", nil) == http.StatusNotFound }, 10*time.Second, 5*time.Millisecond, "it's unmounted")
+	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"skip": null}`, &volume))
+	assert.False(t, volume.Enabled, "it's kept disabled, when it's updated")
+	require.Equal(t, http.StatusOK, patch(t, server, "volume/media?enabled=true", `{}`, &volume))
+	assert.True(t, volume.Enabled)
+	require.Eventually(t, func() bool { return get(t, server, "object/media", nil) == http.StatusOK }, 10*time.Second, 5*time.Millisecond, "it's mounted")
 }
 
 // credentials is a provider of credentials, in memory
@@ -253,7 +267,7 @@ func TestVolumeCreateSignIn(t *testing.T) {
 	server, _ := newServer(t, filer.WithCredentials(credentials{
 		google.ClientCredential: json.RawMessage(`{"installed":{"client_id":"client-1","client_secret":"client-secret"}}`),
 	}))
-	data, err := json.Marshal(schema.Volume{Name: "tasks", URL: "gtasks://tasks"})
+	data, err := json.Marshal(schema.VolumeCreateRequest{Name: "tasks", URL: "gtasks://tasks"})
 	require.NoError(t, err)
 	resp, err := http.Post(server.URL+"/api/volume", "application/json", bytes.NewReader(data))
 	require.NoError(t, err)
@@ -272,5 +286,5 @@ func TestVolumeCreateSignIn(t *testing.T) {
 	assert.NotContains(t, string(raw), "client-secret")
 
 	// A volume of Google Tasks with a path isn't one
-	assert.Equal(t, http.StatusBadRequest, post(t, server, "volume", schema.Volume{Name: "tasks", URL: "gtasks://tasks/lists"}, nil))
+	assert.Equal(t, http.StatusBadRequest, post(t, server, "volume", schema.VolumeCreateRequest{Name: "tasks", URL: "gtasks://tasks/lists"}, nil))
 }

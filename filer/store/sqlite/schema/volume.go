@@ -21,8 +21,8 @@ type VolumeListRequest struct{}
 // one
 type VolumeList []*filer.Volume
 
-// VolumePut is a volume which is put: created, or its URL, and whether
-// it's enabled, replaced
+// VolumePut is a volume which is created, or whose URL, and whether it's
+// enabled, are updated
 type VolumePut filer.VolumeMeta
 
 // VolumeState is the state of a volume's index, of its name, which is got,
@@ -40,6 +40,8 @@ func (name VolumeName) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 	switch op {
 	case sqlite.Get:
 		return bind.Query("volume.get"), nil
+	case sqlite.Update:
+		return bind.Query("volume.update"), nil
 	case sqlite.Delete:
 		return bind.Query("volume.delete"), nil
 	}
@@ -68,18 +70,19 @@ func (state VolumeState) Select(bind *sqlite.Bind, op sqlite.Op) (string, error)
 ////////////////////////////////////////////////////////////////////////////////
 // WRITERS
 
-// Insert binds a volume, and returns the query which puts it, which only
-// modifies it when it changes
+// Insert binds a volume, and returns the query which creates it
 func (put VolumePut) Insert(bind *sqlite.Bind) (string, error) {
+	put.Update(bind)
 	bind.Set("name", put.Name)
+	return bind.Query("volume.create"), nil
+}
+
+// Update binds a volume's URL, and whether it's enabled
+func (put VolumePut) Update(bind *sqlite.Bind) error {
 	bind.Set("url", put.URL)
 	bind.Set("enabled", put.Enabled)
 	bind.Set("now", time.Now().UTC())
-	return bind.Query("volume.put"), nil
-}
-
-func (put VolumePut) Update(*sqlite.Bind) error {
-	return sqlite.ErrNotImplemented.With("a volume is put")
+	return nil
 }
 
 func (state VolumeState) Insert(*sqlite.Bind) (string, error) {

@@ -77,7 +77,7 @@ func get(r *Registry, volume string) gofiler.Filer {
 func newRegistry(t *testing.T) (*Registry, string) {
 	t.Helper()
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -87,7 +87,7 @@ func newRegistry(t *testing.T) (*Registry, string) {
 func Test_Registry_Add(t *testing.T) {
 	t.Run("Add", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		b, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		b, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
 		assert.Equal(t, "media", b.URL().Host)
 		assert.Same(t, b, get(r, "media"))
@@ -96,18 +96,18 @@ func Test_Registry_Add(t *testing.T) {
 
 	t.Run("Duplicate", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		first, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		first, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
 
 		// The existing backend is kept
-		_, err = r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		_, err = add(t, r, "media", fileURL(t, dir, "media"))
 		assert.ErrorIs(t, err, gofiler.ErrConflict)
 		assert.Same(t, first, get(r, "media"))
 	})
 
 	t.Run("WrongVolume", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		_, err := r.Add(context.Background(), "media", fileURL(t, dir, "other"))
+		_, err := add(t, r, "media", fileURL(t, dir, "other"))
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 		assert.Empty(t, names(r))
 	})
@@ -116,20 +116,20 @@ func Test_Registry_Add(t *testing.T) {
 		r, dir := newRegistry(t)
 		u := fileURL(t, dir, "media")
 		u.Path += "/missing"
-		_, err := r.Add(context.Background(), "media", u)
+		_, err := add(t, r, "media", u)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 		assert.Empty(t, names(r))
 	})
 
 	t.Run("UnsupportedScheme", func(t *testing.T) {
 		r, _ := newRegistry(t)
-		_, err := r.Add(context.Background(), "media", &url.URL{Scheme: "ftp", Host: "media", Path: "/data"})
+		_, err := add(t, r, "media", &url.URL{Scheme: "ftp", Host: "media", Path: "/data"})
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	})
 
 	t.Run("NilURL", func(t *testing.T) {
 		r, _ := newRegistry(t)
-		_, err := r.Add(context.Background(), "media", nil)
+		_, err := add(t, r, "media", nil)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	})
 }
@@ -137,10 +137,10 @@ func Test_Registry_Add(t *testing.T) {
 func Test_Registry_Del(t *testing.T) {
 	t.Run("ClosesBackend", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		b, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		b, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
 
-		require.NoError(t, r.Del(context.Background(), "media"))
+		require.NoError(t, del(t, r, "media"))
 		assert.Nil(t, get(r, "media"))
 		assert.Empty(t, names(r))
 
@@ -153,26 +153,24 @@ func Test_Registry_Del(t *testing.T) {
 
 	t.Run("Missing", func(t *testing.T) {
 		r, _ := newRegistry(t)
-		assert.NoError(t, r.Del(context.Background(), "missing"))
+		assert.NoError(t, del(t, r, "missing"))
 	})
 
 	t.Run("AddAfterDel", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		_, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
-		require.NoError(t, r.Del(context.Background(), "media"))
-		_, err = r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		require.NoError(t, del(t, r, "media"))
+		_, err = add(t, r, "media", fileURL(t, dir, "media"))
 		assert.NoError(t, err)
 	})
 }
 
 func Test_Registry_Close(t *testing.T) {
-	dir := t.TempDir()
-	r, err := New(context.Background())
+	r, dir := newRegistry(t)
+	a, err := add(t, r, "a", fileURL(t, dir, "a"))
 	require.NoError(t, err)
-	a, err := r.Add(context.Background(), "a", fileURL(t, dir, "a"))
-	require.NoError(t, err)
-	b, err := r.Add(context.Background(), "b", fileURL(t, dir, "b"))
+	b, err := add(t, r, "b", fileURL(t, dir, "b"))
 	require.NoError(t, err)
 
 	// Closing the registry closes every backend
@@ -188,7 +186,7 @@ func Test_Registry_Close(t *testing.T) {
 func Test_Registry_With(t *testing.T) {
 	t.Run("CallsWithBackend", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		added, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		added, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
 
 		var got gofiler.Filer
@@ -210,7 +208,7 @@ func Test_Registry_With(t *testing.T) {
 
 	t.Run("ReturnsError", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		_, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
 		err = r.With(context.Background(), "media", func(context.Context, gofiler.Filer) error {
 			return fs.ErrNotExist
@@ -220,7 +218,7 @@ func Test_Registry_With(t *testing.T) {
 
 	t.Run("DelWaitsAndCancels", func(t *testing.T) {
 		r, dir := newRegistry(t)
-		_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		_, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
 
 		// A call which runs until its context is cancelled, then still uses
@@ -243,7 +241,7 @@ func Test_Registry_With(t *testing.T) {
 
 		// Removing the volume cancels the call, and waits for it to finish
 		// before closing the backend
-		require.NoError(t, r.Del(context.Background(), "media"))
+		require.NoError(t, del(t, r, "media"))
 		select {
 		case <-finished:
 		default:
@@ -264,10 +262,8 @@ func Test_Registry_With(t *testing.T) {
 	})
 
 	t.Run("CloseWaits", func(t *testing.T) {
-		dir := t.TempDir()
-		r, err := New(context.Background())
-		require.NoError(t, err)
-		_, err = r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+		r, dir := newRegistry(t)
+		_, err := add(t, r, "media", fileURL(t, dir, "media"))
 		require.NoError(t, err)
 
 		entered := make(chan struct{})
@@ -287,10 +283,6 @@ func Test_Registry_With(t *testing.T) {
 		default:
 			t.Fatal("Close returned before the call using the backend finished")
 		}
-
-		// Backends cannot be added after the registry is closed
-		_, err = r.Add(context.Background(), "other", fileURL(t, dir, "other"))
-		assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
 	})
 }
 
@@ -301,21 +293,24 @@ func Test_Registry_Validate(t *testing.T) {
 	// the same backend
 	u := fileURL(t, dir, "media")
 	u.RawQuery = url.Values{"readonly": {"true"}, "package": {"(?i)\\.bundle$", "(?i)\\.sparsebundle$"}}.Encode()
-	validated, err := r.Validate(context.Background(), u)
+	validated, err := validate(r, u)
 	require.NoError(t, err)
 	assert.Equal(t, "file", validated.Scheme)
 	assert.Equal(t, "media", validated.Host)
 	assert.Equal(t, "true", validated.Query().Get("readonly"))
 	assert.Equal(t, []string{"(?i)\\.bundle$", "(?i)\\.sparsebundle$"}, validated.Query()["package"], "the default packages are in the URL")
 
-	b, err := r.Add(context.Background(), "media", validated)
+	assert.Equal(t, "none", validated.Query().Get("index"), "and its index option")
+	b, err := add(t, r, "media", validated)
 	require.NoError(t, err)
-	assert.Equal(t, validated.String(), b.URL().String())
+	volume, err := r.GetVolume(context.Background(), "media")
+	require.NoError(t, err)
+	assert.Equal(t, validated.String(), volume.URL)
 	_, err = b.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.txt"}})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 
 	// A URL which isn't valid isn't
-	_, err = r.Validate(context.Background(), &url.URL{Scheme: "file", Host: "media", Path: u.Path, RawQuery: "unknown=1"})
+	_, err = validate(r, &url.URL{Scheme: "file", Host: "media", Path: u.Path, RawQuery: "unknown=1"})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
@@ -328,9 +323,9 @@ func Test_Registry_AbsolutePath(t *testing.T) {
 		{Scheme: "file", Host: "media"},
 		{Scheme: "file", Host: "media", Path: "relative/dir"},
 	} {
-		_, err := r.Add(context.Background(), "media", u)
+		_, err := add(t, r, "media", u)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, u.String())
-		_, err = r.Validate(context.Background(), u)
+		_, err = validate(r, u)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, u.String())
 	}
 	assert.Empty(t, names(r))
@@ -345,7 +340,7 @@ func Test_Registry_AddConcurrent(t *testing.T) {
 	errs := make(chan error, 8)
 	for range 8 {
 		wg.Go(func() {
-			_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+			_, err := add(t, r, "media", fileURL(t, dir, "media"))
 			errs <- err
 		})
 	}
@@ -363,13 +358,13 @@ func Test_Registry_AddConcurrent(t *testing.T) {
 	assert.Equal(t, []string{"media"}, names(r))
 }
 
-func Test_Registry_DelCancelled(t *testing.T) {
+func Test_Registry_DeleteHeldUp(t *testing.T) {
 	r, dir := newRegistry(t)
-	_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+	_, err := add(t, r, "media", fileURL(t, dir, "media"))
 	require.NoError(t, err)
 
-	// A function which doesn't return when it's cancelled holds up closing,
-	// but not a Del whose context is cancelled
+	// A function which doesn't return when it's cancelled holds up closing
+	// the volume, but not deleting it, which can't be used meanwhile
 	release := make(chan struct{})
 	entered := make(chan struct{})
 	go r.With(context.Background(), "media", func(ctx context.Context, _ gofiler.Filer) error {
@@ -378,9 +373,9 @@ func Test_Registry_DelCancelled(t *testing.T) {
 		return nil
 	})
 	<-entered
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	assert.ErrorIs(t, r.Del(ctx, "media"), context.DeadlineExceeded)
+	_, err = r.DeleteVolume(context.Background(), "media")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return !slices.Contains(r.Keys(), "media") }, mountTimeout, time.Millisecond)
 
 	// It's still being removed, and Close waits for it
 	closed := make(chan error, 1)
@@ -405,7 +400,7 @@ func Test_Registry_Keys(t *testing.T) {
 
 	// The volumes which can be used are returned in order
 	for _, volume := range []string{"music", "audiobooks", "podcasts"} {
-		_, err := r.Add(context.Background(), volume, fileURL(t, dir, volume))
+		_, err := add(t, r, volume, fileURL(t, dir, volume))
 		require.NoError(t, err)
 	}
 	assert.Equal(t, []string{"audiobooks", "music", "podcasts"}, r.Keys())
@@ -418,12 +413,11 @@ func Test_Registry_Keys(t *testing.T) {
 		return nil
 	})
 	<-entered
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	assert.ErrorIs(t, r.Del(ctx, "music"), context.DeadlineExceeded)
-	assert.Equal(t, []string{"audiobooks", "podcasts"}, r.Keys())
+	_, err := r.DeleteVolume(context.Background(), "music")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return slices.Equal([]string{"audiobooks", "podcasts"}, r.Keys()) }, mountTimeout, time.Millisecond)
 	close(release)
-	require.NoError(t, r.Del(context.Background(), "music"))
+	require.Eventually(t, func() bool { return get(r, "music") == nil }, mountTimeout, time.Millisecond)
 	assert.Equal(t, []string{"audiobooks", "podcasts"}, r.Keys())
 
 	// The keys can be changed without changing the registry
@@ -442,12 +436,12 @@ func Test_Registry_Schemes(t *testing.T) {
 
 	// Each scheme can be validated, and an unsupported one can't
 	for _, u := range []*url.URL{fileURL(t, dir, "media"), mustURL(t, "s3://bucket/photos?name=media&endpoint="+url.QueryEscape(fakeS3(t)))} {
-		_, err := r.Validate(context.Background(), u)
+		_, err := validate(r, u)
 		assert.NoError(t, err, u)
 	}
 	u := fileURL(t, dir, "media")
 	u.Scheme = "ftp"
-	_, err := r.Validate(context.Background(), u)
+	_, err := validate(r, u)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
 	// The schemes can be changed without changing the registry
@@ -461,34 +455,37 @@ func Test_Registry_S3(t *testing.T) {
 
 	// A bucket's volume can be named by its name option, and isn't watched,
 	// as it can't be, and can be removed
-	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly&"+endpoint))
+	b, err := add(t, r, "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly&"+endpoint))
 	require.NoError(t, err)
 	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+endpoint+"&name=photos&profile=&readonly=true&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
-	volume, err := r.Volume("photos")
+	volume, err := r.GetVolume(context.Background(), "photos")
 	require.NoError(t, err)
-	assert.Equal(t, schema.Volume{VolumeMeta: schema.VolumeMeta{Name: "photos", URL: b.URL().String(), Enabled: true}}, *volume)
+	assert.Equal(t, "photos", volume.Name)
+	assert.Equal(t, withIndex(t, b.URL(), "none"), volume.URL)
+	assert.True(t, volume.Enabled)
+	assert.False(t, volume.Created.IsZero())
 	readonly, err := volume.Readonly()
 	require.NoError(t, err)
 	assert.True(t, readonly)
-	require.NoError(t, r.Del(context.Background(), "photos"))
+	require.NoError(t, del(t, r, "photos"))
 
 	// A bucket's name is the volume's, unless the name option is set
-	b, err = r.Add(context.Background(), "bucket", mustURL(t, "s3://bucket/photos?"+endpoint))
+	b, err = add(t, r, "bucket", mustURL(t, "s3://bucket/photos?"+endpoint))
 	require.NoError(t, err)
 	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+endpoint+"&name=bucket&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
-	require.NoError(t, r.Del(context.Background(), "bucket"))
+	require.NoError(t, del(t, r, "bucket"))
 
 	// The name must be the volume's
-	_, err = r.Add(context.Background(), "other", mustURL(t, "s3://bucket/photos?name=photos&"+endpoint))
+	_, err = add(t, r, "other", mustURL(t, "s3://bucket/photos?name=photos&"+endpoint))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	_, err = r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?"+endpoint))
+	_, err = add(t, r, "photos", mustURL(t, "s3://bucket/photos?"+endpoint))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
 func Test_Registry_UpdateRename(t *testing.T) {
 	r, _ := newRegistry(t)
 	endpoint := "endpoint=" + url.QueryEscape(fakeS3(t))
-	b, err := r.Add(context.Background(), "photos", mustURL(t, "s3://bucket/photos?name=photos&"+endpoint))
+	b, err := add(t, r, "photos", mustURL(t, "s3://bucket/photos?name=photos&"+endpoint))
 	require.NoError(t, err)
 
 	// While the volume is used, the options can't rename it, which doesn't
@@ -505,14 +502,14 @@ func Test_Registry_UpdateRename(t *testing.T) {
 		})
 	}()
 	ctx := <-using
-	_, err = r.Update(context.Background(), "photos", url.Values{"name": {"other"}})
+	_, err = update(t, r, "photos", url.Values{"name": {"other"}})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	assert.NoError(t, ctx.Err())
 	close(release)
 	assert.NoError(t, <-used)
-	volume, err := r.Volume("photos")
+	volume, err := r.GetVolume(context.Background(), "photos")
 	require.NoError(t, err)
-	assert.Equal(t, b.URL().String(), volume.URL)
+	assert.Equal(t, withIndex(t, b.URL(), "none"), volume.URL)
 }
 
 // credentials expands a placeholder of a credential, such as ${ID}, to its
@@ -536,26 +533,35 @@ func Test_Registry_Credentials(t *testing.T) {
 
 	// A bucket's credentials are expanded by the registry's provider, and
 	// can't be without one
-	r, err := New(context.Background(), WithCredentials(credentials{}))
+	r, err := New(context.Background(), WithCredentials(credentials{}), WithStore(newStore(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
-	_, err = r.Add(context.Background(), "bucket", u)
+	runRegistry(t, r)
+	_, err = add(t, r, "bucket", u)
 	require.NoError(t, err)
 	r2, _ := newRegistry(t)
-	_, err = r2.Add(context.Background(), "bucket", u)
+	_, err = add(t, r2, "bucket", u)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
-	// The volume's URL doesn't have the credentials, which updating it keeps,
-	// as the bucket can't be accessed without them
-	volume, err := r.Volume("bucket")
+	// The volume's URL has the placeholders of its credentials, not the
+	// credentials, so it's mounted again from the store, which updating it
+	// keeps, as the bucket can't be accessed without them
+	volume, err := r.GetVolume(context.Background(), "bucket")
 	require.NoError(t, err)
-	assert.NotContains(t, volume.URL, "access-key-id")
-	volume, err = r.Update(context.Background(), "bucket", url.Values{"readonly": {"true"}})
+	placeholders := func(volume *schema.Volume) {
+		t.Helper()
+		u, err := url.Parse(volume.URL)
+		require.NoError(t, err)
+		assert.Equal(t, "${ID}", u.Query().Get("access-key-id"))
+		assert.Equal(t, "${SECRET}", u.Query().Get("secret-access-key"))
+	}
+	placeholders(volume)
+	volume, err = update(t, r, "bucket", url.Values{"readonly": {"true"}})
 	require.NoError(t, err)
 	readonly, err := volume.Readonly()
 	require.NoError(t, err)
 	assert.True(t, readonly)
-	assert.NotContains(t, volume.URL, "secret-access-key")
+	placeholders(volume)
 }
 
 func Test_VolumeName(t *testing.T) {
@@ -654,7 +660,7 @@ func Test_Registry_WatchObjects(t *testing.T) {
 	// added while watching
 	a, b := fileURL(t, dir, "a"), fileURL(t, dir, "b")
 	for volume, u := range map[string]*url.URL{"a": a, "b": b} {
-		_, err := r.Add(context.Background(), volume, u)
+		_, err := add(t, r, volume, u)
 		require.NoError(t, err)
 	}
 	for volume, u := range map[string]*url.URL{"a": a, "b": b} {
@@ -664,7 +670,7 @@ func Test_Registry_WatchObjects(t *testing.T) {
 	}
 
 	// A volume which is removed isn't watched
-	require.NoError(t, r.Del(context.Background(), "a"))
+	require.NoError(t, del(t, r, "a"))
 	time.Sleep(200 * time.Millisecond)
 	for len(events) > 0 {
 		<-events
@@ -708,7 +714,7 @@ func Test_Registry_WatchSlow(t *testing.T) {
 	go r.WatchObjects(ctx, slow)
 	fast := watchAll(t, r, 1024)
 	u := fileURL(t, dir, "slow")
-	_, err := r.Add(context.Background(), "slow", u)
+	_, err := add(t, r, "slow", u)
 	require.NoError(t, err)
 	path := filepath.FromSlash(u.Path)
 	waitFor(t, fast, path, func(event schema.Event) bool {
@@ -734,7 +740,7 @@ func Test_Registry_WatchSlow(t *testing.T) {
 
 	// And removing the volume isn't held up
 	removed := make(chan error, 1)
-	go func() { removed <- r.Del(context.Background(), "slow") }()
+	go func() { removed <- del(t, r, "slow") }()
 	select {
 	case err := <-removed:
 		assert.NoError(t, err)
@@ -758,7 +764,7 @@ func Test_Registry_WatchRestart(t *testing.T) {
 	r, dir := newRegistry(t)
 	events := watchAll(t, r, 1024)
 	u := fileURL(t, dir, "restart")
-	_, err := r.Add(context.Background(), "restart", u)
+	_, err := add(t, r, "restart", u)
 	require.NoError(t, err)
 	path := filepath.FromSlash(u.Path)
 	waitFor(t, events, path, func(event schema.Event) bool {
@@ -788,7 +794,7 @@ func Test_Registry_Objects(t *testing.T) {
 	r, dir := newRegistry(t)
 	ctx := context.Background()
 	for _, volume := range []string{"a", "b"} {
-		_, err := r.Add(ctx, volume, fileURL(t, dir, volume))
+		_, err := add(t, r, volume, fileURL(t, dir, volume))
 		require.NoError(t, err)
 	}
 	key := func(name, path string) schema.ObjectKey {
@@ -851,7 +857,7 @@ func Test_Registry_ObjectsRemoved(t *testing.T) {
 	r, dir := newRegistry(t)
 	ctx := context.Background()
 	u := fileURL(t, dir, "media")
-	_, err := r.Add(ctx, "media", u)
+	_, err := add(t, r, "media", u)
 	require.NoError(t, err)
 	_, err = r.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: "/a.txt"}, Body: strings.NewReader("a")})
 	require.NoError(t, err)
@@ -865,7 +871,7 @@ func Test_Registry_ObjectsRemoved(t *testing.T) {
 	require.NoError(t, err)
 
 	removed := make(chan error, 1)
-	go func() { removed <- r.Del(ctx, "media") }()
+	go func() { removed <- del(t, r, "media") }()
 	select {
 	case err := <-removed:
 		require.NoError(t, err)
@@ -876,7 +882,7 @@ func Test_Registry_ObjectsRemoved(t *testing.T) {
 	assert.ErrorIs(t, err, fs.ErrClosed)
 	assert.NoError(t, iter.Close())
 
-	_, err = r.Add(ctx, "media", u)
+	_, err = add(t, r, "media", u)
 	require.NoError(t, err)
 	assert.ErrorIs(t, read(ctx, func(io.Reader) error { return nil }), gofiler.ErrNotFound)
 }
@@ -884,18 +890,20 @@ func Test_Registry_ObjectsRemoved(t *testing.T) {
 func Test_Registry_Volume(t *testing.T) {
 	r, dir := newRegistry(t)
 	u := fileURL(t, dir, "media")
-	b, err := r.Add(context.Background(), "media", u)
+	b, err := add(t, r, "media", u)
 	require.NoError(t, err)
 
-	// A volume which is registered has the URL of its backend, and one which
-	// isn't, or is being removed, isn't found
-	volume, err := r.Volume("media")
+	// A volume which is stored has the URL of its backend, with its index
+	// option, and one which isn't, or is deleted, isn't found
+	volume, err := r.GetVolume(context.Background(), "media")
 	require.NoError(t, err)
-	assert.Equal(t, schema.Volume{Name: "media", URL: b.URL().String(), Enabled: true}, *volume)
-	_, err = r.Volume("missing")
+	assert.Equal(t, "media", volume.Name)
+	assert.Equal(t, withIndex(t, b.URL(), "none"), volume.URL)
+	assert.True(t, volume.Enabled)
+	_, err = r.GetVolume(context.Background(), "missing")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
-	require.NoError(t, r.Del(context.Background(), "media"))
-	_, err = r.Volume("media")
+	require.NoError(t, del(t, r, "media"))
+	_, err = r.GetVolume(context.Background(), "media")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }
 
@@ -904,10 +912,10 @@ func Test_Registry_Update(t *testing.T) {
 	ctx := context.Background()
 	u := fileURL(t, dir, "media")
 	u.RawQuery = url.Values{"skip": {`\.tmp$`}}.Encode()
-	_, err := r.Add(ctx, "media", u)
+	_, err := add(t, r, "media", u)
 	require.NoError(t, err)
 	query := func() url.Values {
-		volume, err := r.Volume("media")
+		volume, err := r.GetVolume(context.Background(), "media")
 		require.NoError(t, err)
 		u, err := url.Parse(volume.URL)
 		require.NoError(t, err)
@@ -920,7 +928,7 @@ func Test_Registry_Update(t *testing.T) {
 
 	// The options of a volume, which are the defaults, unless they're
 	// changed, as its URL has each of them
-	validated, err := r.Validate(ctx, fileURL(t, dir, "defaults"))
+	validated, err := validate(r, fileURL(t, dir, "defaults"))
 	require.NoError(t, err)
 	defaults := validated.Query()
 	options := func(changed url.Values) url.Values {
@@ -938,7 +946,7 @@ func Test_Registry_Update(t *testing.T) {
 
 	// An option is added, and the others are kept, and the volume is opened
 	// again with them
-	volume, err := r.Update(ctx, "media", url.Values{"readonly": {"true"}})
+	volume, err := update(t, r, "media", url.Values{"readonly": {"true"}})
 	require.NoError(t, err)
 	assert.Equal(t, "media", volume.Name)
 	assert.Equal(t, options(url.Values{"readonly": {"true"}, "skip": {`\.tmp$`}}), query())
@@ -946,34 +954,24 @@ func Test_Registry_Update(t *testing.T) {
 
 	// An option is replaced, and one without values is removed, so it's the
 	// default
-	_, err = r.Update(ctx, "media", url.Values{"readonly": {"false"}, "skip": {}})
+	_, err = update(t, r, "media", url.Values{"readonly": {"false"}, "skip": {}})
 	require.NoError(t, err)
 	assert.Equal(t, defaults, query())
 	assert.NoError(t, create("/a.txt"))
 
 	// Options which are invalid don't change the volume
 	for _, patch := range []url.Values{{"unknown": {"1"}}, {"readonly": {"maybe"}}, {"skip": {"("}}} {
-		_, err := r.Update(ctx, "media", patch)
+		_, err := update(t, r, "media", patch)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, patch)
 		assert.Equal(t, defaults, query(), patch)
 	}
 
 	// A volume which isn't registered isn't found
-	_, err = r.Update(ctx, "missing", url.Values{"readonly": {"true"}})
+	_, err = update(t, r, "missing", url.Values{"readonly": {"true"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 
-	// A volume can't be updated from a function using it, which it'd wait
-	// for, nor removed
-	require.NoError(t, r.With(ctx, "media", func(ctx context.Context, _ gofiler.Filer) error {
-		_, err := r.Update(ctx, "media", url.Values{"readonly": {"true"}})
-		assert.ErrorIs(t, err, gofiler.ErrConflict)
-		assert.ErrorIs(t, r.Del(ctx, "media"), gofiler.ErrConflict)
-		return nil
-	}))
-	assert.Contains(t, r.Keys(), "media", "it isn't removed")
-
-	// Updating waits for the calls using the volume, which are cancelled,
-	// and the volume can't be added meanwhile
+	// Mounting it again waits for the calls using the volume, which are
+	// cancelled, and it can't be used meanwhile
 	entered, release := make(chan struct{}), make(chan struct{})
 	go r.With(ctx, "media", func(ctx context.Context, _ gofiler.Filer) error {
 		close(entered)
@@ -984,16 +982,15 @@ func Test_Registry_Update(t *testing.T) {
 	<-entered
 	updated := make(chan error, 1)
 	go func() {
-		_, err := r.Update(ctx, "media", url.Values{"readonly": {"true"}})
+		_, err := update(t, r, "media", url.Values{"readonly": {"true"}})
 		updated <- err
 	}()
 	require.Eventually(t, func() bool {
-		_, err := r.Add(ctx, "media", fileURL(t, dir, "media"))
-		return errors.Is(err, gofiler.ErrConflict) && !slices.Contains(r.Keys(), "media")
+		return !slices.Contains(r.Keys(), "media")
 	}, 10*time.Second, 10*time.Millisecond)
 	select {
 	case err := <-updated:
-		t.Fatalf("updated before the call using the volume returned: %v", err)
+		t.Fatalf("mounted again before the call using the volume returned: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)
@@ -1006,24 +1003,23 @@ func Test_Registry_UpdateMissing(t *testing.T) {
 		t.Skip("a directory which is open can't be removed on Windows")
 	}
 	r, dir := newRegistry(t)
-	ctx := context.Background()
 	u := fileURL(t, dir, "media")
-	_, err := r.Add(ctx, "media", u)
+	_, err := add(t, r, "media", u)
 	require.NoError(t, err)
 
 	// When the volume's directory is removed, its options can't be checked,
 	// as a backend can't be created for them, so the volume isn't closed
 	require.NoError(t, os.RemoveAll(filepath.FromSlash(u.Path)))
-	_, err = r.Update(ctx, "media", url.Values{"readonly": {"true"}})
+	_, err = update(t, r, "media", url.Values{"readonly": {"true"}})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	_, err = r.Volume("media")
+	_, err = r.GetVolume(context.Background(), "media")
 	assert.NoError(t, err, "the volume was removed when it couldn't be updated")
 }
 
 func Test_Registry_CloseWaitsForUpdate(t *testing.T) {
 	r, dir := newRegistry(t)
 	ctx := context.Background()
-	_, err := r.Add(ctx, "media", fileURL(t, dir, "media"))
+	_, err := add(t, r, "media", fileURL(t, dir, "media"))
 	require.NoError(t, err)
 
 	// Close waits for the backend which Update is closing, which is no longer
@@ -1036,7 +1032,7 @@ func Test_Registry_CloseWaitsForUpdate(t *testing.T) {
 		return nil
 	})
 	<-entered
-	go r.Update(ctx, "media", url.Values{"readonly": {"true"}})
+	go update(t, r, "media", url.Values{"readonly": {"true"}})
 	require.Eventually(t, func() bool { return !slices.Contains(r.Keys(), "media") }, 10*time.Second, 10*time.Millisecond)
 	closed := make(chan error, 1)
 	go func() { closed <- r.close() }()
@@ -1058,19 +1054,22 @@ func Test_Registry_Cancelled(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// A volume isn't added, or updated, with a context which is cancelled
-	_, err := r.Add(cancelled, "media", fileURL(t, dir, "media"))
+	// A volume isn't created, or updated, with a context which is cancelled
+	u := fileURL(t, dir, "media")
+	_, err := r.CreateVolume(cancelled, schema.VolumeMeta{Name: "media", URL: u.String(), Enabled: true})
 	assert.ErrorIs(t, err, context.Canceled)
-	assert.Empty(t, r.Keys())
-	_, err = r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+	assert.Empty(t, volumes(t, r))
+	_, err = add(t, r, "media", u)
 	require.NoError(t, err)
-	_, err = r.Update(cancelled, "media", url.Values{"readonly": {"true"}})
+	readonly, err := PatchURL(u.String(), url.Values{"readonly": {"true"}})
+	require.NoError(t, err)
+	_, err = r.UpdateVolume(cancelled, schema.VolumeMeta{Name: "media", URL: readonly, Enabled: true})
 	assert.ErrorIs(t, err, context.Canceled)
-	volume, err := r.Volume("media")
+	volume, err := r.GetVolume(context.Background(), "media")
 	require.NoError(t, err)
-	u, err := url.Parse(volume.URL)
+	stored, err := url.Parse(volume.URL)
 	require.NoError(t, err)
-	assert.Equal(t, "false", u.Query().Get("readonly"))
+	assert.Equal(t, "false", stored.Query().Get("readonly"))
 }
 
 func Test_Registry_InvalidQuery(t *testing.T) {
@@ -1080,9 +1079,9 @@ func Test_Registry_InvalidQuery(t *testing.T) {
 	// readonly=%ZZ doesn't mount a volume which can be written
 	u := fileURL(t, dir, "media")
 	u.RawQuery = "readonly=%ZZ"
-	_, err := r.Validate(context.Background(), u)
+	_, err := validate(r, u)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	_, err = r.Add(context.Background(), "media", u)
+	_, err = add(t, r, "media", u)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	assert.Empty(t, r.Keys())
 }
@@ -1096,7 +1095,7 @@ func Test_Registry_UpdateRescan(t *testing.T) {
 	// while it's closed, and its options can change which objects it has
 	r, dir := newRegistry(t)
 	events := watchAll(t, r, 1024)
-	_, err := r.Add(context.Background(), "media", fileURL(t, dir, "media"))
+	_, err := add(t, r, "media", fileURL(t, dir, "media"))
 	require.NoError(t, err)
 	for deadline := time.After(10 * time.Second); ; {
 		select {
@@ -1109,7 +1108,7 @@ func Test_Registry_UpdateRescan(t *testing.T) {
 		}
 		break
 	}
-	_, err = r.Update(context.Background(), "media", url.Values{"skip": {""}})
+	_, err = update(t, r, "media", url.Values{"skip": {""}})
 	require.NoError(t, err)
 	for deadline := time.After(10 * time.Second); ; {
 		select {

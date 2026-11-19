@@ -19,16 +19,17 @@ import (
 
 func Test_Registry_Run(t *testing.T) {
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)))
 	require.NoError(t, err)
 	defer r.close()
 	assert.False(t, r.Running())
 
-	// A volume added before it runs, and a watch made before it runs, which
-	// lasts until it stops
+	// A volume created before it runs, which it mounts once it runs, and a
+	// watch made before it runs, which lasts until it stops
 	before := fileURL(t, dir, "before")
-	_, err = r.Add(context.Background(), "before", before)
+	_, err = r.CreateVolume(context.Background(), schema.VolumeMeta{Name: "before", URL: before.String(), Enabled: true})
 	require.NoError(t, err)
+	assert.Empty(t, r.Keys(), "it isn't mounted until it runs")
 	ch, done := make(chan schema.Event, 100), make(chan error, 1)
 	go func() { done <- r.WatchObjects(context.Background(), ch) }()
 	watching(t, r, ch)
@@ -39,13 +40,15 @@ func Test_Registry_Run(t *testing.T) {
 	go func() { running <- r.Run(ctx, nil) }()
 	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
 	assert.ErrorIs(t, r.Run(context.Background(), nil), gofiler.ErrConflict)
+	_, err = mounted(t, r, "before", nil)
+	require.NoError(t, err)
 
-	// The volumes are watched, which are added before it runs, and after
+	// The volumes are watched, which are created before it runs, and after
 	waitFor(t, ch, filepath.FromSlash(before.Path), func(event schema.Event) bool {
 		return event.Name == "before" && event.EventType != schema.EventTypeRescan
 	})
 	after := fileURL(t, dir, "after")
-	_, err = r.Add(context.Background(), "after", after)
+	_, err = add(t, r, "after", after)
 	require.NoError(t, err)
 	waitFor(t, ch, filepath.FromSlash(after.Path), func(event schema.Event) bool {
 		return event.Name == "after" && event.EventType != schema.EventTypeRescan
@@ -53,7 +56,7 @@ func Test_Registry_Run(t *testing.T) {
 
 	// A volume which is removed isn't watched, as its watch ends before it's
 	// removed
-	require.NoError(t, r.Del(context.Background(), "after"))
+	require.NoError(t, del(t, r, "after"))
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.FromSlash(after.Path), "gone.txt"), nil, 0o600))
 	time.Sleep(100 * time.Millisecond)
 	for len(ch) > 0 {
@@ -74,21 +77,19 @@ func Test_Registry_Run(t *testing.T) {
 	assert.ErrorIs(t, ended(t, done), fs.ErrClosed)
 	assert.ErrorIs(t, r.WatchObjects(context.Background(), ch), fs.ErrClosed)
 
-	// And it can't be used, or run, again
-	_, err = r.Add(context.Background(), "again", fileURL(t, dir, "again"))
-	assert.Error(t, err)
+	// And it can't be run again
 	assert.ErrorIs(t, r.Run(context.Background(), nil), fs.ErrClosed)
 }
 
 func Test_Registry_RunDebounce(t *testing.T) {
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithBroadcaster(newBroadcaster(t)))
+	r, err := New(context.Background(), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	assert.Equal(t, debounceDelay, r.debounce)
 	runRegistry(t, r)
 	u := fileURL(t, dir, "media")
-	_, err = r.Add(context.Background(), "media", u)
+	_, err = add(t, r, "media", u)
 	require.NoError(t, err)
 	events := watchAll(t, r, 100)
 
@@ -157,7 +158,7 @@ func ended(t *testing.T, done <-chan error) error {
 func Test_Registry_Broadcaster(t *testing.T) {
 	dir := t.TempDir()
 	b := newBroadcaster(t)
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(b))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(b), WithStore(newStore(t)))
 	require.NoError(t, err)
 
 	// The changes to the volumes are published to it, as changes of the
@@ -169,7 +170,7 @@ func Test_Registry_Broadcaster(t *testing.T) {
 	require.NoError(t, err)
 	runRegistry(t, r)
 	u := fileURL(t, dir, "media")
-	_, err = r.Add(context.Background(), "media", u)
+	_, err = add(t, r, "media", u)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		_ = os.WriteFile(filepath.Join(filepath.FromSlash(u.Path), "a.txt"), nil, 0o600)
@@ -189,9 +190,9 @@ func Test_Registry_Broadcaster(t *testing.T) {
 
 	// A broadcaster which is nil isn't one, and without one, the changes
 	// aren't published, so they can't be watched
-	_, err = New(context.Background(), WithBroadcaster(nil))
+	_, err = New(context.Background(), WithBroadcaster(nil), WithStore(newStore(t)))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	without, err := New(context.Background())
+	without, err := New(context.Background(), WithStore(newStore(t)))
 	require.NoError(t, err)
 	defer without.close()
 	assert.ErrorIs(t, without.WatchObjects(context.Background(), make(chan schema.Event)), gofiler.ErrNotImplemented)

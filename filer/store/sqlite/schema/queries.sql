@@ -1,10 +1,15 @@
--- volume.put
--- A volume, or its url and enabled, which are only modified when they do
+-- volume.create
+-- A volume, which is a conflict when one of its name is stored
 INSERT INTO volume (name, url, enabled, created_at)
 VALUES (@name, @url, @enabled, @now)
-ON CONFLICT (name) DO UPDATE SET
-  url = excluded.url, enabled = excluded.enabled, modified_at = excluded.created_at
-WHERE url IS NOT excluded.url OR enabled IS NOT excluded.enabled;
+RETURNING name, url, enabled, created_at, modified_at;
+
+-- volume.update
+-- A volume's url and enabled, which are only modified, and returned, when
+-- they change
+UPDATE volume SET url = @url, enabled = @enabled, modified_at = @now
+WHERE name = @name AND (url IS NOT @url OR enabled IS NOT @enabled)
+RETURNING name, url, enabled, created_at, modified_at;
 
 -- volume.get
 SELECT name, url, enabled, created_at, modified_at FROM volume WHERE name = @name;

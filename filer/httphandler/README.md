@@ -6,11 +6,16 @@ A volume is a backend which stores objects, which is registered with a `name`, a
 
 ### GET /volume
 
-List the volumes which are registered, in order of their names, with the `url` of each one's backend, which includes each of its options, defaults too, such as `readonly=false`, but no secrets, and which a volume can be added from again. A volume which is being added or removed isn't listed. A volume which is indexed, with the `index=folders` option, has `index`, with its `mode`, its `status`, `scanning` or `ready`, the `folders` its scan has indexed, when it `started` and was `scanned`, and its last `error`. A volume whose watch failed has `offline`, with why, until it's opened again: one whose user needs to sign in again stays offline until `PATCH /volume/{name}` opens it, and others are opened again by the server, after a while. `schemes` is the schemes of the URLs which volumes can be added from, such as `file` and `s3`.
+List the volumes which are stored, in order of their names, including those which aren't `enabled`, with when they were `created` and `modified`.
+
+* **`url`** is the backend's, with each of its options, defaults too, such as `readonly=false`, its `index` option, and the placeholders of its credentials, but not the credentials. A volume is created again from it when the server starts.
+* **`index`** is that of a volume which is mounted and indexed, with `index=folders`: its `mode`, its `status`, `scanning` or `ready`, the `folders` its scan has indexed, when it `started` and was `scanned`, and its last `error`.
+* **`enabled: false` with an `error`** is a volume which is enabled, but offline, or can't be mounted. One whose user needs to sign in again stays so until `PATCH /volume/{name}`. Others are opened again by the server, after a while.
+* **`schemes`** is the schemes of the URLs which volumes can be created from, such as `file` and `s3`.
 
 ### POST /volume
 
-Create a volume with a `name`, which is an identifier, and the `url` of its backend, whose `name` option, or otherwise its host, is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/folder`, whose path is absolute, and which exists, or `file://media/C:/folder` on Windows. An `s3` URL is a bucket, and the prefix of its objects, such as `s3://photos/2026`, whose name is the volume's, or its name option, which is needed when the bucket's name isn't an identifier, such as `s3://my.bucket/photos?name=photos`, and whose objects can be listed, got, read, written and deleted. A bucket's directories are the prefixes of its keys, before a `/`, and keys which aren't paths, such as `a//b` or `../c`, aren't listed. Its query is the options, which are dependent on the scheme:
+Create a volume with a `name`, which is an identifier, the `url` of its backend, and whether it's `enabled`, which it is by default. The volume is stored, and the server mounts it, when it's enabled, shortly after this returns. Its `url` whose `name` option, or otherwise its host, is the name, and whose scheme is one of the `schemes`. A `file` URL is a directory on the server, such as `file://media/mnt/folder`, whose path is absolute, and which exists, or `file://media/C:/folder` on Windows. An `s3` URL is a bucket, and the prefix of its objects, such as `s3://photos/2026`, whose name is the volume's, or its name option, which is needed when the bucket's name isn't an identifier, such as `s3://my.bucket/photos?name=photos`, and whose objects can be listed, got, read, written and deleted. A bucket's directories are the prefixes of its keys, before a `/`, and keys which aren't paths, such as `a//b` or `../c`, aren't listed. Its query is the options, which are dependent on the scheme:
 
 | Scheme | Option | Value | Default |
 | ------ | ------ | ----- | ------- |
@@ -30,21 +35,23 @@ Create a volume with a `name`, which is an identifier, and the `url` of its back
 
 A bucket is checked when its volume is created, with its credentials, which are those of the options, whose placeholders the server's provider of credentials expands, and which can't be used with `profile` or `anonymous`. A credential which isn't a placeholder is stored by the provider, once the bucket is checked with it, by a key of the volume's name and the option, with a random suffix, such as `S3_PHOTOS_SECRET_ACCESS_KEY_3F9A…`, so it doesn't replace another credential, and the volume uses its placeholder, so its `url` never has the credentials. The `filer` server keeps them in files, encrypted, which last when it's restarted: in `credentials`, in its folder of the user's cache, with a passphrase of `--passphrase`, or one it makes, and keeps beside them, in `credentials.key`. A credential which starts with `$` is given with `$$`, such as `$$word` for `$word`, as otherwise it's a placeholder. A placeholder can be of any credential of the server, such as a variable of its environment, which is sent to the volume's `endpoint`, so creating a volume is only for trusted users. Otherwise its credentials are those of the `profile`, or the default ones, such as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the server's environment, a role, or none, when it's `anonymous`. When the bucket is in another region, and `region` isn't set, it's the bucket's region. The volume's `url` has the region, so it isn't redirected again.
 
-Returns 400 if the name or URL is invalid, or an option is unknown or invalid, or the bucket isn't in its `region`, 403 if the bucket can't be accessed, with the credentials, or there are none, 404 if the bucket doesn't exist, or 409 if a volume with the name exists, or is being added.
+Returns 400 if the name or URL is invalid, or an option is unknown or invalid, or the bucket isn't in its `region`, 401 when its user needs to sign in, with how, 403 if the bucket can't be accessed, with the credentials, or there are none, 404 if the bucket doesn't exist, or 409 if a volume with the name exists.
 
 ### GET /volume/{name}
 
-Get the volume `name`, with the `url` of its backend, which includes each of its options, defaults too, and which the volume can be created again from. Returns 404 if the volume isn't mounted, or is being added or deleted.
+Get the volume `name`, as `GET /volume` lists it. Returns 404 if the volume isn't stored.
 
 ### PATCH /volume/{name}
 
-Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept. The volume's backend is cloned with the options, which are checked, so the volume isn't changed when they're invalid, and its credentials, which its `url` doesn't have, are kept.
+Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept, and so are its credentials' placeholders. A backend is created with the options, which checks them, so the volume isn't changed when they're invalid. The volume is stored, and the server mounts it again, shortly after this returns.
 
-Without any options, `{}`, the volume is opened again, as it is. That brings an `offline` volume back, such as one whose user signed in again. Returns 401, with how to sign in as its `detail`, as `POST /volume` does, when its user needs to sign in, such as when their sign-in is revoked.
+With `enabled=false` in the query, the volume is disabled, so the server unmounts it, keeping it, and its index, and with `enabled=true` it's enabled, so it's mounted. Without it, whether it's enabled is kept.
+
+Without any options, `{}`, the volume is opened again, as it is. That brings an offline volume back, such as one whose user signed in again. Returns 401, with how to sign in as its `detail`, as `POST /volume` does, when its user needs to sign in, such as when their sign-in is revoked.
 
 ### DELETE /volume/{name}
 
-Delete the volume `name`, which stops watching it, and closes its backend, once the requests which are using it, which are cancelled, have finished, which it waits for, and releases what it used, such as its directory, whose files aren't deleted. The volume can't be used once it's being deleted, and its name can't be used for another volume until it's deleted.
+Delete the volume `name`, and its index, from the store, and return it. The server then stops watching it, and closes its backend, once the requests which are using it, which are cancelled, have finished, and releases what it used, such as its directory, whose files aren't deleted. A volume of the same name isn't mounted until it's closed. Returns 404 if the volume isn't stored.
 
 ## Object Operations
 

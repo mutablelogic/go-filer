@@ -114,13 +114,22 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 			return gofiler.ErrBadParameter.Withf("volume %d has no name, which is its name option, or the host of its url", i+1)
 		}
 
-		// The backend's URL is logged, as it has the placeholders of the
-		// credentials, which are stored, not the credentials
-		b, err := registry.Add(ctx.Context(), name, u)
-		if err != nil {
+		// It's stored, enabled, replacing a stored volume of the same name,
+		// and mounted by Run. Its URL is logged, as it has the placeholders
+		// of the credentials, which are stored, not the credentials.
+		meta := schema.VolumeMeta{Name: name, URL: u.String(), Enabled: true}
+		var volume *schema.Volume
+		if _, err := registry.GetVolume(ctx.Context(), name); errors.Is(err, gofiler.ErrNotFound) {
+			volume, err = registry.CreateVolume(ctx.Context(), meta)
+			if err != nil {
+				return fmt.Errorf("volume %q: %w", name, err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("volume %q: %w", name, err)
+		} else if volume, err = registry.UpdateVolume(ctx.Context(), meta); err != nil {
 			return fmt.Errorf("volume %q: %w", name, err)
 		}
-		ctx.Logger().InfoContext(ctx.Context(), "added volume", "name", name, "url", b.URL().String())
+		ctx.Logger().InfoContext(ctx.Context(), "added volume", "name", name, "url", volume.URL)
 	}
 
 	// Register the HTTP handlers

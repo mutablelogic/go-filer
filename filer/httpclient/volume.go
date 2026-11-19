@@ -3,6 +3,8 @@ package httpclient
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
@@ -37,18 +39,26 @@ func (c *Client) GetVolume(ctx context.Context, name string) (*schema.Volume, er
 	return types.Ptr(response), nil
 }
 
-// UpdateVolume changes the options of a volume by its name, and returns it,
-// with the URL of its backend. An option which is null is removed, so it's
-// the default, and those which aren't in the patch are kept.
-func (c *Client) UpdateVolume(ctx context.Context, name string, patch schema.VolumePatch) (*schema.Volume, error) {
+// UpdateVolume changes the options of a volume by its name, and whether it's
+// enabled, so it's mounted, when enabled isn't nil, and returns it, with the
+// URL of its backend. An option which is null is removed, so it's the
+// default, and those which aren't in the patch are kept.
+func (c *Client) UpdateVolume(ctx context.Context, name string, patch schema.VolumePatch, enabled *bool) (*schema.Volume, error) {
+	if patch == nil {
+		patch = schema.VolumePatch{}
+	}
 	req, err := client.NewJSONRequestEx(http.MethodPatch, patch, types.ContentTypeAny)
 	if err != nil {
 		return nil, err
 	}
+	opts := []client.RequestOpt{client.OptPath("volume", name)}
+	if enabled != nil {
+		opts = append(opts, client.OptQuery(url.Values{"enabled": {strconv.FormatBool(*enabled)}}))
+	}
 
 	// Perform request
 	var response schema.Volume
-	if err := c.DoWithContext(ctx, req, &response, client.OptPath("volume", name)); err != nil {
+	if err := c.DoWithContext(ctx, req, &response, opts...); err != nil {
 		return nil, err
 	}
 
@@ -70,9 +80,9 @@ func (c *Client) DeleteVolume(ctx context.Context, name string) (*schema.Volume,
 }
 
 // CreateVolume creates a volume with a name, from the URL of its backend,
-// and returns it, with the URL of its backend, which has each of its
-// options, defaults too
-func (c *Client) CreateVolume(ctx context.Context, volume schema.Volume) (*schema.Volume, error) {
+// which is enabled, unless its Enabled is false, and returns it, with the
+// URL of its backend, which has each of its options, defaults too
+func (c *Client) CreateVolume(ctx context.Context, volume schema.VolumeCreateRequest) (*schema.Volume, error) {
 	req, err := client.NewJSONRequest(volume)
 	if err != nil {
 		return nil, err

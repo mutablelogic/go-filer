@@ -45,7 +45,7 @@ func Test_New(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "index.db")
 	s, err := sqlite.New(ctx, path)
 	require.NoError(t, err)
-	_, err = s.PutVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 	s, err = sqlite.New(ctx, path)
@@ -68,7 +68,7 @@ func Test_Trace(t *testing.T) {
 	s, err := sqlite.New(ctx, gosqlite.Memory, store.WithTracer(provider.Tracer("test")))
 	require.NoError(t, err)
 	defer s.Close()
-	_, err = s.PutVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=none", Enabled: true})
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=none", Enabled: true})
 	require.NoError(t, err)
 	_, err = s.GetVolume(ctx, "missing")
 	require.ErrorIs(t, err, gofiler.ErrNotFound)
@@ -77,10 +77,10 @@ func Test_Trace(t *testing.T) {
 	for _, span := range recorder.Ended() {
 		spans[span.Name()] = span
 	}
-	for _, name := range []string{"filer.store.sqlite.New", "filer.store.sqlite.PutVolume", "filer.store.sqlite.GetVolume"} {
+	for _, name := range []string{"filer.store.sqlite.New", "filer.store.sqlite.CreateVolume", "filer.store.sqlite.GetVolume"} {
 		require.Contains(t, spans, name)
 	}
-	put := spans["filer.store.sqlite.PutVolume"]
+	put := spans["filer.store.sqlite.CreateVolume"]
 	assert.Contains(t, attrs(put)["arg.volume"], "media")
 	assert.Equal(t, codes.Unset, put.Status().Code)
 	queries := 0
@@ -111,7 +111,7 @@ func Test_Migrate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "index.db")
 	s, err := sqlite.New(ctx, path)
 	require.NoError(t, err)
-	_, err = s.PutVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 	db, err := ncruces.Open(ctx, path)
@@ -132,7 +132,7 @@ func Test_Migrate(t *testing.T) {
 func Test_PutRollback(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
-	_, err := s.PutVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
+	_, err := s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
 	require.NoError(t, err)
 	object := func(path, key, value string) *schema.Object {
 		return &schema.Object{ObjectKey: schema.ObjectKey{Path: path}, ObjectMeta: schema.ObjectMeta{Meta: []schema.Meta{{Namespace: "dc", Key: key, Value: json.RawMessage(value)}}}}

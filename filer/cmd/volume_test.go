@@ -100,6 +100,41 @@ func Test_VolumeCreateCmd(t *testing.T) {
 	}
 }
 
+func Test_VolumeEnabled(t *testing.T) {
+	var cli struct {
+		VolumeUpdate  VolumeUpdateCmd  `cmd:"" name:"volume-update"`
+		VolumeMount   VolumeMountCmd   `cmd:"" name:"volume-mount"`
+		VolumeUnmount VolumeUnmountCmd `cmd:"" name:"volume-unmount"`
+	}
+	parse := func(args ...string) {
+		t.Helper()
+		cli.VolumeUpdate.Enabled = nil
+		parser, err := kong.New(&cli)
+		require.NoError(t, err)
+		_, err = parser.Parse(args)
+		require.NoError(t, err)
+	}
+
+	// Whether a volume is enabled is kept, unless it's updated with
+	// --enabled, or --no-enabled
+	parse("volume-update", "media")
+	assert.Nil(t, cli.VolumeUpdate.Enabled)
+	parse("volume-update", "media", "--enabled")
+	if assert.NotNil(t, cli.VolumeUpdate.Enabled) {
+		assert.True(t, *cli.VolumeUpdate.Enabled)
+	}
+	parse("volume-update", "media", "--no-enabled")
+	if assert.NotNil(t, cli.VolumeUpdate.Enabled) {
+		assert.False(t, *cli.VolumeUpdate.Enabled)
+	}
+
+	// A volume is mounted, and unmounted, by its name
+	parse("volume-mount", "music")
+	assert.Equal(t, "music", cli.VolumeMount.Name)
+	parse("volume-unmount", "photos")
+	assert.Equal(t, "photos", cli.VolumeUnmount.Name)
+}
+
 func Test_VolumeUpdateCmd(t *testing.T) {
 	patch := func(args ...string) (map[string]string, error) {
 		var cli struct {

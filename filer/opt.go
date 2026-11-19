@@ -24,7 +24,7 @@ type opt struct {
 	broadcaster *broadcaster.Broadcaster
 	meter       metric.Meter
 	backendOpts gofiler.Opts  // the options every backend is created with: its tracer, credentials, and client options
-	indexStore  store.Store   // where the indexes of volumes with the index option are kept
+	store       store.Store   // where the volumes, and their indexes, are kept, which is required
 	worker      string        // the name of the worker, which is in the metrics
 	debounce    time.Duration // how long a change is held, until its object is quiet
 }
@@ -40,6 +40,11 @@ func (o *opt) apply(opt []Opt) error {
 		if err := fn(o); err != nil {
 			return err
 		}
+	}
+
+	// The store is required, as it's the volumes of the registry
+	if o.store == nil {
+		return gofiler.ErrBadParameter.With("the registry needs a store, with WithStore")
 	}
 
 	// Return success
@@ -151,15 +156,15 @@ func defaultWorker() string {
 	return "unknown"
 }
 
-// WithIndexerStore sets the store of the indexes of volumes, which a volume
-// with the index option, such as index=folders, is indexed in, by the
-// volume's name. Without it, a volume can't be indexed.
-func WithIndexerStore(store store.Store) Opt {
+// WithStore sets the store of the volumes, and their indexes, which is
+// required. The registry mounts the volumes which are enabled in it, and a
+// volume with the index option, such as index=folders, is indexed in it.
+func WithStore(s store.Store) Opt {
 	return func(o *opt) error {
-		if store == nil {
-			return gofiler.ErrBadParameter.With("the indexer's store can't be nil")
+		if s == nil {
+			return gofiler.ErrBadParameter.With("the store can't be nil")
 		}
-		o.indexStore = store
+		o.store = s
 		return nil
 	}
 }

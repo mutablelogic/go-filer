@@ -37,7 +37,9 @@ type VolumeCommands struct {
 	VolumeCreateS3        VolumeCreateS3Cmd        `cmd:"" name:"volume-create-s3" help:"Create a volume of an S3 bucket, or one which is compatible, such as MinIO's or SeaweedFS's." group:"VOLUME"`
 	VolumeCreateGTasks    VolumeCreateGTasksCmd    `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGContacts VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts" help:"Create a volume of a Google account's contacts, as vCards, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
-	VolumeUpdate          VolumeUpdateCmd          `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
+	VolumeUpdate          VolumeUpdateCmd          `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, and whether it's enabled, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
+	VolumeMount           VolumeMountCmd           `cmd:"" name:"volume-mount" help:"Enable a volume by its name, so the server mounts it, and does when it starts, signing in when its user needs to." group:"VOLUME"`
+	VolumeUnmount         VolumeUnmountCmd         `cmd:"" name:"volume-unmount" help:"Disable a volume by its name, so the server unmounts it, keeping it, and its index." group:"VOLUME"`
 	VolumeDelete          VolumeDeleteCmd          `cmd:"" name:"volume-delete" help:"Delete a volume by its name, without deleting its files." group:"VOLUME"`
 	VolumeWatch           VolumeWatchCmd           `cmd:"" name:"volume-watch" help:"Show the changes to the objects of volumes, as they happen, until it's interrupted." group:"VOLUME"`
 }
@@ -55,6 +57,16 @@ type VolumeUpdateCmd struct {
 	NoBrowser bool     `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it."`
 	Opt       []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
 	Unset     []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
+	Enabled   *bool    `name:"enabled" negatable:"" help:"Enable the volume, so it's mounted, or disable it, with --no-enabled, so it's unmounted, which is kept as it is without either."`
+}
+
+type VolumeMountCmd struct {
+	VolumeGetCmd
+	NoBrowser bool `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it."`
+}
+
+type VolumeUnmountCmd struct {
+	VolumeGetCmd
 }
 
 type VolumeWatchCmd struct {
@@ -224,12 +236,13 @@ func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
 // signs in with Google, in the browser, and creates it again, and prints it
 func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInClient *credentialclient.Client, noBrowser bool) error {
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
-		created, err := client.CreateVolume(ctx, volume)
+		req := schema.VolumeCreateRequest{Name: volume.Name, URL: volume.URL}
+		created, err := client.CreateVolume(ctx, req)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
 			if err := signInWithBrowser(ctx, signInClient, *signIn, noBrowser); err != nil {
 				return err
 			}
-			created, err = client.CreateVolume(ctx, volume)
+			created, err = client.CreateVolume(ctx, req)
 		}
 		if err != nil {
 			return err
@@ -242,7 +255,7 @@ func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInCli
 // createVolume creates the volume, and prints it
 func createVolume(ctx server.Cmd, span string, volume schema.Volume) error {
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
-		volume, err := client.CreateVolume(ctx, volume)
+		volume, err := client.CreateVolume(ctx, schema.VolumeCreateRequest{Name: volume.Name, URL: volume.URL})
 		if err != nil {
 			return err
 		}
@@ -268,22 +281,37 @@ func (cmd *VolumeUpdateCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
+	return updateVolume(ctx, "filer.VolumeUpdateCmd", cmd.Name, patch, cmd.Enabled, cmd.NoBrowser)
+}
+
+// Run enables the volume, so it's mounted
+func (cmd *VolumeMountCmd) Run(ctx server.Cmd) error {
+	return updateVolume(ctx, "filer.VolumeMountCmd", cmd.Name, nil, types.Ptr(true), cmd.NoBrowser)
+}
+
+// Run disables the volume, so it's unmounted
+func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
+	return updateVolume(ctx, "filer.VolumeUnmountCmd", cmd.Name, nil, types.Ptr(false), true)
+}
+
+// updateVolume updates the options of a volume, and whether it's enabled,
+// when it isn't nil, signing in when its user needs to, and prints it
+func updateVolume(ctx server.Cmd, span, name string, patch schema.VolumePatch, enabled *bool, noBrowser bool) error {
 	signInClient, err := newSignInClient(ctx)
 	if err != nil {
 		return err
 	}
-	return withClient(ctx, "filer.VolumeUpdateCmd", func(ctx context.Context, client *httpclient.Client) error {
-		volume, err := client.UpdateVolume(ctx, cmd.Name, patch)
+	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
+		volume, err := client.UpdateVolume(ctx, name, patch, enabled)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
-			if err := signInWithBrowser(ctx, signInClient, *signIn, cmd.NoBrowser); err != nil {
+			if err := signInWithBrowser(ctx, signInClient, *signIn, noBrowser); err != nil {
 				return err
 			}
-			volume, err = client.UpdateVolume(ctx, cmd.Name, patch)
+			volume, err = client.UpdateVolume(ctx, name, patch, enabled)
 		}
 		if err != nil {
 			return err
 		}
-
 		fmt.Println(volume)
 		return nil
 	})
