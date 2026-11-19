@@ -53,10 +53,15 @@ CREATE INDEX IF NOT EXISTS object_type ON object (volume, media_type, key);
 CREATE INDEX IF NOT EXISTS object_subtype ON object (volume, media_subtype, key);
 
 -- schema.metadata
--- The metadata of the objects, one row per entry, in the order they're put
+-- The metadata of the objects, one row per entry, in the order they're put,
+-- of its source: the backend's, which is empty, or a task's, such as
+-- metadata, which a read of the object merges, the task's replacing the
+-- backend's of the same namespace and key
 CREATE TABLE IF NOT EXISTS metadata (
   volume          TEXT NOT NULL,
   object          TEXT NOT NULL,          -- the key of its object
+  source          TEXT NOT NULL DEFAULT '' CHECK (source = '' OR (
+                    source GLOB '[a-z]*' AND source NOT GLOB '*[^a-z_]*')),   -- the backend's, or a task's kind
   namespace       TEXT CHECK (namespace IS NULL OR (
                     length(namespace) <= 64 AND namespace GLOB '[a-zA-Z]*'
                     AND namespace NOT GLOB '*[^a-zA-Z0-9_-]*')),   -- an identifier, or NULL for none
@@ -69,7 +74,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 );
 
 -- schema.metadata_key
-CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, object, ifnull(namespace, ''), key);
+CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, object, source, ifnull(namespace, ''), key);
 
 -- schema.object_state
 -- The state of the objects of the volumes, by key and kind: the work of
@@ -98,9 +103,11 @@ CREATE TRIGGER IF NOT EXISTS object_updated AFTER UPDATE ON object BEGIN
 END;
 
 -- schema.object_deleted
--- A file which is deleted has no revision
+-- A file which is deleted has no revision, nor the work of its tasks, nor
+-- the revisions they were done of, but the work of indexing it, and of a
+-- scan, is kept, as it's of the backend
 CREATE TRIGGER IF NOT EXISTS object_deleted AFTER DELETE ON object BEGIN
-  DELETE FROM object_state WHERE volume = old.volume AND key = old.key AND kind = 'listed';
+  DELETE FROM object_state WHERE volume = old.volume AND key = old.key AND kind NOT IN ('index', 'rescan', 'seen');
 END;
 
 -- schema.object_state_due

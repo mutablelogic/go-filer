@@ -50,7 +50,7 @@ func (self *folderIterator) Next(ctx context.Context) (*schema.Object, error) {
 		} else if self.done {
 			return nil, io.EOF
 		}
-		page, err := self.indexer.store.List(ctx, self.indexer.name, self.req)
+		page, err := self.indexer.store.ListObjects(ctx, self.indexer.name, self.req)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +92,7 @@ func (self *objectIterator) Count(ctx context.Context) (uint64, error) {
 	if self.file {
 		return 1, nil
 	}
-	return self.indexer.store.Count(ctx, self.indexer.name, self.req)
+	return self.indexer.store.CountObjects(ctx, self.indexer.name, self.req)
 }
 
 // Next returns the next object, or io.EOF when there are no more
@@ -108,7 +108,7 @@ func (self *objectIterator) Next(ctx context.Context) (*schema.Object, error) {
 		} else if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		page, err := self.indexer.store.List(ctx, self.indexer.name, self.req)
+		page, err := self.indexer.store.ListObjects(ctx, self.indexer.name, self.req)
 		if err != nil {
 			return nil, err
 		}

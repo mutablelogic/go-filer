@@ -5,6 +5,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	store "github.com/mutablelogic/go-filer/store"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -14,11 +15,13 @@ import (
 type Opt func(*opt) error
 
 type opt struct {
-	retry          time.Duration // How long to wait to watch again, when watching fails, which doubles each time
-	rescanInterval time.Duration // How often a backend which can't be watched is scanned again
-	debounce       time.Duration // How long work waits, for more of its path, which coalesces with it
-	rescanMin      time.Duration // How often a folder is rescanned, at most
-	mode           Mode          // What's indexed, which is ModeFolders, by default
+	retry          time.Duration       // How long to wait to watch again, when watching fails, which doubles each time
+	rescanInterval time.Duration       // How often a backend which can't be watched is scanned again
+	debounce       time.Duration       // How long work waits, for more of its path, which coalesces with it
+	rescanMin      time.Duration       // How often a folder is rescanned, at most
+	mode           Mode                // What's indexed, which is ModeFolders, by default
+	tasks          map[store.Kind]Task // The tasks of the files, of their kinds, such as KindMetadata
+	taskWorkers    int                 // How many workers do the tasks' work
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -60,13 +63,42 @@ func WithRescanInterval(interval time.Duration) Opt {
 }
 
 // WithMode sets what's indexed, which is ModeFolders, by default, or
-// ModeObjects, of the files too
+// ModeObjects, of the files too, or ModeMetadata, of the files, which are
+// enriched with their metadata, when a task is set (see WithMetadataTask)
 func WithMode(mode Mode) Opt {
 	return func(o *opt) error {
-		if mode != ModeFolders && mode != ModeObjects {
-			return gofiler.ErrBadParameter.Withf("an indexer's mode is %s or %s, not %q", ModeFolders, ModeObjects, mode)
+		if mode != ModeFolders && mode != ModeObjects && mode != ModeMetadata {
+			return gofiler.ErrBadParameter.Withf("an indexer's mode is %s, %s or %s, not %q", ModeFolders, ModeObjects, ModeMetadata, mode)
 		}
 		o.mode = mode
+		return nil
+	}
+}
+
+// WithMetadataTask sets the task which enriches a volume's files with their
+// metadata, of ModeMetadata, which reads a file of the backend, and stores
+// what it finds, when it's new, or changed, apart from indexing it
+func WithMetadataTask(task Task) Opt {
+	return func(o *opt) error {
+		if task == nil {
+			return gofiler.ErrBadParameter.With("a metadata task is nil")
+		}
+		if o.tasks == nil {
+			o.tasks = make(map[store.Kind]Task)
+		}
+		o.tasks[store.KindMetadata] = task
+		return nil
+	}
+}
+
+// WithTaskWorkers sets how many workers do the work of tasks, which is
+// DefaultTaskWorkers
+func WithTaskWorkers(n int) Opt {
+	return func(o *opt) error {
+		if n <= 0 {
+			return gofiler.ErrBadParameter.Withf("task workers: %d", n)
+		}
+		o.taskWorkers = n
 		return nil
 	}
 }
@@ -113,7 +145,7 @@ func WithRetry(retry time.Duration) Opt {
 // PRIVATE METHODS
 
 func (o *opt) apply(opts []Opt) error {
-	o.retry, o.rescanInterval, o.debounce, o.rescanMin, o.mode = defaultRetry, DefaultRescanInterval, DefaultDebounce, DefaultRescanMinInterval, ModeFolders
+	o.retry, o.rescanInterval, o.debounce, o.rescanMin, o.mode, o.taskWorkers = defaultRetry, DefaultRescanInterval, DefaultDebounce, DefaultRescanMinInterval, ModeFolders, DefaultTaskWorkers
 	for _, fn := range opts {
 		if err := fn(o); err != nil {
 			return err

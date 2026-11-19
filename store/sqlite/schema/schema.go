@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 10
+const Version = 11
 
 var (
 	//go:embed objects.sql
@@ -109,6 +109,21 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 		if version >= 1 && version < 10 {
 			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_10").Exec(ctx, `ALTER TABLE volume ADD COLUMN phase TEXT`); err != nil {
 				return err
+			}
+		}
+		// Version 11's metadata is of its source, the backend's, or a task's,
+		// which metadata of version 6 to 10 is added, as the backend's, and
+		// its index is created again, of its source, as is the trigger of an
+		// object which is deleted, which removes the state of its tasks
+		if version >= 6 && version < 11 {
+			for _, query := range []string{
+				`ALTER TABLE metadata ADD COLUMN source TEXT NOT NULL DEFAULT ''`,
+				`DROP INDEX IF EXISTS metadata_key`,
+				`DROP TRIGGER IF EXISTS object_deleted`,
+			} {
+				if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_11").Exec(ctx, query); err != nil {
+					return err
+				}
 			}
 		}
 		for _, key := range objects.Keys() {

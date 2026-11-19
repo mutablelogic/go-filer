@@ -219,13 +219,13 @@ func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest)
 		// its objects
 		key := store.FolderKey(folderPath(req.Path))
 		if pending, err := self.store.Pending(ctx, self.name, key); err == nil && !pending && self.ready(ctx) {
-			if object, err := self.store.Get(ctx, self.name, key); err == nil {
+			if object, err := self.store.GetObject(ctx, self.name, key); err == nil {
 				object.Name = self.name
 				return object, nil
 			}
 		}
 		return self.Filer.GetObject(ctx, req)
-	case self.mode != ModeObjects:
+	case !self.mode.Files():
 		// A file is the backend's, unless files are indexed
 		return self.Filer.GetObject(ctx, req)
 	}
@@ -243,7 +243,7 @@ func (self *Indexer) getFile(ctx context.Context, req schema.GetObjectRequest) (
 	if err != nil || pending {
 		return self.Filer.GetObject(ctx, req)
 	}
-	indexed, err := self.store.Get(ctx, self.name, req.Path)
+	indexed, err := self.store.GetObject(ctx, self.name, req.Path)
 	if err != nil {
 		return self.Filer.GetObject(ctx, req)
 	}
@@ -264,7 +264,7 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 		}
 		return &folderIterator{backend: iter}, nil
 	}
-	if _, err := self.store.Get(ctx, self.name, parent); errors.Is(err, gofiler.ErrNotFound) {
+	if _, err := self.store.GetObject(ctx, self.name, parent); errors.Is(err, gofiler.ErrNotFound) {
 		return nil, &fs.PathError{Op: "list", Path: req.Path, Err: fs.ErrNotExist}
 	} else if err != nil {
 		return nil, err
@@ -282,7 +282,7 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 // their type, inode/directory, or inode, the folders of the index, once it's
 // ready
 func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
-	if self.mode == ModeObjects {
+	if self.mode.Files() {
 		if iter := self.listIndex(ctx, req); iter != nil {
 			return iter, nil
 		}
@@ -307,9 +307,9 @@ func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequ
 // there. Work which is queued once it's listed is of the listing's later
 // pages, as a backend's listing is of its changes while it's listed.
 func (self *Indexer) listIndex(ctx context.Context, req schema.ListObjectsRequest) schema.ListObjectsIterator {
-	if self.mode != ModeObjects {
+	if !self.mode.Files() {
 		return nil
-	} else if state, err := self.store.State(ctx, self.name); err != nil || state.Status != schema.IndexStatusReady || state.Mode != string(ModeObjects) {
+	} else if state, err := self.store.State(ctx, self.name); err != nil || state.Status != schema.IndexStatusReady || !Mode(state.Mode).Files() {
 		return nil
 	}
 	p, after := req.Path, req.StartAfter
@@ -329,8 +329,8 @@ func (self *Indexer) listIndex(ctx context.Context, req schema.ListObjectsReques
 	} else if pending, err := self.store.Pending(ctx, self.name, p); err != nil || pending {
 		return nil
 	} else {
-		_, fileErr := self.store.Get(ctx, self.name, p)
-		_, folderErr := self.store.Get(ctx, self.name, store.FolderKey(p))
+		_, fileErr := self.store.GetObject(ctx, self.name, p)
+		_, folderErr := self.store.GetObject(ctx, self.name, store.FolderKey(p))
 		switch {
 		case fileErr == nil && folderErr == nil:
 			return nil
@@ -345,7 +345,7 @@ func (self *Indexer) listIndex(ctx context.Context, req schema.ListObjectsReques
 		if pending, err := self.store.Pending(ctx, self.name, p); err != nil || pending {
 			return nil
 		}
-		file, err := self.store.Get(ctx, self.name, p)
+		file, err := self.store.GetObject(ctx, self.name, p)
 		if err != nil {
 			return nil
 		}
@@ -362,7 +362,7 @@ func (self *Indexer) listIndex(ctx context.Context, req schema.ListObjectsReques
 	// between the two isn't missed
 	if pending, err := self.store.PendingBeneath(ctx, self.name, folder); err != nil || pending {
 		return nil
-	} else if _, err := self.store.Get(ctx, self.name, folder); err != nil {
+	} else if _, err := self.store.GetObject(ctx, self.name, folder); err != nil {
 		return nil
 	}
 	return &objectIterator{indexer: self, req: store.ListRequest{Parent: folder, Recursive: req.Recursive, After: after, Limit: listPage, Type: req.Type}}
@@ -417,7 +417,7 @@ func (self *Indexer) keysAt(ctx context.Context, p string) []string {
 	}
 	keys := make([]string, 0, 2)
 	for _, key := range []string{p, store.FolderKey(p)} {
-		if _, err := self.store.Get(ctx, self.name, key); err == nil {
+		if _, err := self.store.GetObject(ctx, self.name, key); err == nil {
 			keys = append(keys, key)
 		}
 	}
@@ -506,7 +506,7 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 		// counts changed
 		self.mu.Lock()
 		defer self.mu.Unlock()
-		if err := self.store.Delete(ctx, self.name, root); err != nil {
+		if err := self.store.DeleteObject(ctx, self.name, root); err != nil {
 			return err
 		}
 		return self.parents(ctx, root)
@@ -568,6 +568,13 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 		}
 		if done += len(files); stored != nil {
 			stored(done)
+		}
+	}
+	// Its files which are new, or changed, since they were enriched, are
+	// enriched
+	if self.tasked() {
+		if err := self.queue.stale(ctx, root, store.KindMetadata); err != nil {
+			return err
 		}
 	}
 	if whole {
@@ -642,7 +649,7 @@ func (self *Indexer) list(ctx context.Context, root string, progress func(int)) 
 			if progress != nil && len(l.folders)%progressEvery == 0 {
 				progress(len(l.folders))
 			}
-		} else if self.mode == ModeObjects {
+		} else if self.mode.Files() {
 			l.files, seen[key] = l.files+1, store.Revision(child)
 		}
 		if len(seen) >= seenPage {
@@ -694,7 +701,7 @@ func (self *Indexer) get(ctx context.Context, f *fetches, n int) ([]*schema.Obje
 		} else if file != nil {
 			files, listed[key] = append(files, file), f.listed[key]
 		} else if f.indexed[key] {
-			if err := self.store.Delete(ctx, self.name, key); err != nil {
+			if err := self.store.DeleteObject(ctx, self.name, key); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -729,7 +736,7 @@ func (self *Indexer) put(ctx context.Context, objects []*schema.Object) error {
 	}
 	for len(objects) > 0 {
 		n := min(len(objects), listPage)
-		if err := self.store.Put(ctx, self.name, objects[:n]...); err != nil {
+		if err := self.store.PutObject(ctx, self.name, objects[:n]...); err != nil {
 			return err
 		}
 		objects = objects[n:]
@@ -745,7 +752,7 @@ func (self *Indexer) put(ctx context.Context, objects []*schema.Object) error {
 func (self *Indexer) index(ctx context.Context, folder string) error {
 	object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: folder}})
 	if errors.Is(err, fs.ErrNotExist) || (err == nil && !object.IsDir) {
-		if err := self.store.Delete(ctx, self.name, folder); err != nil {
+		if err := self.store.DeleteObject(ctx, self.name, folder); err != nil {
 			return err
 		}
 		return &fs.PathError{Op: "index", Path: folder, Err: fs.ErrNotExist}
@@ -771,7 +778,7 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		count++
 		if child.IsDir {
 			t.folders[store.Key(child)] = child
-		} else if self.mode == ModeObjects {
+		} else if self.mode.Files() {
 			t.files[store.Key(child)] = child
 		}
 	}
@@ -792,7 +799,7 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 	for _, child := range indexed {
 		key := store.Key(child)
 		if !t.has(key) {
-			if err := self.store.Delete(ctx, self.name, key); err != nil {
+			if err := self.store.DeleteObject(ctx, self.name, key); err != nil {
 				return err
 			}
 		} else if child.IsDir {
@@ -813,7 +820,13 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 	if err != nil {
 		return err
 	}
-	return self.publish(ctx, append(objects, got...), listed)
+	if err := self.publish(ctx, append(objects, got...), listed); err != nil {
+		return err
+	} else if self.tasked() {
+		// Its files which are new, or changed, are enriched
+		return self.queue.stale(ctx, folder, store.KindMetadata)
+	}
+	return nil
 }
 
 // refresh changes the index, of the object of a key, which is created,
@@ -831,7 +844,7 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 	if key == "/" {
 		return self.index(ctx, key)
 	}
-	_, indexErr := self.store.Get(ctx, self.name, key)
+	_, indexErr := self.store.GetObject(ctx, self.name, key)
 	if indexErr != nil && !errors.Is(indexErr, gofiler.ErrNotFound) {
 		return indexErr
 	}
@@ -841,7 +854,7 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: key}})
 		switch {
 		case errors.Is(err, fs.ErrNotExist) || (err == nil && !object.IsDir):
-			if err := self.store.Delete(ctx, self.name, key); err != nil {
+			if err := self.store.DeleteObject(ctx, self.name, key); err != nil {
 				return err
 			}
 		case err != nil:
@@ -849,17 +862,20 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		default:
 			rescan = true
 		}
-	} else if self.mode == ModeObjects {
+	} else if self.mode.Files() {
 		// A file which is new is stored once its folder is indexed, so a
 		// folder which fails to be indexed is retried
 		file, err := self.file(ctx, p)
 		if err != nil {
 			return err
 		} else if file != nil && indexErr == nil {
-			return self.put(ctx, []*schema.Object{file})
+			if err := self.put(ctx, []*schema.Object{file}); err != nil {
+				return err
+			}
+			return self.enrichFile(ctx, key)
 		} else if file != nil {
 			full = file
-		} else if err := self.store.Delete(ctx, self.name, key); err != nil {
+		} else if err := self.store.DeleteObject(ctx, self.name, key); err != nil {
 			return err
 		}
 	}
@@ -869,7 +885,10 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		return err
 	}
 	if full != nil {
-		return self.put(ctx, []*schema.Object{full})
+		if err := self.put(ctx, []*schema.Object{full}); err != nil {
+			return err
+		}
+		return self.enrichFile(ctx, key)
 	}
 
 	// A folder which is there is rescanned, which is queued once the
@@ -881,12 +900,22 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 	return nil
 }
 
+// enrichFile queues the file of the key to be enriched, when the volume
+// does a task, as it's stored of the backend, without a revision of its
+// listing, so it isn't stale (see PushStale) until it's scanned
+func (self *Indexer) enrichFile(ctx context.Context, key string) error {
+	if self.tasked() {
+		return self.queue.task(ctx, store.KindMetadata, key)
+	}
+	return nil
+}
+
 // parents indexes the folders above a key again, as their counts, or
 // folders, changed, up to the first which was indexed, removing those which
 // aren't there any more. It's called with the indexer locked.
 func (self *Indexer) parents(ctx context.Context, key string) error {
 	for parent := store.ParentKey(key); parent != ""; parent = store.ParentKey(parent) {
-		_, err := self.store.Get(ctx, self.name, parent)
+		_, err := self.store.GetObject(ctx, self.name, parent)
 		if err != nil && !errors.Is(err, gofiler.ErrNotFound) {
 			return err
 		}
@@ -934,7 +963,7 @@ func (self *Indexer) beneath(ctx context.Context, folder string) ([]*schema.Obje
 func (self *Indexer) all(ctx context.Context, req store.ListRequest) ([]*schema.Object, error) {
 	var result []*schema.Object
 	for {
-		page, err := self.store.List(ctx, self.name, req)
+		page, err := self.store.ListObjects(ctx, self.name, req)
 		if err != nil {
 			return nil, err
 		}

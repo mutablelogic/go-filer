@@ -141,8 +141,8 @@ func Test_Migrate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(7), state.Files)
 	assert.Equal(t, "objects", state.Mode)
-	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
-	_, err = s.Get(ctx, "media", "/a/")
+	require.NoError(t, s.PutObject(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
+	_, err = s.GetObject(ctx, "media", "/a/")
 	assert.NoError(t, err)
 	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/a/", Kind: store.KindIndex}))
 }
@@ -182,7 +182,7 @@ func Test_MigrateKeys(t *testing.T) {
 	state, err := s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Equal(t, schema.IndexState{}, state, "it's scanned again")
-	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 	assert.Empty(t, objects)
 	work, err := s.Claim(ctx, "media", []store.Kind{store.KindIndex, store.KindRescan}, 10, time.Hour)
@@ -190,11 +190,11 @@ func Test_MigrateKeys(t *testing.T) {
 	assert.Empty(t, work)
 
 	// Its objects are of keys, a file, and a folder, of the same path
-	require.NoError(t, s.Put(ctx, "media",
+	require.NoError(t, s.PutObject(ctx, "media",
 		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}},
 		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}},
 	))
-	objects, err = s.List(ctx, "media", store.ListRequest{Parent: "/"})
+	objects, err = s.ListObjects(ctx, "media", store.ListRequest{Parent: "/"})
 	require.NoError(t, err)
 	assert.Len(t, objects, 2)
 }
@@ -220,6 +220,11 @@ func Test_MigrateRevisions(t *testing.T) {
 		  parent TEXT GENERATED ALWAYS AS (rtrim(rtrim(key, '/'), replace(rtrim(key, '/'), '/', ''))) VIRTUAL,
 		  PRIMARY KEY (volume, key)
 		);
+		CREATE TABLE metadata (
+		  volume TEXT NOT NULL, object TEXT NOT NULL, namespace TEXT, key TEXT NOT NULL, value TEXT NOT NULL, text TEXT,
+		  FOREIGN KEY (volume, object) REFERENCES object (volume, key) ON DELETE CASCADE ON UPDATE CASCADE
+		);
+		CREATE UNIQUE INDEX metadata_key ON metadata (volume, object, ifnull(namespace, ''), key);
 		CREATE TABLE object_state (
 		  volume TEXT NOT NULL REFERENCES volume (name) ON DELETE CASCADE ON UPDATE CASCADE,
 		  key TEXT NOT NULL, kind TEXT NOT NULL, etag TEXT, after TIMESTAMP NOT NULL,
@@ -229,6 +234,7 @@ func Test_MigrateRevisions(t *testing.T) {
 		INSERT INTO volume (name, url, enabled, created_at, status, folders, files, scan_mode)
 		VALUES ('media', 'file://media/mnt/media?index=objects', 1, '2026-11-19T12:00:00Z', 'ready', 1, 1, 'objects');
 		INSERT INTO object (volume, key) VALUES ('media', '/'), ('media', '/a.txt');
+		INSERT INTO metadata (volume, object, namespace, key, value) VALUES ('media', '/a.txt', 'dc', 'title', '"A"');
 		PRAGMA user_version = 6;
 	`))
 	require.NoError(t, db.Close())
@@ -236,8 +242,18 @@ func Test_MigrateRevisions(t *testing.T) {
 	s, err := sqlite.New(ctx, path)
 	require.NoError(t, err)
 	defer s.Close()
-	_, err = s.Get(ctx, "media", "/a.txt")
+	_, err = s.GetObject(ctx, "media", "/a.txt")
 	require.NoError(t, err, "its objects are kept")
+
+	// Its metadata is the backend's, which a task's is merged with
+	object, err := s.GetObject(ctx, "media", "/a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"A"`)}}, object.Meta)
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"B"`)}}))
+	object, err = s.GetObject(ctx, "media", "/a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"B"`)}}, object.Meta)
+
 	revisions, err := s.Revisions(ctx, "media", "/", true)
 	require.NoError(t, err)
 	assert.Empty(t, revisions)
@@ -245,14 +261,14 @@ func Test_MigrateRevisions(t *testing.T) {
 	revisions, err = s.Revisions(ctx, "media", "/", true)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"/a.txt": "1"}, revisions)
-	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.txt"}}))
+	require.NoError(t, s.PutObject(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.txt"}}))
 	revisions, err = s.Revisions(ctx, "media", "/", true)
 	require.NoError(t, err)
 	assert.Empty(t, revisions, "its triggers are created")
 
 	// Its objects have their media types, of a listing of a type
-	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/b.png"}, ObjectMeta: schema.ObjectMeta{ContentType: "image/png"}}))
-	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Type: "image"})
+	require.NoError(t, s.PutObject(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/b.png"}, ObjectMeta: schema.ObjectMeta{ContentType: "image/png"}}))
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Type: "image"})
 	require.NoError(t, err)
 	require.Len(t, objects, 1)
 	assert.Equal(t, "/b.png", objects[0].Path)
@@ -266,19 +282,19 @@ func Test_PutRollback(t *testing.T) {
 	object := func(path, key, value string) *schema.Object {
 		return &schema.Object{ObjectKey: schema.ObjectKey{Path: path}, ObjectMeta: schema.ObjectMeta{Meta: []schema.Meta{{Namespace: "dc", Key: key, Value: json.RawMessage(value)}}}}
 	}
-	require.NoError(t, s.Put(ctx, "media", object("/a", "title", `"before"`)))
+	require.NoError(t, s.PutObject(ctx, "media", object("/a", "title", `"before"`)))
 
 	// A batch which updates an object, and its metadata, and then fails, on a
 	// later object's metadata, whose key isn't an identifier, is rolled back,
 	// as a whole
-	err = s.Put(ctx, "media", object("/a", "title", `"after"`), object("/b", "title", `"b"`), object("/c", "not a key", `"c"`))
+	err = s.PutObject(ctx, "media", object("/a", "title", `"after"`), object("/b", "title", `"b"`), object("/c", "not a key", `"c"`))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	a, err := s.Get(ctx, "media", "/a")
+	a, err := s.GetObject(ctx, "media", "/a")
 	require.NoError(t, err)
 	require.Len(t, a.Meta, 1)
 	assert.JSONEq(t, `"before"`, string(a.Meta[0].Value), "its update is rolled back")
 	for _, path := range []string{"/b", "/c"} {
-		_, err := s.Get(ctx, "media", path)
+		_, err := s.GetObject(ctx, "media", path)
 		assert.ErrorIs(t, err, gofiler.ErrNotFound, path)
 	}
 }

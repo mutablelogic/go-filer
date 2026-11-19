@@ -229,7 +229,7 @@ func (v Volume) IndexStatus() string {
 			phase = "idle"
 		}
 		result = fmt.Sprintf("%s, %d folders", phase, v.Index.Folders)
-		if v.Index.Mode == "objects" && (v.Index.Status == IndexStatusReady || v.Index.Files > 0) {
+		if (v.Index.Mode == "objects" || v.Index.Mode == "metadata") && (v.Index.Status == IndexStatusReady || v.Index.Files > 0) {
 			result += fmt.Sprintf(", %d files", v.Index.Files)
 		}
 	case v.Index.Error != "":

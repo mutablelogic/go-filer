@@ -35,21 +35,35 @@ RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coales
 
 -- object.put
 -- An object, which replaces the one of its key, and its metadata, of a JSON
--- array of entries, which replaces its metadata
+-- array of entries, which replaces the backend's metadata, but not a task's
 INSERT INTO object (volume, key, type, size, etag, modified_at)
 VALUES (@volume, @key, nullif(@type, ''), @size, @etag, @modified_at)
 ON CONFLICT (volume, key) DO UPDATE SET
   type = excluded.type, size = excluded.size, etag = excluded.etag, modified_at = excluded.modified_at;
-DELETE FROM metadata WHERE volume = @volume AND object = @key;
-INSERT INTO metadata (volume, object, namespace, key, value)
-SELECT @volume, @key, nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null')
+DELETE FROM metadata WHERE volume = @volume AND object = @key AND source = '';
+INSERT INTO metadata (volume, object, source, namespace, key, value)
+SELECT @volume, @key, '', nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null')
+FROM json_each(@meta) AS entry
+ORDER BY entry.id;
+
+-- object.set_meta
+-- The metadata of an object, of a source, a task's, of a JSON array of
+-- entries, which replaces the source's
+DELETE FROM metadata WHERE volume = @volume AND object = @key AND source = @source;
+INSERT INTO metadata (volume, object, source, namespace, key, value)
+SELECT @volume, @key, @source, nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null')
 FROM json_each(@meta) AS entry
 ORDER BY entry.id;
 
 -- object.get
 SELECT key, coalesce(type, ''), size, etag, modified_at, (
-  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value)) ORDER BY rowid)
+  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value)) ORDER BY source <> '', rowid)
   FROM metadata WHERE metadata.volume = object.volume AND metadata.object = object.key
+    AND NOT (source = '' AND EXISTS (
+      SELECT 1 FROM metadata AS task
+      WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
+        AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key
+    ))
 )
 FROM object WHERE volume = @volume AND key = @key;
 
@@ -57,8 +71,13 @@ FROM object WHERE volume = @volume AND key = @key;
 -- The objects of a folder, or beneath it, of the where clause, in the order
 -- of their keys, after the key the listing starts after
 SELECT key, coalesce(type, ''), size, etag, modified_at, (
-  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value)) ORDER BY rowid)
+  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value)) ORDER BY source <> '', rowid)
   FROM metadata WHERE metadata.volume = object.volume AND metadata.object = object.key
+    AND NOT (source = '' AND EXISTS (
+      SELECT 1 FROM metadata AS task
+      WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
+        AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key
+    ))
 )
 FROM object WHERE volume = @volume AND ${where} AND key > @after
 ORDER BY key;
@@ -128,27 +147,54 @@ ON CONFLICT (volume, key, kind) DO UPDATE SET
 
 -- queue.due
 -- The work of the kinds which is due, and isn't leased, earliest first
-SELECT key, kind, after, attempts, coalesce(error, ''), leased_until FROM object_state
+SELECT key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '') FROM object_state
 WHERE volume = @volume AND kind IN (SELECT value FROM json_each(@kinds))
   AND julianday(after) <= julianday(@now)
   AND (leased_until IS NULL OR julianday(leased_until) <= julianday(@now))
 ORDER BY julianday(after), key;
 
 -- queue.lease
-UPDATE object_state SET leased_until = @leased
+-- Work which is claimed, until its lease ends, and, of a task's, the revision
+-- of the file's listing, which it's done of
+UPDATE object_state SET leased_until = @leased,
+  revision = CASE WHEN kind IN ('index', 'rescan') THEN revision ELSE (
+    SELECT listed.revision FROM object_state AS listed
+    WHERE listed.volume = object_state.volume AND listed.key = object_state.key AND listed.kind = 'listed'
+  ) END
 WHERE volume = @volume AND key = @key AND kind = @kind
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until;
+RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.done
 -- Work which is done, of its claim, which is kept when it's pushed again
 -- since, as its lease is cleared
 DELETE FROM object_state
-WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased;
+WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
+RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
+
+-- queue.did
+-- The revision of the file which a task's work was done of, its listing's
+-- when it was claimed, of a row of the task's kind, with _done after it,
+-- while it's indexed, so a file which changed while it was done is stale
+INSERT INTO object_state (volume, key, kind, after, revision)
+SELECT @volume, @key, @did, @now, nullif(@revision, '')
+WHERE EXISTS (SELECT 1 FROM object WHERE volume = @volume AND key = @key)
+ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision;
+
+-- queue.push_stale
+-- The work of a task of the files beneath a folder whose listings' revisions
+-- aren't those the task was last done of, which isn't queued again
+INSERT INTO object_state (volume, key, kind, after)
+SELECT listed.volume, listed.key, @kind, @now
+FROM object_state AS listed
+LEFT JOIN object_state AS did ON did.volume = listed.volume AND did.key = listed.key AND did.kind = @did
+WHERE listed.volume = @volume AND listed.kind = 'listed' AND listed.key > @lower AND listed.key < @upper
+  AND (did.key IS NULL OR did.revision IS NOT listed.revision)
+ON CONFLICT (volume, key, kind) DO NOTHING;
 
 -- queue.failed
 UPDATE object_state SET attempts = attempts + 1, error = @error, after = @after, leased_until = NULL
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until;
+RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.pending
 -- Whether a key has work which would change its index: an index or a

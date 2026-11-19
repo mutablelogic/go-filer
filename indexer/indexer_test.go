@@ -238,7 +238,7 @@ func Test_Scan(t *testing.T) {
 	assert.True(t, object.IsDir)
 	assert.Equal(t, "media", object.Name)
 	assert.Equal(t, "2", count(t, object), "its folder, and its file")
-	indexed, err := s.Get(context.Background(), "media", "/a/")
+	indexed, err := s.GetObject(context.Background(), "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", indexed.Path, "it's got from the index")
 
@@ -343,7 +343,7 @@ func Test_Clone(t *testing.T) {
 // volume media, which are files, in their order
 func indexed(t *testing.T, s store.Store) []string {
 	t.Helper()
-	objects, err := s.List(context.Background(), "media", store.ListRequest{Parent: "/", Recursive: true})
+	objects, err := s.ListObjects(context.Background(), "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 	result := []string{}
 	for _, object := range objects {
@@ -382,7 +382,7 @@ func Test_Objects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(4), state.Folders, "with the root")
 	assert.Equal(t, uint64(2), state.Files)
-	file, err := s.Get(context.Background(), "media", "/x.txt")
+	file, err := s.GetObject(context.Background(), "media", "/x.txt")
 	require.NoError(t, err)
 	require.NotNil(t, file.Size)
 	assert.Equal(t, int64(len("x.txt")), *file.Size)
@@ -396,7 +396,7 @@ func Test_Objects(t *testing.T) {
 	files(t, s, "/a/y.txt", "/c/z.txt", "/w.txt", "/x.txt")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("longer"), 0o644))
 	require.Eventually(t, func() bool {
-		file, err := s.Get(context.Background(), "media", "/x.txt")
+		file, err := s.GetObject(context.Background(), "media", "/x.txt")
 		return err == nil && file.Size != nil && *file.Size == int64(len("longer"))
 	}, 10*time.Second, 10*time.Millisecond, "its size is indexed again")
 	require.Eventually(t, func() bool {
@@ -474,18 +474,18 @@ type faultyStore struct {
 	lists atomic.Int32 // How many listings fail
 }
 
-func (f *faultyStore) Get(ctx context.Context, volume, path string) (*schema.Object, error) {
+func (f *faultyStore) GetObject(ctx context.Context, volume, path string) (*schema.Object, error) {
 	if f.path != "" && path == f.path {
 		return nil, gofiler.ErrInternalServerError.With("the read failed")
 	}
-	return f.Store.Get(ctx, volume, path)
+	return f.Store.GetObject(ctx, volume, path)
 }
 
-func (f *faultyStore) List(ctx context.Context, volume string, req store.ListRequest) ([]*schema.Object, error) {
+func (f *faultyStore) ListObjects(ctx context.Context, volume string, req store.ListRequest) ([]*schema.Object, error) {
 	if f.lists.Add(-1) >= 0 {
 		return nil, gofiler.ErrInternalServerError.With("the listing failed")
 	}
-	return f.Store.List(ctx, volume, req)
+	return f.Store.ListObjects(ctx, volume, req)
 }
 
 // fuller is a backend whose files have more metadata than its listing, as a
@@ -577,7 +577,7 @@ func Test_ObjectsRevision(t *testing.T) {
 	run(t, i)
 	title := func(want string) func() bool {
 		return func() bool {
-			object, err := s.Get(context.Background(), "media", "/x.txt")
+			object, err := s.GetObject(context.Background(), "media", "/x.txt")
 			return err == nil && len(object.Meta) == 1 && string(object.Meta[0].Value) == `"`+want+`"`
 		}
 	}
@@ -635,7 +635,7 @@ func Test_ObjectsKeepMeta(t *testing.T) {
 	require.NoError(t, err)
 	run(t, i)
 	title := func(path string) bool {
-		object, err := s.Get(context.Background(), "media", path)
+		object, err := s.GetObject(context.Background(), "media", path)
 		return err == nil && len(object.Meta) == 1 && string(object.Meta[0].Value) == `"full"`
 	}
 
@@ -668,8 +668,8 @@ func Test_BucketFileAndFolder(t *testing.T) {
 		return err == nil && count(t, root) == "3"
 	}, 10*time.Second, 10*time.Millisecond, "a, a/ and x.txt")
 	require.Eventually(t, func() bool {
-		file, fileErr := s.Get(context.Background(), "media", "/a")
-		folder, folderErr := s.Get(context.Background(), "media", "/a/")
+		file, fileErr := s.GetObject(context.Background(), "media", "/a")
+		folder, folderErr := s.GetObject(context.Background(), "media", "/a/")
 		return fileErr == nil && !file.IsDir && folderErr == nil && folder.IsDir
 	}, 10*time.Second, 10*time.Millisecond, "the file, and the folder, are indexed")
 	file, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
@@ -1054,9 +1054,9 @@ func Test_RefreshRetry(t *testing.T) {
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/new/deep/f.txt"}, Body: strings.NewReader("f")})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		_, fileErr := s.Get(context.Background(), "media", "/new/deep/f.txt")
-		_, folderErr := s.Get(context.Background(), "media", "/new/")
-		root, rootErr := s.Get(context.Background(), "media", "/")
+		_, fileErr := s.GetObject(context.Background(), "media", "/new/deep/f.txt")
+		_, folderErr := s.GetObject(context.Background(), "media", "/new/")
+		root, rootErr := s.GetObject(context.Background(), "media", "/")
 		return fileErr == nil && folderErr == nil && rootErr == nil && count(t, root) == "4"
 	}, 10*time.Second, 10*time.Millisecond, "the folders above it are indexed, and the root's count")
 }
@@ -1136,7 +1136,7 @@ func Test_CatchUpChanges(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 	assert.Equal(t, []string{"/e/f/g.txt", "/x.txt"}, indexed(t, s))
-	x, err := s.Get(context.Background(), "media", "/x.txt")
+	x, err := s.GetObject(context.Background(), "media", "/x.txt")
 	require.NoError(t, err)
 	assert.Equal(t, int64(len("changed")), *x.Size, "of the changed file")
 	assert.Equal(t, int32(2), l.gets.Load(), "only /x.txt, and /e/f/g.txt, are got")
@@ -1157,11 +1157,107 @@ func Test_RefreshFolderRetry(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "new", "deep", "f.txt"), []byte("f"), 0o644))
 	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/new/deep/", Kind: store.KindIndex}))
 	require.Eventually(t, func() bool {
-		_, fileErr := s.Get(context.Background(), "media", "/new/deep/f.txt")
-		_, folderErr := s.Get(context.Background(), "media", "/new/")
-		root, rootErr := s.Get(context.Background(), "media", "/")
+		_, fileErr := s.GetObject(context.Background(), "media", "/new/deep/f.txt")
+		_, folderErr := s.GetObject(context.Background(), "media", "/new/")
+		root, rootErr := s.GetObject(context.Background(), "media", "/")
 		return fileErr == nil && folderErr == nil && rootErr == nil && count(t, root) == "4"
 	}, 10*time.Second, 10*time.Millisecond, "the folders above it are indexed, and it's rescanned")
+}
+
+// sizer is a task which stores the size of a file, as test:size, and
+// counts its calls, of each file, and fails of the files it's told to
+type sizer struct {
+	mu    sync.Mutex
+	calls map[string]int
+	fail  map[string]bool
+	gone  map[string]bool // The files which are gone, once they're read
+}
+
+func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataStore, object *schema.Object) error {
+	z.mu.Lock()
+	if z.calls == nil {
+		z.calls = make(map[string]int)
+	}
+	z.calls[object.Path]++
+	fail, gone := z.fail[object.Path], z.gone[object.Path]
+	z.mu.Unlock()
+	if fail {
+		return errors.New("it can't be read")
+	} else if gone {
+		return &iofs.PathError{Op: "read", Path: object.Path, Err: iofs.ErrNotExist}
+	}
+	return s.SetMetadata(ctx, object.Path, []schema.Meta{{Namespace: "test", Key: "size", Value: json.RawMessage(fmt.Sprint(*object.Size))}})
+}
+
+func (z *sizer) count(path string) int {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	return z.calls[path]
+}
+
+func Test_MetadataTask(t *testing.T) {
+	backend, dir := newBackend(t)
+	s := newStore(t)
+	z := &sizer{fail: map[string]bool{"/a/y.txt": true}}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	size := func(path string) string {
+		object, err := s.GetObject(context.Background(), "media", path)
+		if err != nil {
+			return ""
+		}
+		for _, m := range object.Meta {
+			if m.Namespace == "test" && m.Key == "size" {
+				return string(m.Value)
+			}
+		}
+		return ""
+	}
+
+	// Each file which is indexed is enriched, of the task, once, and one
+	// which fails is tried a few times, and given up
+	require.Eventually(t, func() bool { return size("/x.txt") == "5" }, 10*time.Second, 5*time.Millisecond, "it's enriched")
+	require.Eventually(t, func() bool { return z.count("/a/y.txt") == 5 }, 10*time.Second, 5*time.Millisecond, "it's given up, after 5 attempts")
+	assert.Equal(t, 1, z.count("/x.txt"))
+
+	// A rescan of files which haven't changed doesn't enrich them again, but
+	// one which has changed is, and one which was given up is tried again,
+	// once it changes
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/", Kind: store.KindRescan}))
+	require.Eventually(t, func() bool {
+		work, err := s.Claim(context.Background(), "media", []store.Kind{store.KindRescan}, 1, time.Millisecond)
+		return err == nil && len(work) == 0
+	}, 10*time.Second, 5*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 1, z.count("/x.txt"), "it hasn't changed")
+	assert.Equal(t, 5, z.count("/a/y.txt"), "it hasn't changed")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("changed"), 0o644))
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/", Kind: store.KindRescan}))
+	require.Eventually(t, func() bool { return size("/x.txt") == "7" }, 10*time.Second, 5*time.Millisecond, "it's enriched again")
+	assert.Equal(t, 2, z.count("/x.txt"))
+
+	// A volume whose files are indexed, but not enriched, doesn't run it
+	objects := &sizer{}
+	o, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithMode(indexer.ModeObjects), indexer.WithMetadataTask(objects.task), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, o)
+	time.Sleep(100 * time.Millisecond)
+	assert.Zero(t, objects.count("/x.txt"), "of index=objects")
+}
+
+func Test_MetadataTaskGone(t *testing.T) {
+	backend, _ := newBackend(t)
+	z := &sizer{gone: map[string]bool{"/x.txt": true}}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+
+	// A file which is gone, as the backend says, once it's read, is done,
+	// rather than tried again
+	require.Eventually(t, func() bool { return z.count("/a/y.txt") == 1 && z.count("/x.txt") == 1 }, 10*time.Second, 5*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 1, z.count("/x.txt"), "it isn't tried again")
 }
 
 func Test_Poll(t *testing.T) {

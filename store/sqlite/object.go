@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	// Packages
@@ -18,10 +19,10 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Get returns the object of the volume of the key, with its metadata, or
+// GetObject returns the object of the volume of the key, with its metadata, or
 // ErrNotFound
-func (self *Store) Get(ctx context.Context, volume, key string) (_ *filer.Object, err error) {
-	ctx, end := self.span(ctx, "Get", attribute.String("arg.volume", volume), attribute.String("arg.key", key))
+func (self *Store) GetObject(ctx context.Context, volume, key string) (_ *filer.Object, err error) {
+	ctx, end := self.span(ctx, "GetObject", attribute.String("arg.volume", volume), attribute.String("arg.key", key))
 	defer func() { end(err) }()
 	if err := store.ValidateKey(key); err != nil {
 		return nil, err
@@ -35,11 +36,11 @@ func (self *Store) Get(ctx context.Context, volume, key string) (_ *filer.Object
 	return result[0], nil
 }
 
-// Put stores the objects of the volume, replacing those of their keys, and
+// PutObject stores the objects of the volume, replacing those of their keys, and
 // their metadata, in one transaction, or returns ErrNotFound when the
 // volume isn't stored
-func (self *Store) Put(ctx context.Context, volume string, objects ...*filer.Object) (err error) {
-	ctx, end := self.span(ctx, "Put", attribute.String("arg.volume", volume), attribute.Int("arg.objects", len(objects)))
+func (self *Store) PutObject(ctx context.Context, volume string, objects ...*filer.Object) (err error) {
+	ctx, end := self.span(ctx, "PutObject", attribute.String("arg.volume", volume), attribute.Int("arg.objects", len(objects)))
 	defer func() { end(err) }()
 	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
 		var exists schema.VolumeList
@@ -58,11 +59,36 @@ func (self *Store) Put(ctx context.Context, volume string, objects ...*filer.Obj
 	}))
 }
 
-// Delete removes the object of the volume of the key, and, of a folder's,
+// SetMetadata replaces the metadata of the object of the volume of the key, of
+// the source, a task's kind, in one transaction, or returns ErrNotFound when
+// the object isn't indexed, or ErrPreconditionFailed when it isn't of the
+// attributes, which the task read, any more
+func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, of *filer.ObjectAttr, meta []filer.Meta) (err error) {
+	ctx, end := self.span(ctx, "SetMetadata", attribute.String("arg.volume", volume), attribute.String("arg.key", key), attribute.String("arg.source", source), attribute.Int("arg.meta", len(meta)))
+	defer func() { end(err) }()
+	if err := store.ValidateKey(key); err != nil {
+		return err
+	} else if !types.IsIdentifier(source) || strings.ToLower(source) != source {
+		return gofiler.ErrBadParameter.Withf("the source of metadata is a task's kind, such as metadata, not %q", source)
+	}
+	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
+		var result schema.ObjectList
+		if err := conn.Get(ctx, &result, schema.ObjectKey{Volume: volume, Key: key}); errors.Is(err, sqlite.ErrNotFound) {
+			return gofiler.ErrNotFound.Withf("%q isn't indexed in volume %q", key, volume)
+		} else if err != nil {
+			return err
+		} else if of != nil && !sameAttr(result[0].ObjectAttr, *of) {
+			return gofiler.ErrPreconditionFailed.Withf("%q changed since it was read", key)
+		}
+		return conn.Insert(ctx, nil, schema.ObjectMetaPut{Volume: volume, Key: key, Source: source, Meta: meta})
+	}))
+}
+
+// DeleteObject removes the object of the volume of the key, and, of a folder's,
 // every object beneath it, with their metadata, which isn't an error when
 // there's none
-func (self *Store) Delete(ctx context.Context, volume, key string) (err error) {
-	ctx, end := self.span(ctx, "Delete", attribute.String("arg.volume", volume), attribute.String("arg.key", key))
+func (self *Store) DeleteObject(ctx context.Context, volume, key string) (err error) {
+	ctx, end := self.span(ctx, "DeleteObject", attribute.String("arg.volume", volume), attribute.String("arg.key", key))
 	defer func() { end(err) }()
 	if err := store.ValidateKey(key); err != nil {
 		return err
@@ -70,11 +96,11 @@ func (self *Store) Delete(ctx context.Context, volume, key string) (err error) {
 	return storeErr(self.conn.Delete(ctx, nil, schema.ObjectKey{Volume: volume, Key: key}))
 }
 
-// List returns, in the order of their keys, up to the request's limit of
+// ListObjects returns, in the order of their keys, up to the request's limit of
 // the objects of a folder, or every object beneath it when it's recursive,
 // after the key it starts after, without the folder
-func (self *Store) List(ctx context.Context, volume string, req store.ListRequest) (_ []*filer.Object, err error) {
-	ctx, end := self.span(ctx, "List", attribute.String("arg.volume", volume), attribute.String("arg.req", types.Stringify(req)))
+func (self *Store) ListObjects(ctx context.Context, volume string, req store.ListRequest) (_ []*filer.Object, err error) {
+	ctx, end := self.span(ctx, "ListObjects", attribute.String("arg.volume", volume), attribute.String("arg.req", types.Stringify(req)))
 	defer func() { end(err) }()
 	if err := store.ValidateFolderKey(req.Parent); err != nil {
 		return nil, err
@@ -86,10 +112,10 @@ func (self *Store) List(ctx context.Context, volume string, req store.ListReques
 	return result, nil
 }
 
-// Count returns how many objects a listing has, of every page, without the
+// CountObjects returns how many objects a listing has, of every page, without the
 // key it starts after, or its limit
-func (self *Store) Count(ctx context.Context, volume string, req store.ListRequest) (_ uint64, err error) {
-	ctx, end := self.span(ctx, "Count", attribute.String("arg.volume", volume), attribute.String("arg.req", types.Stringify(req)))
+func (self *Store) CountObjects(ctx context.Context, volume string, req store.ListRequest) (_ uint64, err error) {
+	ctx, end := self.span(ctx, "CountObjects", attribute.String("arg.volume", volume), attribute.String("arg.req", types.Stringify(req)))
 	defer func() { end(err) }()
 	if err := store.ValidateFolderKey(req.Parent); err != nil {
 		return 0, err
@@ -140,4 +166,12 @@ func (self *Store) SetRevisions(ctx context.Context, volume string, revisions ma
 		}
 		return nil
 	}))
+}
+
+// sameAttr returns true when two versions of an object have the same
+// attributes: entity tags, sizes, and when they were modified
+func sameAttr(a, b filer.ObjectAttr) bool {
+	sameETag := (a.ETag == nil) == (b.ETag == nil) && (a.ETag == nil || *a.ETag == *b.ETag)
+	sameSize := (a.Size == nil) == (b.Size == nil) && (a.Size == nil || *a.Size == *b.Size)
+	return sameETag && sameSize && a.ModTime.Equal(b.ModTime)
 }

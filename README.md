@@ -166,6 +166,10 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **`--volume`** creates a volume when the server starts, or updates the stored one of the same name.
 * **Indexing:** the `index` option sets what's indexed.
   * `index=none`, or no option, indexes nothing; `index=folders` indexes folders; `index=objects` indexes files too, with their size, modified time, type, entity tag and the backend's metadata.
+  * `index=metadata` indexes files as `objects` does, and enriches each new or changed file with a task, such as go-metadata's. The server passes the task with `registry.WithMetadataTask`.
+    * Task workers run separately from indexing, so a slow read never holds it up.
+    * A task stores what it finds with `SetMetadata`, as its own metadata rows, which the backend's metadata never replaces. Reads merge the two, and the task's value wins for the same key.
+    * A file is enriched again only when its listing's revision changes. A file whose task keeps failing is given up after five attempts, until it changes.
   * Folders are listed from the index.
   * With `index=objects`, a new or changed file is stored from `GetObject`, not from the listing, which on S3 lacks the metadata. That's one HEAD request per new or changed object.
   * A scan has two phases: **scanning** lists the tree, and **indexing** fetches and stores new or changed files 100 at a time. It then goes **idle**. The Index column shows the phase. On a first scan, the file count rises as files are stored.

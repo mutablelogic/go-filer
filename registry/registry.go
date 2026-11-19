@@ -267,7 +267,7 @@ func (self *Registry) Schemes() []string {
 // when it isn't indexed any more, or its backend is another, which doesn't
 // write the state when there's none
 func (self *Registry) forget(ctx context.Context, volume string) {
-	_ = self.store.Delete(ctx, volume, "/")
+	_ = self.store.DeleteObject(ctx, volume, "/")
 	if state, err := self.store.State(ctx, volume); err == nil && state != (schema.IndexState{}) {
 		_ = self.store.SetState(ctx, volume, schema.IndexState{})
 	}
@@ -340,7 +340,11 @@ func (self *Registry) indexed(volume string, b gofiler.Filer, mode indexer.Mode)
 	if mode == indexer.ModeNone {
 		return b, nil
 	}
-	i, err := indexer.New(volume, b, self.store, indexer.WithMode(mode))
+	opts := []indexer.Opt{indexer.WithMode(mode)}
+	if self.metadata != nil {
+		opts = append(opts, indexer.WithMetadataTask(self.metadata))
+	}
+	i, err := indexer.New(volume, b, self.store, opts...)
 	if err != nil {
 		return nil, errors.Join(err, closeFiler(b))
 	}

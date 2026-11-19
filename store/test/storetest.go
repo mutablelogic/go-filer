@@ -41,6 +41,8 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("Revisions", func(t *testing.T) { testRevisions(t, withVolumes(t, newStore(t))) })
 	t.Run("ListType", func(t *testing.T) { testListType(t, withVolumes(t, newStore(t))) })
 	t.Run("Scan", func(t *testing.T) { testScan(t, withVolumes(t, newStore(t))) })
+	t.Run("SetMetadata", func(t *testing.T) { testSetMetadata(t, withVolumes(t, newStore(t))) })
+	t.Run("QueueStale", func(t *testing.T) { testQueueStale(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -253,40 +255,40 @@ func testIndex(t *testing.T, s store.Store) {
 
 	// A volume's objects are stored once it's been created, and kept when
 	// it's updated
-	assert.ErrorIs(t, s.Put(ctx, "media", folder("/a")), gofiler.ErrNotFound)
+	assert.ErrorIs(t, s.PutObject(ctx, "media", folder("/a")), gofiler.ErrNotFound)
 	volume := schema.VolumeMeta{Name: "media", URL: "file://media/tmp/media", Enabled: true}
 	_, err := s.CreateVolume(ctx, volume)
 	require.NoError(t, err)
-	require.NoError(t, s.Put(ctx, "media", folder("/a")))
+	require.NoError(t, s.PutObject(ctx, "media", folder("/a")))
 	volume.Enabled = false
 	_, err = s.UpdateVolume(ctx, volume)
 	require.NoError(t, err)
-	_, err = s.Get(ctx, "media", "/a/")
+	_, err = s.GetObject(ctx, "media", "/a/")
 	assert.NoError(t, err, "its index is kept")
 }
 
 func testDeleteVolume(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "media", folder("/"), folder("/a")))
-	require.NoError(t, s.Put(ctx, "photos", folder("/b")))
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), folder("/a")))
+	require.NoError(t, s.PutObject(ctx, "photos", folder("/b")))
 	require.NoError(t, s.SetState(ctx, "media", schema.IndexState{Status: schema.IndexStatusReady, Folders: 2}))
 
 	// A volume is deleted with its index, and its state, but not another's
 	require.NoError(t, s.DeleteVolume(ctx, "media"))
 	_, err := s.GetVolume(ctx, "media")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
-	_, err = s.Get(ctx, "media", "/a/")
+	_, err = s.GetObject(ctx, "media", "/a/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	state, err := s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Equal(t, schema.IndexStatusNone, state.Status)
-	_, err = s.Get(ctx, "photos", "/b/")
+	_, err = s.GetObject(ctx, "photos", "/b/")
 	assert.NoError(t, err)
 
 	// Created again, it has no index, or state
 	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/tmp/media"})
 	require.NoError(t, err)
-	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 	assert.Empty(t, objects)
 	state, err = s.State(ctx, "media")
@@ -299,10 +301,10 @@ func testGet(t *testing.T, s store.Store) {
 
 	// An object which isn't indexed isn't found, and a key which isn't
 	// absolute, and clean, is bad
-	_, err := s.Get(ctx, "media", "/a/")
+	_, err := s.GetObject(ctx, "media", "/a/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	for _, bad := range []string{"", "a", "/a//", "/a/../b", "/a/./"} {
-		_, err := s.Get(ctx, "media", bad)
+		_, err := s.GetObject(ctx, "media", bad)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
 	}
 
@@ -313,8 +315,8 @@ func testGet(t *testing.T, s store.Store) {
 	put := folder("/a")
 	put.ETag, put.ModTime, put.ContentType = &etag, modtime, "inode/directory"
 	put.Meta = []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"A"`)}}
-	require.NoError(t, s.Put(ctx, "media", put))
-	got, err := s.Get(ctx, "media", "/a/")
+	require.NoError(t, s.PutObject(ctx, "media", put))
+	got, err := s.GetObject(ctx, "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", got.Path)
 	assert.True(t, got.IsDir)
@@ -325,16 +327,16 @@ func testGet(t *testing.T, s store.Store) {
 
 	// A file of the same path, which a bucket can have, is another object,
 	// with its own metadata
-	_, err = s.Get(ctx, "media", "/a")
+	_, err = s.GetObject(ctx, "media", "/a")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound, "it's the folder's key")
 	same := file("/a")
 	same.Meta = []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"file"`)}}
-	require.NoError(t, s.Put(ctx, "media", same))
-	got, err = s.Get(ctx, "media", "/a")
+	require.NoError(t, s.PutObject(ctx, "media", same))
+	got, err = s.GetObject(ctx, "media", "/a")
 	require.NoError(t, err)
 	assert.False(t, got.IsDir)
 	assert.JSONEq(t, `"file"`, string(got.Meta[0].Value))
-	got, err = s.Get(ctx, "media", "/a/")
+	got, err = s.GetObject(ctx, "media", "/a/")
 	require.NoError(t, err)
 	assert.True(t, got.IsDir)
 	assert.JSONEq(t, `"A"`, string(got.Meta[0].Value), "the folder's is kept")
@@ -345,7 +347,7 @@ func testGet(t *testing.T, s store.Store) {
 	got.Meta[0].Value[1] = 'X'
 	*put.ETag = "changed"
 	put.Meta[0].Value[1] = 'Y'
-	again, err := s.Get(ctx, "media", "/a/")
+	again, err := s.GetObject(ctx, "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", again.Path)
 	assert.Equal(t, "etag-1", *again.ETag)
@@ -354,8 +356,8 @@ func testGet(t *testing.T, s store.Store) {
 	// It's replaced when it's put again
 	replaced := folder("/a")
 	replaced.Meta = nil
-	require.NoError(t, s.Put(ctx, "media", replaced))
-	again, err = s.Get(ctx, "media", "/a/")
+	require.NoError(t, s.PutObject(ctx, "media", replaced))
+	again, err = s.GetObject(ctx, "media", "/a/")
 	require.NoError(t, err)
 	assert.Nil(t, again.ETag)
 	assert.Empty(t, again.Meta)
@@ -363,14 +365,14 @@ func testGet(t *testing.T, s store.Store) {
 	// An object whose key isn't clean is bad, and none of the objects put
 	// with it are stored
 	for _, bad := range []*schema.Object{file("/b/../c"), folder("/b/."), file("b"), file("")} {
-		assert.ErrorIs(t, s.Put(ctx, "media", file("/ok"), bad), gofiler.ErrBadParameter, bad.Path)
+		assert.ErrorIs(t, s.PutObject(ctx, "media", file("/ok"), bad), gofiler.ErrBadParameter, bad.Path)
 	}
-	_, err = s.Get(ctx, "media", "/ok")
+	_, err = s.GetObject(ctx, "media", "/ok")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound, "the batch is rolled back")
 
 	// The root's key is "/"
-	require.NoError(t, s.Put(ctx, "media", folder("/")))
-	root, err := s.Get(ctx, "media", "/")
+	require.NoError(t, s.PutObject(ctx, "media", folder("/")))
+	root, err := s.GetObject(ctx, "media", "/")
 	require.NoError(t, err)
 	assert.Equal(t, "/", root.Path)
 	assert.True(t, root.IsDir)
@@ -378,7 +380,7 @@ func testGet(t *testing.T, s store.Store) {
 
 func testList(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "media",
+	require.NoError(t, s.PutObject(ctx, "media",
 		folder("/"), file("/a.txt"), folder("/a"), file("/a0.txt"), folder("/a/b"), file("/a/b/c.txt"), folder("/ab"), file("/ab"),
 	))
 
@@ -386,7 +388,7 @@ func testList(t *testing.T, s store.Store) {
 	// without the folder, or those beneath its folders
 	list := func(req store.ListRequest) []string {
 		t.Helper()
-		objects, err := s.List(ctx, "media", req)
+		objects, err := s.ListObjects(ctx, "media", req)
 		require.NoError(t, err)
 		return keys(objects)
 	}
@@ -409,54 +411,54 @@ func testList(t *testing.T, s store.Store) {
 	// A listing is counted, of every page, without where it starts after,
 	// or its limit
 	for _, req := range []store.ListRequest{{Parent: "/"}, {Parent: "/", After: "/a/", Limit: 1}, {Parent: "/a/"}, {Parent: "/", Recursive: true, Limit: 2}, {Parent: "/missing/"}} {
-		count, err := s.Count(ctx, "media", req)
+		count, err := s.CountObjects(ctx, "media", req)
 		require.NoError(t, err)
 		all := req
 		all.After, all.Limit = "", 0
-		objects, err := s.List(ctx, "media", all)
+		objects, err := s.ListObjects(ctx, "media", all)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(len(objects)), count, req)
 	}
-	_, err := s.Count(ctx, "media", store.ListRequest{Parent: "/a"})
+	_, err := s.CountObjects(ctx, "media", store.ListRequest{Parent: "/a"})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
 	// A parent which isn't a folder's key is bad, as a file's would list
 	// what's beside it
 	for _, bad := range []string{"/a", "a/", "", "/a/../"} {
-		_, err := s.List(ctx, "media", store.ListRequest{Parent: bad, Recursive: true})
+		_, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: bad, Recursive: true})
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
 	}
 }
 
 func testDelete(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "media", folder("/"), folder("/a"), folder("/a/b"), file("/a/b/c.txt"), folder("/ab"), file("/a.txt"), file("/a")))
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), folder("/a"), folder("/a/b"), file("/a/b/c.txt"), folder("/ab"), file("/a.txt"), file("/a")))
 
 	// A folder is deleted with what's beneath it, but not a key which only
 	// starts with its path, or a file of its path
-	require.NoError(t, s.Delete(ctx, "media", "/a/"))
-	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, s.DeleteObject(ctx, "media", "/a/"))
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/a", "/a.txt", "/ab/"}, keys(objects))
-	_, err = s.Get(ctx, "media", "/a/b/c.txt")
+	_, err = s.GetObject(ctx, "media", "/a/b/c.txt")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 
 	// A file is deleted on its own
-	require.NoError(t, s.Put(ctx, "media", folder("/a"), file("/a/b.txt")))
-	require.NoError(t, s.Delete(ctx, "media", "/a"))
-	objects, err = s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, s.PutObject(ctx, "media", folder("/a"), file("/a/b.txt")))
+	require.NoError(t, s.DeleteObject(ctx, "media", "/a"))
+	objects, err = s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/a.txt", "/a/", "/a/b.txt", "/ab/"}, keys(objects))
 
 	// Deleting what isn't there isn't an error, a bad key is, and the root
 	// deletes it all
-	require.NoError(t, s.Delete(ctx, "media", "/missing"))
-	assert.ErrorIs(t, s.Delete(ctx, "media", "a"), gofiler.ErrBadParameter)
-	require.NoError(t, s.Delete(ctx, "media", "/"))
-	objects, err = s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, s.DeleteObject(ctx, "media", "/missing"))
+	assert.ErrorIs(t, s.DeleteObject(ctx, "media", "a"), gofiler.ErrBadParameter)
+	require.NoError(t, s.DeleteObject(ctx, "media", "/"))
+	objects, err = s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 	assert.Empty(t, objects)
-	_, err = s.Get(ctx, "media", "/")
+	_, err = s.GetObject(ctx, "media", "/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }
 
@@ -464,15 +466,15 @@ func testVolumes(t *testing.T, s store.Store) {
 	ctx := context.Background()
 
 	// Each volume's objects are its own
-	require.NoError(t, s.Put(ctx, "media", folder("/a")))
-	require.NoError(t, s.Put(ctx, "photos", folder("/b")))
-	_, err := s.Get(ctx, "photos", "/a/")
+	require.NoError(t, s.PutObject(ctx, "media", folder("/a")))
+	require.NoError(t, s.PutObject(ctx, "photos", folder("/b")))
+	_, err := s.GetObject(ctx, "photos", "/a/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
-	objects, err := s.List(ctx, "photos", store.ListRequest{Parent: "/"})
+	objects, err := s.ListObjects(ctx, "photos", store.ListRequest{Parent: "/"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/b"}, paths(objects))
-	require.NoError(t, s.Delete(ctx, "photos", "/"))
-	_, err = s.Get(ctx, "media", "/a/")
+	require.NoError(t, s.DeleteObject(ctx, "photos", "/"))
+	_, err = s.GetObject(ctx, "media", "/a/")
 	assert.NoError(t, err)
 }
 
@@ -837,7 +839,7 @@ func testQueuePending(t *testing.T, s store.Store) {
 
 func testRevisions(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "media", folder("/"), file("/a.txt"), folder("/b"), file("/b/c.txt"), folder("/b/d"), file("/b/d/e.txt"), file("/bc.txt")))
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), file("/a.txt"), folder("/b"), file("/b/c.txt"), folder("/b/d"), file("/b/d/e.txt"), file("/bc.txt")))
 	revisions := func(folder string, recursive bool) map[string]string {
 		t.Helper()
 		result, err := s.Revisions(ctx, "media", folder, recursive)
@@ -870,11 +872,11 @@ func testRevisions(t *testing.T, s store.Store) {
 
 	// A file which is put again has none, and nor has one which is deleted,
 	// or beneath a folder which is
-	require.NoError(t, s.Put(ctx, "media", file("/a.txt")))
+	require.NoError(t, s.PutObject(ctx, "media", file("/a.txt")))
 	assert.NotContains(t, revisions("/", false), "/a.txt")
-	require.NoError(t, s.Delete(ctx, "media", "/bc.txt"))
+	require.NoError(t, s.DeleteObject(ctx, "media", "/bc.txt"))
 	assert.NotContains(t, revisions("/", false), "/bc.txt")
-	require.NoError(t, s.Delete(ctx, "media", "/b/"))
+	require.NoError(t, s.DeleteObject(ctx, "media", "/b/"))
 	assert.Empty(t, revisions("/", true))
 
 	// A folder's key which isn't one is bad, as is a key, and a volume which
@@ -891,12 +893,12 @@ func testListType(t *testing.T, s store.Store) {
 		object.ContentType = t
 		return object
 	}
-	require.NoError(t, s.Put(ctx, "media",
+	require.NoError(t, s.PutObject(ctx, "media",
 		folder("/"), typed(file("/a.jpg"), "image/jpeg"), typed(file("/b.png"), "image/png"),
 		typed(file("/c.txt"), "text/plain; charset=utf-8"), folder("/d"), typed(file("/d/e.JPG"), "IMAGE/JPEG"),
 		file("/f"), typed(folder("/g"), "application/x-apple-sparsebundle"), typed(file("/h.svg"), "image/svg+xml"),
 	))
-	all, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	all, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 
 	// A listing of a type is of the objects which schema.MatchType says are
@@ -911,10 +913,10 @@ func testListType(t *testing.T, s store.Store) {
 					want = append(want, store.Key(object))
 				}
 			}
-			objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Type: kind})
+			objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Type: kind})
 			require.NoError(t, err)
 			assert.Equal(t, want, keys(objects), "%q recursive=%v", kind, recursive)
-			count, err := s.Count(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Type: kind})
+			count, err := s.CountObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Type: kind})
 			require.NoError(t, err)
 			assert.Equal(t, uint64(len(want)), count, "%q recursive=%v is counted", kind, recursive)
 		}
@@ -923,7 +925,7 @@ func testListType(t *testing.T, s store.Store) {
 
 func testScan(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "media", folder("/"), folder("/a"), file("/a/b.txt"), file("/c.txt"), folder("/d"), file("/d/e.txt")))
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), folder("/a"), file("/a/b.txt"), file("/c.txt"), folder("/d"), file("/d/e.txt")))
 	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a/b.txt": "r1", "/c.txt": "r1", "/d/e.txt": "r1"}))
 	changed := func(folder, after string, limit int) []store.Seen {
 		t.Helper()
@@ -959,10 +961,10 @@ func testScan(t *testing.T, s store.Store) {
 	// What wasn't seen, beneath the folder, is swept, with what's beneath it,
 	// but not the folder
 	require.NoError(t, s.Sweep(ctx, "media", "/"))
-	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/a/", "/a/b.txt", "/c.txt"}, keys(objects))
-	_, err = s.Get(ctx, "media", "/")
+	_, err = s.GetObject(ctx, "media", "/")
 	assert.NoError(t, err, "the folder is kept")
 
 	// What's seen is forgotten, of a folder, but not beside it
@@ -972,7 +974,7 @@ func testScan(t *testing.T, s store.Store) {
 	require.NoError(t, s.Unsee(ctx, "media", "/"))
 	assert.Equal(t, uint64(0), count("/"))
 	require.NoError(t, s.Sweep(ctx, "media", "/a/"))
-	_, err = s.Get(ctx, "media", "/a/b.txt")
+	_, err = s.GetObject(ctx, "media", "/a/b.txt")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound, "what isn't seen, once it's forgotten, is swept")
 
 	// A key which isn't a folder's is bad, and a volume which isn't stored
@@ -981,4 +983,137 @@ func testScan(t *testing.T, s store.Store) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.Sweep(ctx, "media", "/a"), gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.Seen(ctx, "missing", map[string]string{"/a": ""}), gofiler.ErrNotFound)
+}
+
+func testSetMetadata(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	meta := func(entries ...string) []schema.Meta {
+		result := []schema.Meta{}
+		for i := 0; i < len(entries); i += 3 {
+			result = append(result, schema.Meta{Namespace: entries[i], Key: entries[i+1], Value: json.RawMessage(entries[i+2])})
+		}
+		return result
+	}
+	withMeta := func(object *schema.Object, entries ...string) *schema.Object {
+		object.Meta = meta(entries...)
+		return object
+	}
+	got := func(key string) string {
+		t.Helper()
+		object, err := s.GetObject(ctx, "media", key)
+		require.NoError(t, err)
+		return string(mustJSON(t, object.Meta))
+	}
+
+	// A task's metadata is merged with the backend's, which it replaces of
+	// the same namespace and key, after the backend's
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), withMeta(file("/a.txt"), "dc", "title", `"A"`, "dc", "creator", `"X"`)))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("dc", "title", `"B"`, "exif", "width", `100`)))
+	assert.JSONEq(t, `[{"namespace":"dc","key":"creator","value":"X"},{"namespace":"dc","key":"title","value":"B"},{"namespace":"exif","key":"width","value":100}]`, got("/a.txt"))
+
+	// Putting the object replaces the backend's, but not the task's, and the
+	// task's replaces its own, and when it has none, the backend's are read
+	require.NoError(t, s.PutObject(ctx, "media", withMeta(file("/a.txt"), "dc", "title", `"C"`)))
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"B"},{"namespace":"exif","key":"width","value":100}]`, got("/a.txt"))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("exif", "width", `200`)))
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"C"},{"namespace":"exif","key":"width","value":200}]`, got("/a.txt"))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, nil))
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"C"}]`, got("/a.txt"))
+
+	// A listing is merged too
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("dc", "title", `"D"`)))
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/"})
+	require.NoError(t, err)
+	require.Len(t, objects, 1)
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"D"}]`, string(mustJSON(t, objects[0].Meta)))
+
+	// A task which read a version of the object which isn't its version any
+	// more is superseded, and doesn't replace what's found of it
+	current, err := s.GetObject(ctx, "media", "/a.txt")
+	require.NoError(t, err)
+	stale := current.ObjectAttr
+	stale.ModTime = stale.ModTime.Add(-time.Hour)
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &stale, meta("dc", "title", `"Stale"`)), gofiler.ErrPreconditionFailed)
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &current.ObjectAttr, meta("dc", "title", `"Current"`)))
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"Current"}]`, got("/a.txt"))
+
+	// An object which isn't indexed isn't found, and a source which isn't a
+	// task's kind is bad, and the task's metadata is deleted with its object
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/missing.txt", "metadata", nil, nil), gofiler.ErrNotFound)
+	for _, bad := range []string{"", "Metadata", "a b", "1x"} {
+		assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", bad, nil, nil), gofiler.ErrBadParameter, bad)
+	}
+	require.NoError(t, s.DeleteObject(ctx, "media", "/a.txt"))
+	require.NoError(t, s.PutObject(ctx, "media", file("/a.txt")))
+	_, err = s.GetObject(ctx, "media", "/a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "null", got("/a.txt"), "its task's metadata was deleted with it")
+}
+
+func testQueueStale(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	tasks := []store.Kind{store.KindMetadata}
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), file("/a.txt"), folder("/b"), file("/b/c.txt"), file("/d.txt")))
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r1", "/b/c.txt": "r1"}))
+
+	// The files whose listings' revisions aren't those a task was done of
+	// are queued, of the folder, once, but not those without a revision, or
+	// of another kind of work
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	_, paths := claimed(t, s, all, 10)
+	assert.Empty(t, paths, "it isn't indexing")
+	work, paths := claimed(t, s, tasks, 10)
+	assert.ElementsMatch(t, []string{"metadata /a.txt", "metadata /b/c.txt"}, paths)
+
+	// Once it's done, it isn't queued again, until its revision changes
+	require.NoError(t, s.Done(ctx, "media", work...))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	_, paths = claimed(t, s, tasks, 10)
+	assert.Empty(t, paths)
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r2"}))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	work, paths = claimed(t, s, tasks, 10)
+	assert.Equal(t, []string{"metadata /a.txt"}, paths)
+
+	// Work which is pushed again, while it's claimed, isn't done, so its
+	// revision isn't recorded
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/a.txt", Kind: store.KindMetadata}))
+	require.NoError(t, s.Done(ctx, "media", work...))
+	work, paths = claimed(t, s, tasks, 10)
+	assert.Equal(t, []string{"metadata /a.txt"}, paths, "it's pushed again")
+	require.NoError(t, s.Done(ctx, "media", work...))
+
+	// A file which changed while its task was done of it, whose revision
+	// isn't the one it was claimed of, is stale, once it's done
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r3"}))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	work, paths = claimed(t, s, tasks, 10)
+	require.Equal(t, []string{"metadata /a.txt"}, paths)
+	assert.Equal(t, "r3", work[0].Revision, "of the revision it's claimed of")
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r3b"}))
+	require.NoError(t, s.Done(ctx, "media", work...))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	work, paths = claimed(t, s, tasks, 10)
+	assert.Equal(t, []string{"metadata /a.txt"}, paths, "it changed while it was done")
+	require.NoError(t, s.Done(ctx, "media", work...))
+
+	// Of a folder, and not beside it
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r3", "/b/c.txt": "r3"}))
+	require.NoError(t, s.PushStale(ctx, "media", "/b/", store.KindMetadata))
+	_, paths = claimed(t, s, tasks, 10)
+	assert.Equal(t, []string{"metadata /b/c.txt"}, paths)
+
+	// A file which is deleted has no work of its task, nor the revision it
+	// was done of
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	require.NoError(t, s.DeleteObject(ctx, "media", "/a.txt"))
+	_, paths = claimed(t, s, tasks, 10)
+	assert.Empty(t, paths, "its work is gone, and /b/c.txt's is claimed")
+
+	// Work of indexing isn't a task's, and a folder's key which isn't one is
+	// bad
+	assert.ErrorIs(t, s.PushStale(ctx, "media", "/", store.KindIndex), gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.PushStale(ctx, "media", "/b", store.KindMetadata), gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.PushStale(ctx, "missing", "/", store.KindMetadata), gofiler.ErrNotFound)
 }
