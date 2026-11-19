@@ -85,7 +85,7 @@ func (self *Metadata) Enrich(ctx context.Context, backend gofiler.Filer, store i
 	}); err != nil {
 		return err
 	}
-	if err := store.SetMetadata(ctx, object.Path, meta(entries), shapes(entries)); err != nil {
+	if err := store.SetMetadata(ctx, object.Path, schema.TaskMeta{Meta: meta(entries), Geo: shapes(entries), Events: occurrences(entries)}); err != nil {
 		return err
 	} else if extractErr != nil && !isNotImplemented(extractErr) {
 		if errors.Is(extractErr, gometadata.ErrBadParameter) {

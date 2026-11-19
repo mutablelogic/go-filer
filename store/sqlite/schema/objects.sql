@@ -98,6 +98,43 @@ CREATE TABLE IF NOT EXISTS object_geo (
 -- An object has a shape once, of a source
 CREATE UNIQUE INDEX IF NOT EXISTS object_geo_shape ON object_geo (volume, object, source, shape);
 
+-- schema.object_event
+-- The times of the events of the objects, such as a calendar's, of their
+-- sources, as metadata is, which a task finds: each time an event, or a
+-- task, occurs, of its UID, and recurrence ID, which identify it, as an
+-- event can be of more than one object, and its start, and end, which is
+-- exclusive, which are dates, of an all-day event, or times, in UTC, of a
+-- fixed width, so they sort, and the zone of its times
+CREATE TABLE IF NOT EXISTS object_event (
+  volume          TEXT NOT NULL,
+  object          TEXT NOT NULL,          -- the key of its object
+  source          TEXT NOT NULL DEFAULT '' CHECK (source = '' OR (
+                    source GLOB '[a-z]*' AND source NOT GLOB '*[^a-z_]*')),   -- the backend's, or a task's kind
+  uid             TEXT NOT NULL CHECK (uid <> ''),
+  recurrence_id   TEXT,                   -- of a time an event which repeats occurs, the start it was to have
+  kind            TEXT NOT NULL CHECK (kind IN ('event', 'task')),
+  title           TEXT,
+  start_date      TEXT CHECK (start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  start_at        TEXT CHECK (start_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z'),
+  end_date        TEXT CHECK (end_date IS NULL OR (end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND start_date IS NOT NULL AND end_date >= start_date)),
+  end_at          TEXT CHECK (end_at IS NULL OR (end_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z' AND start_at IS NOT NULL AND end_at >= start_at)),
+  tz              TEXT,                   -- such as Europe/Berlin, or NULL, of a date
+  CHECK ((start_date IS NULL) <> (start_at IS NULL)),
+  FOREIGN KEY (volume, object) REFERENCES object (volume, key) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- schema.object_event_occurrence
+-- An object has an occurrence once, of a source
+CREATE UNIQUE INDEX IF NOT EXISTS object_event_occurrence ON object_event (volume, object, source, uid, ifnull(recurrence_id, ''));
+
+-- schema.object_event_at
+-- The events of a volume, of their times, and of their dates, apart, of which
+-- a search finds those of a time, or a day
+CREATE INDEX IF NOT EXISTS object_event_at ON object_event (volume, start_at) WHERE start_at IS NOT NULL;
+
+-- schema.object_event_date
+CREATE INDEX IF NOT EXISTS object_event_date ON object_event (volume, start_date) WHERE start_date IS NOT NULL;
+
 -- schema.object_state
 -- The state of the objects of the volumes, by key and kind: the work of
 -- indexing them, which is the queue, which outlasts a restart, whose key
