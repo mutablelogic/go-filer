@@ -13,7 +13,7 @@ require (
 	github.com/mutablelogic/go-metadata v1.1.5
 	github.com/mutablelogic/go-pg v1.5.1
 	github.com/mutablelogic/go-server v1.8.20
-	github.com/mutablelogic/go-sqlite v1.1.2
+	github.com/mutablelogic/go-sqlite v1.1.3
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
