@@ -117,7 +117,13 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 		if err != nil {
 			return err
 		}
-		for _, event := range self.changes(last, next) {
+		changes := self.changes(last, next)
+		if len(changes) > 0 {
+			// What was got from Google is out of date, so it's got again,
+			// before what changed is sent, and read
+			self.clearCache()
+		}
+		for _, event := range changes {
 			select {
 			case ch <- event:
 			case <-ctx.Done():
@@ -157,6 +163,7 @@ func (self *TaskFiler) sequence() uint64 {
 // changed numbers the changes the filer made, in order, and gives them to
 // its watches, without waiting, where each keeps the latest of a path
 func (self *TaskFiler) changed(changes ...taskChange) {
+	self.clearCache()
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	for i := range changes {

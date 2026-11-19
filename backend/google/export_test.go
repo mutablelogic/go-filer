@@ -58,3 +58,9 @@ func CalendarPath(filer *CalendarFiler, calendar, id string) string {
 func ClearCalendarCache(filer *CalendarFiler) {
 	filer.clearCache()
 }
+
+// ClearTaskCache clears what a task filer got from Google, as its watch
+// does, when what it's of changes
+func ClearTaskCache(filer *TaskFiler) {
+	filer.clearCache()
+}
