@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	// Packages
@@ -38,6 +39,7 @@ type Watcher struct {
 	dir       string             // the filer's directory of the objects, which ends with "/"
 	closed    context.Context    // cancelled when the watcher is closed, which ends watching
 	close     context.CancelFunc // cancels closed
+	watching  atomic.Int32       // how many of the watches are subscribed
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -122,6 +124,12 @@ func (self *Watcher) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
+// Watching returns true while the changes are subscribed to, so they're
+// sent as they happen, which they aren't while it subscribes again
+func (self *Watcher) Watching() bool {
+	return self.watching.Load() > 0
+}
+
 // Watch sends the changes to the objects to the channel, from now, until the
 // context is cancelled, when it returns nil, or subscribing fails too many
 // times in a row. The ready function, when it's set, is called once, when the
@@ -140,15 +148,21 @@ func (self *Watcher) Watch(ctx context.Context, ch chan<- schema.Event, ready fu
 	since, retry, failures := time.Now().UnixNano(), retryMin, 0
 	id, epoch := rand.Int32(), int32(0)
 	seen := &seen{}
-	subscribed := func() {
-		if ready != nil {
-			ready()
-			ready = nil
-		}
-	}
 	for {
 		epoch++
+		watching := false
+		subscribed := func() {
+			watching = true
+			self.watching.Add(1)
+			if ready != nil {
+				ready()
+				ready = nil
+			}
+		}
 		received, err := self.subscribe(ctx, ch, id, epoch, since, seen, subscribed)
+		if watching {
+			self.watching.Add(-1)
+		}
 		if seen.ts > since {
 			since = seen.ts
 		}

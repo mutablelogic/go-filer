@@ -136,6 +136,11 @@ func (c *counting) WatchesLive() bool {
 	return ok && l.WatchesLive()
 }
 
+func (c *counting) IsLink(path string) bool {
+	l, ok := c.Filer.(interface{ IsLink(string) bool })
+	return ok && l.IsLink(path)
+}
+
 func (c *counting) CompleteListing() bool {
 	l, ok := c.Filer.(interface{ CompleteListing() bool })
 	return ok && l.CompleteListing()
@@ -152,6 +157,33 @@ func (u *unwatchedCounting) WatchObjects(context.Context, chan<- schema.Event) e
 }
 
 func (u *unwatchedCounting) WatchesLive() bool { return false }
+
+// endingCounting is a backend which is watched live, until its watch ends,
+// when stop is closed, and which isn't watching while watching is false,
+// which counts its calls to GetObject
+type endingCounting struct {
+	counting
+	stop     chan struct{}
+	watching atomic.Bool
+}
+
+func (e *endingCounting) WatchesLive() bool { return true }
+
+func (e *endingCounting) Watching() bool { return e.watching.Load() }
+
+func (e *endingCounting) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
+	select {
+	case ch <- schema.Rescan(""):
+	case <-ctx.Done():
+		return nil
+	}
+	select {
+	case <-e.stop:
+		return errors.New("the watch ended")
+	case <-ctx.Done():
+		return nil
+	}
+}
 
 // incompleteCounting is a backend whose listing isn't complete, which counts
 // its calls to GetObject
@@ -615,7 +647,8 @@ func Test_GetFile(t *testing.T) {
 	if !fsevents.Supported() {
 		t.Skip(fsevents.ErrNotSupported)
 	}
-	backend, _ := newBackend(t)
+	backend, dir := newBackend(t)
+	require.NoError(t, os.Symlink("x.txt", filepath.Join(dir, "link.txt")))
 	c := &counting{Filer: backend}
 	s := newStore(t)
 	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
@@ -625,7 +658,7 @@ func Test_GetFile(t *testing.T) {
 	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects))
 	require.NoError(t, err)
 	run(t, i)
-	files(t, s, "/a/y.txt", "/x.txt")
+	files(t, s, "/a/y.txt", "/link.txt", "/x.txt")
 	time.Sleep(100 * time.Millisecond)
 	n, object := gets(t, i, c, x)
 	assert.Zero(t, n, "it's the index's")
@@ -638,6 +671,8 @@ func Test_GetFile(t *testing.T) {
 	assert.Zero(t, n, "a folder is the index's")
 	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: x.ObjectKey, IfModifiedSince: time.Unix(1, 0)})
 	assert.Equal(t, int32(1), n, "a conditional request is the backend's")
+	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/link.txt"}})
+	assert.Equal(t, int32(1), n, "a link is the backend's, as its target's changes aren't its")
 	require.NoError(t, s.Push(context.Background(), "media", store.Work{Path: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
 	n, _ = gets(t, i, c, x)
 	assert.Equal(t, int32(1), n, "a file with work queued is the backend's")
@@ -657,6 +692,35 @@ func Test_GetFile(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	n, _ = gets(t, bucket, &incomplete.counting, x)
 	assert.Equal(t, int32(1), n, "a listing which isn't complete is the backend's")
+}
+
+func Test_GetFileWatchEnds(t *testing.T) {
+	backend, _ := newBackend(t)
+	e := &endingCounting{counting: counting{Filer: backend}, stop: make(chan struct{})}
+	e.watching.Store(true)
+	s := newStore(t)
+	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
+
+	// A file is the index's while the backend is watched live
+	i, err := indexer.New("media", e, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0), indexer.WithRetry(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	files(t, s, "/a/y.txt", "/x.txt")
+	n, _ := gets(t, i, &e.counting, x)
+	assert.Zero(t, n, "it's the index's")
+
+	// But not while the backend isn't watching, as it subscribes again
+	e.watching.Store(false)
+	n, _ = gets(t, i, &e.counting, x)
+	assert.Equal(t, int32(1), n, "it's the backend's while it isn't watching")
+	e.watching.Store(true)
+
+	// Or once its watch ends, until it's watched again
+	close(e.stop)
+	assert.Eventually(t, func() bool {
+		n, _ := gets(t, i, &e.counting, x)
+		return n == 1
+	}, 5*time.Second, 10*time.Millisecond, "it's the backend's once its watch ends")
 }
 
 func Test_GetFileUnwatched(t *testing.T) {

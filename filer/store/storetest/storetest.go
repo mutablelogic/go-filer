@@ -644,6 +644,11 @@ func testQueuePending(t *testing.T, s store.Store) {
 	assert.True(t, pending("/a/b.txt"), "of a folder above it")
 	assert.True(t, pending("/a"), "of itself")
 	assert.False(t, pending("/ab"), "of a folder whose path only starts with it")
+	work, _ = claimed(t, s, all, 10)
+	require.NoError(t, s.Done(ctx, "media", work...))
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	assert.True(t, pending("/a/b.txt"), "of an index of a folder above it")
+	assert.False(t, pending("/"), "of the folder above the folder")
 	_, err := s.Pending(ctx, "media", "a/b")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }

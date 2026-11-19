@@ -40,8 +40,8 @@ type QueueStore interface {
 	Failed(ctx context.Context, volume string, work Work, err error, retry time.Duration) error
 
 	// Pending returns true when the path has work queued, or claimed, which
-	// would change its index: an index of it, or a rescan of it, or of a
-	// folder above it, so the index of it can be out of date
+	// would change its index: an index, or a rescan, of it, or of a folder
+	// above it, so the index of it can be out of date
 	Pending(ctx context.Context, volume, path string) (bool, error)
 }
 

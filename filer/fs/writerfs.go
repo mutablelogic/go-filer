@@ -44,6 +44,7 @@ const (
 )
 
 var _ filer.WriterFS = (*writerfs)(nil)
+var _ fs.ReadLinkFS = (*writerfs)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -115,6 +116,29 @@ func (self *writerfs) Stat(path string) (fs.FileInfo, error) {
 		return nil, &fs.PathError{Op: "stat", Path: path, Err: fs.ErrInvalid}
 	}
 	return self.root.Stat(filepath.FromSlash(path))
+}
+
+// Lstat returns file information for the named file or directory, without
+// following a symbolic link, which is its own. The path must be a valid
+// fs.FS path.
+func (self *writerfs) Lstat(path string) (fs.FileInfo, error) {
+	if self.closed.Load() {
+		return nil, &fs.PathError{Op: "lstat", Path: path, Err: fs.ErrClosed}
+	} else if !isValidPath(path) {
+		return nil, &fs.PathError{Op: "lstat", Path: path, Err: fs.ErrInvalid}
+	}
+	return self.root.Lstat(filepath.FromSlash(path))
+}
+
+// ReadLink returns the target of the named symbolic link. The path must be a
+// valid fs.FS path.
+func (self *writerfs) ReadLink(path string) (string, error) {
+	if self.closed.Load() {
+		return "", &fs.PathError{Op: "readlink", Path: path, Err: fs.ErrClosed}
+	} else if !isValidPath(path) {
+		return "", &fs.PathError{Op: "readlink", Path: path, Err: fs.ErrInvalid}
+	}
+	return self.root.Readlink(filepath.FromSlash(path))
 }
 
 // Create the named file from the body, creating any intermediate

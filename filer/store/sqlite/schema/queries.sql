@@ -141,12 +141,12 @@ WHERE volume = @volume AND path = @path AND kind = @kind AND leased_until = @lea
 RETURNING path, kind, after, attempts, coalesce(error, ''), leased_until;
 
 -- queue.pending
--- Whether a path has work which would change its index: an index of it, or
--- a rescan of it, or a folder above it, queued, or claimed
+-- Whether a path has work which would change its index: an index or a
+-- rescan of it, or of a folder above it, which can remove what's beneath
+-- it, queued, or claimed
 SELECT EXISTS (
   SELECT 1 FROM object_state
-  WHERE volume = @volume AND (
-    (kind = 'index' AND path = @path) OR
-    (kind = 'rescan' AND path IN (SELECT value FROM json_each(@ancestors)))
+  WHERE volume = @volume AND kind IN ('index', 'rescan') AND (
+    path IN (SELECT value FROM json_each(@ancestors))
   )
 );

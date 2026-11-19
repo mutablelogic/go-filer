@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	// Packages
@@ -63,33 +64,51 @@ func (self *Indexer) Run(ctx context.Context) error {
 func (self *Indexer) watch(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	events, done := make(chan schema.Event, 64), make(chan error, 1)
-	go func() {
-		done <- self.Filer.WatchObjects(ctx, events)
-	}()
-
 	// It's watching live once a backend whose changes are sent as they happen
-	// sends its first, until its watch ends, so the index is up to date,
-	// but for the changes which are queued
-	defer self.live.Store(false)
+	// sends its first, which is queued, until its watch ends, so the index is
+	// up to date, but for the changes which are queued. Its watch ends when
+	// WatchObjects returns, before the changes it sent are read, so a change
+	// which is read after it doesn't set it again.
 	live := false
 	if l, ok := self.Filer.(interface{ WatchesLive() bool }); ok {
 		live = l.WatchesLive()
 	}
+	var mu sync.Mutex
+	stopped := false
+	setLive := func(watching bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !watching {
+			stopped = true
+		}
+		self.live.Store(watching && !stopped)
+	}
+	events, done, ended := make(chan schema.Event, 64), make(chan error, 1), make(chan struct{})
+	go func() {
+		defer close(ended)
+		err := self.Filer.WatchObjects(ctx, events)
+		setLive(false)
+		done <- err
+	}()
+	defer func() {
+		cancel()
+		<-ended
+	}()
 	for {
 		select {
 		case err := <-done:
 			return err
 		case event := <-events:
-			if live {
-				self.live.Store(true)
-			}
 			// The change is queued, which is quick, and then sent to the
 			// watchers, who aren't held up by indexing it, which is done in
 			// the background, and a watcher which doesn't read its changes
-			// doesn't hold up the index
+			// doesn't hold up the index. When it can't be queued, the watch
+			// is started again, with a rescan, so it isn't missed.
 			if err := self.apply(ctx, event); err != nil {
-				self.failed(ctx, err)
+				return err
+			}
+			if live {
+				setLive(true)
 			}
 			self.forward(ctx, event)
 		}

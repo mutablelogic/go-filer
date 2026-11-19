@@ -200,6 +200,40 @@ func Test_Watcher(t *testing.T) {
 	}
 }
 
+func Test_WatcherWatching(t *testing.T) {
+	defer func(retry time.Duration) { retryMin = retry }(retryMin)
+	retryMin = time.Hour
+	filer, addr := newFakeFiler(t)
+	watcher, err := New(context.Background(), addr, "media", "")
+	require.NoError(t, err)
+	defer watcher.Close()
+
+	// It's watching once it's subscribed, and isn't while it waits to
+	// subscribe again, or once it's cancelled
+	assert.False(t, watcher.Watching(), "before it's watched")
+	ctx, cancel := context.WithCancel(context.Background())
+	ready, done := make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- watcher.Watch(ctx, make(chan schema.Event), func() { close(ready) })
+	}()
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("not ready")
+	}
+	assert.True(t, watcher.Watching(), "once it's subscribed")
+	filer.responses <- nil
+	assert.Eventually(t, func() bool { return !watcher.Watching() }, 5*time.Second, time.Millisecond, "while it subscribes again")
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("watching didn't end")
+	}
+	assert.False(t, watcher.Watching(), "once it's cancelled")
+}
+
 func Test_WatcherFails(t *testing.T) {
 	defer func(retry time.Duration) { retryMin = retry }(retryMin)
 	retryMin = time.Millisecond

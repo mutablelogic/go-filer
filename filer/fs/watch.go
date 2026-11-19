@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	iofs "io/fs"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -20,19 +21,6 @@ type pathFS interface {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// WatchObjects sends each change to the objects in the filesystem to the
-// channel, until the context is cancelled, or the filesystem is closed, when
-// fs.ErrClosed is returned. Changes to files which aren't listed, such as
-// hidden files, aren't sent, and a change within a package is an update to
-// the package. Returns filer.ErrNotImplemented when the filesystem isn't a
-// directory, or can't be watched on this platform.
-//
-// The first change is a rescan of the root, once the directory is watched,
-// so a change after it is sent. The calls share one watch of the directory,
-// so a second call doesn't watch it again: one which joins a watch which is
-// running is sent its rescan at once. Each is sent each change, and one
-// which falls behind is sent a rescan of the directory, rather than holding
-// up the others.
 // CompleteListing returns true, as a listing's files are as GetObject
 // returns them, with their types and metadata
 func (self *FS) CompleteListing() bool {
@@ -46,6 +34,27 @@ func (self *FS) WatchesLive() bool {
 	return ok && fsys.Path() != "" && fsevents.Supported()
 }
 
+// IsLink returns true when the object at the path is a symbolic link, or
+// can't be checked, as a change to a link's target is sent for the target,
+// not the link, so the link's object isn't known to be up to date
+func (self *FS) IsLink(path string) bool {
+	info, err := iofs.Lstat(self.fs, fsPath(path))
+	return err != nil || info.Mode()&iofs.ModeSymlink != 0
+}
+
+// WatchObjects sends each change to the objects in the filesystem to the
+// channel, until the context is cancelled, or the filesystem is closed, when
+// fs.ErrClosed is returned. Changes to files which aren't listed, such as
+// hidden files, aren't sent, and a change within a package is an update to
+// the package. Returns filer.ErrNotImplemented when the filesystem isn't a
+// directory, or can't be watched on this platform.
+//
+// The first change is a rescan of the root, once the directory is watched,
+// so a change after it is sent. The calls share one watch of the directory,
+// so a second call doesn't watch it again: one which joins a watch which is
+// running is sent its rescan at once. Each is sent each change, and one
+// which falls behind is sent a rescan of the directory, rather than holding
+// up the others.
 func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	if err := self.checkRequest(ctx); err != nil {
 		return err
