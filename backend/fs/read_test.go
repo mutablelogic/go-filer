@@ -178,3 +178,39 @@ func Test_ReadObjectSeek(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func Test_ReadObjectReadAt(t *testing.T) {
+	self, err := NewFS("test", fstest.MapFS{"song.mp3": {Data: []byte("abcdef")}}, nil, filer.Opts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	read, _, err := self.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/song.mp3"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The reader of a file which can be read at an offset can be, so
+	// go-metadata doesn't copy it, until the filesystem is closed
+	if err := read(ctx, func(r io.Reader) error {
+		ra, ok := r.(io.ReaderAt)
+		if !ok {
+			t.Fatal("the reader can't be read at an offset")
+		} else if _, ok := r.(io.Seeker); !ok {
+			t.Fatal("the reader can't seek")
+		}
+		data := make([]byte, 3)
+		if _, err := ra.ReadAt(data, 3); err != nil && !errors.Is(err, io.EOF) {
+			return err
+		} else if string(data) != "def" {
+			t.Errorf("read %q, want %q", data, "def")
+		}
+		self.Close()
+		if _, err := ra.ReadAt(data, 0); !errors.Is(err, fs.ErrClosed) {
+			t.Errorf("read once closed: %v", err)
+		}
+		return nil
+	}); err != nil && !errors.Is(err, fs.ErrClosed) {
+		t.Fatal(err)
+	}
+}

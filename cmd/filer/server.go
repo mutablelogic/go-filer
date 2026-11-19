@@ -8,6 +8,7 @@ import (
 	// Packages
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	google "github.com/mutablelogic/go-filer/backend/google"
+	metadatacmd "github.com/mutablelogic/go-filer/metadata/cmd"
 	registry "github.com/mutablelogic/go-filer/registry"
 	filercmd "github.com/mutablelogic/go-filer/registry/cmd"
 	store "github.com/mutablelogic/go-filer/store"
@@ -32,9 +33,10 @@ type ServerCommands struct {
 }
 
 type RunServer struct {
-	Filer       filercmd.Flags  `embed:""`
-	Credentials CredentialFlags `embed:""`
-	Indexer     IndexerFlags    `embed:""`
+	Filer       filercmd.Flags    `embed:""`
+	Credentials CredentialFlags   `embed:""`
+	Indexer     IndexerFlags      `embed:""`
+	Enrichment  metadatacmd.Flags `embed:""`
 	servercmd.RunServer
 }
 
@@ -83,10 +85,17 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	}
 	defer closeStore()
 
+	// The task which enriches the files of volumes with index=metadata, of
+	// go-metadata, which reads media, too, when it's built with cgo
+	task, err := runner.Enrichment.WithMetadataEnrichment(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
 	// when the registry, and its volumes, are closed
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*registry.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, registry.WithCredentials(credentials), registry.WithStore(s))
+	}, registry.WithCredentials(credentials), registry.WithStore(s), task)
 }
