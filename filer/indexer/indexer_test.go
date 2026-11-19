@@ -903,6 +903,79 @@ func Test_ListObjects(t *testing.T) {
 	assert.Equal(t, before+1, l.lists.Load(), "its files aren't indexed")
 }
 
+// slow is a backend which can't be watched, whose files are slow to get,
+// which counts them
+type slow struct {
+	gofiler.Filer
+	gets atomic.Int32
+}
+
+func (s *slow) WatchObjects(context.Context, chan<- schema.Event) error {
+	return gofiler.ErrNotImplemented.With("it can't be watched")
+}
+
+func (s *slow) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	object, err := s.Filer.GetObject(ctx, req)
+	if err == nil && !object.IsDir {
+		s.gets.Add(1)
+		time.Sleep(5 * time.Millisecond)
+	}
+	return object, err
+}
+
+func Test_ScanPages(t *testing.T) {
+	backend, dir := newBackend(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "many"), 0o755))
+	for n := range 250 {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "many", fmt.Sprintf("%03d.txt", n)), nil, 0o644))
+	}
+	const files = 252 // and x.txt, and a/y.txt
+	s := newStore(t)
+	state := func() schema.IndexState {
+		t.Helper()
+		state, err := s.State(context.Background(), "media")
+		require.NoError(t, err)
+		return state
+	}
+	start := func(b gofiler.Filer) (context.CancelFunc, chan error) {
+		i, err := indexer.New("media", b, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- i.Run(ctx) }()
+		return cancel, done
+	}
+
+	// A first scan stores its files a page at a time, which its state
+	// counts, while it's scanning
+	first := &slow{Filer: backend}
+	cancel, done := start(first)
+	require.Eventually(t, func() bool {
+		state := state()
+		return state.Status == schema.IndexStatusScanning && state.Files >= 100
+	}, 10*time.Second, time.Millisecond, "its files are stored while it's scanning")
+	assert.Equal(t, uint64(5), state().Folders, "of the folders it's listed")
+	cancel()
+	require.NoError(t, <-done)
+	stored := len(indexed(t, s))
+	assert.Less(t, stored, files, "it stopped before it got them all")
+
+	// One which stops has stored those it's got, which the next scan doesn't
+	// get again
+	second := &slow{Filer: backend}
+	cancel, done = start(second)
+	defer func() {
+		cancel()
+		require.NoError(t, <-done)
+	}()
+	require.Eventually(t, func() bool {
+		state := state()
+		return state.Status == schema.IndexStatusReady && state.Files == files
+	}, 10*time.Second, time.Millisecond, "it's scanned")
+	assert.Equal(t, int32(files-stored), second.gets.Load(), "only the files which weren't stored are got")
+	assert.Len(t, indexed(t, s), files)
+}
+
 func Test_Poll(t *testing.T) {
 	backend, dir := newBackend(t)
 

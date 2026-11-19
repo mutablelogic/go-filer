@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,10 @@ var _ gofiler.Filer = (*Indexer)(nil)
 const (
 	// listPage is how many objects of the index are read at a time
 	listPage = 1000
+
+	// filePage is how many files a scan gets, of the backend, and stores, at
+	// a time, so one which stops has stored those it's got
+	filePage = 100
 
 	// progressEvery is how many folders a scan lists between storing its
 	// progress
@@ -446,16 +451,20 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 			return err
 		}
 	}
-	var progress func(int)
+	var progress, stored func(int)
 	if whole {
 		// A volume which is ready is listed from its index while it's
 		// scanned again, and keeps the counts of its last scan until it's
 		// scanned, so they aren't of a scan in progress, and otherwise its
-		// progress is the folders it's scanned
+		// progress is the folders it's scanned, and the files it's stored
 		if state.Status != schema.IndexStatusReady {
 			state.Status, state.Folders, state.Files, state.Mode = schema.IndexStatusScanning, 0, 0, ""
 			progress = func(folders int) {
 				state.Folders = uint64(folders)
+				_ = self.store.SetState(ctx, self.name, state)
+			}
+			stored = func(files int) {
+				state.Files = uint64(files)
 				_ = self.store.SetState(ctx, self.name, state)
 			}
 		}
@@ -465,17 +474,38 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		}
 	}
 
-	// List it, then change the index, which is locked only while it's
-	// changed
+	// List it, then change the index, of its folders, and then of its files
+	// which are new, or changed, which are got, and stored, a page at a
+	// time, so a scan which stops, such as when the server does, has stored
+	// those it's got, which aren't got again, and the index is locked only
+	// while it's changed
 	t, err := self.list(ctx, root, progress)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	if progress != nil {
+		progress(len(t.folders) + 1)
+	}
 	self.mu.Lock()
-	err = self.replace(ctx, root, t)
+	f, err := self.replace(ctx, root, t)
 	self.mu.Unlock()
 	if err != nil {
 		return err
+	}
+	done := len(t.files) - len(f.keys)
+	if stored != nil {
+		stored(done)
+	}
+	for len(f.keys) > 0 {
+		self.mu.Lock()
+		n, err := self.fetch(ctx, f, filePage)
+		self.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		if done += n; stored != nil {
+			stored(done)
+		}
 	}
 	if whole {
 		state.Status, state.Folders, state.Files, state.Mode, state.Scanned = schema.IndexStatusReady, uint64(len(t.folders)+1), uint64(len(t.files)), string(self.mode), time.Now()
@@ -526,71 +556,108 @@ func (self *Indexer) list(ctx context.Context, root string, progress func(int)) 
 
 // replace replaces the index's subtree of a folder's key with the backend's,
 // removing the objects which aren't there any more, or aren't indexed, with
-// what's beneath them, or the whole subtree, when the folder isn't there.
-// It's written a page at a time. It's called with the indexer locked.
-func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
+// what's beneath them, or the whole subtree, when the folder isn't there,
+// and storing its folders, a page at a time, and returns its files which
+// are new, or changed, which are to be got (see fetch). It's called with the
+// indexer locked.
+func (self *Indexer) replace(ctx context.Context, root string, t tree) (*fetches, error) {
 	if t.root == nil {
-		return self.store.Delete(ctx, self.name, root)
+		return &fetches{}, self.store.Delete(ctx, self.name, root)
 	}
 	indexed, err := self.beneath(ctx, root)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	revisions, err := self.store.Revisions(ctx, self.name, root, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	files := make(map[string]*schema.Object)
 	for _, object := range indexed {
 		key := store.Key(object)
 		if !t.has(key) {
 			if err := self.store.Delete(ctx, self.name, key); err != nil {
-				return err
+				return nil, err
 			}
 		} else if !object.IsDir {
 			files[key] = object
 		}
 	}
-	objects := make([]*schema.Object, 0, len(t.folders)+len(t.files)+1)
+	objects := make([]*schema.Object, 0, len(t.folders)+1)
 	t.root.Path, _ = store.PathOf(root)
 	objects = append(objects, withCount(t.root, t.counts[root]))
 	for key, folder := range t.folders {
 		objects = append(objects, withCount(folder, t.counts[key]))
 	}
-	changed, listed, err := self.changed(ctx, t, files, revisions)
-	if err != nil {
-		return err
-	} else if err := self.put(ctx, append(objects, changed...)); err != nil {
-		return err
+	if err := self.put(ctx, objects); err != nil {
+		return nil, err
 	}
-	return self.store.SetRevisions(ctx, self.name, listed)
+	return changed(t, files, revisions), nil
+}
+
+// fetches is the files of a tree which are new, or changed, in the order of
+// their keys, which are got, and stored, a page at a time (see fetch)
+type fetches struct {
+	keys    []string          // The keys of the files, which are got in order
+	listed  map[string]string // The revisions of their listings, which are stored with them
+	indexed map[string]bool   // The keys of those which are indexed, which are removed when they aren't there any more
 }
 
 // changed returns the files of the tree which are new, or which are indexed,
 // but whose listing doesn't say what it did when they were stored, of their
-// revisions, as the backend, rather than its listing, which can have less,
-// such as a bucket's, which hasn't its metadata, so the index's files are
-// as GetObject returns them, and the revisions of their listings, which are
-// stored once they are. A file which isn't there any more is removed.
-func (self *Indexer) changed(ctx context.Context, t tree, indexed map[string]*schema.Object, revisions map[string]string) ([]*schema.Object, map[string]string, error) {
-	result, listed := make([]*schema.Object, 0, len(t.files)), make(map[string]string)
+// revisions, which are got of the backend, rather than its listing, which
+// can have less, such as a bucket's, which hasn't its metadata, so the
+// index's files are as GetObject returns them
+func changed(t tree, indexed map[string]*schema.Object, revisions map[string]string) *fetches {
+	f := &fetches{listed: make(map[string]string), indexed: make(map[string]bool)}
 	for key, object := range t.files {
 		revision := store.Revision(object)
-		if _, exists := indexed[key]; exists && revisions[key] == revision {
+		_, exists := indexed[key]
+		if exists && revisions[key] == revision {
 			continue
 		}
+		f.keys, f.listed[key], f.indexed[key] = append(f.keys, key), revision, exists
+	}
+	slices.Sort(f.keys)
+	return f
+}
+
+// fetch gets up to n of the files, of the backend, and stores them, with
+// the revisions of their listings, and removes those which aren't there any
+// more, and returns how many it's done. It's called with the indexer locked.
+func (self *Indexer) fetch(ctx context.Context, f *fetches, n int) (int, error) {
+	n = min(n, len(f.keys))
+	files, listed := make([]*schema.Object, 0, n), make(map[string]string, n)
+	for _, key := range f.keys[:n] {
 		file, err := self.file(ctx, key)
 		if err != nil {
-			return nil, nil, err
+			return 0, err
 		} else if file != nil {
-			result, listed[key] = append(result, file), revision
-		} else if _, exists := indexed[key]; exists {
+			files, listed[key] = append(files, file), f.listed[key]
+		} else if f.indexed[key] {
 			if err := self.store.Delete(ctx, self.name, key); err != nil {
-				return nil, nil, err
+				return 0, err
 			}
 		}
 	}
-	return result, listed, nil
+	if err := self.put(ctx, files); err != nil {
+		return 0, err
+	} else if err := self.store.SetRevisions(ctx, self.name, listed); err != nil {
+		return 0, err
+	}
+	f.keys = f.keys[n:]
+	return n, nil
+}
+
+// fetchAll gets, and stores, every one of the files (see fetch). It's
+// called with the indexer locked.
+func (self *Indexer) fetchAll(ctx context.Context, f *fetches) error {
+	for len(f.keys) > 0 {
+		if _, err := self.fetch(ctx, f, filePage); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // has returns true when the tree has the object of the key, which is
@@ -688,13 +755,10 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		child.Meta = mergeCount(child.Meta, counts[key])
 		objects = append(objects, child)
 	}
-	changed, listed, err := self.changed(ctx, t, files, revisions)
-	if err != nil {
-		return err
-	} else if err := self.put(ctx, append(objects, changed...)); err != nil {
+	if err := self.put(ctx, objects); err != nil {
 		return err
 	}
-	return self.store.SetRevisions(ctx, self.name, listed)
+	return self.fetchAll(ctx, changed(t, files, revisions))
 }
 
 // refresh changes the index, of the object of a key, which is created,
@@ -720,7 +784,9 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		t, err := self.list(ctx, key, nil)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
-		} else if err := self.replace(ctx, key, t); err != nil {
+		} else if f, err := self.replace(ctx, key, t); err != nil {
+			return err
+		} else if err := self.fetchAll(ctx, f); err != nil {
 			return err
 		}
 	} else if self.mode == ModeObjects {

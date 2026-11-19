@@ -164,6 +164,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
   * `index=none`, or no option, indexes nothing; `index=folders` indexes folders; `index=objects` indexes files too, with their size, modified time, type, entity tag and the backend's metadata.
   * Folders are listed from the index.
   * With `index=objects`, a new or changed file is stored from `GetObject`, not from the listing, which on S3 lacks the metadata. That's one HEAD request per new or changed object.
+  * A scan stores folders first, then fetches and stores new or changed files 100 at a time. On a first scan, the file count rises as it goes. A scan that stops, such as on a restart, keeps what it stored, and the next scan skips those files.
   * A file counts as changed when its listing's ETag, size or modified time differs from when it was stored. The index records these in `object_state`. On S3 a metadata-only overwrite keeps the ETag but changes the modified time, so it's caught.
   * `GetObject` of a file comes from the index when no work is queued for it. Otherwise it comes from the backend.
   * The index follows a backend's changes when it can be watched, and otherwise rescans it at an interval.
