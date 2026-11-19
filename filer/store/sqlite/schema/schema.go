@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 6
+const Version = 7
 
 var (
 	//go:embed objects.sql
@@ -75,6 +75,14 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 				if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_6").Exec(ctx, query); err != nil {
 					return err
 				}
+			}
+		}
+		// Version 7's queue has the revisions of the files which are listed,
+		// which a queue of version 6 is added, as NULL, so its files are got
+		// again, at their next scan, and a queue before it is created with
+		if version == 6 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_7").Exec(ctx, `ALTER TABLE object_state ADD COLUMN revision TEXT`); err != nil {
+				return err
 			}
 		}
 		for _, key := range objects.Keys() {
