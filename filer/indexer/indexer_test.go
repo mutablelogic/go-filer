@@ -2,8 +2,10 @@ package indexer_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -301,6 +303,260 @@ func Test_Clone(t *testing.T) {
 	_, err = c.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/g/z.txt"}, Body: strings.NewReader("z")})
 	require.NoError(t, err)
 	eventually(t, c, "/a", "/a/b", "/c", "/g")
+}
+
+// indexed returns the paths of the objects of the store's index, of the
+// volume media, which are files, in their order
+func indexed(t *testing.T, s store.Store) []string {
+	t.Helper()
+	objects, err := s.List(context.Background(), "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, err)
+	result := []string{}
+	for _, object := range objects {
+		if !object.IsDir {
+			result = append(result, object.Path)
+		}
+	}
+	return result
+}
+
+// files waits for the files of the store's index to be those
+func files(t *testing.T, s store.Store, want ...string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return strings.Join(indexed(t, s), ",") == strings.Join(want, ",")
+	}, 10*time.Second, 10*time.Millisecond, "want %v, got %v", want, indexed(t, s))
+}
+
+func Test_Objects(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	s := newStore(t)
+
+	// Its files are indexed, with their attributes, as well as its folders,
+	// which its URL says
+	i, err := indexer.New("media", backend, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	assert.Equal(t, indexer.ModeObjects, i.Mode())
+	assert.Equal(t, "objects", i.URL().Query().Get(indexer.IndexParam))
+	run(t, i)
+	assert.Equal(t, []string{"/a/y.txt", "/x.txt"}, indexed(t, s))
+	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true), "its folders are listed, not its files")
+	state, err := i.State(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, uint64(4), state.Folders, "with the root")
+	assert.Equal(t, uint64(2), state.Files)
+	file, err := s.Get(context.Background(), "media", "/x.txt")
+	require.NoError(t, err)
+	require.NotNil(t, file.Size)
+	assert.Equal(t, int64(len("x.txt")), *file.Size)
+	assert.False(t, file.ModTime.IsZero())
+
+	// A file which is written through it, or the backend, is indexed, and
+	// one which changes is indexed again
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "w.txt"), []byte("w"), 0o644))
+	files(t, s, "/a/y.txt", "/c/z.txt", "/w.txt", "/x.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("longer"), 0o644))
+	require.Eventually(t, func() bool {
+		file, err := s.Get(context.Background(), "media", "/x.txt")
+		return err == nil && file.Size != nil && *file.Size == int64(len("longer"))
+	}, 10*time.Second, 10*time.Millisecond, "its size is indexed again")
+	require.Eventually(t, func() bool {
+		object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/"}})
+		return err == nil && count(t, object) == "1"
+	}, 10*time.Second, 10*time.Millisecond, "its folder's count")
+
+	// A file which is deleted, through it, or the backend, isn't, nor are
+	// the files of a folder which is removed
+	_, err = i.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}})
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(dir, "w.txt")))
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "a")))
+	files(t, s, "/x.txt")
+}
+
+func Test_ObjectsToFolders(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+
+	// A volume whose files were indexed, which is indexed of its folders,
+	// doesn't keep its files, once it's scanned
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- i.Run(ctx) }()
+	files(t, s, "/a/y.txt", "/x.txt")
+	require.Eventually(t, func() bool {
+		state, err := s.State(context.Background(), "media")
+		return err == nil && state.Status == schema.IndexStatusReady && state.Files == 2
+	}, 10*time.Second, 5*time.Millisecond, "its scan is done")
+	cancel()
+	require.NoError(t, <-done)
+	before, err := s.State(context.Background(), "media")
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), before.Folders)
+
+	// While it's scanned again, its counts are of its last scan, rather than
+	// of the scan in progress
+	lowest := before.Folders
+	watching, stop := context.WithCancel(context.Background())
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		for watching.Err() == nil {
+			if state, err := s.State(context.Background(), "media"); err == nil && state.Folders < lowest {
+				lowest = state.Folders
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	folders, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, folders)
+	files(t, s)
+	stop()
+	<-watched
+	assert.Equal(t, before.Folders, lowest, "its count isn't the progress of the scan")
+	after, err := s.State(context.Background(), "media")
+	require.NoError(t, err)
+	assert.Zero(t, after.Files)
+}
+
+// faultyStore is a store whose reads of a path fail, and whose listings
+// fail, while it's set to
+type faultyStore struct {
+	store.Store
+	path  string       // A path whose reads fail
+	lists atomic.Int32 // How many listings fail
+}
+
+func (f *faultyStore) Get(ctx context.Context, volume, path string) (*schema.Object, error) {
+	if f.path != "" && path == f.path {
+		return nil, gofiler.ErrInternalServerError.With("the read failed")
+	}
+	return f.Store.Get(ctx, volume, path)
+}
+
+func (f *faultyStore) List(ctx context.Context, volume string, req store.ListRequest) ([]*schema.Object, error) {
+	if f.lists.Add(-1) >= 0 {
+		return nil, gofiler.ErrInternalServerError.With("the listing failed")
+	}
+	return f.Store.List(ctx, volume, req)
+}
+
+// fuller is a backend whose files have more metadata than its listing, as a
+// bucket's do
+type fuller struct {
+	gofiler.Filer
+}
+
+func (f *fuller) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	object, err := f.Filer.GetObject(ctx, req)
+	if err == nil && !object.IsDir {
+		object.Meta = append(object.Meta, schema.Meta{Namespace: "dc", Key: "title", Value: json.RawMessage(`"full"`)})
+	}
+	return object, err
+}
+
+func Test_ObjectsReadError(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+
+	// A file whose index can't be read is an error, which is retried, of
+	// the index's state, rather than a panic
+	s := &faultyStore{Store: newStore(t)}
+	i, err := indexer.New("media", backend, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	run(t, i)
+	s.path = "/c/z.txt"
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		state, err := i.State(context.Background())
+		return err == nil && strings.Contains(state.Error, "the read failed")
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+func Test_ListFoldersOfFile(t *testing.T) {
+	backend, _ := newBackend(t)
+
+	// A file of the index isn't a folder, so it can't be listed
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	_, err = i.ListFolders(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt/"}})
+	assert.ErrorIs(t, err, iofs.ErrNotExist)
+}
+
+func Test_ObjectsKeepMeta(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+	s := newStore(t)
+
+	// A file is stored of the backend, with more than its listing, which
+	// isn't replaced by its listing, while it's the same, when its folder is
+	// indexed again
+	i, err := indexer.New("media", &fuller{Filer: backend}, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	run(t, i)
+	title := func(path string) bool {
+		object, err := s.Get(context.Background(), "media", path)
+		return err == nil && len(object.Meta) == 1 && string(object.Meta[0].Value) == `"full"`
+	}
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return title("/c/z.txt") }, 10*time.Second, 10*time.Millisecond, "it's stored of the backend")
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/w.txt"}, Body: strings.NewReader("w")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return title("/c/w.txt") }, 10*time.Second, 10*time.Millisecond)
+	assert.True(t, title("/c/z.txt"), "it's kept, as it's the same")
+}
+
+func Test_BucketFileAndFolder(t *testing.T) {
+	// A bucket's file, /a, beside which a folder, /a/, is created, isn't
+	// mistaken for the folder, so the root, which lists both, is indexed
+	// again
+	b := newBucket("a", "x.txt")
+	i, err := indexer.New("media", b, newStore(t), indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	run(t, i)
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/b/c.txt"}, Body: strings.NewReader("c")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		root, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+		return err == nil && count(t, root) == "3"
+	}, 10*time.Second, 10*time.Millisecond, "a, a/ and x.txt")
+}
+
+func Test_ObjectsParentRetry(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+
+	// A new file whose folder fails to be indexed is indexed again, with its
+	// folder, rather than being taken as indexed
+	s := &faultyStore{Store: newStore(t)}
+	i, err := indexer.New("media", backend, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0), indexer.WithRetry(10*time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	time.Sleep(100 * time.Millisecond)
+	s.lists.Store(1)
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/"}})
+		return err == nil && count(t, object) == "1"
+	}, 10*time.Second, 10*time.Millisecond, "its folder's count")
 }
 
 func Test_Poll(t *testing.T) {

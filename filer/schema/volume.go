@@ -125,9 +125,17 @@ type VolumeIndex struct {
 type IndexState struct {
 	Status  IndexStatus `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
 	Folders uint64      `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
+	Files   uint64      `json:"files,omitempty" help:"How many files the last scan indexed, of a volume whose files are indexed"`
 	Started time.Time   `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
 	Scanned time.Time   `json:"scanned,omitzero" help:"When the last scan which finished did"`
 	Error   string      `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`
+}
+
+// Rescanning returns true when an index which is ready is scanned again,
+// which is when its scan started after the last one finished, and it
+// hasn't failed
+func (state IndexState) Rescanning() bool {
+	return state.Status == IndexStatusReady && state.Error == "" && state.Started.After(state.Scanned)
 }
 
 // IndexStatus is how far a volume is indexed
@@ -198,8 +206,9 @@ func (v Volume) Status() string {
 }
 
 // IndexStatus returns how the volume's index is: none, when it isn't
-// indexed, or isn't mounted, scanning, or ready, with how many folders it
-// has, or failed, when it hasn't been indexed, with why its last scan, or
+// indexed, or isn't mounted, indexing, when it's scanned, for the first
+// time, with its progress, or again, with the counts of its last scan, or
+// idle, when it's ready, with how many folders it has, or failed, when it hasn't been indexed, with why its last scan, or
 // its watch, failed, when it did
 func (v Volume) IndexStatus() string {
 	var result string
@@ -207,9 +216,21 @@ func (v Volume) IndexStatus() string {
 	case v.Index == nil:
 		return "none"
 	case v.Index.Status == IndexStatusScanning:
-		result = fmt.Sprintf("scanning, %d folders", v.Index.Folders)
+		result = fmt.Sprintf("indexing, %d folders", v.Index.Folders)
+		if v.Index.Mode == "objects" && v.Index.Files > 0 {
+			result += fmt.Sprintf(", %d files", v.Index.Files)
+		}
 	case v.Index.Status == IndexStatusReady:
-		result = fmt.Sprintf("ready, %d folders", v.Index.Folders)
+		// It's idle, unless it's scanned again, when it has the counts of
+		// its last scan
+		result = "idle"
+		if v.Index.Rescanning() {
+			result = "indexing"
+		}
+		result += fmt.Sprintf(", %d folders", v.Index.Folders)
+		if v.Index.Mode == "objects" {
+			result += fmt.Sprintf(", %d files", v.Index.Files)
+		}
 	case v.Index.Error != "":
 		result = "failed"
 	default:
