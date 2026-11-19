@@ -98,22 +98,24 @@ ON CONFLICT (volume, key, kind) DO UPDATE SET
 
 -- queue.push_rescan
 -- The rescan of a folder, which replaces the index and rescan work beneath
--- it, unless a rescan of a folder above it is queued, and isn't claimed, but
--- the root's, which is a catch-up, replaces only the rescans, as the index
--- of a change holds up reads, and a catch-up doesn't
+-- it, unless a rescan of a folder above it, but the root, is queued, and
+-- isn't claimed. A rescan of the root is a catch-up, which doesn't hold up
+-- reads, so it doesn't replace work, nor is a rescan of a folder of it, as
+-- the index of a change, and a rescan of a folder, which can have absorbed
+-- one, do.
 DELETE FROM object_state
 WHERE volume = @volume AND kind IN ('index', 'rescan') AND (key > @lower AND key < @upper OR (key = @key AND kind = 'index'))
-AND (kind = 'rescan' OR @key <> '/')
+AND @key <> '/'
 AND NOT EXISTS (
   SELECT 1 FROM object_state AS above
-  WHERE above.volume = @volume AND above.kind = 'rescan' AND above.key IN (SELECT value FROM json_each(@ancestors))
+  WHERE above.volume = @volume AND above.kind = 'rescan' AND above.key IN (SELECT value FROM json_each(@ancestors)) AND above.key <> '/'
     AND (above.leased_until IS NULL OR julianday(above.leased_until) <= julianday('now'))
 );
 INSERT INTO object_state (volume, key, kind, after)
 SELECT @volume, @key, @kind, @after
 WHERE NOT EXISTS (
   SELECT 1 FROM object_state
-  WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors))
+  WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors)) AND key <> '/'
     AND (leased_until IS NULL OR julianday(leased_until) <= julianday('now'))
 )
 ON CONFLICT (volume, key, kind) DO UPDATE SET
