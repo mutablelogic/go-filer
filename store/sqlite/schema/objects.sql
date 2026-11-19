@@ -172,3 +172,53 @@ END;
 
 -- schema.object_state_due
 CREATE INDEX IF NOT EXISTS object_state_due ON object_state (volume, kind, after);
+
+-- schema.object_search
+-- The search of the objects, of their names, the main fields of their
+-- metadata, which are its title, creator, identifier, description and
+-- subject, the names of their folders, their own, the one above it, and
+-- those above them, which are weighed less, the further they are, and the
+-- text of their other metadata, of the rowids of their objects, which it doesn't keep the text
+-- of, so it's an index alone. A VACUUM, which can renumber the objects'
+-- rowids, needs it rebuilt, which an upgrade of the schema does.
+CREATE VIRTUAL TABLE IF NOT EXISTS object_search USING fts5(
+  name, title, folder, parent, path, meta,
+  content = '', contentless_delete = 1,
+  tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3'
+);
+
+-- schema.object_search_deleted
+-- An object which is deleted isn't searched
+CREATE TRIGGER IF NOT EXISTS object_search_deleted AFTER DELETE ON object BEGIN
+  DELETE FROM object_search WHERE rowid = old.rowid;
+END;
+
+-- schema.object_search_build
+-- The search of every object, which is built again when the schema is
+-- upgraded, as of search.refresh
+DELETE FROM object_search;
+
+-- schema.object_search_built
+INSERT INTO object_search (rowid, name, title, folder, parent, path, meta)
+SELECT object.rowid, search_name(object.key),
+  coalesce((
+    SELECT group_concat(search_text(metadata.value), ' ') FROM metadata
+    WHERE metadata.volume = object.volume AND metadata.object = object.key
+      AND metadata.namespace = 'dc' AND metadata.key IN ('title', 'creator', 'identifier', 'description', 'subject')
+      AND NOT (metadata.source = '' AND EXISTS (
+        SELECT 1 FROM metadata AS task
+        WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
+          AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key))
+  ), ''),
+  search_folder(object.key, 1), search_folder(object.key, 2), search_path(object.key),
+  coalesce((
+    SELECT group_concat(search_text(metadata.value), ' ') FROM metadata
+    WHERE metadata.volume = object.volume AND metadata.object = object.key
+      AND NOT (metadata.namespace = 'dc' AND metadata.key IN ('title', 'creator', 'identifier', 'description', 'subject'))
+      AND NOT (metadata.namespace = 'metadata' AND metadata.key = 'hint') AND ifnull(metadata.namespace, '') <> 'folder'
+      AND NOT (metadata.source = '' AND EXISTS (
+        SELECT 1 FROM metadata AS task
+        WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
+          AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key))
+  ), '')
+FROM object;
