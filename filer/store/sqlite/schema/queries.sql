@@ -145,11 +145,11 @@ RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until;
 -- it, queued, or claimed, or, of a folder's listing, of a key beneath it
 SELECT EXISTS (
   SELECT 1 FROM object_state
-  WHERE volume = @volume AND kind IN ('index', 'rescan') AND (
-    key IN (SELECT value FROM json_each(@ancestors)) OR
-    (@beneath AND key > @lower AND key < @upper)
-  )
-);
+  WHERE volume = @volume AND key IN (SELECT value FROM json_each(@ancestors)) AND kind IN ('index', 'rescan')
+) OR (@beneath AND EXISTS (
+  SELECT 1 FROM object_state
+  WHERE volume = @volume AND key > @lower AND key < @upper AND kind IN ('index', 'rescan')
+));
 
 -- revision.list
 -- The revisions of the files of a folder, or beneath it, of the where clause
