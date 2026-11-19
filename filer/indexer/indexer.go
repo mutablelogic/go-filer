@@ -2,7 +2,8 @@
 // folders, in a Store, which it follows the backend's changes in, so its
 // folder tree is listed from the index, rather than the backend, which can
 // be slow, such as a bucket, or a network mount. Its files are indexed
-// later; until then, everything but its folders comes from the backend.
+// later; until then, everything but its folders comes from the backend. The
+// changes are queued in the store, and indexed in the background.
 package indexer
 
 import (
@@ -35,9 +36,10 @@ type Indexer struct {
 	opt
 	name  string
 	store store.Store
+	queue *queue
 
-	// mu serialises changes to the index, of Run, and of writes and
-	// deletes, so a folder isn't reconciled with two listings at once
+	// mu serialises changes to the index, of its worker's work, so a folder
+	// isn't reconciled with two listings at once
 	mu sync.Mutex
 
 	// The calls to WatchObjects, which are sent the backend's changes, once
@@ -66,7 +68,18 @@ const (
 	// progressEvery is how many folders a scan lists between storing its
 	// progress
 	progressEvery = 100
+
+	// workBatch is how much work is claimed at a time, workLease is how long
+	// it's leased for, so it's claimed again, when it isn't done, and
+	// workIdle is how often the queue is checked, when there's no work,
+	// for work which is due later
+	workBatch = 100
+	workLease = time.Minute
+	workIdle  = time.Second
 )
+
+// kinds are the kinds of work which the indexer does
+var kinds = []store.Kind{store.KindIndex, store.KindRescan}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -86,6 +99,7 @@ func New(name string, backend gofiler.Filer, s store.Store, opts ...Opt) (*Index
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
 	}
+	self.queue = newQueue(s, name, self.debounce, self.rescanMin)
 	return self, nil
 }
 
@@ -98,8 +112,20 @@ func New(name string, backend gofiler.Filer, s store.Store, opts ...Opt) (*Index
 // again when the backend says its changes may have been missed. A backend
 // which can't be watched is scanned again at the rescan interval. When
 // watching fails, it's watched, and scanned, again, after a while, which
-// doubles each time, up to a minute.
+// doubles each time, up to a minute. The changes are queued, in the store,
+// and indexed by a worker, in the background, so the work which is queued
+// when it stops is done when it runs again.
 func (self *Indexer) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	worked := make(chan struct{})
+	go func() {
+		defer close(worked)
+		self.work(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-worked
+	}()
 	retry := self.retry
 	for {
 		err := self.watch(ctx)
@@ -251,31 +277,27 @@ func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequ
 	return self.Filer.ListObjects(ctx, req)
 }
 
-// CreateObject writes an object to the backend, and updates the index, of
-// its folder, and of a folder which is created for it
+// CreateObject writes an object to the backend, and queues the index of
+// it, which updates its folder, and a folder which is created for it
 func (self *Indexer) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	object, err := self.Filer.CreateObject(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	self.mu.Lock()
-	defer self.mu.Unlock()
-	if err := self.refresh(ctx, object.Path, schema.EventTypeCreated); err != nil {
+	if err := self.queue.index(ctx, object.Path); err != nil {
 		self.failed(ctx, err)
 	}
 	return object, nil
 }
 
-// DeleteObjects deletes objects of the backend, and updates the index, of
-// a folder which is deleted, and of its parent
+// DeleteObjects deletes objects of the backend, and queues the index of
+// what's deleted, which updates a folder which is deleted, and its parent
 func (self *Indexer) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	resp, err := self.Filer.DeleteObjects(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	self.mu.Lock()
-	defer self.mu.Unlock()
-	if err := self.refresh(ctx, folderPath(req.Path), schema.EventTypeDeleted); err != nil {
+	if err := self.queue.index(ctx, folderPath(req.Path)); err != nil {
 		self.failed(ctx, err)
 	}
 	return resp, nil
@@ -299,25 +321,27 @@ func (self *Indexer) watch(ctx context.Context) error {
 		case err := <-done:
 			return err
 		case event := <-events:
+			// The change is queued, which is quick, and then sent to the
+			// watchers, who aren't held up by indexing it, which is done in
+			// the background, and a watcher which doesn't read its changes
+			// doesn't hold up the index
 			if err := self.apply(ctx, event); err != nil {
-				return err
+				self.failed(ctx, err)
 			}
 			self.forward(ctx, event)
 		}
 	}
 }
 
-// poll scans a backend which can't be watched, now, and at the rescan
-// interval, until the context is cancelled
+// poll queues a scan of a backend which can't be watched, now, and at the
+// rescan interval, until the context is cancelled, and tells its watchers
+// to compare what they know with it, as its changes aren't known
 func (self *Indexer) poll(ctx context.Context) error {
 	for {
-		if err := self.scan(ctx, "/"); err != nil && ctx.Err() == nil {
+		if err := self.queue.rescan(ctx, "/"); err != nil && ctx.Err() == nil {
 			self.failed(ctx, err)
-		} else if err == nil {
-			// Its watchers compare what they know with it, as its changes
-			// aren't known
-			self.forward(ctx, schema.Rescan(self.name))
 		}
+		self.forward(ctx, schema.Rescan(self.name))
 		select {
 		case <-ctx.Done():
 			return nil
@@ -326,19 +350,112 @@ func (self *Indexer) poll(ctx context.Context) error {
 	}
 }
 
-// apply changes the index, of a change to the backend: a rescan scans the
-// folder again, and an object which is created, updated or deleted is
-// refreshed, with its folder
+// apply queues the work of a change to the backend: a rescan of its folder,
+// or the index of an object which is created, updated or deleted
 func (self *Indexer) apply(ctx context.Context, event schema.Event) error {
 	switch event.EventType {
 	case schema.EventTypeRescan:
-		return self.scan(ctx, folderPath(event.Path))
+		return self.queue.rescan(ctx, folderPath(event.Path))
 	case schema.EventTypeCreated, schema.EventTypeUpdated, schema.EventTypeDeleted:
-		self.mu.Lock()
-		defer self.mu.Unlock()
-		return self.refresh(ctx, folderPath(event.Path), event.EventType)
+		return self.queue.index(ctx, folderPath(event.Path))
 	default:
 		return nil
+	}
+}
+
+// work does the work of the queue, until the context is cancelled: a
+// rescan scans the folder, and an index refreshes the object, with its
+// folders. Work which fails is done again, after a while, which doubles
+// with each attempt, and work which isn't done when it's cancelled is
+// pushed again, so it's done when it runs again, rather than once its
+// lease has passed.
+func (self *Indexer) work(ctx context.Context) {
+	retry := self.retry
+	for {
+		claimed, err := self.store.Claim(ctx, self.name, kinds, workBatch, workLease)
+		if ctx.Err() != nil {
+			return
+		} else if err != nil {
+			self.failed(ctx, err)
+			if !self.idle(ctx, retry) {
+				return
+			}
+			retry = min(retry*2, maxRetry)
+			continue
+		}
+		retry = self.retry
+		if len(claimed) == 0 {
+			if !self.idle(ctx, workIdle) {
+				return
+			}
+			continue
+		}
+
+		// Do the work, which is done, or failed, of its claim
+		done := make([]store.Work, 0, len(claimed))
+		for i, w := range claimed {
+			err := self.do(ctx, w)
+			if ctx.Err() != nil {
+				self.release(claimed[i:])
+				break
+			} else if err != nil {
+				self.failed(ctx, err)
+				_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
+			} else {
+				done = append(done, w)
+			}
+		}
+		if err := self.store.Done(context.WithoutCancel(ctx), self.name, done...); err != nil {
+			self.failed(ctx, err)
+		}
+	}
+}
+
+// do does work, of the queue
+func (self *Indexer) do(ctx context.Context, w store.Work) error {
+	switch w.Kind {
+	case store.KindRescan:
+		self.queue.rescanned(w.Path)
+		return self.scan(ctx, w.Path)
+	case store.KindIndex:
+		// The event of the change isn't kept, as changes are coalesced, so a
+		// folder is listed, as when it's created, which can have folders,
+		// such as one which is moved there
+		self.mu.Lock()
+		defer self.mu.Unlock()
+		return self.refresh(ctx, w.Path, schema.EventTypeCreated)
+	default:
+		return nil
+	}
+}
+
+// release pushes work which is claimed, but isn't done, again, so it's
+// claimed again at once, rather than once its lease has passed
+func (self *Indexer) release(work []store.Work) {
+	for i := range work {
+		work[i].Attempts, work[i].Error = 0, ""
+	}
+	_ = self.store.Push(context.Background(), self.name, work...)
+}
+
+// idle waits for work to be pushed, which is due once the debounce has
+// passed, which it waits for too, or the time to pass, for work which is
+// due later, and returns false when the context is cancelled
+func (self *Indexer) idle(ctx context.Context, wait time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-self.queue.wake:
+		if self.debounce > 0 {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(self.debounce):
+			}
+		}
+		return true
+	case <-time.After(wait):
+		return true
 	}
 }
 

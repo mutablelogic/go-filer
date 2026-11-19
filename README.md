@@ -136,10 +136,12 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 
 * **`Run(ctx)`** indexes it, until the context is cancelled. It watches the backend, and scans it once it's watching, a folder at a time, so a change during the scan isn't missed.
 * **Following changes:** a rescan event scans that folder again. A folder which is created, or deleted, is indexed, or removed, with what's beneath it.
+* **In the background:** changes are queued in the store's `object_state`, and a worker indexes them, so watchers, writes and deletes aren't held up, and work which is queued when it stops is done when it runs again. Changes of a path within the debounce, 250ms by default (`WithDebounce`), are one.
+* **Rescans** are coalesced, a rescan of a folder replacing those beneath it, and a folder is rescanned at most once a minute, by default (`WithRescanMinInterval`). A rescan which is sooner is deferred, not dropped.
 * **Backends which can't be watched**, such as a bucket without SeaweedFS, are scanned again at the rescan interval, 15 minutes by default (`WithRescanInterval`).
 * **A watch which fails** is watched, and scanned, again after a while, which doubles each time, up to a minute. Why it failed is in the state.
 * **`ListFolders`** lists a folder's folders, or every folder beneath it, with `Recursive`, in the order a backend lists them. **`GetObject`** of a folder is the index's, with `folder:children` and `folder:children-count`. Until the first scan finishes, both are the backend's.
-* **Writes and deletes** through it update the index as they're made.
+* **Writes and deletes** through it queue the index of what they change, as the backend's changes do.
 * **Everything else**, such as files, is the backend's. Files are indexed later.
 * **`State`** is the index's status (never indexed, scanning, or ready), how many folders the scan has indexed, when it started and finished, and why it last failed.
 * **Stores:** `store/sqlite`, in a file, or in memory with `sqlite.Memory`. Postgres comes later (#72). Every store passes `store/storetest`.
