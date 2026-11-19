@@ -214,8 +214,8 @@ SELECT object.rowid, search_name(object.key),
   coalesce((
     SELECT group_concat(search_text(metadata.value), ' ') FROM metadata
     WHERE metadata.volume = object.volume AND metadata.object = object.key
-      AND NOT (metadata.namespace = 'dc' AND metadata.key IN ('title', 'creator', 'identifier', 'description', 'subject'))
-      AND NOT (metadata.namespace = 'metadata' AND metadata.key = 'hint') AND ifnull(metadata.namespace, '') <> 'folder'
+      AND NOT (ifnull(metadata.namespace, '') = 'dc' AND metadata.key IN ('title', 'creator', 'identifier', 'description', 'subject'))
+      AND NOT (ifnull(metadata.namespace, '') = 'metadata' AND metadata.key = 'hint') AND ifnull(metadata.namespace, '') <> 'folder'
       AND NOT (metadata.source = '' AND EXISTS (
         SELECT 1 FROM metadata AS task
         WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
