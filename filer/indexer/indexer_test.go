@@ -963,8 +963,8 @@ func Test_ScanPages(t *testing.T) {
 	cancel, done := start(first)
 	require.Eventually(t, func() bool {
 		state := state()
-		return state.Status == schema.IndexStatusScanning && state.Files >= 100
-	}, 10*time.Second, time.Millisecond, "its files are stored while it's scanning")
+		return state.Status == schema.IndexStatusScanning && state.Phase == schema.IndexPhaseIndexing && state.Files >= 100
+	}, 10*time.Second, time.Millisecond, "its files are stored while it's indexing them, once they're listed")
 	assert.Equal(t, uint64(5), state().Folders, "of the folders it's listed")
 	cancel()
 	require.NoError(t, <-done)
@@ -981,8 +981,8 @@ func Test_ScanPages(t *testing.T) {
 	}()
 	require.Eventually(t, func() bool {
 		state := state()
-		return state.Status == schema.IndexStatusReady && state.Files == files
-	}, 10*time.Second, time.Millisecond, "it's scanned")
+		return state.Status == schema.IndexStatusReady && state.Files == files && state.Phase == schema.IndexPhaseIdle
+	}, 10*time.Second, time.Millisecond, "it's scanned, and idle")
 	assert.Equal(t, int32(files-stored), second.gets.Load(), "only the files which weren't stored are got")
 	assert.Len(t, indexed(t, s), files)
 }
@@ -1085,6 +1085,77 @@ func Test_CatchUp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, gets+1, l.gets.Load(), "a changed file is the backend's")
 	assert.Equal(t, lists+1, l.lists.Load(), "a listing of it is the backend's")
+}
+
+func Test_CatchUpChanges(t *testing.T) {
+	backend, dir := newBackend(t)
+	s := newStore(t)
+	start := func(b gofiler.Filer) (*indexer.Indexer, func()) {
+		i, err := indexer.New("media", b, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- i.Run(ctx) }()
+		return i, func() {
+			cancel()
+			require.NoError(t, <-done)
+		}
+	}
+	scanned := func(since time.Time) bool {
+		state, err := s.State(context.Background(), "media")
+		return err == nil && state.Status == schema.IndexStatusReady && state.Scanned.After(since)
+	}
+
+	// A volume which is indexed, and then changed while it isn't running
+	_, stop := start(&listing{Filer: backend})
+	require.Eventually(t, func() bool { return scanned(time.Time{}) }, 10*time.Second, 5*time.Millisecond)
+	stop()
+	stopped := time.Now()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("changed"), 0o644))
+	require.NoError(t, os.Remove(filepath.Join(dir, "a", "y.txt")))
+	require.NoError(t, os.Remove(filepath.Join(dir, "a", "b")))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "e", "f"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "e", "f", "g.txt"), []byte("g"), 0o644))
+
+	// Catches up, when it runs again, of what was added, changed, and
+	// removed, getting only the files which are new, or changed
+	l := &listing{Filer: backend}
+	i, stop := start(l)
+	defer stop()
+	require.Eventually(t, func() bool { return scanned(stopped) }, 10*time.Second, 5*time.Millisecond, "it's scanned again")
+	req := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}
+	want, err := listed(t, backend, req)
+	require.NoError(t, err)
+	got, err := listed(t, i, req)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.Equal(t, []string{"/e/f/g.txt", "/x.txt"}, indexed(t, s))
+	x, err := s.Get(context.Background(), "media", "/x.txt")
+	require.NoError(t, err)
+	assert.Equal(t, int64(len("changed")), *x.Size, "of the changed file")
+	assert.Equal(t, int32(2), l.gets.Load(), "only /x.txt, and /e/f/g.txt, are got")
+}
+
+func Test_RefreshFolderRetry(t *testing.T) {
+	backend, dir := newBackend(t)
+	s := newStore(t)
+
+	// A folder which is new, whose folder above it fails to be indexed, is
+	// retried, with the folders above it, rather than being rescanned on its
+	// own, as queueing its rescan replaces the work which would be retried
+	f := &flaky{Filer: backend, fail: map[string]int{"/new/": 1}}
+	i, err := indexer.New("media", f, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0), indexer.WithRetry(10*time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "new", "deep"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "new", "deep", "f.txt"), []byte("f"), 0o644))
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/new/deep/", Kind: store.KindIndex}))
+	require.Eventually(t, func() bool {
+		_, fileErr := s.Get(context.Background(), "media", "/new/deep/f.txt")
+		_, folderErr := s.Get(context.Background(), "media", "/new/")
+		root, rootErr := s.Get(context.Background(), "media", "/")
+		return fileErr == nil && folderErr == nil && rootErr == nil && count(t, root) == "4"
+	}, 10*time.Second, 10*time.Millisecond, "the folders above it are indexed, and it's rescanned")
 }
 
 func Test_Poll(t *testing.T) {

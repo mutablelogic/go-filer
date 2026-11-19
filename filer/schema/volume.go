@@ -26,6 +26,13 @@ const (
 	IndexStatusReady    IndexStatus = "ready"    // It's indexed, and the index follows its changes
 )
 
+// The phases of a scan of an index
+const (
+	IndexPhaseIdle     IndexPhase = ""         // It isn't scanned
+	IndexPhaseScanning IndexPhase = "scanning" // Its folders, and files, are listed
+	IndexPhaseIndexing IndexPhase = "indexing" // Its files which are new, or changed, are got, and stored
+)
+
 // OptDescription is the option of every backend's URL which describes what
 // the volume is, such as "Folder /mnt/media", which a backend sets, when
 // it isn't set
@@ -127,20 +134,17 @@ type IndexState struct {
 	Folders uint64      `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
 	Files   uint64      `json:"files,omitempty" help:"How many files the last scan indexed, of a volume whose files are indexed"`
 	Mode    string      `json:"mode,omitempty" help:"What the last scan which finished indexed: folders, or objects"`
+	Phase   IndexPhase  `json:"phase,omitempty" help:"What the scan in progress is doing: scanning, when it's listed, or indexing, when its files are stored, or empty, when it's idle"`
 	Started time.Time   `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
 	Scanned time.Time   `json:"scanned,omitzero" help:"When the last scan which finished did"`
 	Error   string      `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`
 }
 
-// Rescanning returns true when an index which is ready is scanned again,
-// which is when its scan started after the last one finished, and it
-// hasn't failed
-func (state IndexState) Rescanning() bool {
-	return state.Status == IndexStatusReady && state.Error == "" && state.Started.After(state.Scanned)
-}
-
 // IndexStatus is how far a volume is indexed
 type IndexStatus string
+
+// IndexPhase is what a scan of a volume's index is doing
+type IndexPhase string
 
 // VolumeList is the volumes which are registered, in order of their names,
 // and the schemes of the URLs which volumes can be added from
@@ -216,20 +220,16 @@ func (v Volume) IndexStatus() string {
 	switch {
 	case v.Index == nil:
 		return "none"
-	case v.Index.Status == IndexStatusScanning:
-		result = fmt.Sprintf("indexing, %d folders", v.Index.Folders)
-		if v.Index.Mode == "objects" && v.Index.Files > 0 {
-			result += fmt.Sprintf(", %d files", v.Index.Files)
+	case v.Index.Status == IndexStatusScanning || v.Index.Status == IndexStatusReady:
+		// What its scan is doing, of the counts of the scan in progress, the
+		// first, or of its last scan, when it's ready, which is idle, when
+		// it isn't scanned
+		phase := string(v.Index.Phase)
+		if phase == "" {
+			phase = "idle"
 		}
-	case v.Index.Status == IndexStatusReady:
-		// It's idle, unless it's scanned again, when it has the counts of
-		// its last scan
-		result = "idle"
-		if v.Index.Rescanning() {
-			result = "indexing"
-		}
-		result += fmt.Sprintf(", %d folders", v.Index.Folders)
-		if v.Index.Mode == "objects" {
+		result = fmt.Sprintf("%s, %d folders", phase, v.Index.Folders)
+		if v.Index.Mode == "objects" && (v.Index.Status == IndexStatusReady || v.Index.Files > 0) {
 			result += fmt.Sprintf(", %d files", v.Index.Files)
 		}
 	case v.Index.Error != "":

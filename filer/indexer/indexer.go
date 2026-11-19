@@ -72,6 +72,10 @@ const (
 	// a time, so one which stops has stored those it's got
 	filePage = 100
 
+	// seenPage is how many objects a scan's listing records as seen, in the
+	// store, at a time
+	seenPage = 1000
+
 	// progressEvery is how many folders a scan lists between storing its
 	// progress
 	progressEvery = 100
@@ -210,8 +214,12 @@ func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest)
 	case conditional:
 		return self.Filer.GetObject(ctx, req)
 	case isFolder:
-		if self.ready(ctx) {
-			if object, err := self.store.Get(ctx, self.name, store.FolderKey(folderPath(req.Path))); err == nil {
+		// A folder is the index's when no work is queued which would change
+		// it, as a folder which is new is listed by its rescan, which counts
+		// its objects
+		key := store.FolderKey(folderPath(req.Path))
+		if pending, err := self.store.Pending(ctx, self.name, key); err == nil && !pending && self.ready(ctx) {
+			if object, err := self.store.Get(ctx, self.name, key); err == nil {
 				object.Name = self.name
 				return object, nil
 			}
@@ -422,15 +430,13 @@ func (self *Indexer) keysAt(ctx context.Context, p string) []string {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS - SCANNING
 
-// tree is a folder's subtree, of the backend: the folder, and the folders
-// beneath it, by their keys, with how many objects each lists, and its
-// files, by their keys, when they're indexed, so a file, and a folder, of
-// the same path, which a bucket can have, are both indexed
+// tree is a folder's objects, of the backend, of one listing of it, which
+// index indexes: its folders, and its files, when they're indexed, by their
+// keys, so a file, and a folder, of the same path, which a bucket can have,
+// are both indexed
 type tree struct {
-	root    *schema.Object
 	folders map[string]*schema.Object
 	files   map[string]*schema.Object
-	counts  map[string]int
 }
 
 // scan indexes the folder of the key, and every folder beneath it, of one
@@ -439,7 +445,7 @@ type tree struct {
 // removed. The root's scan is the whole volume's, whose state is scanning,
 // and then ready. A scan clears why the index last failed, as it starts, as
 // it's of what failed, or after it, so the error is of this scan, or later.
-func (self *Indexer) scan(ctx context.Context, root string) error {
+func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 	whole := root == "/"
 	state, err := self.store.State(ctx, self.name)
 	if err != nil {
@@ -468,40 +474,84 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 				_ = self.store.SetState(ctx, self.name, state)
 			}
 		}
-		state.Started, state.Error = time.Now(), ""
+		// It's scanning, and then indexing, of its files, and idle, once
+		// it's done, or it fails, so it isn't of a scan which isn't
+		state.Started, state.Error, state.Phase = time.Now(), "", schema.IndexPhaseScanning
 		if err := self.store.SetState(ctx, self.name, state); err != nil {
 			return err
 		}
+		defer func() {
+			if err != nil {
+				if state, e := self.store.State(context.WithoutCancel(ctx), self.name); e == nil {
+					state.Phase = schema.IndexPhaseIdle
+					_ = self.store.SetState(context.WithoutCancel(ctx), self.name, state)
+				}
+			}
+		}()
 	}
 
-	// List it, then change the index, of its folders, and then of its files
-	// which are new, or changed, which are got, and stored, a page at a
-	// time, so a scan which stops, such as when the server does, has stored
-	// those it's got, which aren't got again, and the index is locked only
-	// while it's changed
-	t, err := self.list(ctx, root, progress)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	// List it, of what's seen, which the store keeps, of its files, so a
+	// volume isn't held in memory, and of its folders, which are kept, with
+	// how many objects they list. What was seen before, by a scan which
+	// stopped, is forgotten, as is what's seen, once it's done.
+	if err := self.store.Unsee(ctx, self.name, root); err != nil {
+		return err
+	}
+	defer func() { _ = self.store.Unsee(context.WithoutCancel(ctx), self.name, root) }()
+	l, err := self.list(ctx, root, progress)
+	if errors.Is(err, fs.ErrNotExist) {
+		self.mu.Lock()
+		defer self.mu.Unlock()
+		return self.store.Delete(ctx, self.name, root)
+	} else if err != nil {
 		return err
 	}
 	if progress != nil {
-		progress(len(t.folders) + 1)
+		progress(len(l.folders) + 1)
 	}
+
+	// Then the index's objects beneath it which weren't seen are removed,
+	// and its folders are stored, and then its files which are new, or
+	// changed, are got, and stored, a page at a time, so a scan which stops,
+	// such as when the server does, has stored those it's got, which aren't
+	// got again, and the index is locked only while it's changed
 	self.mu.Lock()
-	folders, f, err := self.replace(ctx, root, t)
+	err = self.store.Sweep(ctx, self.name, root)
 	if err == nil {
-		err = self.publish(ctx, folders, nil)
+		err = self.publish(ctx, l.objects(root), nil)
 	}
 	self.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	done := len(t.files) - len(f.keys)
+	changed, err := self.store.CountChanged(ctx, self.name, root)
+	if err != nil {
+		return err
+	}
+	if whole {
+		state.Phase = schema.IndexPhaseIndexing
+		if err := self.store.SetState(ctx, self.name, state); err != nil {
+			return err
+		}
+	}
+	done := l.files - int(changed)
 	if stored != nil {
 		stored(done)
 	}
-	for len(f.keys) > 0 {
+	for after := ""; ; {
+		page, err := self.store.Changed(ctx, self.name, root, after, filePage)
+		if err != nil {
+			return err
+		} else if len(page) == 0 {
+			break
+		}
+		f := &fetches{listed: make(map[string]string, len(page)), indexed: make(map[string]bool, len(page))}
+		for _, seen := range page {
+			f.keys, f.listed[seen.Key], f.indexed[seen.Key] = append(f.keys, seen.Key), seen.Revision, seen.Indexed
+		}
+		after = page[len(page)-1].Key
 		self.mu.Lock()
-		files, listed, err := self.get(ctx, f, filePage)
+		files, listed, err := self.get(ctx, f, len(f.keys))
 		if err == nil {
 			err = self.publish(ctx, files, listed)
 		}
@@ -514,88 +564,86 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		}
 	}
 	if whole {
-		state.Status, state.Folders, state.Files, state.Mode, state.Scanned = schema.IndexStatusReady, uint64(len(t.folders)+1), uint64(done), string(self.mode), time.Now()
+		state.Status, state.Folders, state.Files, state.Mode, state.Phase, state.Scanned = schema.IndexStatusReady, uint64(len(l.folders)+1), uint64(done), string(self.mode), schema.IndexPhaseIdle, time.Now()
 		return self.store.SetState(ctx, self.name, state)
 	}
 	return nil
 }
 
-// list returns the subtree of a folder's key, of one recursive listing of
-// the backend, reporting how many folders it's listed every so often, or
-// fs.ErrNotExist, with an empty subtree, when the folder isn't there
-func (self *Indexer) list(ctx context.Context, root string, progress func(int)) (tree, error) {
-	t := tree{folders: make(map[string]*schema.Object), files: make(map[string]*schema.Object), counts: map[string]int{root: 0}}
+// listing is a listing of a folder's subtree, of a scan: the folder, and the
+// folders beneath it, by their keys, with how many objects each lists, and
+// how many files it has, which are seen (see ScanStore), rather than kept
+type listing struct {
+	root    *schema.Object
+	folders map[string]*schema.Object
+	counts  map[string]int
+	files   int
+}
+
+// objects returns the folder, and the folders beneath it, with how many
+// objects each lists, which are stored
+func (l *listing) objects(root string) []*schema.Object {
+	objects := make([]*schema.Object, 0, len(l.folders)+1)
+	l.root.Path, _ = store.PathOf(root)
+	objects = append(objects, withCount(l.root, l.counts[root]))
+	for key, folder := range l.folders {
+		objects = append(objects, withCount(folder, l.counts[key]))
+	}
+	return objects
+}
+
+// list lists the subtree of a folder's key, of one recursive listing of the
+// backend, whose keys, and the revisions of the files, are seen (see
+// ScanStore), a page at a time, reporting how many folders it's listed every
+// so often, or returns fs.ErrNotExist, when the folder isn't there
+func (self *Indexer) list(ctx context.Context, root string, progress func(int)) (*listing, error) {
 	object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: root}})
 	if err != nil {
-		return t, err
+		return nil, err
 	} else if !object.IsDir {
-		return t, &fs.PathError{Op: "index", Path: root, Err: fs.ErrNotExist}
+		return nil, &fs.PathError{Op: "index", Path: root, Err: fs.ErrNotExist}
 	}
-	t.root = object
+	l := &listing{root: object, folders: make(map[string]*schema.Object), counts: map[string]int{root: 0}}
 	iter, err := self.Filer.ListObjects(ctx, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: root}, Recursive: true})
 	if err != nil {
-		return t, err
+		return nil, err
 	}
 	defer iter.Close()
+	seen := make(map[string]string, seenPage)
+	flush := func() error {
+		if len(seen) == 0 {
+			return nil
+		}
+		err := self.store.Seen(ctx, self.name, seen)
+		clear(seen)
+		return err
+	}
 	for {
 		child, err := iter.Next(ctx)
 		if errors.Is(err, io.EOF) {
-			return t, nil
+			return l, flush()
 		} else if err != nil {
-			return t, err
+			return nil, err
 		}
 		key := store.Key(child)
-		t.counts[store.ParentKey(key)]++
+		l.counts[store.ParentKey(key)]++
 		if child.IsDir {
-			t.folders[key] = child
-			if _, exists := t.counts[key]; !exists {
-				t.counts[key] = 0
+			l.folders[key], seen[key] = child, ""
+			if _, exists := l.counts[key]; !exists {
+				l.counts[key] = 0
 			}
-			if progress != nil && len(t.folders)%progressEvery == 0 {
-				progress(len(t.folders))
+			if progress != nil && len(l.folders)%progressEvery == 0 {
+				progress(len(l.folders))
 			}
 		} else if self.mode == ModeObjects {
-			t.files[key] = child
+			l.files, seen[key] = l.files+1, store.Revision(child)
 		}
-	}
-}
-
-// replace replaces the index's subtree of a folder's key with the backend's,
-// removing the objects which aren't there any more, or aren't indexed, with
-// what's beneath them, or the whole subtree, when the folder isn't there,
-// and returns its folders, which are to be stored (see publish), and its
-// files which are new, or changed, which are to be got (see get). It's
-// called with the indexer locked.
-func (self *Indexer) replace(ctx context.Context, root string, t tree) ([]*schema.Object, *fetches, error) {
-	if t.root == nil {
-		return nil, &fetches{}, self.store.Delete(ctx, self.name, root)
-	}
-	indexed, err := self.beneath(ctx, root)
-	if err != nil {
-		return nil, nil, err
-	}
-	revisions, err := self.store.Revisions(ctx, self.name, root, true)
-	if err != nil {
-		return nil, nil, err
-	}
-	files := make(map[string]*schema.Object)
-	for _, object := range indexed {
-		key := store.Key(object)
-		if !t.has(key) {
-			if err := self.store.Delete(ctx, self.name, key); err != nil {
-				return nil, nil, err
+		if len(seen) >= seenPage {
+			if err := flush(); err != nil {
+				return nil, err
 			}
-		} else if !object.IsDir {
-			files[key] = object
 		}
 	}
-	objects := make([]*schema.Object, 0, len(t.folders)+1)
-	t.root.Path, _ = store.PathOf(root)
-	objects = append(objects, withCount(t.root, t.counts[root]))
-	for key, folder := range t.folders {
-		objects = append(objects, withCount(folder, t.counts[key]))
-	}
-	return objects, changed(t, files, revisions), nil
 }
 
 // fetches is the files of a tree which are new, or changed, in the order of
@@ -762,10 +810,11 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 }
 
 // refresh changes the index, of the object of a key, which is created,
-// updated or deleted: a folder which is there is indexed, with what's
-// beneath it, as it can have folders, such as one which is moved here, and
-// a folder which isn't there any more is removed, with what's beneath it,
-// and a file, when files are indexed, is stored, of the backend, or removed.
+// updated or deleted: a folder which is there is rescanned, which is queued,
+// as it can have folders, and files, such as one which is moved here, which
+// are indexed as a scan's are, a page at a time, and a folder which isn't
+// there any more is removed, with what's beneath it, and a file, when files
+// are indexed, is stored, of the backend, or removed.
 // Then the folders above it are indexed again, as their counts, or folders,
 // changed, up to the first which was indexed, removing those which aren't
 // there any more, but not of a file which was indexed, and still is, as
@@ -780,19 +829,18 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		return indexErr
 	}
 	var full *schema.Object
+	rescan := false
 	if p, folder := store.PathOf(key); folder {
-		t, err := self.list(ctx, key, nil)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: key}})
+		switch {
+		case errors.Is(err, fs.ErrNotExist) || (err == nil && !object.IsDir):
+			if err := self.store.Delete(ctx, self.name, key); err != nil {
+				return err
+			}
+		case err != nil:
 			return err
-		} else if folders, f, err := self.replace(ctx, key, t); err != nil {
-			return err
-		} else if files, listed, err := self.get(ctx, f, len(f.keys)); err != nil {
-			// Its files are got before its folders are stored, so they
-			// aren't indexed until they are, and getting them, which
-			// fails, is retried, with the folders above it
-			return err
-		} else if err := self.publish(ctx, append(folders, files...), listed); err != nil {
-			return err
+		default:
+			rescan = true
 		}
 	} else if self.mode == ModeObjects {
 		// A file which is new is stored once its folder is indexed, so a
@@ -830,6 +878,13 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 	}
 	if full != nil {
 		return self.put(ctx, []*schema.Object{full})
+	}
+
+	// A folder which is there is rescanned, which is queued once the
+	// folders above it are indexed, as queueing it replaces its index,
+	// which is the work this is, which isn't retried, when they fail
+	if rescan {
+		return self.queue.rescan(ctx, key)
 	}
 	return nil
 }

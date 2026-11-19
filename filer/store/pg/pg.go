@@ -92,6 +92,26 @@ func (self *Store) Count(context.Context, string, store.ListRequest) (uint64, er
 	return 0, errNotImplemented
 }
 
+func (self *Store) Seen(context.Context, string, map[string]string) error {
+	return errNotImplemented
+}
+
+func (self *Store) Unsee(context.Context, string, string) error {
+	return errNotImplemented
+}
+
+func (self *Store) Sweep(context.Context, string, string) error {
+	return errNotImplemented
+}
+
+func (self *Store) Changed(context.Context, string, string, string, int) ([]store.Seen, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) CountChanged(context.Context, string, string) (uint64, error) {
+	return 0, errNotImplemented
+}
+
 func (self *Store) Revisions(context.Context, string, string, bool) (map[string]string, error) {
 	return nil, errNotImplemented
 }
