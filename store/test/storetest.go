@@ -1245,6 +1245,17 @@ func testSearch(t *testing.T, s store.Store) {
 	got, _ = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}, OffsetLimit: schema.OffsetLimit{Limit: &huge}})
 	assert.Len(t, got, 3)
 
+	// Of the volumes, or of every one, without any
+	resp, err := s.Search(ctx, schema.SearchRequest{Query: schema.Query{Terms: []string{"spiegel"}, Volumes: []string{"photos"}}})
+	require.NoError(t, err)
+	require.Len(t, resp.Body, 1)
+	assert.Equal(t, "photos", resp.Body[0].Name)
+	assert.Equal(t, uint64(1), resp.Count)
+	assert.Equal(t, float32(1), resp.Body[0].Rank, "of the best of its volumes")
+	resp, err = s.Search(ctx, schema.SearchRequest{Query: schema.Query{Terms: []string{"spiegel"}, Volumes: []string{"media", "photos"}}})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(2), resp.Count)
+
 	// Without terms, nothing matches
 	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{" ", "*"}}})
 	assert.Empty(t, got)
