@@ -102,7 +102,7 @@ func (r SearchRefresh) Update(*sqlite.Bind) error {
 // Select binds the match of the search, of the query's terms, and its page,
 // of a list, or of a get, its count
 func (req SearchRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
-	bind.Set("match", Match(req.Terms))
+	bind.Set("match", Match(req.Query.Terms))
 	switch op {
 	case sqlite.List:
 		limit := int64(-1)
