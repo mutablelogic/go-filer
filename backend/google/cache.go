@@ -66,6 +66,10 @@ func newCache[T any](now func() time.Time, ttl func() time.Duration) *cache[T] {
 // was got. When it's already being got, it waits for it, and returns it, or
 // when it couldn't be got, such as when what got it was cancelled, gets it.
 func (c *cache[T]) get(key string, fn func() (T, error)) (T, error) {
+	if c == nil {
+		// A cache which there isn't keeps nothing
+		return fn()
+	}
 	for {
 		c.mu.Lock()
 		if value, exists := c.values[key]; exists && c.now().Sub(value.at) < c.ttl() {
@@ -107,6 +111,10 @@ func (c *cache[T]) load(key string, l *loading[T], fn func() (T, error)) (T, err
 // peek returns the value kept with the key, without getting it, or false
 // when there's none, or it's been kept for longer than the cache keeps values
 func (c *cache[T]) peek(key string) (T, bool) {
+	if c == nil {
+		var zero T
+		return zero, false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if value, exists := c.values[key]; exists && c.now().Sub(value.at) < c.ttl() {
@@ -121,6 +129,9 @@ func (c *cache[T]) peek(key string) (T, bool) {
 // got, and aren't waited for by what asks for them after, which gets them
 // again
 func (c *cache[T]) clear() {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	clear(c.values)
