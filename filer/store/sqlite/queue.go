@@ -114,3 +114,19 @@ func (self *Store) Failed(ctx context.Context, volume string, work store.Work, c
 	}
 	return nil
 }
+
+// Pending returns true when the path has work queued, or claimed, which
+// would change its index: an index of it, or a rescan of it, or of a folder
+// above it
+func (self *Store) Pending(ctx context.Context, volume, path string) (_ bool, err error) {
+	ctx, end := self.span(ctx, "Pending", attribute.String("arg.volume", volume), attribute.String("arg.path", path))
+	defer func() { end(err) }()
+	if err := store.ValidateWork(store.Work{Path: path, Kind: store.KindIndex}); err != nil {
+		return false, err
+	}
+	var pending schema.Pending
+	if err := self.conn.Get(ctx, &pending, schema.QueuePending{Volume: volume, Path: path}); err != nil {
+		return false, storeErr(err)
+	}
+	return bool(pending), nil
+}

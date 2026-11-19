@@ -75,9 +75,10 @@ func (self *Indexer) watch(ctx context.Context) error {
 			// The change is queued, which is quick, and then sent to the
 			// watchers, who aren't held up by indexing it, which is done in
 			// the background, and a watcher which doesn't read its changes
-			// doesn't hold up the index
+			// doesn't hold up the index. When it can't be queued, the watch
+			// is started again, with a rescan, so it isn't missed.
 			if err := self.apply(ctx, event); err != nil {
-				self.failed(ctx, err)
+				return err
 			}
 			self.forward(ctx, event)
 		}

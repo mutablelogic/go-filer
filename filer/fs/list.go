@@ -110,9 +110,9 @@ func (self *listIterator) next(ctx context.Context) (*schema.Object, error) {
 		}
 		name := path.Join(frame.dir, entry.Name())
 
-		// Skip files which are not objects, such as sockets and devices.
-		// Symbolic links are checked once resolved.
-		if entry.Type()&fs.ModeSymlink == 0 && !isObject(entry.Type()) {
+		// Skip files which are not objects, such as sockets, devices and
+		// symbolic links
+		if !isObject(entry.Type()) {
 			continue
 		}
 
@@ -137,17 +137,6 @@ func (self *listIterator) next(ctx context.Context) (*schema.Object, error) {
 				return self.object(name, entry.Info)
 			}
 			continue
-		}
-
-		// Resolve symbolic links, skipping those which are broken or point
-		// outside the filesystem. A link to a directory is returned, but isn't
-		// descended into, as it could loop.
-		if entry.Type()&fs.ModeSymlink != 0 {
-			info, err := fs.Stat(self.fs, name)
-			if err != nil || !isObject(info.Mode()) {
-				continue
-			}
-			return self.object(name, func() (fs.FileInfo, error) { return info, nil })
 		}
 
 		// Return the file, skipping it if it was removed during iteration
@@ -301,9 +290,10 @@ func (self *listIterator) seek(startAfter string) error {
 	return nil
 }
 
-// stat returns the file information for the named file, following symbolic
-// links. A file which is not an object, such as a socket, named pipe or
-// device, does not exist, nor does a file which is skipped, or is beneath a
+// stat returns the file information for the named file. A file which is not
+// an object, such as a socket, named pipe, device or symbolic link, does not
+// exist, nor does a file beneath a symbolic link, as objects are as a
+// bucket's, which has no links, nor does a file which is skipped, or is beneath a
 // directory which is, such as a hidden file, or a file in a package, such as
 // a band of a sparse disk image, as it's not listed. A path which isn't
 // valid, such as one with "..", "." or empty elements, or a trailing "/", is
@@ -317,32 +307,59 @@ func (self *FS) stat(op, name string) (fs.FileInfo, error) {
 	// A file which doesn't exist, or can't be read, is reported by its object
 	// path, rather than the filesystem's, whose errors are of its own
 	// operations, such as statat
-	info, err := fs.Stat(self.fs, name)
-	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
-		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) {
-			err = pathErr.Err
+	var info fs.FileInfo
+	for _, p := range components(name) {
+		var err error
+		info, err = fs.Lstat(self.fs, p)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				err = pathErr.Err
+			}
+			return nil, &fs.PathError{Op: op, Path: objectPath(name), Err: err}
+		} else if err != nil {
+			return nil, err
+		} else if !isObject(info.Mode()) {
+			return nil, &fs.PathError{Op: op, Path: objectPath(name), Err: fs.ErrNotExist}
 		}
-		return nil, &fs.PathError{Op: op, Path: objectPath(name), Err: err}
-	} else if err != nil {
-		return nil, err
-	} else if !isObject(info.Mode()) {
-		return nil, &fs.PathError{Op: op, Path: objectPath(name), Err: fs.ErrNotExist}
 	}
 	return info, nil
 }
 
-// sortKey returns the name of the entry, followed by "/" for a directory.
-// Symbolic links are resolved, so that a link to a directory sorts as a
-// directory. A package is a file, which sorts as its name.
-func (self *listIterator) sortKey(dir string, entry fs.DirEntry) string {
-	isDir := entry.IsDir()
-	if entry.Type()&fs.ModeSymlink != 0 {
-		if info, err := fs.Stat(self.fs, path.Join(dir, entry.Name())); err == nil {
-			isDir = info.IsDir()
+// link returns the path of the name, or of a directory above it, which is a
+// symbolic link, or empty when none is, of those which exist
+func (self *FS) link(name string) string {
+	for _, p := range components(name) {
+		info, err := fs.Lstat(self.fs, p)
+		if err != nil {
+			return ""
+		} else if info.Mode()&fs.ModeSymlink != 0 {
+			return p
 		}
 	}
-	if isDir && !self.isPackage(entry.Name()) {
+	return ""
+}
+
+// components returns the paths of a name, and of each directory above it,
+// from the first, such as "a", "a/b" and "a/b/c" of "a/b/c", or "." of the
+// root
+func components(name string) []string {
+	if name == "." {
+		return []string{name}
+	}
+	var paths []string
+	for i, r := range name {
+		if r == '/' {
+			paths = append(paths, name[:i])
+		}
+	}
+	return append(paths, name)
+}
+
+// sortKey returns the name of the entry, followed by "/" for a directory.
+// A package is a file, which sorts as its name.
+func (self *listIterator) sortKey(dir string, entry fs.DirEntry) string {
+	if entry.IsDir() && !self.isPackage(entry.Name()) {
 		return entry.Name() + "/"
 	}
 	return entry.Name()

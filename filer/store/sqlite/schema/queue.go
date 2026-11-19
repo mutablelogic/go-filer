@@ -44,6 +44,16 @@ type QueueFailure struct {
 	After time.Time
 }
 
+// QueuePending selects whether a path of a volume has work which would
+// change its index
+type QueuePending struct {
+	Volume string
+	Path   string
+}
+
+// Pending is whether a path has work which would change its index
+type Pending bool
+
 // WorkList is the work which is read
 type WorkList []store.Work
 
@@ -134,8 +144,22 @@ func (key QueueKey) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 	return "", sqlite.ErrNotImplemented.Withf("queue: %v", op)
 }
 
+func (pending QueuePending) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	if op != sqlite.Get {
+		return "", sqlite.ErrNotImplemented.Withf("queue pending: %v", op)
+	}
+	bind.Set("volume", pending.Volume)
+	bind.Set("path", pending.Path)
+	bind.Set("ancestors", append(Ancestors(pending.Path), pending.Path))
+	return bind.Query("queue.pending"), nil
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // READERS
+
+func (pending *Pending) Scan(row sqlite.Row) error {
+	return row.Scan((*bool)(pending))
+}
 
 func (list *WorkList) Scan(row sqlite.Row) error {
 	var work store.Work

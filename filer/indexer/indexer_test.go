@@ -119,6 +119,38 @@ func (u *unwatched) WatchObjects(ctx context.Context, ch chan<- schema.Event) er
 	return u.Filer.WatchObjects(ctx, ch)
 }
 
+// counting is a backend which counts its calls to GetObject, whose watch is
+// live when the backend's is
+type counting struct {
+	gofiler.Filer
+	gets atomic.Int32
+}
+
+func (c *counting) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	c.gets.Add(1)
+	return c.Filer.GetObject(ctx, req)
+}
+
+// unwatchedCounting is a backend which can't be watched, which counts its
+// calls to GetObject
+type unwatchedCounting struct {
+	counting
+}
+
+func (u *unwatchedCounting) WatchObjects(context.Context, chan<- schema.Event) error {
+	return gofiler.ErrNotImplemented.With("it can't be watched")
+}
+
+// gets returns how many times a file is got from the backend, of a call to
+// GetObject of the indexer, and the file
+func gets(t *testing.T, i *indexer.Indexer, c *counting, req schema.GetObjectRequest) (int32, *schema.Object) {
+	t.Helper()
+	before := c.gets.Load()
+	object, err := i.GetObject(context.Background(), req)
+	require.NoError(t, err)
+	return c.gets.Load() - before, object
+}
+
 // bursty is a backend whose watch sends a burst of rescans of the root, and
 // which counts the recursive listings of it, which are scans
 type bursty struct {
@@ -422,9 +454,13 @@ func Test_ObjectsToFolders(t *testing.T) {
 	stop()
 	<-watched
 	assert.Equal(t, before.Folders, lowest, "its count isn't the progress of the scan")
-	after, err := s.State(context.Background(), "media")
-	require.NoError(t, err)
-	assert.Zero(t, after.Files)
+
+	// Its count of files is stored once the scan is done, after its files
+	// are removed
+	assert.Eventually(t, func() bool {
+		after, err := s.State(context.Background(), "media")
+		return err == nil && after.Files == 0
+	}, 10*time.Second, 5*time.Millisecond, "it has no files")
 }
 
 // faultyStore is a store whose reads of a path fail, and whose listings
@@ -512,6 +548,11 @@ func Test_ObjectsKeepMeta(t *testing.T) {
 		object, err := s.Get(context.Background(), "media", path)
 		return err == nil && len(object.Meta) == 1 && string(object.Meta[0].Value) == `"full"`
 	}
+
+	// The files of its scan are stored of the backend, rather than its
+	// listing, which has less
+	assert.True(t, title("/x.txt"), "a file of its scan is stored of the backend")
+	assert.True(t, title("/a/y.txt"), "a file of its scan is stored of the backend")
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}, Body: strings.NewReader("z")})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return title("/c/z.txt") }, 10*time.Second, 10*time.Millisecond, "it's stored of the backend")
@@ -559,6 +600,71 @@ func Test_ObjectsParentRetry(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond, "its folder's count")
 }
 
+func Test_GetFile(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+	c := &counting{Filer: backend}
+	s := newStore(t)
+	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
+
+	// A file of a volume which is watched is the index's, without the
+	// backend, with its volume's name
+	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects))
+	require.NoError(t, err)
+	run(t, i)
+	files(t, s, "/a/y.txt", "/x.txt")
+	time.Sleep(100 * time.Millisecond)
+	n, object := gets(t, i, c, x)
+	assert.Zero(t, n, "it's the index's")
+	assert.Equal(t, "media", object.Name)
+	assert.Equal(t, int64(len("x.txt")), *object.Size)
+
+	// But not a file which isn't indexed, a request which is conditional, or
+	// a file which has work queued, which would change it
+	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
+	assert.Zero(t, n, "a folder is the index's")
+	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: x.ObjectKey, IfModifiedSince: time.Unix(1, 0)})
+	assert.Equal(t, int32(1), n, "a conditional request is the backend's")
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Path: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	n, _ = gets(t, i, c, x)
+	assert.Equal(t, int32(1), n, "a file with work queued is the backend's")
+
+	// A volume whose files aren't indexed gets them from the backend
+	folders, err := indexer.New("media", c, newStore(t))
+	require.NoError(t, err)
+	run(t, folders)
+	n, _ = gets(t, folders, c, x)
+	assert.Equal(t, int32(1), n)
+}
+
+func Test_GetFileUnwatched(t *testing.T) {
+	backend, dir := newBackend(t)
+	c := &unwatchedCounting{counting{Filer: backend}}
+	s := newStore(t)
+	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
+
+	// A file of a volume which is polled, rather than watched, is the
+	// index's too, as of its last scan, between its scans, while none is
+	// queued
+	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(50*time.Millisecond), indexer.WithRescanMinInterval(0), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	run(t, i)
+	files(t, s, "/a/y.txt", "/x.txt")
+	require.Eventually(t, func() bool {
+		n, object := gets(t, i, &c.counting, x)
+		return n == 0 && *object.Size == int64(len("x.txt"))
+	}, 10*time.Second, time.Millisecond, "it's the index's")
+
+	// One which changed is the index's once it's scanned again
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("longer"), 0o644))
+	require.Eventually(t, func() bool {
+		_, object := gets(t, i, &c.counting, x)
+		return *object.Size == int64(len("longer"))
+	}, 10*time.Second, 10*time.Millisecond, "it's scanned again")
+}
+
 func Test_Poll(t *testing.T) {
 	backend, dir := newBackend(t)
 
@@ -599,12 +705,12 @@ func Test_Symlink(t *testing.T) {
 	backend, dir := newBackend(t)
 	require.NoError(t, os.Symlink(".", filepath.Join(dir, "a", "loop")))
 
-	// A link to a directory, which the backend lists, but doesn't descend
-	// into, as it could loop, is a folder, which isn't descended into
+	// A link to a directory isn't an object, as a bucket has no links, so
+	// it isn't a folder, and isn't descended into
 	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithRescanInterval(time.Hour))
 	require.NoError(t, err)
 	run(t, i)
-	assert.Equal(t, []string{"/a", "/a/b", "/a/loop", "/c"}, folders(t, i, "/", true))
+	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
 }
 
 func Test_DeleteParents(t *testing.T) {

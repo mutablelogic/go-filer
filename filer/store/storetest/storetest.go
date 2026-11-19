@@ -36,6 +36,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueueCoalesce", func(t *testing.T) { testQueueCoalesce(t, withVolumes(t, newStore(t))) })
 	t.Run("QueueOrder", func(t *testing.T) { testQueueOrder(t, withVolumes(t, newStore(t))) })
 	t.Run("QueueLease", func(t *testing.T) { testQueueLease(t, withVolumes(t, newStore(t))) })
+	t.Run("QueuePending", func(t *testing.T) { testQueuePending(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -617,4 +618,37 @@ func testQueueLease(t *testing.T, s store.Store) {
 	require.NoError(t, s.Push(ctx, "media", index("/b")))
 	_, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /b"}, paths, "the second claim is done")
+}
+
+func testQueuePending(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	pending := func(path string) bool {
+		t.Helper()
+		result, err := s.Pending(ctx, "media", path)
+		require.NoError(t, err)
+		return result
+	}
+
+	// A path has work pending when it's indexed, or it, or a folder above it,
+	// is rescanned, whether the work is queued, or claimed, until it's done
+	assert.False(t, pending("/a/b.txt"))
+	require.NoError(t, s.Push(ctx, "media", index("/a/b.txt")))
+	assert.True(t, pending("/a/b.txt"))
+	assert.False(t, pending("/a/c.txt"), "of another path")
+	assert.False(t, pending("/a"), "of the folder of the path")
+	work, _ := claimed(t, s, all, 10)
+	assert.True(t, pending("/a/b.txt"), "while it's claimed")
+	require.NoError(t, s.Done(ctx, "media", work...))
+	assert.False(t, pending("/a/b.txt"))
+	require.NoError(t, s.Push(ctx, "media", rescan("/a")))
+	assert.True(t, pending("/a/b.txt"), "of a folder above it")
+	assert.True(t, pending("/a"), "of itself")
+	assert.False(t, pending("/ab"), "of a folder whose path only starts with it")
+	work, _ = claimed(t, s, all, 10)
+	require.NoError(t, s.Done(ctx, "media", work...))
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	assert.True(t, pending("/a/b.txt"), "of an index of a folder above it")
+	assert.False(t, pending("/"), "of the folder above the folder")
+	_, err := s.Pending(ctx, "media", "a/b")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }

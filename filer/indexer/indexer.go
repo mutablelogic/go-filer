@@ -191,19 +191,49 @@ func (self *Indexer) WatchObjects(ctx context.Context, ch chan<- schema.Event) e
 	}
 }
 
-// GetObject returns an object, which is a folder of the index, once it's
-// ready, when the path is a folder's, which ends with "/", or is the root,
-// or otherwise the backend's, which resolves a path without one, which can
-// be a file, and a folder, of a bucket
+// GetObject returns an object: a folder, of the index, once it's ready, when
+// the path is a folder's, which ends with "/", or is the root, and a file,
+// of the index, when its files are indexed, and it's up to date, and
+// otherwise the backend's, which resolves a path without one, which can be
+// a file, and a folder, of a bucket. A request which is conditional is the
+// backend's.
 func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	conditional := len(req.IfNoneMatch) > 0 || !req.IfModifiedSince.IsZero()
 	isFolder := strings.HasSuffix(req.Path, "/") || folderPath(req.Path) == "/"
-	if isFolder && len(req.IfNoneMatch) == 0 && req.IfModifiedSince.IsZero() && self.ready(ctx) {
-		if object, err := self.store.Get(ctx, self.name, folderPath(req.Path)); err == nil && object.IsDir {
-			object.Name = self.name
-			return object, nil
+	switch {
+	case conditional:
+		return self.Filer.GetObject(ctx, req)
+	case isFolder:
+		if self.ready(ctx) {
+			if object, err := self.store.Get(ctx, self.name, folderPath(req.Path)); err == nil && object.IsDir {
+				object.Name = self.name
+				return object, nil
+			}
 		}
+		return self.Filer.GetObject(ctx, req)
+	case self.mode != ModeObjects:
+		// A file is the backend's, unless files are indexed
+		return self.Filer.GetObject(ctx, req)
 	}
-	return self.Filer.GetObject(ctx, req)
+	return self.getFile(ctx, req)
+}
+
+// getFile returns a file, of the index, when it's there, and has no work
+// queued, as the backend's changes, which are watched, or polled, are
+// indexed. Otherwise it's the backend's.
+func (self *Indexer) getFile(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	// Work which is pending is checked first, so work which is done between
+	// the two isn't missed, as it's done before the index is read
+	pending, err := self.store.Pending(ctx, self.name, req.Path)
+	if err != nil || pending {
+		return self.Filer.GetObject(ctx, req)
+	}
+	indexed, err := self.store.Get(ctx, self.name, req.Path)
+	if err != nil || indexed.IsDir {
+		return self.Filer.GetObject(ctx, req)
+	}
+	indexed.Name = self.name
+	return indexed, nil
 }
 
 // ListFolders lists the folders of a folder, or every folder beneath it,
@@ -410,24 +440,38 @@ func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
 	for p, folder := range t.folders {
 		objects = append(objects, withCount(folder, t.counts[p]))
 	}
-	return self.put(ctx, append(objects, t.changed(files)...))
+	changed, err := self.changed(ctx, t, files)
+	if err != nil {
+		return err
+	}
+	return self.put(ctx, append(objects, changed...))
 }
 
-// changed returns the files of the tree which are indexed, and aren't the
-// same as those which are, by their entity tags, or sizes and modified
-// times, so a file which is stored of the backend, which can have more than
-// its listing, such as a bucket's metadata, isn't replaced by its listing
-func (t tree) changed(indexed map[string]*schema.Object) []*schema.Object {
+// changed returns the files of the tree which are new, or aren't the same
+// as those which are indexed, by their entity tags, or sizes and modified
+// times, of the backend, rather than of its listing, which can have less,
+// such as a bucket's, which hasn't its metadata, so the index's files are
+// as GetObject returns them. A file which isn't there any more is removed.
+func (self *Indexer) changed(ctx context.Context, t tree, indexed map[string]*schema.Object) ([]*schema.Object, error) {
 	result := make([]*schema.Object, 0, len(t.files))
-	for p, file := range t.files {
+	for p, listed := range t.files {
 		if _, exists := t.folders[p]; exists {
 			continue
-		} else if previous, exists := indexed[p]; exists && sameObject(previous, file) {
+		} else if previous, exists := indexed[p]; exists && sameObject(previous, listed) {
 			continue
 		}
-		result = append(result, file)
+		file, err := self.file(ctx, p)
+		if err != nil {
+			return nil, err
+		} else if file != nil {
+			result = append(result, file)
+		} else if _, exists := indexed[p]; exists {
+			if err := self.store.Delete(ctx, self.name, p); err != nil {
+				return nil, err
+			}
+		}
 	}
-	return result
+	return result, nil
 }
 
 // indexedFiles returns how many files of the tree are indexed, which are
@@ -532,7 +576,11 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		child.Meta = mergeCount(child.Meta, counts[p])
 		objects = append(objects, child)
 	}
-	return self.put(ctx, append(objects, t.changed(files)...))
+	changed, err := self.changed(ctx, t, files)
+	if err != nil {
+		return err
+	}
+	return self.put(ctx, append(objects, changed...))
 }
 
 // refresh changes the index, of an object which is created, updated or

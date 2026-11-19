@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	iofs "io/fs"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -59,8 +60,11 @@ func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error 
 // when the file isn't listed. The changes to files are the changes to
 // objects, with the same values (see Test_eventTypes). A change within a package is an update to the
 // package, which is a file. A file which is created or updated must be one
-// which is listed, so not a socket, or a link which is broken or leads out of
-// the filesystem, but a deleted file can't be checked, so only its name is.
+// which is listed, so not a socket, or a link, or beneath one, which is a
+// deletion of its path, as it can replace an object, such as a link which
+// is renamed over a file, and a file which isn't there any more isn't a
+// change, as its deletion is. A deleted file can't be checked, so only its
+// name is.
 func (self *FS) event(event fsevents.Event) (schema.Event, bool) {
 	name, eventType := event.Path, schema.EventType(event.Op)
 	if pkg, ok := self.packageOf(name); ok {
@@ -73,7 +77,10 @@ func (self *FS) event(event fsevents.Event) (schema.Event, bool) {
 		return schema.Event{}, false
 	case name != "" && (eventType == schema.EventTypeCreated || eventType == schema.EventTypeUpdated):
 		if _, err := self.stat("watch", name); err != nil {
-			return schema.Event{}, false
+			if _, err := iofs.Lstat(self.fs, name); err != nil {
+				return schema.Event{}, false
+			}
+			eventType = schema.EventTypeDeleted
 		}
 	}
 	return schema.Event{

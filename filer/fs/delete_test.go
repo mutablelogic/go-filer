@@ -221,9 +221,8 @@ func Test_DeleteObjects(t *testing.T) {
 	})
 
 	t.Run("Links", func(t *testing.T) {
-		// A link to a file is returned as the file it's listed as, and links
-		// to directories, broken links, and links out of the filesystem
-		// aren't, and only the links are deleted, not what they lead to. Links
+		// Links aren't objects, as a bucket has none, so they aren't listed,
+		// or returned, but they're deleted, not what they lead to. Links
 		// within the filesystem are relative, as absolute links can't be
 		// resolved within its root.
 		outside := t.TempDir()
@@ -251,12 +250,8 @@ func Test_DeleteObjects(t *testing.T) {
 		var paths []string
 		for _, object := range deleted.Body {
 			paths = append(paths, object.Path)
-			if object.Path == "/linked/file.txt" {
-				require.NotNil(t, object.Size)
-				assert.Equal(t, int64(len("data")), *object.Size)
-			}
 		}
-		assert.ElementsMatch(t, []string{"/linked/a.txt", "/linked/file.txt"}, paths)
+		assert.ElementsMatch(t, []string{"/linked/a.txt"}, paths)
 		assert.ElementsMatch(t, listed, paths)
 		assert.False(t, exists("linked"))
 		assert.True(t, exists("targets/file.txt"))
