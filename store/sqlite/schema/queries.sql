@@ -86,6 +86,12 @@ ORDER BY key;
 -- How many objects a listing has, of the where clause, of every page
 SELECT count(*) FROM object WHERE volume = @volume AND ${where};
 
+-- object.delete_meta
+-- The metadata of a source, a task's kind, of every object of a volume, and
+-- its task's work, and the revisions it was done of
+DELETE FROM metadata WHERE volume = @volume AND source = @source;
+DELETE FROM object_state WHERE volume = @volume AND kind IN (@source, @did);
+
 -- object.delete
 -- An object, and, of a folder's key, those beneath it, of the range of their
 -- keys, and their metadata, which cascades
@@ -181,13 +187,17 @@ WHERE EXISTS (SELECT 1 FROM object WHERE volume = @volume AND key = @key)
 ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision;
 
 -- queue.push_stale
--- The work of a task of the files beneath a folder whose listings' revisions
--- aren't those the task was last done of, which isn't queued again
+-- The work of a task of the files beneath a folder which are indexed, whose
+-- listings' revisions aren't those the task was last done of, or which it
+-- hasn't been done of, including those which have no revision, such as a
+-- file which is stored of a change, until it's scanned, which isn't queued
+-- again
 INSERT INTO object_state (volume, key, kind, after)
-SELECT listed.volume, listed.key, @kind, @now
-FROM object_state AS listed
-LEFT JOIN object_state AS did ON did.volume = listed.volume AND did.key = listed.key AND did.kind = @did
-WHERE listed.volume = @volume AND listed.kind = 'listed' AND listed.key > @lower AND listed.key < @upper
+SELECT object.volume, object.key, @kind, @now
+FROM object
+LEFT JOIN object_state AS listed ON listed.volume = object.volume AND listed.key = object.key AND listed.kind = 'listed'
+LEFT JOIN object_state AS did ON did.volume = object.volume AND did.key = object.key AND did.kind = @did
+WHERE object.volume = @volume AND object.key > @lower AND object.key < @upper AND object.key NOT GLOB '*/'
   AND (did.key IS NULL OR did.revision IS NOT listed.revision)
 ON CONFLICT (volume, key, kind) DO NOTHING;
 

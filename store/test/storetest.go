@@ -43,6 +43,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("Scan", func(t *testing.T) { testScan(t, withVolumes(t, newStore(t))) })
 	t.Run("SetMetadata", func(t *testing.T) { testSetMetadata(t, withVolumes(t, newStore(t))) })
 	t.Run("QueueStale", func(t *testing.T) { testQueueStale(t, withVolumes(t, newStore(t))) })
+	t.Run("DeleteMetadata", func(t *testing.T) { testDeleteMetadata(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1057,16 +1058,18 @@ func testQueueStale(t *testing.T, s store.Store) {
 	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r1", "/b/c.txt": "r1"}))
 
 	// The files whose listings' revisions aren't those a task was done of
-	// are queued, of the folder, once, but not those without a revision, or
-	// of another kind of work
+	// are queued, of the folder, once, and those it hasn't been done of,
+	// which have no revision, such as one which is stored of a change, but
+	// not folders, or of another kind of work
 	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	_, paths := claimed(t, s, all, 10)
 	assert.Empty(t, paths, "it isn't indexing")
 	work, paths := claimed(t, s, tasks, 10)
-	assert.ElementsMatch(t, []string{"metadata /a.txt", "metadata /b/c.txt"}, paths)
+	assert.ElementsMatch(t, []string{"metadata /a.txt", "metadata /b/c.txt", "metadata /d.txt"}, paths)
 
-	// Once it's done, it isn't queued again, until its revision changes
+	// Once it's done, it isn't queued again, until its revision changes, as
+	// one without a revision isn't, while it has none
 	require.NoError(t, s.Done(ctx, "media", work...))
 	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	_, paths = claimed(t, s, tasks, 10)
@@ -1116,4 +1119,36 @@ func testQueueStale(t *testing.T, s store.Store) {
 	assert.ErrorIs(t, s.PushStale(ctx, "media", "/", store.KindIndex), gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.PushStale(ctx, "media", "/b", store.KindMetadata), gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.PushStale(ctx, "missing", "/", store.KindMetadata), gofiler.ErrNotFound)
+}
+
+func testDeleteMetadata(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	tasks := []store.Kind{store.KindMetadata}
+	backend := file("/a.txt")
+	backend.Meta = []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"backend"`)}}
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), backend, file("/b.txt")))
+	require.NoError(t, s.PutObject(ctx, "photos", folder("/"), file("/a.txt")))
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r1", "/b.txt": "r1"}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"task"`)}}))
+	require.NoError(t, s.SetMetadata(ctx, "photos", "/a.txt", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"photos"`)}}))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	work, _ := claimed(t, s, tasks, 10)
+	require.NoError(t, s.Done(ctx, "media", work[:1]...))
+
+	// A task's metadata is removed, of the volume, with its work, and the
+	// revisions it was done of, so it's done of every file again, but not
+	// the backend's metadata, or another volume's
+	require.NoError(t, s.DeleteMetadata(ctx, "media", "metadata"))
+	object, err := s.GetObject(ctx, "media", "/a.txt")
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"backend"}]`, string(mustJSON(t, object.Meta)))
+	other, err := s.GetObject(ctx, "photos", "/a.txt")
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"photos"}]`, string(mustJSON(t, other.Meta)))
+	_, paths := claimed(t, s, tasks, 10)
+	assert.Empty(t, paths, "its work is removed")
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	_, paths = claimed(t, s, tasks, 10)
+	assert.ElementsMatch(t, []string{"metadata /a.txt", "metadata /b.txt"}, paths, "it's done of every file again")
+	assert.ErrorIs(t, s.DeleteMetadata(ctx, "media", "Bad"), gofiler.ErrBadParameter)
 }

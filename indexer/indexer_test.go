@@ -1246,6 +1246,115 @@ func Test_MetadataTask(t *testing.T) {
 	assert.Zero(t, objects.count("/x.txt"), "of index=objects")
 }
 
+func Test_MetadataTaskUpgrade(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	start := func(opts ...indexer.Opt) func() {
+		i, err := indexer.New("media", &unwatched{Filer: backend}, s, append([]indexer.Opt{indexer.WithRescanInterval(time.Hour)}, opts...)...)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- i.Run(ctx) }()
+		return func() {
+			cancel()
+			require.NoError(t, <-done)
+		}
+	}
+
+	// A volume whose files are indexed
+	stop := start(indexer.WithMode(indexer.ModeObjects))
+	files(t, s, "/a/y.txt", "/x.txt")
+	require.Eventually(t, func() bool {
+		state, err := s.State(context.Background(), "media")
+		return err == nil && state.Status == schema.IndexStatusReady && state.Files == 2
+	}, 10*time.Second, 5*time.Millisecond)
+
+	// One of which is stored again, as a watch event does when it changes,
+	// so its listing's revision isn't, until it's scanned again
+	object, err := s.GetObject(context.Background(), "media", "/x.txt")
+	require.NoError(t, err)
+	require.NoError(t, s.PutObject(context.Background(), "media", object))
+	revisions, err := s.Revisions(context.Background(), "media", "/", true)
+	require.NoError(t, err)
+	require.NotContains(t, revisions, "/x.txt")
+	require.Contains(t, revisions, "/a/y.txt")
+	stop()
+
+	// Is enriched, once it's of index=metadata, at once, rather than once
+	// it's scanned again, which can be slow, as its listing is here
+	z := &sizer{}
+	g := &gated{Filer: backend, release: make(chan struct{})}
+	i, err := indexer.New("media", &unwatched{Filer: g}, s, indexer.WithRescanInterval(time.Hour), indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- i.Run(ctx) }()
+	defer func() {
+		cancel()
+		require.NoError(t, <-done)
+	}()
+	require.Eventually(t, func() bool { return z.count("/x.txt") == 1 && z.count("/a/y.txt") == 1 }, 10*time.Second, 5*time.Millisecond, "its files are enriched, while it's scanned, as is one without a revision")
+	close(g.release)
+}
+
+// gated is a backend whose listings wait until it's released, or they're
+// cancelled, as a slow volume's do
+type gated struct {
+	gofiler.Filer
+	release chan struct{}
+}
+
+func (g *gated) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return g.Filer.ListObjects(ctx, req)
+}
+
+func Test_MetadataTaskDowngrade(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	start := func(z *sizer, mode indexer.Mode) func() {
+		i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithRescanInterval(time.Hour), indexer.WithMode(mode), indexer.WithMetadataTask(z.task))
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- i.Run(ctx) }()
+		return func() {
+			cancel()
+			require.NoError(t, <-done)
+		}
+	}
+	enriched := func() bool {
+		object, err := s.GetObject(context.Background(), "media", "/x.txt")
+		if err != nil {
+			return false
+		}
+		for _, m := range object.Meta {
+			if m.Namespace == "test" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// A volume which is enriched, and then isn't, of index=objects, doesn't
+	// keep what it was enriched with, and is enriched again, of every file,
+	// when it's of index=metadata again
+	z := &sizer{}
+	stop := start(z, indexer.ModeMetadata)
+	require.Eventually(t, enriched, 10*time.Second, 5*time.Millisecond, "it's enriched")
+	stop()
+	stop = start(&sizer{}, indexer.ModeObjects)
+	require.Eventually(t, func() bool { return !enriched() }, 10*time.Second, 5*time.Millisecond, "what it was enriched with is removed")
+	stop()
+	stop = start(z, indexer.ModeMetadata)
+	defer stop()
+	require.Eventually(t, func() bool { return enriched() && z.count("/x.txt") == 2 }, 10*time.Second, 5*time.Millisecond, "it's enriched again")
+}
+
 func Test_MetadataTaskGone(t *testing.T) {
 	backend, _ := newBackend(t)
 	z := &sizer{gone: map[string]bool{"/x.txt": true}}

@@ -136,6 +136,10 @@ func (self *Store) SetMetadata(context.Context, string, string, string, *schema.
 	return errNotImplemented
 }
 
+func (self *Store) DeleteMetadata(context.Context, string, string) error {
+	return errNotImplemented
+}
+
 func (self *Store) DeleteObject(context.Context, string, string) error {
 	return errNotImplemented
 }

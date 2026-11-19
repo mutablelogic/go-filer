@@ -30,7 +30,21 @@ func (self *Indexer) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	workers.Go(func() { self.work(ctx) })
-	if self.tasked() {
+	if self.mode.Level() < ModeMetadata.Level() {
+		// A volume which isn't enriched doesn't keep what it was enriched
+		// with, of when it was, so it's enriched of every file again, when it
+		// is again
+		if err := self.store.DeleteMetadata(ctx, self.name, string(store.KindMetadata)); err != nil {
+			self.failed(ctx, err)
+		}
+	} else if self.tasked() {
+		// The files which are indexed, and not enriched, such as those of a
+		// volume whose files were indexed, which is enriched now, are queued
+		// at once, rather than once it's scanned again, as their revisions are
+		// known, and what's new, or changed, is queued by its scan
+		if err := self.queue.stale(ctx, "/", store.KindMetadata); err != nil {
+			self.failed(ctx, err)
+		}
 		workers.Go(func() { self.enrich(ctx) })
 	}
 	defer func() {
