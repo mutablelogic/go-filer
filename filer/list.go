@@ -6,6 +6,7 @@ import (
 	"io"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -33,6 +34,13 @@ func (self *Registry) List(ctx context.Context, req schema.ObjectListRequest) (_
 	}
 	defer func() { err = errors.Join(err, iter.Close()) }()
 	list := &schema.ObjectList{ObjectListRequest: req, Body: []*schema.Object{}}
+
+	// The count of the listing, of every page, when it can be counted
+	if n, err := count(ctx, iter); err == nil {
+		list.Count = types.Ptr(n)
+	} else if !errors.Is(err, gofiler.ErrNotImplemented) {
+		return nil, err
+	}
 	for {
 		obj, err := iter.Next(ctx)
 		if errors.Is(err, io.EOF) {

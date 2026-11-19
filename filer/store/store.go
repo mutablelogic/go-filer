@@ -44,6 +44,10 @@ type Store interface {
 	// its type, when it has one (see schema.MatchType)
 	List(ctx context.Context, volume string, req ListRequest) ([]*schema.Object, error)
 
+	// Count returns how many objects a listing has, of every page, without
+	// the key it starts after, or its limit
+	Count(ctx context.Context, volume string, req ListRequest) (uint64, error)
+
 	// State returns the state of the volume's index, which is IndexStatusNone
 	// when it's never been indexed
 	State(ctx context.Context, volume string) (schema.IndexState, error)

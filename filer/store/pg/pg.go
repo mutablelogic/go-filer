@@ -88,6 +88,10 @@ func (self *Store) PendingBeneath(context.Context, string, string) (bool, error)
 	return false, errNotImplemented
 }
 
+func (self *Store) Count(context.Context, string, store.ListRequest) (uint64, error) {
+	return 0, errNotImplemented
+}
+
 func (self *Store) Revisions(context.Context, string, string, bool) (map[string]string, error) {
 	return nil, errNotImplemented
 }

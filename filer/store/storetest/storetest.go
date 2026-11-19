@@ -405,6 +405,20 @@ func testList(t *testing.T, s store.Store) {
 	assert.Equal(t, []string{"/a/b/c.txt", "/a0.txt"}, list(store.ListRequest{Parent: "/", Recursive: true, After: "/a/b/", Limit: 2}))
 	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/", After: "/ab/"}))
 
+	// A listing is counted, of every page, without where it starts after,
+	// or its limit
+	for _, req := range []store.ListRequest{{Parent: "/"}, {Parent: "/", After: "/a/", Limit: 1}, {Parent: "/a/"}, {Parent: "/", Recursive: true, Limit: 2}, {Parent: "/missing/"}} {
+		count, err := s.Count(ctx, "media", req)
+		require.NoError(t, err)
+		all := req
+		all.After, all.Limit = "", 0
+		objects, err := s.List(ctx, "media", all)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(len(objects)), count, req)
+	}
+	_, err := s.Count(ctx, "media", store.ListRequest{Parent: "/a"})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+
 	// A parent which isn't a folder's key is bad, as a file's would list
 	// what's beside it
 	for _, bad := range []string{"/a", "a/", "", "/a/../"} {
@@ -853,6 +867,9 @@ func testListType(t *testing.T, s store.Store) {
 			objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Type: kind})
 			require.NoError(t, err)
 			assert.Equal(t, want, keys(objects), "%q recursive=%v", kind, recursive)
+			count, err := s.Count(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Type: kind})
+			require.NoError(t, err)
+			assert.Equal(t, uint64(len(want)), count, "%q recursive=%v is counted", kind, recursive)
 		}
 	}
 }

@@ -205,6 +205,28 @@ type typeIterator struct {
 	t string
 }
 
+// Count returns how many objects the listing has, when it can count them,
+// which a backend which lists by a type counts of the type, or
+// ErrNotImplemented
+func (self *typeIterator) Count(ctx context.Context) (uint64, error) {
+	return count(ctx, self.ListObjectsIterator)
+}
+
+// Count returns how many objects the listing has, when it can count them,
+// or ErrNotImplemented
+func (self *listIterator) Count(ctx context.Context) (uint64, error) {
+	return count(ctx, self.ListObjectsIterator)
+}
+
+// count returns how many objects a listing has, when it can count them, or
+// ErrNotImplemented
+func count(ctx context.Context, iter schema.ListObjectsIterator) (uint64, error) {
+	if c, ok := iter.(schema.Counter); ok {
+		return c.Count(ctx)
+	}
+	return 0, gofiler.ErrNotImplemented.With("the listing can't be counted")
+}
+
 func (self *typeIterator) Next(ctx context.Context) (*schema.Object, error) {
 	for {
 		obj, err := self.ListObjectsIterator.Next(ctx)

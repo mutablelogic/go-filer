@@ -73,15 +73,27 @@ func (self *folderIterator) Close() error {
 }
 
 // objectIterator lists objects, a page at a time, from the index, of the
-// request, or of the page, when it's done
+// request, or of the page, when it's done, which is of a file, which it
+// counts
 type objectIterator struct {
 	indexer *Indexer
 	req     store.ListRequest
 	page    []*schema.Object
 	done    bool
+	file    bool
 }
 
 var _ schema.ListObjectsIterator = (*objectIterator)(nil)
+var _ schema.Counter = (*objectIterator)(nil)
+
+// Count returns how many objects the listing has, of every page, without
+// where it starts after
+func (self *objectIterator) Count(ctx context.Context) (uint64, error) {
+	if self.file {
+		return 1, nil
+	}
+	return self.indexer.store.Count(ctx, self.indexer.name, self.req)
+}
 
 // Next returns the next object, or io.EOF when there are no more
 func (self *objectIterator) Next(ctx context.Context) (*schema.Object, error) {

@@ -173,6 +173,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
     * no work is queued at it, above it, or beneath it.
   * Otherwise a listing comes from the backend, as does one of a path that's both a file and a folder.
   * A listing of a type, such as `type=image`, is a query on the index, which keeps each object's type without its parameters.
+  * A page of a listing from the index has `count`, the number of objects the whole query matches, including its type filter but not `start_after` or the limit. When the listing can't be counted, such as from a backend, `count` is `null`.
   * Lowering it to `folders` removes the files from the index after the next scan.
   * The registry runs each indexer while the volume is mounted. Turning indexing off, or pointing the volume at another backend (scheme, host or path), removes the index. Deleting a volume deletes its index.
 * **Volume changes:** with `store.WithBroadcaster`, a store publishes a change when a volume is created, updated or deleted, of schema `store`, table `volume`, whose row is the volume's name, and whose data is the volume. The `filer` server serves them on `/changes`, with its objects' changes.

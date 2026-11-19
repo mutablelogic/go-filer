@@ -108,10 +108,13 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 			return err
 		}
 
-		// Objects summary, which is of a page, whose total isn't known, and
-		// how to get the next page
-		count := uint(len(list.Body))
-		if _, err := tui.TableSummary("objects", 0, count, 0, list.Limit).Write(os.Stdout); err != nil {
+		// Objects summary, which is of a page, of the total, when it's known,
+		// and how to get the next page
+		total := uint(0)
+		if list.Count != nil {
+			total = uint(*list.Count)
+		}
+		if _, err := tui.TableSummary("objects", total, uint(len(list.Body)), 0, list.Limit).Write(os.Stdout); err != nil {
 			return err
 		}
 		if list.Next != "" {

@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/url"
@@ -503,4 +504,43 @@ func Test_Registry_IndexObjects(t *testing.T) {
 		_, err = s.Get(ctx, "media", "/a/photo.png")
 		return err == nil
 	}, mountTimeout, 5*time.Millisecond, "its file is indexed again")
+}
+
+func Test_Registry_ListCount(t *testing.T) {
+	r, _, dir := newIndexedRegistry(t)
+	ctx := context.Background()
+	u := indexedURL(t, dir, "media", "objects")
+	for _, name := range []string{"a/x.txt", "a/b/y.txt", "z.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(filepath.FromSlash(u.Path), filepath.FromSlash(name)), []byte(name), 0o644))
+	}
+	_, err := add(t, r, "media", u)
+	require.NoError(t, err)
+	ready(t, r, "media")
+	count := func(name, kind string) *uint64 {
+		t.Helper()
+		limit := uint64(1)
+		list, err := r.List(ctx, schema.ObjectListRequest{ListObjectsRequest: schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Name: name, Path: "/"}, Recursive: true, Type: kind}, Limit: &limit})
+		require.NoError(t, err)
+		return list.Count
+	}
+
+	// A listing of an index is counted, of every page, and of its type
+	require.Eventually(t, func() bool {
+		n := count("media", "")
+		return n != nil && *n == 5
+	}, 10*time.Second, 10*time.Millisecond, "a/, a/b/, a/b/y.txt, a/x.txt and z.txt")
+	if n := count("media", "text"); assert.NotNil(t, n) {
+		assert.Equal(t, uint64(3), *n, "of its type")
+	}
+
+	// A listing of a volume which isn't indexed isn't counted, which is null
+	_, err = add(t, r, "plain", indexedURL(t, dir, "plain", ""))
+	require.NoError(t, err)
+	limit := uint64(1)
+	list, err := r.List(ctx, schema.ObjectListRequest{ListObjectsRequest: schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Name: "plain", Path: "/"}}, Limit: &limit})
+	require.NoError(t, err)
+	assert.Nil(t, list.Count)
+	data, err := json.Marshal(list)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"count":null`)
 }

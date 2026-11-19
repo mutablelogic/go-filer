@@ -328,7 +328,7 @@ func (self *Indexer) listIndex(ctx context.Context, req schema.ListObjectsReques
 		if err != nil {
 			return nil
 		}
-		iter := &objectIterator{indexer: self, done: true}
+		iter := &objectIterator{indexer: self, done: true, file: true}
 		if after == "" || p > after {
 			file.Name = self.name
 			iter.page = []*schema.Object{file}
