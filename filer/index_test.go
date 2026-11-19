@@ -489,4 +489,18 @@ func Test_Registry_IndexObjects(t *testing.T) {
 		return errors.Is(err, gofiler.ErrNotFound)
 	}, mountTimeout, 5*time.Millisecond, "its file isn't indexed")
 	assert.Equal(t, []string{"/a", "/a/b"}, indexedFolders(t, r, "media"))
+
+	// And raised to objects again, its folders are kept, and its files are
+	// indexed, once it's scanned
+	_, err = update(t, r, "media", url.Values{indexer.IndexParam: {"objects"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a", "/a/b"}, indexedFolders(t, r, "media"), "its folders are kept")
+	require.Eventually(t, func() bool {
+		v, err := r.GetVolume(ctx, "media")
+		if err != nil || v.Index == nil || v.Index.Mode != "objects" {
+			return false
+		}
+		_, err = s.Get(ctx, "media", "/a/photo.png")
+		return err == nil
+	}, mountTimeout, 5*time.Millisecond, "its file is indexed again")
 }
