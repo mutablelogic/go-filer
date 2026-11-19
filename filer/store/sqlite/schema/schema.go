@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 7
+const Version = 8
 
 var (
 	//go:embed objects.sql
@@ -82,6 +82,16 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 		// again, at their next scan, and a queue before it is created with
 		if version == 6 {
 			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_7").Exec(ctx, `ALTER TABLE object_state ADD COLUMN revision TEXT`); err != nil {
+				return err
+			}
+		}
+		// Version 8's objects have their media type, of a listing of a type,
+		// which an object of version 6 or 7 is added, as it's generated
+		if version == 6 || version == 7 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_8").Exec(ctx, `ALTER TABLE object ADD COLUMN media_type TEXT GENERATED ALWAYS AS (
+				CASE WHEN type IS NULL AND key GLOB '*/' THEN 'inode/directory'
+				ELSE lower(trim(CASE WHEN instr(type, ';') > 0 THEN substr(type, 1, instr(type, ';') - 1) ELSE type END))
+				END) VIRTUAL`); err != nil {
 				return err
 			}
 		}

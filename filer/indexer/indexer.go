@@ -2,9 +2,10 @@
 // folders, in a Store, which it follows the backend's changes in, so its
 // folder tree is listed from the index, rather than the backend, which can
 // be slow, such as a bucket, or a network mount. With ModeObjects, its files
-// are indexed too, with their attributes, and the backend's metadata, but
-// are read, and listed, from the backend, so far. The changes are queued in
-// the store, and indexed in the background.
+// are indexed too, with their attributes, and the backend's metadata, and
+// are got, and listed, from the index, when it's up to date for them, but
+// are read from the backend. The changes are queued in the store, and
+// indexed in the background.
 package indexer
 
 import (
@@ -262,16 +263,88 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 	return &folderIterator{indexer: self, req: store.ListRequest{Parent: parent, Recursive: req.Recursive, After: after, Limit: listPage}}, nil
 }
 
-// ListObjects lists objects of the backend, or, when the request is only
-// for folders, of their type, inode/directory, or inode, the folders of the
-// index, once it's ready
+// ListObjects lists objects of the index, when it's up to date for them
+// (see listIndex), and otherwise of the backend, or, when the request is
+// only for folders, of their type, inode/directory, or inode, the folders of
+// the index, once it's ready
 func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	if iter := self.listIndex(ctx, req); iter != nil {
+		return iter, nil
+	}
 	folder := &schema.Object{ObjectAttr: schema.ObjectAttr{IsDir: true}}
 	file := &schema.Object{ObjectMeta: schema.ObjectMeta{ContentType: "application/octet-stream"}}
 	if req.Type != "" && schema.MatchType(folder, req.Type) && !schema.MatchType(file, req.Type) && self.ready(ctx) {
 		return self.ListFolders(ctx, req)
 	}
 	return self.Filer.ListObjects(ctx, req)
+}
+
+// listIndex returns a listing of the index, of the objects of a folder, or
+// of a file, of the request, or nil, when the index isn't up to date for it,
+// so it's the backend's. It's up to date when its files are indexed, it's
+// ready, of a scan of its files, and no work is queued which would change
+// the listing: of the folder, or a folder above it, or beneath it, or of the
+// file, as for GetObject. A path without a "/" after it is the folder's,
+// or the file's, which the index has, but not both, which a bucket can have,
+// and a path the index hasn't is the backend's, which says whether it's
+// there. Work which is queued once it's listed is of the listing's later
+// pages, as a backend's listing is of its changes while it's listed.
+func (self *Indexer) listIndex(ctx context.Context, req schema.ListObjectsRequest) schema.ListObjectsIterator {
+	if self.mode != ModeObjects {
+		return nil
+	} else if state, err := self.store.State(ctx, self.name); err != nil || state.Status != schema.IndexStatusReady || state.Mode != string(ModeObjects) {
+		return nil
+	}
+	p, after := req.Path, req.StartAfter
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	if after != "" && !strings.HasPrefix(after, "/") {
+		after = "/" + after
+	}
+
+	// A folder, of its key, or a path which is a folder's, or a file's
+	folder := ""
+	if strings.HasSuffix(p, "/") {
+		folder = p
+	} else {
+		_, fileErr := self.store.Get(ctx, self.name, p)
+		_, folderErr := self.store.Get(ctx, self.name, store.FolderKey(p))
+		switch {
+		case fileErr == nil && folderErr == nil:
+			return nil
+		case folderErr == nil:
+			folder = store.FolderKey(p)
+		case fileErr != nil:
+			return nil
+		}
+	}
+	if folder == "" {
+		// The file, as GetObject has it, which is after the start, or none
+		if pending, err := self.store.Pending(ctx, self.name, p); err != nil || pending {
+			return nil
+		}
+		file, err := self.store.Get(ctx, self.name, p)
+		if err != nil {
+			return nil
+		}
+		iter := &objectIterator{indexer: self, done: true}
+		if after == "" || p > after {
+			file.Name = self.name
+			iter.page = []*schema.Object{file}
+		}
+		return iter
+	}
+
+	// The folder's objects, a page at a time, when the folder is indexed,
+	// which is checked once its work isn't pending, so work which is done
+	// between the two isn't missed
+	if pending, err := self.store.PendingBeneath(ctx, self.name, folder); err != nil || pending {
+		return nil
+	} else if _, err := self.store.Get(ctx, self.name, folder); err != nil {
+		return nil
+	}
+	return &objectIterator{indexer: self, req: store.ListRequest{Parent: folder, Recursive: req.Recursive, After: after, Limit: listPage, Type: req.Type}}
 }
 
 // CreateObject writes an object to the backend, and queues the index of

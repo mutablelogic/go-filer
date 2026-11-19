@@ -39,6 +39,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueuePending", func(t *testing.T) { testQueuePending(t, withVolumes(t, newStore(t))) })
 	t.Run("QueuePendingBeneath", func(t *testing.T) { testQueuePendingBeneath(t, withVolumes(t, newStore(t))) })
 	t.Run("Revisions", func(t *testing.T) { testRevisions(t, withVolumes(t, newStore(t))) })
+	t.Run("ListType", func(t *testing.T) { testListType(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -821,4 +822,37 @@ func testRevisions(t *testing.T, s store.Store) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.SetRevisions(ctx, "media", map[string]string{"a": "1"}), gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.SetRevisions(ctx, "missing", map[string]string{"/a": "1"}), gofiler.ErrNotFound)
+}
+
+func testListType(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	typed := func(object *schema.Object, t string) *schema.Object {
+		object.ContentType = t
+		return object
+	}
+	require.NoError(t, s.Put(ctx, "media",
+		folder("/"), typed(file("/a.jpg"), "image/jpeg"), typed(file("/b.png"), "image/png"),
+		typed(file("/c.txt"), "text/plain; charset=utf-8"), folder("/d"), typed(file("/d/e.JPG"), "IMAGE/JPEG"),
+		file("/f"), typed(folder("/g"), "application/x-apple-sparsebundle"), typed(file("/h.svg"), "image/svg+xml"),
+	))
+	all, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, err)
+
+	// A listing of a type is of the objects which schema.MatchType says are
+	// of it, of their types, without their parameters, or case, of a
+	// folder's, inode/directory, when it hasn't one, and of a major type,
+	// or a subtype, as well as a media type
+	for _, kind := range []string{"image", "image/jpeg", "jpeg", " Image/JPEG; q=1 ", "text/plain", "plain", "text", "inode/directory", "directory", "inode", "svg+xml", "application", "x-apple-sparsebundle", "audio", "image/"} {
+		for _, recursive := range []bool{true, false} {
+			want := []string{}
+			for _, object := range all {
+				if (recursive || store.ParentKey(store.Key(object)) == "/") && schema.MatchType(object, kind) {
+					want = append(want, store.Key(object))
+				}
+			}
+			objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Type: kind})
+			require.NoError(t, err)
+			assert.Equal(t, want, keys(objects), "%q recursive=%v", kind, recursive)
+		}
+	}
 }

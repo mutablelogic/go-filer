@@ -71,3 +71,47 @@ func (self *folderIterator) Close() error {
 	}
 	return nil
 }
+
+// objectIterator lists objects, a page at a time, from the index, of the
+// request, or of the page, when it's done
+type objectIterator struct {
+	indexer *Indexer
+	req     store.ListRequest
+	page    []*schema.Object
+	done    bool
+}
+
+var _ schema.ListObjectsIterator = (*objectIterator)(nil)
+
+// Next returns the next object, or io.EOF when there are no more
+func (self *objectIterator) Next(ctx context.Context) (*schema.Object, error) {
+	for {
+		if len(self.page) > 0 {
+			object := self.page[0]
+			self.page = self.page[1:]
+			object.Name = self.indexer.name
+			return object, nil
+		} else if self.done {
+			return nil, io.EOF
+		} else if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		page, err := self.indexer.store.List(ctx, self.indexer.name, self.req)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) < self.req.Limit || len(page) == 0 {
+			self.done = true
+		}
+		if len(page) > 0 {
+			self.req.After = store.Key(page[len(page)-1])
+		}
+		self.page = page
+	}
+}
+
+// Close ends the listing
+func (self *objectIterator) Close() error {
+	self.page, self.done = nil, true
+	return nil
+}

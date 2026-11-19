@@ -2,6 +2,7 @@ package schema
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	// Packages
@@ -82,12 +83,23 @@ func (req ObjectListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, er
 	}
 	bind.Set("volume", req.Volume)
 	bind.Set("after", req.After)
+	var where string
 	if req.Recursive {
 		lower, upper := store.Subtree(req.Parent)
-		bind.Set("where", "key > "+bind.Set("lower", lower)+" AND key < "+bind.Set("upper", upper))
+		where = "key > " + bind.Set("lower", lower) + " AND key < " + bind.Set("upper", upper)
 	} else {
-		bind.Set("where", "parent = "+bind.Set("parent", req.Parent))
+		where = "parent = " + bind.Set("parent", req.Parent)
 	}
+
+	// A media type is the object's, and a major type is the start of it,
+	// which is a range of the index, and a subtype is the end of it
+	if t := store.MediaType(req.Type); strings.Contains(t, "/") {
+		where += " AND media_type = " + bind.Set("type", t)
+	} else if t != "" {
+		where += " AND (media_type >= " + bind.Set("major", t+"/") + " AND media_type < " + bind.Set("next", t+"0") +
+			" OR substr(media_type, instr(media_type, '/') + 1) = " + bind.Set("type", t) + ")"
+	}
+	bind.Set("where", where)
 	if req.Limit > 0 {
 		bind.Set("offsetlimit", "LIMIT "+bind.Set("limit", req.Limit))
 	}

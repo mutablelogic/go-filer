@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"mime"
 	"path"
 	"strconv"
 	"strings"
@@ -39,7 +40,8 @@ type Store interface {
 
 	// List returns, in the order of their keys, up to the request's limit
 	// of the objects of a folder, or every object beneath it when it's
-	// recursive, after the key it starts after, without the folder
+	// recursive, after the key it starts after, without the folder, and of
+	// its type, when it has one (see schema.MatchType)
 	List(ctx context.Context, volume string, req ListRequest) ([]*schema.Object, error)
 
 	// State returns the state of the volume's index, which is IndexStatusNone
@@ -69,6 +71,19 @@ type ListRequest struct {
 	Recursive bool   // Every object beneath it, rather than its own
 	After     string // The key of the last object returned, or empty
 	Limit     int    // The most objects returned, or zero for every one
+	Type      string // Only objects of this type, its major type, or its subtype, or empty for every one
+}
+
+// MediaType returns a type of a listing, without its parameters, in lower
+// case, as schema.MatchType compares it, which has a "/" when it's a media
+// type, and otherwise is a major type, or a subtype, or is empty
+func MediaType(t string) string {
+	if t = strings.ToLower(strings.TrimSpace(t)); strings.Contains(t, "/") {
+		if mt, _, err := mime.ParseMediaType(t); err == nil {
+			return mt
+		}
+	}
+	return t
 }
 
 ////////////////////////////////////////////////////////////////////////////////

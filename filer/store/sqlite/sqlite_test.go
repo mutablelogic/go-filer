@@ -201,7 +201,8 @@ func Test_MigrateKeys(t *testing.T) {
 
 func Test_MigrateRevisions(t *testing.T) {
 	// A database of version 6, whose queue hasn't the revisions of files,
-	// gets them, and keeps its objects
+	// and whose objects haven't their media types, gets them, and keeps its
+	// objects
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "index.db")
 	db, err := ncruces.Open(ctx, path)
@@ -248,6 +249,13 @@ func Test_MigrateRevisions(t *testing.T) {
 	revisions, err = s.Revisions(ctx, "media", "/", true)
 	require.NoError(t, err)
 	assert.Empty(t, revisions, "its triggers are created")
+
+	// Its objects have their media types, of a listing of a type
+	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/b.png"}, ObjectMeta: schema.ObjectMeta{ContentType: "image/png"}}))
+	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Type: "image"})
+	require.NoError(t, err)
+	require.Len(t, objects, 1)
+	assert.Equal(t, "/b.png", objects[0].Path)
 }
 
 func Test_PutRollback(t *testing.T) {
