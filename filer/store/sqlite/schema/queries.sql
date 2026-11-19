@@ -23,15 +23,15 @@ DELETE FROM volume WHERE name = @name RETURNING name, url, enabled, created_at, 
 
 -- volume.state
 -- Its state, whose NULLs are its zero values
-SELECT coalesce(status, ''), coalesce(folders, 0), index_started, index_timestamp, coalesce(error, '')
+SELECT coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), index_started, index_timestamp, coalesce(error, '')
 FROM volume WHERE name = @name;
 
 -- volume.set_state
 UPDATE volume SET
-  status = nullif(@status, ''), folders = nullif(@folders, 0),
+  status = nullif(@status, ''), folders = nullif(@folders, 0), files = nullif(@files, 0),
   index_started = @started, index_timestamp = @scanned, error = nullif(@error, '')
 WHERE name = @name
-RETURNING coalesce(status, ''), coalesce(folders, 0), index_started, index_timestamp, coalesce(error, '');
+RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), index_started, index_timestamp, coalesce(error, '');
 
 -- object.put
 -- An object, which replaces the one at its path, and its metadata, of a

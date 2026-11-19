@@ -310,7 +310,7 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		if state.Status != schema.IndexStatusReady {
 			state.Status = schema.IndexStatusScanning
 		}
-		state.Folders, state.Started, state.Error = 0, time.Now(), ""
+		state.Folders, state.Files, state.Started, state.Error = 0, 0, time.Now(), ""
 		if err := self.store.SetState(ctx, self.name, state); err != nil {
 			return err
 		}
@@ -333,7 +333,7 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		return err
 	}
 	if whole {
-		state.Status, state.Folders, state.Scanned = schema.IndexStatusReady, uint64(len(t.folders)+1), time.Now()
+		state.Status, state.Folders, state.Files, state.Scanned = schema.IndexStatusReady, uint64(len(t.folders)+1), uint64(t.indexedFiles()), time.Now()
 		return self.store.SetState(ctx, self.name, state)
 	}
 	return nil
@@ -411,6 +411,18 @@ func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
 		}
 	}
 	return self.put(ctx, objects)
+}
+
+// indexedFiles returns how many files of the tree are indexed, which are
+// those which aren't of a folder's path
+func (t tree) indexedFiles() int {
+	n := 0
+	for p := range t.files {
+		if _, exists := t.folders[p]; !exists {
+			n++
+		}
+	}
+	return n
 }
 
 // has returns true when the tree has the object, which is indexed: a

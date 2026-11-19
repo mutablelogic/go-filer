@@ -105,28 +105,42 @@ func attrs(span sdktrace.ReadOnlySpan) map[string]string {
 }
 
 func Test_Migrate(t *testing.T) {
-	// A database of version 1, which had volumes, but not objects, gets
-	// them, and keeps its volumes
+	// A database of version 1, which had volumes, without how many files
+	// were indexed, and not objects, gets them, and keeps its volumes
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "index.db")
-	s, err := sqlite.New(ctx, path)
-	require.NoError(t, err)
-	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
-	require.NoError(t, err)
-	require.NoError(t, s.Close())
 	db, err := ncruces.Open(ctx, path)
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(ctx, `DROP TABLE metadata; DROP TABLE object; PRAGMA user_version = 1`))
+	require.NoError(t, db.Exec(ctx, `
+		CREATE TABLE volume (
+		  name TEXT PRIMARY KEY, url TEXT NOT NULL, enabled BOOLEAN NOT NULL,
+		  created_at TIMESTAMP NOT NULL, modified_at TIMESTAMP, status TEXT,
+		  folders INTEGER, index_started TIMESTAMP, index_timestamp TIMESTAMP, error TEXT
+		);
+		INSERT INTO volume (name, url, enabled, created_at, status, folders)
+		VALUES ('media', 'file://media/mnt/media?index=folders', 1, '2026-11-19T12:00:00Z', 'ready', 3);
+		PRAGMA user_version = 1;
+	`))
 	require.NoError(t, db.Close())
 
-	s, err = sqlite.New(ctx, path)
+	s, err := sqlite.New(ctx, path)
 	require.NoError(t, err)
 	defer s.Close()
 	_, err = s.GetVolume(ctx, "media")
 	require.NoError(t, err)
+	state, err := s.State(ctx, "media")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(3), state.Folders)
+	assert.Zero(t, state.Files)
+	state.Files = 7
+	require.NoError(t, s.SetState(ctx, "media", state))
+	state, err = s.State(ctx, "media")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(7), state.Files)
 	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
 	_, err = s.Get(ctx, "media", "/a")
 	assert.NoError(t, err)
+	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/a", Kind: store.KindIndex}))
 }
 
 func Test_PutRollback(t *testing.T) {
