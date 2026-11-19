@@ -47,6 +47,9 @@ func (self *Store) Put(ctx context.Context, volume string, objects ...*filer.Obj
 			return volumeErr(err, volume)
 		}
 		for _, object := range objects {
+			if err := store.ValidateKey(store.Key(object)); err != nil {
+				return err
+			}
 			if err := conn.Insert(ctx, nil, schema.ObjectPut{Volume: volume, Object: object}); err != nil {
 				return err
 			}
@@ -73,6 +76,9 @@ func (self *Store) Delete(ctx context.Context, volume, key string) (err error) {
 func (self *Store) List(ctx context.Context, volume string, req store.ListRequest) (_ []*filer.Object, err error) {
 	ctx, end := self.span(ctx, "List", attribute.String("arg.volume", volume), attribute.String("arg.req", types.Stringify(req)))
 	defer func() { end(err) }()
+	if err := store.ValidateFolderKey(req.Parent); err != nil {
+		return nil, err
+	}
 	result := schema.ObjectList{}
 	if err := self.conn.List(ctx, &result, schema.ObjectListRequest{Volume: volume, ListRequest: req}); err != nil {
 		return nil, storeErr(err)
@@ -85,7 +91,7 @@ func (self *Store) List(ctx context.Context, volume string, req store.ListReques
 func (self *Store) Revisions(ctx context.Context, volume, folder string, recursive bool) (_ map[string]string, err error) {
 	ctx, end := self.span(ctx, "Revisions", attribute.String("arg.volume", volume), attribute.String("arg.folder", folder), attribute.Bool("arg.recursive", recursive))
 	defer func() { end(err) }()
-	if err := store.ValidateWork(store.Work{Key: folder, Kind: store.KindRescan}); err != nil {
+	if err := store.ValidateFolderKey(folder); err != nil {
 		return nil, err
 	}
 	result := schema.Revisions{}

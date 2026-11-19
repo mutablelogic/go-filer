@@ -358,6 +358,14 @@ func testGet(t *testing.T, s store.Store) {
 	assert.Nil(t, again.ETag)
 	assert.Empty(t, again.Meta)
 
+	// An object whose key isn't clean is bad, and none of the objects put
+	// with it are stored
+	for _, bad := range []*schema.Object{file("/b/../c"), folder("/b/."), file("b"), file("")} {
+		assert.ErrorIs(t, s.Put(ctx, "media", file("/ok"), bad), gofiler.ErrBadParameter, bad.Path)
+	}
+	_, err = s.Get(ctx, "media", "/ok")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound, "the batch is rolled back")
+
 	// The root's key is "/"
 	require.NoError(t, s.Put(ctx, "media", folder("/")))
 	root, err := s.Get(ctx, "media", "/")
@@ -395,6 +403,13 @@ func testList(t *testing.T, s store.Store) {
 	assert.Equal(t, []string{"/a0.txt", "/ab"}, list(store.ListRequest{Parent: "/", After: "/a/", Limit: 2}))
 	assert.Equal(t, []string{"/a/b/c.txt", "/a0.txt"}, list(store.ListRequest{Parent: "/", Recursive: true, After: "/a/b/", Limit: 2}))
 	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/", After: "/ab/"}))
+
+	// A parent which isn't a folder's key is bad, as a file's would list
+	// what's beside it
+	for _, bad := range []string{"/a", "a/", "", "/a/../"} {
+		_, err := s.List(ctx, "media", store.ListRequest{Parent: bad, Recursive: true})
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
+	}
 }
 
 func testDelete(t *testing.T, s store.Store) {

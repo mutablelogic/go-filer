@@ -82,8 +82,8 @@ func ValidateWork(work Work) error {
 		return err
 	} else if work.Kind == "" {
 		return gofiler.ErrBadParameter.Withf("work of %q has no kind", work.Key)
-	} else if _, folder := PathOf(work.Key); work.Kind == KindRescan && !folder {
-		return gofiler.ErrBadParameter.Withf("a rescan of %q, which isn't a folder's key", work.Key)
+	} else if work.Kind == KindRescan {
+		return ValidateFolderKey(work.Key)
 	}
 	return nil
 }

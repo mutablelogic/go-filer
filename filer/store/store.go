@@ -132,6 +132,17 @@ func Subtree(folder string) (string, string) {
 	return folder, strings.TrimSuffix(folder, "/") + "0"
 }
 
+// ValidateFolderKey returns ErrBadParameter when a key isn't valid (see
+// ValidateKey), or isn't a folder's, which ends with "/"
+func ValidateFolderKey(key string) error {
+	if err := ValidateKey(key); err != nil {
+		return err
+	} else if _, folder := PathOf(key); !folder {
+		return gofiler.ErrBadParameter.Withf("%q isn't a folder's key", key)
+	}
+	return nil
+}
+
 // Revision returns the revision of an object, of a listing: its entity tag,
 // size and modification time, which a listing changes when any of them do,
 // as a bucket's does when only an object's metadata is written, whose

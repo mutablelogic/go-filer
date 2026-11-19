@@ -137,7 +137,7 @@ func (self *Store) Pending(ctx context.Context, volume, key string) (_ bool, err
 func (self *Store) PendingBeneath(ctx context.Context, volume, folder string) (_ bool, err error) {
 	ctx, end := self.span(ctx, "PendingBeneath", attribute.String("arg.volume", volume), attribute.String("arg.folder", folder))
 	defer func() { end(err) }()
-	if err := store.ValidateWork(store.Work{Key: folder, Kind: store.KindRescan}); err != nil {
+	if err := store.ValidateFolderKey(folder); err != nil {
 		return false, err
 	}
 	var pending schema.Pending
