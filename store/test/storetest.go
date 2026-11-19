@@ -47,6 +47,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("Tasks", func(t *testing.T) { testTasks(t, withVolumes(t, newStore(t))) })
 	t.Run("Geo", func(t *testing.T) { testGeo(t, withVolumes(t, newStore(t))) })
 	t.Run("Changed", func(t *testing.T) { testChanged(t, withVolumes(t, newStore(t))) })
+	t.Run("Events", func(t *testing.T) { testEvents(t, withVolumes(t, newStore(t))) })
 	t.Run("DeleteMetadata", func(t *testing.T) { testDeleteMetadata(t, withVolumes(t, newStore(t))) })
 }
 
@@ -1013,20 +1014,20 @@ func testSetMetadata(t *testing.T, s store.Store) {
 	// A task's metadata is merged with the backend's, which it replaces of
 	// the same namespace and key, after the backend's
 	require.NoError(t, s.PutObject(ctx, "media", folder("/"), withMeta(file("/a.txt"), "dc", "title", `"A"`, "dc", "creator", `"X"`)))
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("dc", "title", `"B"`, "exif", "width", `100`), nil))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, schema.TaskMeta{Meta: meta("dc", "title", `"B"`, "exif", "width", `100`)}))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"creator","value":"X"},{"namespace":"dc","key":"title","value":"B"},{"namespace":"exif","key":"width","value":100}]`, got("/a.txt"))
 
 	// Putting the object replaces the backend's, but not the task's, and the
 	// task's replaces its own, and when it has none, the backend's are read
 	require.NoError(t, s.PutObject(ctx, "media", withMeta(file("/a.txt"), "dc", "title", `"C"`)))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"B"},{"namespace":"exif","key":"width","value":100}]`, got("/a.txt"))
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("exif", "width", `200`), nil))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, schema.TaskMeta{Meta: meta("exif", "width", `200`)}))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"C"},{"namespace":"exif","key":"width","value":200}]`, got("/a.txt"))
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, nil, nil))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, schema.TaskMeta{}))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"C"}]`, got("/a.txt"))
 
 	// A listing is merged too
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("dc", "title", `"D"`), nil))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, schema.TaskMeta{Meta: meta("dc", "title", `"D"`)}))
 	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/"})
 	require.NoError(t, err)
 	require.Len(t, objects, 1)
@@ -1038,15 +1039,15 @@ func testSetMetadata(t *testing.T, s store.Store) {
 	require.NoError(t, err)
 	stale := current.ObjectAttr
 	stale.ModTime = stale.ModTime.Add(-time.Hour)
-	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &stale, meta("dc", "title", `"Stale"`), nil), gofiler.ErrPreconditionFailed)
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &current.ObjectAttr, meta("dc", "title", `"Current"`), nil))
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &stale, schema.TaskMeta{Meta: meta("dc", "title", `"Stale"`)}), gofiler.ErrPreconditionFailed)
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &current.ObjectAttr, schema.TaskMeta{Meta: meta("dc", "title", `"Current"`)}))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"Current"}]`, got("/a.txt"))
 
 	// An object which isn't indexed isn't found, and a source which isn't a
 	// task's kind is bad, and the task's metadata is deleted with its object
-	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/missing.txt", "metadata", nil, nil, nil), gofiler.ErrNotFound)
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/missing.txt", "metadata", nil, schema.TaskMeta{}), gofiler.ErrNotFound)
 	for _, bad := range []string{"", "Metadata", "a b", "1x"} {
-		assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", bad, nil, nil, nil), gofiler.ErrBadParameter, bad)
+		assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", bad, nil, schema.TaskMeta{}), gofiler.ErrBadParameter, bad)
 	}
 	require.NoError(t, s.DeleteObject(ctx, "media", "/a.txt"))
 	require.NoError(t, s.PutObject(ctx, "media", file("/a.txt")))
@@ -1134,7 +1135,7 @@ func testGeo(t *testing.T, s store.Store) {
 
 	// The shapes a task found of a file are read with it, in their order,
 	// and one which is the same as another is stored once
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []geo.Geometry{london, square, london}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, schema.TaskMeta{Geo: []geo.Geometry{london, square, london}}))
 	object, err := s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
 	assert.Equal(t, []geo.Geometry{london, square}, object.Geo)
@@ -1153,21 +1154,21 @@ func testGeo(t *testing.T, s store.Store) {
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
 	assert.Len(t, object.Geo, 2)
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []geo.Geometry{square}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, schema.TaskMeta{Geo: []geo.Geometry{square}}))
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
 	assert.Equal(t, []geo.Geometry{square}, object.Geo)
 
 	// A shape which isn't valid is bad, and replaces nothing
-	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []geo.Geometry{london, geo.NewPoint(91, 0)}), gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, schema.TaskMeta{Geo: []geo.Geometry{london, geo.NewPoint(91, 0)}}), gofiler.ErrBadParameter)
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
 	assert.Equal(t, []geo.Geometry{square}, object.Geo)
 
 	// They're removed of a task which isn't done any more, and of a file
 	// which is deleted
-	require.NoError(t, s.SetMetadata(ctx, "media", "/b.jpg", "metadata", nil, nil, []geo.Geometry{london}))
-	require.NoError(t, s.SetMetadata(ctx, "photos", "/a.jpg", "metadata", nil, nil, []geo.Geometry{london}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.jpg", "metadata", nil, schema.TaskMeta{Geo: []geo.Geometry{london}}))
+	require.NoError(t, s.SetMetadata(ctx, "photos", "/a.jpg", "metadata", nil, schema.TaskMeta{Geo: []geo.Geometry{london}}))
 	require.NoError(t, s.DeleteMetadata(ctx, "media", "metadata"))
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
@@ -1182,6 +1183,59 @@ func testGeo(t *testing.T, s store.Store) {
 	assert.Nil(t, object.Geo, "it's gone with the file")
 }
 
+func testEvents(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), file("/a.ics"), file("/b.ics")))
+	end := schema.At(time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC))
+	meeting := schema.Occurrence{UID: "m", Kind: schema.OccurrenceEvent, Title: "Meeting", Start: schema.At(time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)), End: &end, TZ: "Europe/Berlin"}
+	dayEnd := schema.Date(2026, 12, 26)
+	holiday := schema.Occurrence{UID: "h", RecurrenceID: "2026-12-25", Kind: schema.OccurrenceEvent, Title: "Christmas", Start: schema.Date(2026, 12, 25), End: &dayEnd}
+	task := schema.Occurrence{UID: "t", Kind: schema.OccurrenceTask, Title: "Pay", Start: schema.Date(2026, 11, 21)}
+
+	// The times a task found of a file are read with it, in the order they
+	// start, dates of their days, and one which is the same as another is
+	// stored once
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.ics", "metadata", nil, schema.TaskMeta{Events: []schema.Occurrence{holiday, meeting, task, meeting}}))
+	object, err := s.GetObject(ctx, "media", "/a.ics")
+	require.NoError(t, err)
+	assert.Equal(t, []schema.Occurrence{meeting, task, holiday}, object.Events)
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/"})
+	require.NoError(t, err)
+	require.Len(t, objects, 2)
+	assert.Equal(t, []schema.Occurrence{meeting, task, holiday}, objects[0].Events)
+	assert.Nil(t, objects[1].Events)
+
+	// An occurrence which isn't valid is bad, and replaces nothing
+	bad := meeting
+	bad.End = &schema.When{Time: time.Date(2026, 11, 20, 7, 0, 0, 0, time.UTC)}
+	for _, o := range []schema.Occurrence{{Kind: schema.OccurrenceEvent, Start: meeting.Start}, {UID: "x", Kind: "meeting", Start: meeting.Start}, {UID: "x", Kind: schema.OccurrenceEvent}, bad, {UID: "x", Kind: schema.OccurrenceEvent, Start: meeting.Start, End: &dayEnd}} {
+		assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.ics", "metadata", nil, schema.TaskMeta{Events: []schema.Occurrence{o}}), gofiler.ErrBadParameter, o)
+	}
+	object, err = s.GetObject(ctx, "media", "/a.ics")
+	require.NoError(t, err)
+	assert.Len(t, object.Events, 3)
+
+	// They're replaced when the task sets them again, and removed when it
+	// isn't done any more, or the file changes, or is deleted
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.ics", "metadata", nil, schema.TaskMeta{Events: []schema.Occurrence{task}}))
+	object, err = s.GetObject(ctx, "media", "/a.ics")
+	require.NoError(t, err)
+	assert.Equal(t, []schema.Occurrence{task}, object.Events)
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.ics", "metadata", nil, schema.TaskMeta{Events: []schema.Occurrence{meeting}}))
+	require.NoError(t, s.DeleteMetadata(ctx, "media", "metadata"))
+	object, err = s.GetObject(ctx, "media", "/a.ics")
+	require.NoError(t, err)
+	assert.Nil(t, object.Events)
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.ics", "metadata", nil, schema.TaskMeta{Events: []schema.Occurrence{meeting}}))
+	changed := file("/b.ics")
+	size := int64(99)
+	changed.Size = &size
+	require.NoError(t, s.PutObject(ctx, "media", changed))
+	object, err = s.GetObject(ctx, "media", "/b.ics")
+	require.NoError(t, err)
+	assert.Nil(t, object.Events, "it changed")
+}
+
 func testChanged(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	point := geo.NewPoint(51.5, -0.12)
@@ -1194,7 +1248,7 @@ func testChanged(t *testing.T, s store.Store) {
 	}
 	enrich := func() {
 		t.Helper()
-		require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"task"`)}}, []geo.Geometry{point}))
+		require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"task"`)}}, Geo: []geo.Geometry{point}}))
 	}
 	found := func() (bool, bool) {
 		t.Helper()
@@ -1303,8 +1357,8 @@ func testDeleteMetadata(t *testing.T, s store.Store) {
 	require.NoError(t, s.PutObject(ctx, "media", folder("/"), backend, file("/b.txt")))
 	require.NoError(t, s.PutObject(ctx, "photos", folder("/"), file("/a.txt")))
 	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r1", "/b.txt": "r1"}))
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"task"`)}}, nil))
-	require.NoError(t, s.SetMetadata(ctx, "photos", "/a.txt", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"photos"`)}}, nil))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"task"`)}}}))
+	require.NoError(t, s.SetMetadata(ctx, "photos", "/a.txt", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"photos"`)}}}))
 	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	work, _ := claimed(t, s, tasks, 10)
 	require.NoError(t, s.Done(ctx, "media", work[:1]...))

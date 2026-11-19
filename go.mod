@@ -10,7 +10,7 @@ require (
 	github.com/aws/smithy-go v1.28.9
 	github.com/mutablelogic/go-auth v0.0.20
 	github.com/mutablelogic/go-client v1.4.14
-	github.com/mutablelogic/go-metadata v1.1.6
+	github.com/mutablelogic/go-metadata v1.1.7
 	github.com/mutablelogic/go-pg v1.5.1
 	github.com/mutablelogic/go-server v1.8.20
 	github.com/mutablelogic/go-sqlite v1.1.3
@@ -90,6 +90,7 @@ require (
 	github.com/richardlehane/mscfb v1.0.9 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/teambition/rrule-go v1.8.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xo/terminfo v1.3.1 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect

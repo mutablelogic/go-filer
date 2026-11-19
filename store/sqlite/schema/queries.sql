@@ -47,6 +47,10 @@ DELETE FROM object_geo WHERE volume = @volume AND object = @key AND source <> ''
   SELECT 1 FROM object WHERE volume = @volume AND key = @key
     AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
 );
+DELETE FROM object_event WHERE volume = @volume AND object = @key AND source <> '' AND EXISTS (
+  SELECT 1 FROM object WHERE volume = @volume AND key = @key
+    AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
+);
 INSERT INTO object (volume, key, type, size, etag, modified_at)
 VALUES (@volume, @key, nullif(@type, ''), @size, @etag, @modified_at)
 ON CONFLICT (volume, key) DO UPDATE SET
@@ -72,6 +76,14 @@ FROM json_each(@geo) AS entry
 WHERE true
 ORDER BY entry.id
 ON CONFLICT (volume, object, source, shape) DO NOTHING;
+DELETE FROM object_event WHERE volume = @volume AND object = @key AND source = @source;
+INSERT INTO object_event (volume, object, source, uid, recurrence_id, kind, title, start_date, start_at, end_date, end_at, tz)
+SELECT @volume, @key, @source, entry.value ->> '$.uid', entry.value ->> '$.recurrence_id', entry.value ->> '$.kind', entry.value ->> '$.title',
+  entry.value ->> '$.start_date', entry.value ->> '$.start_at', entry.value ->> '$.end_date', entry.value ->> '$.end_at', entry.value ->> '$.tz'
+FROM json_each(@events) AS entry
+WHERE true
+ORDER BY entry.id
+ON CONFLICT DO NOTHING;
 
 -- object.get
 SELECT key, coalesce(type, ''), size, etag, modified_at, (
@@ -85,6 +97,10 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
 ), (
   SELECT json_group_array(json(shape) ORDER BY source, rowid)
   FROM object_geo WHERE object_geo.volume = object.volume AND object_geo.object = object.key
+), (
+  SELECT json_group_array(json_object('uid', uid, 'recurrence_id', recurrence_id, 'kind', kind, 'title', title,
+    'start', coalesce(start_date, start_at), 'end', coalesce(end_date, end_at), 'tz', tz) ORDER BY coalesce(start_at, start_date || 'T00:00:00Z'), rowid)
+  FROM object_event WHERE object_event.volume = object.volume AND object_event.object = object.key
 )
 FROM object WHERE volume = @volume AND key = @key;
 
@@ -102,6 +118,10 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
 ), (
   SELECT json_group_array(json(shape) ORDER BY source, rowid)
   FROM object_geo WHERE object_geo.volume = object.volume AND object_geo.object = object.key
+), (
+  SELECT json_group_array(json_object('uid', uid, 'recurrence_id', recurrence_id, 'kind', kind, 'title', title,
+    'start', coalesce(start_date, start_at), 'end', coalesce(end_date, end_at), 'tz', tz) ORDER BY coalesce(start_at, start_date || 'T00:00:00Z'), rowid)
+  FROM object_event WHERE object_event.volume = object.volume AND object_event.object = object.key
 )
 FROM object WHERE volume = @volume AND ${where} AND key > @after
 ORDER BY key;
@@ -115,6 +135,7 @@ SELECT count(*) FROM object WHERE volume = @volume AND ${where};
 -- the shapes it found, and its task's work, and the revisions it was done of
 DELETE FROM metadata WHERE volume = @volume AND source = @source;
 DELETE FROM object_geo WHERE volume = @volume AND source = @source;
+DELETE FROM object_event WHERE volume = @volume AND source = @source;
 DELETE FROM object_state WHERE volume = @volume AND kind IN (@source, @did);
 
 -- object.delete
