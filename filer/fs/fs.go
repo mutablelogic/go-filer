@@ -96,6 +96,16 @@ func NewFS(name string, fsys fs.FS, values url.Values, opts filer.Opts) (*FS, er
 		self.opt = opt
 	}
 
+	// The description, when it isn't set, is of its folder, or of the
+	// filesystem, when it isn't a folder
+	if self.description == "" {
+		if self.path != "" {
+			self.description = "Folder " + self.path
+		} else {
+			self.description = "Files of " + name
+		}
+	}
+
 	// A filesystem which doesn't implement the WriterFS interface is
 	// read-only, whatever the readonly option is
 	if _, ok := fsys.(filer.WriterFS); !ok {

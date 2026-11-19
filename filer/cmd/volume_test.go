@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 
 	// Packages
 	kong "github.com/alecthomas/kong"
+	gofiler "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -372,4 +375,77 @@ func Test_VolumeCreateGContactsCmd(t *testing.T) {
 	assert.Error(t, err)
 	_, err = volume("contacts", "--credential", "not a key")
 	assert.Error(t, err)
+}
+
+func Test_VolumeDescription(t *testing.T) {
+	var cli struct {
+		VolumeCreate         VolumeCreateCmd          `cmd:"" name:"volume-create"`
+		VolumeCreateFS       VolumeCreateFSCmd        `cmd:"" name:"volume-create-fs"`
+		VolumeCreateS3       VolumeCreateS3Cmd        `cmd:"" name:"volume-create-s3"`
+		VolumeCreateGTasks   VolumeCreateGTasksCmd    `cmd:"" name:"volume-create-gtasks"`
+		VolumeCreateGContact VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts"`
+		VolumeUpdate         VolumeUpdateCmd          `cmd:"" name:"volume-update"`
+	}
+	description := func(rawURL string) string {
+		t.Helper()
+		u, err := url.Parse(rawURL)
+		require.NoError(t, err)
+		return u.Query().Get("description")
+	}
+	parse := func(args ...string) {
+		t.Helper()
+		parser, err := kong.New(&cli)
+		require.NoError(t, err)
+		_, err = parser.Parse(args)
+		require.NoError(t, err)
+	}
+
+	// Each command which creates a volume sets its description, which an
+	// option replaces
+	parse("volume-create", "file://media/mnt/media?description=Old", "--description", "Family photos")
+	v, err := cli.VolumeCreate.volume()
+	require.NoError(t, err)
+	assert.Equal(t, "Family photos", description(v.URL))
+	parse("volume-create", "file://media/mnt/media", "--description", "Family photos", "-o", "description=Other")
+	v, err = cli.VolumeCreate.volume()
+	require.NoError(t, err)
+	assert.Equal(t, "Other", description(v.URL))
+	parse("volume-create-fs", "media", "/mnt/media", "--description", "Family photos")
+	v, err = cli.VolumeCreateFS.volume()
+	require.NoError(t, err)
+	assert.Equal(t, "Family photos", description(v.URL))
+	parse("volume-create-s3", "photos", "bucket", "--description", "Family photos")
+	v, err = cli.VolumeCreateS3.volume()
+	require.NoError(t, err)
+	assert.Equal(t, "Family photos", description(v.URL))
+	parse("volume-create-gtasks", "tasks", "--description", "Shopping")
+	v, err = cli.VolumeCreateGTasks.volume()
+	require.NoError(t, err)
+	assert.Equal(t, "Shopping", description(v.URL))
+	parse("volume-create-gcontacts", "contacts", "--description", "Friends")
+	v, err = cli.VolumeCreateGContact.volume()
+	require.NoError(t, err)
+	assert.Equal(t, "Friends", description(v.URL))
+
+	// Updating a volume sets it, or the backend's, when it's empty, but not
+	// with an option too, and without the flag, it's kept
+	update := func(args ...string) (schema.VolumePatch, error) {
+		t.Helper()
+		cli.VolumeUpdate = VolumeUpdateCmd{}
+		parse(append([]string{"volume-update", "media"}, args...)...)
+		return cli.VolumeUpdate.patch()
+	}
+	patch, err := update("--description", "Family photos")
+	require.NoError(t, err)
+	assert.JSONEq(t, `["Family photos"]`, string(patch["description"]))
+	patch, err = update("--description", "")
+	require.NoError(t, err)
+	assert.JSONEq(t, `[""]`, string(patch["description"]), "an empty one is the backend's")
+	patch, err = update()
+	require.NoError(t, err)
+	assert.NotContains(t, patch, "description")
+	for _, value := range []string{"Family photos", ""} {
+		_, err = update("--description", value, "-o", "description=Other")
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, value)
+	}
 }

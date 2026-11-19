@@ -77,6 +77,7 @@ The options of the filesystem backend are passed to `New` and `NewFS` as `url.Va
 | `skip` | A regular expression of the names of files and directories which aren't objects, nor is anything in a directory with the name | Hidden files, starting with `.`, and those which operating systems and applications leave alongside content, such as `Thumbs.db`, `desktop.ini`, `Icon\r`, Microsoft Office owner files (`~$*`) and backup files (`*~`) |
 | `package` | A regular expression of the names of directories which are packages | `(?i)\.bundle$` and `(?i)\.sparsebundle$` |
 | `readonly` | Whether objects can only be read, and not created or deleted, even when the filesystem is writable: `true`, `false`, or empty, which is `true`. A filesystem which isn't writable is read-only whatever it's set to | `false` |
+| `description` | What the volume is, such as `Family photos`. Every backend has it | `Folder /mnt/media`, of the directory, or `Files of <name>` |
 
 An unknown option, an expression which doesn't compile, or a `readonly` which isn't a boolean, is `filer.ErrBadParameter`.
 
@@ -112,6 +113,7 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **Signing in:** when there's no sign-in, or it's for another client, or doesn't have the scopes, or is revoked, it's go-auth's `SignInError`, with how to sign in: Google's server, the client's ID, the scopes, and the credential. The HTTP API returns it as 401, with its `detail`, without the client's secret.
 * **Options:** a backend's `gofiler.Opts`: its `Credentials`, of the sign-in, and its `ClientOpts`, go-client's, as they are, such as a user agent, a tracer, of `client.OptTracer`, or a trace.
 * **`readonly`:** true by default. With `false`, tasks can be created, updated and deleted, and lists deleted, as under Writing above.
+* **`description`:** what the volume is, which is `Google Tasks for <email>` by default, of the user who signed in. A sign-in asks for the `userinfo.email` scope too, but doesn't need it, so one from before it was asked for is just `Google Tasks`, until it's signed in again.
 * **`quota`:** the most requests a minute, spaced evenly, which is 120 by default, or 0 for no limit.
 * **`refresh_interval`:** how often `WatchObjects` polls for changes, which is a minute by default, or 0 not to watch.
 * **`hidden`:** include tasks which are hidden, as they're completed, and cleared from their list, which are left out unless it's `true`.
@@ -123,7 +125,7 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **Contacts** are vCard files, `text/vcard`, at the root, named by their ids, such as `/c123.vcf`, with `dc:title` and `contact:name`, of their names.
 * **Content:** written with go-metadata's `pkg/vcard`: names, nicknames, emails, phones, URLs, addresses, organisations, titles, birthday, notes, a photo, as a link, but not Google's default one, of initials, and when it was updated, as `REV`. A primary value is preferred.
 * **No birthdays as objects**, nor calendars, only contacts.
-* **Options:** `quota`, `refresh_interval` and `credential`, as Google Tasks has. It's read-only, so far: `readonly=false` isn't implemented.
+* **Options:** `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has, whose description is `Google Contacts for <email>` by default. It's read-only, so far: `readonly=false` isn't implemented.
 * **Watching** polls the contacts' entity tags, at the refresh interval.
 
 In the registry, its URL is `gcontacts://<name>`, and the `filer` command creates one with `volume-create-gcontacts`, signing in with Google, in the browser, when it needs to.
@@ -148,10 +150,12 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 
 * **The store is the source of truth.** `CreateVolume`, `UpdateVolume` and `DeleteVolume` validate a volume, by creating its backend and closing it, and write the store. They return before it's mounted.
 * **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
+* **A volume's scheme isn't changed** by an update, which is `ErrBadParameter`, so a directory stays a directory. Its path, or a bucket's prefix, can be.
 * **Creating and updating are atomic in the store:** a volume is created once, of the servers which create it at once, and an update of one which is deleted meanwhile is `ErrNotFound`.
 * **Enabled:** a volume which isn't enabled is stored, with its index, but isn't mounted. `filer volume-unmount NAME` disables one, `filer volume-mount NAME` enables it, and `filer volume-update NAME --[no-]enabled` does either, with its options. Over HTTP, it's `PATCH /volume/{name}?enabled=false`.
 * **`GetVolume` and `ListVolumes`** return the stored volumes, which includes those which aren't enabled. A volume which is enabled, but offline, or can't be mounted, is `enabled: false`, with its `error`.
 * **Offline volumes** are opened again, after a while, which doubles, up to a minute. One whose user needs to sign in again isn't, until it's updated, such as with `volume-update`, which opens it again even when nothing changed.
+* **Descriptions:** every backend's URL has a `description` option, of what the volume is, which the backend sets, when it isn't set: `Folder /mnt/media`, `S3 bucket photos/2026 in eu-west-1`, or `Google Tasks for ada@example.com`. `Volume.Description()` returns it, and the CLI's create commands, and `volume-update`, set it with `--description`.
 * **URLs** have each of the backend's options, its `index` option, and the placeholders of its credentials, such as `access-key-id=${ID}`, so it's created again from the store, but not the credentials.
 * **`--volume`** creates a volume when the server starts, or updates the stored one of the same name.
 * **Indexing:** `index=folders` indexes a volume's folders, and `index=none`, or no option, doesn't. The registry runs each indexer while the volume is mounted. Turning it off removes the index, whether the volume is mounted or not, and so does pointing it at another backend, of its scheme, host or path. Deleting a volume deletes its index too.

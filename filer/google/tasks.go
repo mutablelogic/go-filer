@@ -20,6 +20,7 @@ import (
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/filer/google/httpclient"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -56,6 +57,7 @@ type taskOpt struct {
 	endpoint        string        // The endpoint of the API, which is Google's, but a test's
 	credential      string        // The key of the user's sign-in, which is DefaultCredential, unless it's set
 	hidden          bool          // Tasks which are hidden, as they're completed, and cleared, are included
+	description     string        // What the volume is, which is of the user who signed in, by default
 }
 
 var _ gofiler.Filer = (*TaskFiler)(nil)
@@ -122,9 +124,9 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, opts gofi
 	self := &TaskFiler{taskOpt: opt, name: name, opts: opts}
 
 	// The user's sign-in, which has the access the volume needs
-	required, scopes := []string{httpclient.TasksScope}, []string{httpclient.TasksScope}
+	required, scopes := []string{httpclient.TasksScope}, []string{httpclient.TasksScope, httpclient.EmailScope}
 	if opt.readonly {
-		required, scopes = []string{httpclient.TasksReadonlyScope, httpclient.TasksScope}, []string{httpclient.TasksReadonlyScope}
+		required, scopes = []string{httpclient.TasksReadonlyScope, httpclient.TasksScope}, []string{httpclient.TasksReadonlyScope, httpclient.EmailScope}
 	}
 	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, scopes); err != nil {
 		return nil, err
@@ -150,6 +152,11 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, opts gofi
 	if err := self.client.Check(ctx); err != nil {
 		return nil, self.apiError("check", "/", err)
 	}
+
+	// What the volume is, when it isn't set, is of the user who signed in
+	if self.description == "" {
+		self.description = describe(ctx, "Google Tasks", self.tokens, opts.ClientOpts)
+	}
 	return self, nil
 }
 
@@ -159,11 +166,12 @@ func parseTaskOpts(params url.Values) (taskOpt, error) {
 	opt := taskOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: tasksEndpoint}
 	for key := range params {
 		switch key {
-		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, paramHidden:
+		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, paramHidden, schema.OptDescription:
 		default:
 			return opt, gofiler.ErrBadParameter.Withf("unknown parameter: %q", key)
 		}
 	}
+	opt.description = params.Get(schema.OptDescription)
 	if value := params.Get(paramReadonly); value != "" {
 		readonly, err := strconv.ParseBool(value)
 		if err != nil {
@@ -219,7 +227,16 @@ func (self *TaskFiler) URL() *url.URL {
 // the patch, and the same client options, which is checked as a new filer
 // is
 func (self *TaskFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
-	clone, err := NewTaskFiler(ctx, self.name, gofiler.PatchValues(self.params(), patch), self.opts)
+	// A clone of another sign-in, without a description, is described of it
+	params := gofiler.PatchValues(self.params(), patch)
+	credential := params.Get(paramCredential)
+	if credential == "" {
+		credential = DefaultCredential
+	}
+	if credential != self.credential && !patch.Has(schema.OptDescription) {
+		params.Del(schema.OptDescription)
+	}
+	clone, err := NewTaskFiler(ctx, self.name, params, self.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -241,11 +258,12 @@ func (self *TaskFiler) Readonly() bool {
 // URL says how it's set up, defaults too
 func (self *TaskFiler) params() url.Values {
 	return url.Values{
-		paramReadonly:        {strconv.FormatBool(self.readonly)},
-		paramQuota:           {strconv.FormatUint(uint64(self.quota), 10)},
-		paramRefreshInterval: {self.refreshInterval.String()},
-		paramCredential:      {self.credential},
-		paramHidden:          {strconv.FormatBool(self.hidden)},
+		paramReadonly:         {strconv.FormatBool(self.readonly)},
+		paramQuota:            {strconv.FormatUint(uint64(self.quota), 10)},
+		paramRefreshInterval:  {self.refreshInterval.String()},
+		paramCredential:       {self.credential},
+		paramHidden:           {strconv.FormatBool(self.hidden)},
+		schema.OptDescription: {self.description},
 	}
 }
 

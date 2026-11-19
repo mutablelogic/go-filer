@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	// Packages
@@ -22,6 +25,11 @@ const (
 	IndexStatusScanning IndexStatus = "scanning" // It's being scanned, for the first time, or again
 	IndexStatusReady    IndexStatus = "ready"    // It's indexed, and the index follows its changes
 )
+
+// OptDescription is the option of every backend's URL which describes what
+// the volume is, such as "Folder /mnt/media", which a backend sets, when
+// it isn't set
+const OptDescription = "description"
 
 // The schemes of the URLs of volumes' backends
 const (
@@ -69,6 +77,7 @@ type Volume struct {
 	Created  time.Time    `json:"created,omitzero" readonly:"" help:"When the volume was first stored"`
 	Modified time.Time    `json:"modified,omitzero" readonly:"" help:"When the volume's URL, or whether it's enabled, last changed"`
 	Error    string       `json:"error,omitempty" readonly:"" help:"Why the volume isn't enabled, such as when watching its backend failed, until it's opened again, or its user needs to sign in again, which volume-update does"`
+	Mounted  bool         `json:"mounted" readonly:"" help:"Whether the volume is mounted, so its objects can be used, which an enabled volume is shortly after it's created, or updated"`
 	Index    *VolumeIndex `json:"index,omitempty" readonly:"" help:"The volume's index, when it's indexed, of its index option, such as index=folders"`
 }
 
@@ -94,6 +103,16 @@ func (v Volume) Readonly() (bool, error) {
 		return true, fmt.Errorf("volume %q: invalid readonly option %q", v.Name, value)
 	}
 	return readonly, nil
+}
+
+// Description returns what the volume is, of its URL's description option,
+// or empty, when it hasn't one, or its URL can't be parsed
+func (v Volume) Description() string {
+	u, err := url.Parse(v.URL)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get(OptDescription)
 }
 
 // VolumeIndex is a volume's index: what's indexed, and its state
@@ -136,7 +155,7 @@ func (v VolumeList) String() string {
 // TABLE
 
 func (v Volume) Header() []string {
-	return []string{"Name", "URL"}
+	return []string{"Name", "Status", "Index", "Description", "URL", "Options"}
 }
 
 func (v Volume) Width(col int) int {
@@ -148,10 +167,89 @@ func (v Volume) Cell(col int) tui.CellText {
 	case 0:
 		return v.Name
 	case 1:
-		return v.URL
+		return v.Status()
+	case 2:
+		return v.IndexStatus()
+	case 3:
+		return v.Description()
+	case 4:
+		return v.BareURL()
+	case 5:
+		return v.Options()
 	default:
 		return ""
 	}
+}
+
+// Status returns how the volume is: offline, with why, when it's enabled,
+// but its backend isn't working, disabled, mounting, when it's enabled, but
+// isn't mounted yet, or mounted
+func (v Volume) Status() string {
+	switch {
+	case v.Error != "":
+		return "offline: " + v.Error
+	case !v.Enabled:
+		return "disabled"
+	case !v.Mounted:
+		return "mounting"
+	default:
+		return "mounted"
+	}
+}
+
+// IndexStatus returns how the volume's index is: none, when it isn't
+// indexed, or isn't mounted, scanning, or ready, with how many folders it
+// has, or failed, when it hasn't been indexed, with why its last scan, or
+// its watch, failed, when it did
+func (v Volume) IndexStatus() string {
+	var result string
+	switch {
+	case v.Index == nil:
+		return "none"
+	case v.Index.Status == IndexStatusScanning:
+		result = fmt.Sprintf("scanning, %d folders", v.Index.Folders)
+	case v.Index.Status == IndexStatusReady:
+		result = fmt.Sprintf("ready, %d folders", v.Index.Folders)
+	case v.Index.Error != "":
+		result = "failed"
+	default:
+		result = "none"
+	}
+	if v.Index.Error != "" {
+		result += ": " + v.Index.Error
+	}
+	return result
+}
+
+// BareURL returns the volume's URL without its options, such as
+// file://media/mnt/media, or the URL, when it can't be parsed
+func (v Volume) BareURL() string {
+	u, err := url.Parse(v.URL)
+	if err != nil {
+		return v.URL
+	}
+	u.RawQuery, u.Fragment = "", ""
+	return u.String()
+}
+
+// Options returns the options of the volume's URL, other than its
+// description, as key=value, in the order of their keys, separated by
+// spaces, without escaping
+func (v Volume) Options() string {
+	u, err := url.Parse(v.URL)
+	if err != nil {
+		return ""
+	}
+	query := u.Query()
+	query.Del(OptDescription)
+	keys := slices.Sorted(maps.Keys(query))
+	result := make([]string, 0, len(query))
+	for _, key := range keys {
+		for _, value := range query[key] {
+			result = append(result, key+"="+value)
+		}
+	}
+	return strings.Join(result, " ")
 }
 
 // VolumePatch is the options of a volume to change, by their keys, as JSON:

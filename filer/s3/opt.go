@@ -9,6 +9,7 @@ import (
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -18,16 +19,17 @@ import (
 // opt is the options of a bucket, which are parsed from the query
 // parameters of its URL
 type opt struct {
-	name      string // the volume's name
-	region    string // the bucket's region, when it's set
-	profile   string // the profile of the credentials, when it's set
-	keyID     string // the access key ID, which can have placeholders, when it's set
-	secret    string // the secret access key, which has placeholders, when it's set
-	token     string // the session token, which has placeholders, when it's set
-	endpoint  string // the endpoint of a service which is compatible with S3, when it's set
-	anonymous bool   // requests aren't signed, so they're without credentials
-	readonly  bool   // objects can't be created or deleted
-	seaweedfs string // the address of a SeaweedFS filer's gRPC service, which is watched, when it's set
+	name        string // the volume's name
+	region      string // the bucket's region, when it's set
+	profile     string // the profile of the credentials, when it's set
+	keyID       string // the access key ID, which can have placeholders, when it's set
+	secret      string // the secret access key, which has placeholders, when it's set
+	token       string // the session token, which has placeholders, when it's set
+	endpoint    string // the endpoint of a service which is compatible with S3, when it's set
+	anonymous   bool   // requests aren't signed, so they're without credentials
+	readonly    bool   // objects can't be created or deleted
+	seaweedfs   string // the address of a SeaweedFS filer's gRPC service, which is watched, when it's set
+	description string // what the volume is, which is of the bucket, by default
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -95,7 +97,7 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 	// Check the options are known
 	for key := range values {
 		switch key {
-		case optName, optRegion, optProfile, optAccessKeyID, optSecretAccessKey, optSessionToken, optEndpoint, optAnonymous, optReadonly, optSeaweedFS:
+		case optName, optRegion, optProfile, optAccessKeyID, optSecretAccessKey, optSessionToken, optEndpoint, optAnonymous, optReadonly, optSeaweedFS, schema.OptDescription:
 		default:
 			return opt{}, filer.ErrBadParameter.Withf("Unknown option: %q", key)
 		}
@@ -158,6 +160,10 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 		self.seaweedfs = value
 	}
 
+	// Set what the volume is, which is of the bucket, once it's checked,
+	// when it isn't set
+	self.description = values.Get(schema.OptDescription)
+
 	// Return success
 	return self, nil
 }
@@ -185,6 +191,9 @@ func (self opt) values(credentials bool) url.Values {
 	// An anonymous bucket is read-only, whatever its readonly option
 	values.Set(optAnonymous, strconv.FormatBool(self.anonymous))
 	values.Set(optReadonly, strconv.FormatBool(self.readonly || self.anonymous))
+	if self.description != "" {
+		values.Set(schema.OptDescription, self.description)
+	}
 	return values
 }
 

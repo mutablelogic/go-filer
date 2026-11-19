@@ -47,6 +47,7 @@ type fakeTasks struct {
 	deletes   []string                     // The paths which are deleted
 	writes    []string                     // The methods, and paths, which are written
 	failMove  bool                         // Moving a task fails, as Google can
+	email     string                       // The user who signed in, of the userinfo endpoint, or empty, when it's forbidden
 	fields    []map[string]json.RawMessage // The fields which are written
 }
 
@@ -150,6 +151,16 @@ func (f *fakeTasks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+
+	// The user who signed in, which is forbidden without the email scope
+	if r.URL.Path == "/userinfo" {
+		if f.email == "" {
+			writeError(w, http.StatusForbidden)
+		} else {
+			writeJSON(w, map[string]string{"email": f.email})
+		}
+		return
+	}
 
 	// An id which isn't base64url, as Google's are, is a bad request, as
 	// Google says it's an invalid id, rather than that it isn't found
@@ -371,6 +382,39 @@ func writeError(w http.ResponseWriter, status int) {
 }
 
 // newFiler returns a filer of the fake, with the token, and the parameters
+func Test_TaskDescription(t *testing.T) {
+	fake, endpoint := newFake(t)
+
+	// A volume's description is of the user who signed in, when it can be
+	// read, or else the kind of volume, and is its parameter otherwise
+	assert.Equal(t, "Google Tasks", newFiler(t, endpoint, nil).URL().Query().Get("description"))
+	fake.Lock()
+	fake.email = "ada@example.com"
+	fake.Unlock()
+	filer := newFiler(t, endpoint, nil)
+	assert.Equal(t, "Google Tasks for ada@example.com", filer.URL().Query().Get("description"))
+	assert.Equal(t, "Shopping", newFiler(t, endpoint, url.Values{"description": {"Shopping"}}).URL().Query().Get("description"))
+
+	// A clone keeps it, and one without it is described again
+	clone, err := filer.Clone(context.Background(), url.Values{"hidden": {"true"}})
+	require.NoError(t, err)
+	assert.Equal(t, "Google Tasks for ada@example.com", clone.URL().Query().Get("description"))
+
+	// As does a clone of the same sign-in, of its credential, or the default
+	shopping := newFiler(t, endpoint, url.Values{"description": {"Shopping"}})
+	for _, credential := range [][]string{{google.DefaultCredential}, {""}, {}} {
+		clone, err := shopping.Clone(context.Background(), url.Values{"credential": credential})
+		require.NoError(t, err)
+		assert.Equal(t, "Shopping", clone.URL().Query().Get("description"), credential)
+	}
+	fake.Lock()
+	fake.email = "grace@example.com"
+	fake.Unlock()
+	clone, err = filer.Clone(context.Background(), url.Values{"description": {}})
+	require.NoError(t, err)
+	assert.Equal(t, "Google Tasks for grace@example.com", clone.URL().Query().Get("description"))
+}
+
 func newFiler(t *testing.T, endpoint string, params url.Values) *google.TaskFiler {
 	t.Helper()
 	if params == nil {
@@ -851,7 +895,7 @@ func Test_TaskSignIn(t *testing.T) {
 	_, err := newTaskFiler(ctx, "tasks", params(), creds)
 	need := signIn(t, err)
 	assert.Equal(t, google.DefaultCredential, need.Credential)
-	assert.Equal(t, []string{httpclient.TasksReadonlyScope}, need.Scopes, "a read-only volume asks for read-only access")
+	assert.Equal(t, []string{httpclient.TasksReadonlyScope, httpclient.EmailScope}, need.Scopes, "a read-only volume asks for read-only access, and the user's email address")
 	creds = newCredentials(t, endpoint, nil)
 	delete(creds.values, google.ClientCredential)
 	_, err = newTaskFiler(ctx, "tasks", params(), creds)
@@ -873,7 +917,7 @@ func Test_TaskSignIn(t *testing.T) {
 	_, err = newTaskFiler(ctx, "tasks", params("readonly", "false"), newCredentials(t, endpoint, func(c *authclient.Grant) {
 		c.Scopes = []string{httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}
 	}))
-	assert.Equal(t, []string{httpclient.TasksScope, httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}, signIn(t, err).Scopes)
+	assert.Equal(t, []string{httpclient.TasksScope, httpclient.EmailScope, httpclient.TasksReadonlyScope, "https://www.googleapis.com/auth/calendar"}, signIn(t, err).Scopes)
 
 	// Whose token Google doesn't accept, such as when it's revoked
 	_, err = newTaskFiler(ctx, "tasks", params(), newCredentials(t, endpoint, func(c *authclient.Grant) { c.Token.AccessToken = "revoked" }))

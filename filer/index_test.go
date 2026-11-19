@@ -438,3 +438,20 @@ func Test_Registry_ListRetry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Less(t, s.fails.Load(), int32(0), "it's listed again")
 }
+
+func Test_Registry_UpdateScheme(t *testing.T) {
+	r, dir := newRegistry(t)
+	ctx := context.Background()
+	u := fileURL(t, dir, "media")
+	_, err := add(t, r, "media", u)
+	require.NoError(t, err)
+
+	// A volume's scheme isn't changed, and it's kept as it is
+	stored, err := r.GetVolume(ctx, "media")
+	require.NoError(t, err)
+	_, err = r.UpdateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "s3://media/?endpoint=http://localhost:1", Enabled: true})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	again, err := r.GetVolume(ctx, "media")
+	require.NoError(t, err)
+	assert.Equal(t, stored.URL, again.URL)
+}

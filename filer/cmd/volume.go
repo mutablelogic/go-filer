@@ -54,10 +54,11 @@ type VolumeGetCmd struct {
 
 type VolumeUpdateCmd struct {
 	VolumeGetCmd
-	NoBrowser bool     `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it."`
-	Opt       []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
-	Unset     []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
-	Enabled   *bool    `name:"enabled" negatable:"" help:"Enable the volume, so it's mounted, or disable it, with --no-enabled, so it's unmounted, which is kept as it is without either."`
+	NoBrowser   bool     `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it."`
+	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
+	Unset       []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
+	Enabled     *bool    `name:"enabled" negatable:"" help:"Enable the volume, so it's mounted, or disable it, with --no-enabled, so it's unmounted, which is kept as it is without either."`
+	Description *string  `name:"description" help:"What the volume is, such as \"Family photos\", which is a shortcut of -o description=..., or the backend's, when it's empty."`
 }
 
 type VolumeMountCmd struct {
@@ -78,18 +79,20 @@ type VolumeDeleteCmd struct {
 }
 
 type VolumeCreateCmd struct {
-	URL  string   `arg:"" name:"url" help:"URL of the volume's backend, such as file://media/mnt/folder, whose host is the volume's name, or a directory on the server, such as /mnt/media, with --name, or a bucket, such as s3://bucket/prefix?name=photos."`
-	Name string   `name:"name" help:"Volume name, which is an identifier. For a file URL it's the host, and otherwise the name option, or the host, which it defaults to, and sets the option when it isn't the host."`
-	Opt  []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option of the volume, such as readonly=true, skip=^\\. or package=\\.bundle$, which can be repeated, and is added to those of the URL. An option without a value, such as readonly, is empty, which for readonly is true."`
+	URL         string   `arg:"" name:"url" help:"URL of the volume's backend, such as file://media/mnt/folder, whose host is the volume's name, or a directory on the server, such as /mnt/media, with --name, or a bucket, such as s3://bucket/prefix?name=photos."`
+	Name        string   `name:"name" help:"Volume name, which is an identifier. For a file URL it's the host, and otherwise the name option, or the host, which it defaults to, and sets the option when it isn't the host."`
+	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option of the volume, such as readonly=true, skip=^\\. or package=\\.bundle$, which can be repeated, and is added to those of the URL. An option without a value, such as readonly, is empty, which for readonly is true."`
+	Description string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 type VolumeCreateFSCmd struct {
-	Name     string   `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Path     string   `arg:"" name:"path" help:"Absolute path of the directory, on the server, such as /mnt/media."`
-	Readonly bool     `name:"readonly" help:"Files can only be read, and not created or deleted."`
-	Skip     []string `name:"skip" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of files and directories which aren't listed, such as '^\\.', which can be repeated, and replaces the defaults. An empty one, --skip '', lists every name."`
-	Package  []string `name:"package" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of directories which are packages, listed as files, such as '\\.bundle$', which can be repeated, and replaces the defaults. An empty one, --package '', has no packages."`
-	Opt      []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Name        string   `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Path        string   `arg:"" name:"path" help:"Absolute path of the directory, on the server, such as /mnt/media."`
+	Readonly    bool     `name:"readonly" help:"Files can only be read, and not created or deleted."`
+	Skip        []string `name:"skip" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of files and directories which aren't listed, such as '^\\.', which can be repeated, and replaces the defaults. An empty one, --skip '', lists every name."`
+	Package     []string `name:"package" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of directories which are packages, listed as files, such as '\\.bundle$', which can be repeated, and replaces the defaults. An empty one, --package '', has no packages."`
+	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 type VolumeCreateS3Cmd struct {
@@ -105,6 +108,7 @@ type VolumeCreateS3Cmd struct {
 	Readonly     bool     `name:"readonly" help:"Objects can only be read, and not created or deleted."`
 	SeaweedFS    string   `name:"seaweedfs-filer-grpc" placeholder:"HOST:PORT" help:"gRPC service of the SeaweedFS filer whose S3 gateway the endpoint is, such as 192.168.86.21:18888, so the bucket's objects are watched."`
 	Opt          []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description  string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 type VolumeCreateGContactsCmd struct {
@@ -114,6 +118,7 @@ type VolumeCreateGContactsCmd struct {
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
 	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
 	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description     string         `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 type VolumeCreateGTasksCmd struct {
@@ -125,6 +130,7 @@ type VolumeCreateGTasksCmd struct {
 	Hidden          bool           `name:"hidden" help:"Include tasks which are hidden, as they're completed, and cleared from their list, which aren't, unless it's set."`
 	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
 	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description     string         `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -373,6 +379,12 @@ func (cmd *VolumeUpdateCmd) patch() (schema.VolumePatch, error) {
 			values[key] = append(values[key], value)
 		}
 	}
+	if cmd.Description != nil {
+		if _, exists := values[schema.OptDescription]; exists {
+			return nil, gofiler.ErrBadParameter.With("the description is set with --description, and an option")
+		}
+		values[schema.OptDescription] = []string{*cmd.Description}
+	}
 	patch := make(schema.VolumePatch, len(values)+len(cmd.Unset))
 	for key, values := range values {
 		data, err := json.Marshal(values)
@@ -410,11 +422,17 @@ func (cmd *VolumeCreateCmd) volume() (schema.Volume, error) {
 	if err != nil {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid options of url %q: %v", cmd.URL, err)
 	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
+	}
 	opts, err := parseOpts(cmd.Opt)
 	if err != nil {
 		return schema.Volume{}, err
 	}
 	for key, values := range opts {
+		if key == schema.OptDescription {
+			query.Del(key)
+		}
 		query[key] = append(query[key], values...)
 	}
 
@@ -486,6 +504,9 @@ func (cmd *VolumeCreateFSCmd) volume() (schema.Volume, error) {
 	for _, pkg := range cmd.Package {
 		query.Add("package", pkg)
 	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
+	}
 	if err := setOpts(query, cmd.Opt); err != nil {
 		return schema.Volume{}, err
 	}
@@ -539,6 +560,9 @@ func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 	if cmd.Readonly {
 		query.Set("readonly", "true")
 	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
+	}
 	if err := setOpts(query, cmd.Opt); err != nil {
 		return schema.Volume{}, err
 	}
@@ -576,6 +600,9 @@ func (cmd *VolumeCreateGContactsCmd) volume() (schema.Volume, error) {
 	if cmd.RefreshInterval != nil {
 		query.Set("refresh_interval", cmd.RefreshInterval.String())
 	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
+	}
 	if err := setOpts(query, cmd.Opt); err != nil {
 		return schema.Volume{}, err
 	}
@@ -605,6 +632,9 @@ func (cmd *VolumeCreateGTasksCmd) volume() (schema.Volume, error) {
 	}
 	if cmd.Hidden {
 		query.Set("hidden", "true")
+	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
 	}
 	if err := setOpts(query, cmd.Opt); err != nil {
 		return schema.Volume{}, err

@@ -78,6 +78,12 @@ func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
 		return nil, err
 	}
 
+	// What the volume is, when it isn't set, is of the bucket, its prefix,
+	// and where it is
+	if self.description == "" {
+		self.description = self.describe()
+	}
+
 	// The watcher of the bucket's objects, when the endpoint is a SeaweedFS
 	// filer's, which is checked
 	if self.seaweedfs != "" {
@@ -88,6 +94,22 @@ func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
 		self.watcher = watcher
 	}
 	return self, nil
+}
+
+// describe returns what the volume is, of its bucket and prefix, and the
+// host of its endpoint, or its region, such as "S3 bucket photos/2026 in
+// eu-west-1"
+func (self *S3) describe() string {
+	result := "S3 bucket " + self.bucket
+	if prefix := strings.TrimSuffix(self.prefix, "/"); prefix != "" {
+		result += "/" + prefix
+	}
+	if u, err := url.Parse(self.endpoint); err == nil && self.endpoint != "" && u.Host != "" {
+		result += " at " + u.Host
+	} else if self.region != "" {
+		result += " in " + self.region
+	}
+	return result
 }
 
 // parse returns the filer of the URL, without a client
