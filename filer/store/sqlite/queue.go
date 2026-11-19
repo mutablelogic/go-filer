@@ -146,19 +146,3 @@ func (self *Store) PendingBeneath(ctx context.Context, volume, folder string) (_
 	}
 	return bool(pending), nil
 }
-
-// PendingBeneath returns true when the folder has work queued, or claimed,
-// which would change its listing: an index of it, or a rescan of it, or of
-// a folder above it, or an index, or a rescan, of a path beneath it
-func (self *Store) PendingBeneath(ctx context.Context, volume, folder string) (_ bool, err error) {
-	ctx, end := self.span(ctx, "PendingBeneath", attribute.String("arg.volume", volume), attribute.String("arg.folder", folder))
-	defer func() { end(err) }()
-	if err := store.ValidateWork(store.Work{Path: folder, Kind: store.KindRescan}); err != nil {
-		return false, err
-	}
-	var pending schema.Pending
-	if err := self.conn.Get(ctx, &pending, schema.QueuePending{Volume: volume, Path: folder, Beneath: true}); err != nil {
-		return false, storeErr(err)
-	}
-	return bool(pending), nil
-}
