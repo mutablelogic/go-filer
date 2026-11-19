@@ -13,10 +13,12 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	// Packages
@@ -49,6 +51,10 @@ type Indexer struct {
 	// they're indexed, so the backend is watched once
 	smu      sync.Mutex
 	watchers map[*watcher]struct{}
+
+	// logger is the logger which Run is given, which failures are logged
+	// to, or nil before it runs
+	logger atomic.Pointer[slog.Logger]
 }
 
 // watcher is a call to WatchObjects, which is sent changes, until it's

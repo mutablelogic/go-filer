@@ -88,6 +88,9 @@ func (self *Metadata) Enrich(ctx context.Context, backend gofiler.Filer, store i
 	if err := store.SetMetadata(ctx, object.Path, meta(entries), shapes(entries)); err != nil {
 		return err
 	} else if extractErr != nil && !isNotImplemented(extractErr) {
+		if errors.Is(extractErr, gometadata.ErrBadParameter) {
+			return unreadable{extractErr}
+		}
 		return extractErr
 	}
 	return nil
@@ -184,4 +187,20 @@ func withName(r io.Reader, name string) gometadata.NamedReader {
 		return namedFile{named: n, ReaderAt: ra, Seeker: s}
 	}
 	return n
+}
+
+// unreadable is an error of a file which go-metadata can't read, as it
+// isn't valid, of its ErrBadParameter, which is go-filer's ErrBadParameter
+// too, so the task is given up at once, rather than done again, of its
+// message
+type unreadable struct {
+	error
+}
+
+func (u unreadable) Unwrap() error {
+	return u.error
+}
+
+func (u unreadable) Is(target error) bool {
+	return target == gofiler.ErrBadParameter
 }
