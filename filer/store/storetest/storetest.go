@@ -617,16 +617,30 @@ func testQueueCoalesce(t *testing.T, s store.Store) {
 	_, paths = claimed(t, s, all, 10)
 	assert.Empty(t, paths)
 
-	// A rescan of the root, which is a catch-up, replaces the rescans beneath
-	// it, but not the index of a change, which isn't of it, as the index of
-	// a change holds up reads, and a catch-up doesn't
+	// A rescan of the root, which is a catch-up, doesn't replace the work
+	// beneath it, nor is work of it, as the index of a change, and a rescan
+	// of a folder, which can have absorbed one, hold up reads, and a
+	// catch-up doesn't
 	require.NoError(t, s.Push(ctx, "media", index("/x"), rescan("/y/")))
 	require.NoError(t, s.Push(ctx, "media", rescan("/")))
 	require.NoError(t, s.Push(ctx, "media", index("/z"), rescan("/w/")))
 	_, paths = claimed(t, s, []store.Kind{store.KindIndex}, 10)
 	assert.ElementsMatch(t, []string{"index /x", "index /z"}, paths)
-	work, paths := claimed(t, s, []store.Kind{store.KindRescan}, 10)
-	assert.Equal(t, []string{"rescan /"}, paths)
+	var work []store.Work
+	rescans := []string{}
+	for {
+		claim, paths := claimed(t, s, []store.Kind{store.KindRescan}, 10)
+		if len(paths) == 0 {
+			break
+		}
+		rescans = append(rescans, paths...)
+		if paths[0] == "rescan /" {
+			work = claim
+		} else {
+			require.NoError(t, s.Done(ctx, "media", claim...))
+		}
+	}
+	assert.ElementsMatch(t, []string{"rescan /y/", "rescan /", "rescan /w/"}, rescans)
 
 	// Work beneath a rescan which is claimed is queued, as the rescan can
 	// have passed it, and isn't done with it
@@ -802,6 +816,19 @@ func testQueuePending(t *testing.T, s store.Store) {
 	assert.False(t, pending("/a/b.txt"), "of a catch-up")
 	require.NoError(t, s.Push(ctx, "media", index("/a/b.txt")))
 	assert.True(t, pending("/a/b.txt"), "of a change, while a catch-up is queued")
+	work, _ = claimed(t, s, all, 10)
+	require.NoError(t, s.Done(ctx, "media", work...))
+	for len(work) > 0 {
+		work, _ = claimed(t, s, all, 10)
+		require.NoError(t, s.Done(ctx, "media", work...))
+	}
+
+	// Nor is a change, which a rescan of its folder absorbed, forgotten, of a
+	// rescan of the root which is pushed after it
+	require.NoError(t, s.Push(ctx, "media", index("/a/b.txt")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/a/")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/")))
+	assert.True(t, pending("/a/b.txt"), "of the rescan of its folder")
 	_, err := s.Pending(ctx, "media", "a/b")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }

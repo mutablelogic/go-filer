@@ -22,7 +22,8 @@ type QueueStore interface {
 	// the rescan does it, and a rescan of a folder replaces the index and
 	// rescan work beneath it. A rescan of the root is a catch-up, of changes
 	// which can have been missed, which doesn't hold up reads (see Pending),
-	// so it replaces only the rescans beneath it, and an index isn't of it.
+	// so it doesn't replace work beneath it, nor is work of it, as the index
+	// of a change, and a rescan of a folder, which can have absorbed one, do.
 	// Returns ErrNotFound when the volume isn't stored.
 	Push(ctx context.Context, volume string, work ...Work) error
 
