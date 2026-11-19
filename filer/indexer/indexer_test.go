@@ -389,12 +389,40 @@ func Test_ObjectsToFolders(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- i.Run(ctx) }()
 	files(t, s, "/a/y.txt", "/x.txt")
+	require.Eventually(t, func() bool {
+		state, err := s.State(context.Background(), "media")
+		return err == nil && state.Status == schema.IndexStatusReady && state.Files == 2
+	}, 10*time.Second, 5*time.Millisecond, "its scan is done")
 	cancel()
 	require.NoError(t, <-done)
+	before, err := s.State(context.Background(), "media")
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), before.Folders)
+
+	// While it's scanned again, its counts are of its last scan, rather than
+	// of the scan in progress
+	lowest := before.Folders
+	watching, stop := context.WithCancel(context.Background())
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		for watching.Err() == nil {
+			if state, err := s.State(context.Background(), "media"); err == nil && state.Folders < lowest {
+				lowest = state.Folders
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
 	folders, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithRescanInterval(time.Hour))
 	require.NoError(t, err)
 	run(t, folders)
 	files(t, s)
+	stop()
+	<-watched
+	assert.Equal(t, before.Folders, lowest, "its count isn't the progress of the scan")
+	after, err := s.State(context.Background(), "media")
+	require.NoError(t, err)
+	assert.Zero(t, after.Files)
 }
 
 func Test_Poll(t *testing.T) {

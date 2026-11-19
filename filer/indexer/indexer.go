@@ -306,17 +306,19 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 	var progress func(int)
 	if whole {
 		// A volume which is ready is listed from its index while it's
-		// scanned again
+		// scanned again, and keeps the counts of its last scan until it's
+		// scanned, so they aren't of a scan in progress, and otherwise its
+		// progress is the folders it's scanned
 		if state.Status != schema.IndexStatusReady {
-			state.Status = schema.IndexStatusScanning
+			state.Status, state.Folders, state.Files = schema.IndexStatusScanning, 0, 0
+			progress = func(folders int) {
+				state.Folders = uint64(folders)
+				_ = self.store.SetState(ctx, self.name, state)
+			}
 		}
-		state.Folders, state.Files, state.Started, state.Error = 0, 0, time.Now(), ""
+		state.Started, state.Error = time.Now(), ""
 		if err := self.store.SetState(ctx, self.name, state); err != nil {
 			return err
-		}
-		progress = func(folders int) {
-			state.Folders = uint64(folders)
-			_ = self.store.SetState(ctx, self.name, state)
 		}
 	}
 
