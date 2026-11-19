@@ -84,6 +84,10 @@ func (self *Store) PushStale(context.Context, string, string, store.Kind) error 
 	return errNotImplemented
 }
 
+func (self *Store) Search(context.Context, schema.SearchRequest) (*schema.SearchResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (self *Store) Tasks(context.Context, string, store.Kind) (schema.TaskState, error) {
 	return schema.TaskState{}, errNotImplemented
 }

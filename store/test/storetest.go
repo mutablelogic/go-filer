@@ -48,6 +48,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("Geo", func(t *testing.T) { testGeo(t, withVolumes(t, newStore(t))) })
 	t.Run("Changed", func(t *testing.T) { testChanged(t, withVolumes(t, newStore(t))) })
 	t.Run("Events", func(t *testing.T) { testEvents(t, withVolumes(t, newStore(t))) })
+	t.Run("Search", func(t *testing.T) { testSearch(t, withVolumes(t, newStore(t))) })
 	t.Run("DeleteMetadata", func(t *testing.T) { testDeleteMetadata(t, withVolumes(t, newStore(t))) })
 }
 
@@ -1181,6 +1182,73 @@ func testGeo(t *testing.T, s store.Store) {
 	object, err = s.GetObject(ctx, "photos", "/a.jpg")
 	require.NoError(t, err)
 	assert.Nil(t, object.Geo, "it's gone with the file")
+}
+
+func testSearch(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	title := func(path, value string) *schema.Object {
+		object := file(path)
+		object.Meta = []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(value)}}
+		return object
+	}
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), folder("/Arvo Pärt"), title("/Arvo Pärt/01.mp3", `"Spiegel im Spiegel"`), title("/Notes/a.txt", `"Pärt, a \"note\""`)))
+	require.NoError(t, s.PutObject(ctx, "photos", folder("/"), file("/Spiegel.jpg")))
+	found := func(req schema.SearchRequest) ([]string, uint64) {
+		t.Helper()
+		resp, err := s.Search(ctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, req, resp.SearchRequest, "of its request")
+		var result []string
+		for i, object := range resp.Body {
+			result = append(result, object.Name+":"+store.Key(&object.Object))
+			assert.True(t, object.Rank > 0 && object.Rank <= 1, "of 0 to 1: %v", object.Rank)
+			if i > 0 {
+				assert.LessOrEqual(t, object.Rank, resp.Body[i-1].Rank, "best first")
+			}
+		}
+		if len(resp.Body) > 0 && req.Offset == 0 {
+			assert.Equal(t, float32(1), resp.Body[0].Rank, "of the best")
+		}
+		return result, resp.Count
+	}
+
+	// Objects of every volume match any of the terms, best first: of their
+	// names, then their titles, and then their folders, without diacritics
+	got, count := found(schema.SearchRequest{Query: schema.Query{Terms: []string{"spiegel"}}})
+	assert.Equal(t, []string{"photos:/Spiegel.jpg", "media:/Arvo Pärt/01.mp3"}, got)
+	assert.Equal(t, uint64(2), count)
+	got, _ = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}})
+	assert.Equal(t, []string{"media:/Arvo Pärt/", "media:/Notes/a.txt", "media:/Arvo Pärt/01.mp3"}, got)
+	got, _ = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"nothing", "spieg*"}}})
+	assert.Len(t, got, 2, "of any of the terms, and the start of a word")
+	got, _ = found(schema.SearchRequest{Query: schema.Query{Terms: []string{`"note"`, "a OR"}}})
+	assert.Equal(t, []string{"media:/Notes/a.txt"}, got[:1], "a term's syntax isn't FTS5's")
+
+	// But not those which match a term which is excluded
+	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}, Exclude: []string{"note"}}})
+	assert.Equal(t, []string{"media:/Arvo Pärt/", "media:/Arvo Pärt/01.mp3"}, got)
+	assert.Equal(t, uint64(2), count)
+	got, _ = found(schema.SearchRequest{Query: schema.Query{Exclude: []string{"note"}}})
+	assert.Empty(t, got, "of exclusions alone, nothing")
+
+	// Of a page, of how many match, of every page
+	one := uint64(1)
+	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}, OffsetLimit: schema.OffsetLimit{Offset: 1, Limit: &one}})
+	assert.Equal(t, []string{"media:/Notes/a.txt"}, got)
+	assert.Equal(t, uint64(3), count)
+
+	// Of an offset, or a limit, greater than SQLite's, which is an empty page
+	huge := uint64(1) << 63
+	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}, OffsetLimit: schema.OffsetLimit{Offset: huge, Limit: &one}})
+	assert.Empty(t, got)
+	assert.Equal(t, uint64(3), count)
+	got, _ = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}, OffsetLimit: schema.OffsetLimit{Limit: &huge}})
+	assert.Len(t, got, 3)
+
+	// Without terms, nothing matches
+	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{" ", "*"}}})
+	assert.Empty(t, got)
+	assert.Zero(t, count)
 }
 
 func testEvents(t *testing.T, s store.Store) {

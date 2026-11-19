@@ -2,10 +2,12 @@ package schema
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"unicode/utf8"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-sqlite"
 )
@@ -22,16 +24,29 @@ type SearchRefresh struct {
 	To     string
 }
 
-// SearchMatch selects the keys of the objects of a volume, which match an
-// FTS5 query, best first, of the weights of their columns, up to a limit
-type SearchMatch struct {
-	Volume string
-	Match  string
-	Limit  int
+// SearchRequest selects the objects which match a query, best first, of
+// the weights of their columns, of its page, or, of a get, how many match
+type SearchRequest struct {
+	filer.SearchRequest
 }
 
-// SearchKeys is the keys of the objects which match a search, best first
-type SearchKeys []string
+// SearchHit is an object which matches a search, of its volume, and key,
+// and its score, of bm25, which is the better, the more negative
+type SearchHit struct {
+	Volume string
+	Key    string
+	Score  float64
+}
+
+// SearchHits are the objects which match a search, best first
+type SearchHits []SearchHit
+
+// SearchCount is how many objects match a search, and the score of the
+// best
+type SearchCount struct {
+	Count uint64
+	Best  float64
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -85,29 +100,83 @@ func (r SearchRefresh) Update(*sqlite.Bind) error {
 	return sqlite.ErrNotImplemented.With("the search is refreshed")
 }
 
-// Select binds the match of the search
-func (m SearchMatch) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
-	if op != sqlite.List {
-		return "", sqlite.ErrNotImplemented.Withf("search: %v", op)
+// Select binds the match of the search, of the query's terms, and its page,
+// of a list, or of a get, its count
+func (req SearchRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	bind.Set("match", Match(req.Query))
+	switch op {
+	case sqlite.List:
+		// Of SQLite's, which are signed, so one which is greater is the
+		// most, which is an empty page, of an offset, rather than negative,
+		// which SQLite would take as none
+		limit := int64(-1)
+		if req.Limit != nil {
+			limit = int64(min(*req.Limit, math.MaxInt64))
+		}
+		bind.Set("limit", limit)
+		bind.Set("offset", int64(min(req.Offset, math.MaxInt64)))
+		return bind.Query("search.query"), nil
+	case sqlite.Get:
+		return bind.Query("search.count"), nil
 	}
-	limit := m.Limit
-	if limit <= 0 {
-		limit = -1
-	}
-	bind.Set("volume", m.Volume)
-	bind.Set("match", m.Match)
-	bind.Set("limit", limit)
-	return bind.Query("search.match"), nil
+	return "", sqlite.ErrNotImplemented.Withf("search: %v", op)
 }
 
-// Scan reads the key of an object which matches
-func (keys *SearchKeys) Scan(row sqlite.Row) error {
-	var key string
-	if err := row.Scan(&key); err != nil {
+// Scan reads an object which matches
+func (hits *SearchHits) Scan(row sqlite.Row) error {
+	var hit SearchHit
+	if err := row.Scan(&hit.Volume, &hit.Key, &hit.Score); err != nil {
 		return err
 	}
-	*keys = append(*keys, key)
+	*hits = append(*hits, hit)
 	return nil
+}
+
+// Scan reads how many objects match, and the score of the best
+func (count *SearchCount) Scan(row sqlite.Row) error {
+	return row.Scan(&count.Count, &count.Best)
+}
+
+// Rank returns how well a score matches, of 0 to 1, of the best of its
+// search's, which is 1
+func (count SearchCount) Rank(score float64) float32 {
+	if count.Best >= 0 || score >= 0 {
+		return 1
+	}
+	return float32(min(score/count.Best, 1))
+}
+
+// Match returns the FTS5 query of a query's terms, any of which match, of
+// those which aren't excluded, or empty, without terms
+func Match(query filer.Query) string {
+	terms := phrases(query.Terms)
+	if terms == "" {
+		return ""
+	} else if exclude := phrases(query.Exclude); exclude != "" {
+		return "(" + terms + ") NOT (" + exclude + ")"
+	}
+	return terms
+}
+
+// phrases returns the FTS5 query of terms, any of which match: each is a
+// phrase, of its words, which are next to each other, so what's in it, such
+// as a quote, or a hyphen, isn't FTS5's syntax, or the start of a word, of a
+// term which ends with *, or empty, without terms
+func phrases(terms []string) string {
+	var phrases []string
+	for _, term := range terms {
+		term = strings.TrimSpace(term)
+		prefix := strings.HasSuffix(term, "*")
+		if term = strings.TrimSpace(strings.TrimRight(term, "*")); term == "" {
+			continue
+		}
+		phrase := `"` + strings.ReplaceAll(term, `"`, `""`) + `"`
+		if prefix {
+			phrase += "*"
+		}
+		phrases = append(phrases, phrase)
+	}
+	return strings.Join(phrases, " OR ")
 }
 
 ////////////////////////////////////////////////////////////////////////////////

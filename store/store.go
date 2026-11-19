@@ -27,6 +27,7 @@ type Store interface {
 	MetadataStore
 	QueueStore
 	ScanStore
+	SearchStore
 
 	// State returns the state of the volume's index, which is IndexStatusNone
 	// when it's never been indexed
@@ -104,6 +105,15 @@ type MetadataStore interface {
 	// the revisions it was done of, so it's done of every file again, when
 	// it's done again, such as when a volume isn't enriched any more
 	DeleteMetadata(ctx context.Context, volume, source string) error
+}
+
+// SearchStore is the search of the objects of volumes' indexes, of their
+// names, folders, and metadata (see schema.Query)
+type SearchStore interface {
+	// Search returns the objects of every volume which match the request's
+	// query, best first, with their volumes' names, of its page, and how
+	// many match, of every page, which is none of a query without terms
+	Search(ctx context.Context, req schema.SearchRequest) (*schema.SearchResponse, error)
 }
 
 // ListRequest is a request for the objects of a folder

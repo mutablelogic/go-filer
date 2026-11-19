@@ -8,6 +8,7 @@ import (
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
 	ncruces "github.com/mutablelogic/go-sqlite/ncruces"
 	_ "github.com/mutablelogic/go-sqlite/ncruces/fts5"
@@ -15,12 +16,18 @@ import (
 	require "github.com/stretchr/testify/require"
 )
 
-// search returns the keys of the objects of the volume which match, best
-// first
-func (self *Store) search(t *testing.T, volume, match string) []string {
+// search returns the keys of the objects of the volume which match a term,
+// best first
+func (self *Store) search(t *testing.T, volume, term string) []string {
 	t.Helper()
-	var keys schema.SearchKeys
-	require.NoError(t, self.conn.List(context.Background(), &keys, schema.SearchMatch{Volume: volume, Match: match}))
+	resp, err := self.Search(context.Background(), filer.SearchRequest{Query: filer.Query{Terms: []string{term}}})
+	require.NoError(t, err)
+	var keys []string
+	for _, object := range resp.Body {
+		if object.Name == volume {
+			keys = append(keys, store.Key(&object.Object))
+		}
+	}
 	return keys
 }
 
