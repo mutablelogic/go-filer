@@ -39,8 +39,9 @@ type QueueLease time.Time
 
 // QueueFailure is why work failed, and when it's due again
 type QueueFailure struct {
-	Error string
-	After time.Time
+	Error  string
+	Failed time.Time // When it failed
+	After  time.Time // When it's due again
 }
 
 // QueuePending selects whether a key of a volume has work which would
@@ -100,6 +101,7 @@ func (failure QueueFailure) Insert(*sqlite.Bind) (string, error) {
 // Update binds why the work failed, and when it's due again
 func (failure QueueFailure) Update(bind *sqlite.Bind) error {
 	bind.Set("error", failure.Error)
+	bind.Set("failed", failure.Failed.UTC())
 	bind.Set("after", failure.After.UTC())
 	return nil
 }

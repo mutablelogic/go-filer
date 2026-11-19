@@ -147,12 +147,12 @@ func (self *Store) PushStale(ctx context.Context, volume, folder string, kind st
 func (self *Store) Failed(ctx context.Context, volume string, work store.Work, cause error, retry time.Duration) (err error) {
 	ctx, end := self.span(ctx, "Failed", attribute.String("arg.volume", volume), attribute.String("arg.key", work.Key))
 	defer func() { end(err) }()
-	message := ""
+	message, now := "", time.Now()
 	if cause != nil {
 		message = cause.Error()
 	}
 	var result schema.WorkList
-	if err := self.conn.Update(ctx, &result, schema.QueueKey{Volume: volume, Work: work}, schema.QueueFailure{Error: message, After: time.Now().Add(retry)}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+	if err := self.conn.Update(ctx, &result, schema.QueueKey{Volume: volume, Work: work}, schema.QueueFailure{Error: message, Failed: now, After: now.Add(retry)}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
 		return storeErr(err)
 	}
 	return nil

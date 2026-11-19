@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS object_state (
   leased_until    TIMESTAMP,              -- when its claim ends, which Done and Failed are of
   error           TEXT,                   -- why it last failed
   revision        TEXT,                   -- of a listed file, what the backend's listing said of it
+  failed          TIMESTAMP,              -- when it last failed, of its error, rather than when it's due again
   PRIMARY KEY (volume, key, kind)
 );
 

@@ -1145,6 +1145,9 @@ func testTasks(t *testing.T, s store.Store) {
 	work, paths := claimed(t, s, tasks, 10)
 	require.Len(t, work, 3, paths)
 	require.NoError(t, s.Failed(ctx, "media", work[0], errors.New("tried again"), time.Hour))
+	state, err = s.Tasks(ctx, "media", store.KindMetadata)
+	require.NoError(t, err)
+	assert.Equal(t, "tried again", state.Error)
 	work[1].Error = "given up"
 	require.NoError(t, s.Done(ctx, "media", work[1], work[2]))
 	state, err = s.Tasks(ctx, "media", store.KindMetadata)
@@ -1152,7 +1155,7 @@ func testTasks(t *testing.T, s store.Store) {
 	assert.Equal(t, uint64(1), state.Queued)
 	assert.Equal(t, uint64(2), state.Indexed)
 	assert.Equal(t, uint64(1), state.Failed)
-	assert.Contains(t, []string{"tried again", "given up"}, state.Error)
+	assert.Equal(t, "given up", state.Error, "its error is the last, rather than a retry's, which is due later")
 
 	// One which is given up, and done again, once it changed, isn't failed
 	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{work[1].Key: "r2"}))
