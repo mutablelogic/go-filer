@@ -46,7 +46,7 @@ func Test_Search(t *testing.T) {
 		object("/Notes/zahler.txt", false, meta("dc", "title", `"Zählerstand benötigt"`)),
 		object("/Notes/ab/cd/x.txt", false, meta("audio", "artist", `["Arvo Pärt", "https://example.com/arvo"]`)),
 	))
-	require.NoError(t, s.PutObject(ctx, "photos", object("/", true), object("/Ahrensburg.jpg", false)))
+	require.NoError(t, s.PutObject(ctx, "photos", object("/", true), object("/Ahrensburg.jpg", false), object("/plain.txt", false, meta("", "title", `"Unnamespaced"`))))
 
 	// An object's name, the main fields of its metadata, the names of its
 	// folders, and its other metadata are searched, without diacritics, of
@@ -58,6 +58,7 @@ func Test_Search(t *testing.T) {
 	assert.Empty(t, s.search(t, "media", "example"), "not links")
 	assert.Empty(t, s.search(t, "media", "cd"), "not folders of fewer than three characters")
 	assert.Equal(t, []string{"/Ahrensburg.jpg"}, s.search(t, "photos", "ahrensburg"))
+	assert.Equal(t, []string{"/plain.txt"}, s.search(t, "photos", "unnamespaced"), "of metadata without a namespace")
 
 	// A name is weighed more than a folder, and a nearer folder more than one
 	// further up
