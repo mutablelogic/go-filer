@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,7 +68,18 @@ const (
 
 	// contactURL is the link of a contact, of its id, in Google Contacts
 	contactURL = "https://contacts.google.com/person/"
+
+	// photoSize is the most pixels of the longest side of a contact's photo
+	// which is got, maxPhotoSize the most of it which is read, which at
+	// photoSize is tens of kilobytes, and photoTimeout how long it's waited
+	// for
+	photoSize    = 512
+	maxPhotoSize = 1 << 20
+	photoTimeout = 30 * time.Second
 )
+
+// rePhotoSize matches the size at the end of a photo's link, such as =s100
+var rePhotoSize = regexp.MustCompile(`=s\d+(-[a-z]+)?$`)
 
 // peopleEndpoint is the endpoint of the People API, which is Google's,
 // unless a test sets another. It isn't a parameter, as a volume's URL could
@@ -255,7 +269,7 @@ func (self *ContactFiler) ListObjects(ctx context.Context, req schema.ListObject
 			return nil, self.apiError("list", "/", err)
 		}
 		for i := range people {
-			if object, _ := self.contactObject(&people[i]); object != nil && object.Path > req.StartAfter {
+			if object, _ := self.contactObject(ctx, &people[i], false); object != nil && object.Path > req.StartAfter {
 				objects = append(objects, object)
 			}
 		}
@@ -382,7 +396,7 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 		// as it isn't listed, or watched
 		return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	}
-	object, content := self.contactObject(person)
+	object, content := self.contactObject(ctx, person, op == "read")
 	if object == nil {
 		return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	}
@@ -405,21 +419,33 @@ func (self *ContactFiler) snapshot(ctx context.Context) (map[string]string, erro
 }
 
 // contactObject returns a contact, which is a file, of its vCard, with its
-// metadata, and its content, or nil when it's deleted, or its id isn't one
-func (self *ContactFiler) contactObject(person *httpclient.Person) (*schema.Object, []byte) {
+// metadata, and, when it's read, its content, and its size, whose photo is
+// got, and embedded, so it isn't a link, which it is when it can't be got.
+// It has no size when it isn't read, as its photo isn't got for a listing.
+// Returns nil when it's deleted, or its id isn't one.
+func (self *ContactFiler) contactObject(ctx context.Context, person *httpclient.Person, read bool) (*schema.Object, []byte) {
 	id := contactId(person)
 	if person.Metadata.Deleted || !googleId(id) {
 		return nil, nil
 	}
 	card := contactCard(id, person)
-	content, err := card.MarshalText()
-	if err != nil {
-		return nil, nil
-	}
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: self.name, Path: "/" + id + contactExt},
 		ObjectMeta: schema.ObjectMeta{ContentType: vcard.ContentType},
-		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: card.Rev},
+		ObjectAttr: schema.ObjectAttr{ModTime: card.Rev},
+	}
+	var content []byte
+	if read {
+		if card.Photo != nil {
+			if photo := self.photo(ctx, card.Photo.URI); photo != nil {
+				card.Photo = photo
+			}
+		}
+		var err error
+		if content, err = card.MarshalText(); err != nil {
+			return nil, nil
+		}
+		object.Size = types.Ptr(int64(len(content)))
 	}
 	if person.ETag != "" {
 		object.ETag = types.Ptr(person.ETag)
@@ -590,6 +616,34 @@ func primaryFirst[T any](in []T, primary func(T) bool) []T {
 		}
 	})
 	return result
+}
+
+// photo returns a contact's photo, of its link, at photoSize, which is got
+// without the sign-in's token, which isn't needed, nor of the quota, as it
+// isn't the API's, or nil when it can't be got, which isn't an error, so
+// the contact is read with its link
+func (self *ContactFiler) photo(ctx context.Context, link string) *vcard.Photo {
+	ctx, cancel := context.WithTimeout(ctx, photoTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rePhotoSize.ReplaceAllString(link, fmt.Sprintf("=s%d", photoSize)), nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Accept", "image/*")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if resp.StatusCode != http.StatusOK || err != nil || !strings.HasPrefix(mediaType, "image/") {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPhotoSize+1))
+	if err != nil || len(data) == 0 || len(data) > maxPhotoSize {
+		return nil
+	}
+	return &vcard.Photo{MediaType: mediaType, Data: data}
 }
 
 // objectList is an iterator of objects
