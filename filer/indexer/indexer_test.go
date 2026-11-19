@@ -136,6 +136,11 @@ func (c *counting) WatchesLive() bool {
 	return ok && l.WatchesLive()
 }
 
+func (c *counting) CompleteListing() bool {
+	l, ok := c.Filer.(interface{ CompleteListing() bool })
+	return ok && l.CompleteListing()
+}
+
 // unwatchedCounting is a backend which can't be watched, which counts its
 // calls to GetObject
 type unwatchedCounting struct {
@@ -147,6 +152,14 @@ func (u *unwatchedCounting) WatchObjects(context.Context, chan<- schema.Event) e
 }
 
 func (u *unwatchedCounting) WatchesLive() bool { return false }
+
+// incompleteCounting is a backend whose listing isn't complete, which counts
+// its calls to GetObject
+type incompleteCounting struct {
+	counting
+}
+
+func (i *incompleteCounting) CompleteListing() bool { return false }
 
 // gets returns how many times a file is got from the backend, of a call to
 // GetObject of the indexer, and the file
@@ -635,6 +648,15 @@ func Test_GetFile(t *testing.T) {
 	run(t, folders)
 	n, _ = gets(t, folders, c, x)
 	assert.Equal(t, int32(1), n)
+
+	// As does one whose listing isn't complete, as a bucket's isn't
+	incomplete := &incompleteCounting{counting{Filer: backend}}
+	bucket, err := indexer.New("media", incomplete, newStore(t), indexer.WithMode(indexer.ModeObjects))
+	require.NoError(t, err)
+	run(t, bucket)
+	time.Sleep(100 * time.Millisecond)
+	n, _ = gets(t, bucket, &incomplete.counting, x)
+	assert.Equal(t, int32(1), n, "a listing which isn't complete is the backend's")
 }
 
 func Test_GetFileUnwatched(t *testing.T) {

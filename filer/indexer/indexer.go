@@ -199,7 +199,8 @@ func (self *Indexer) WatchObjects(ctx context.Context, ch chan<- schema.Event) e
 
 // GetObject returns an object: a folder, of the index, once it's ready, when
 // the path is a folder's, which ends with "/", or is the root, and a file,
-// of the index, when its files are indexed, and it's up to date, and
+// of the index, when its files are indexed, of a backend whose listing is
+// complete (CompleteListing), and it's up to date, and
 // otherwise the backend's, which resolves a path without one, which can be
 // a file, and a folder, of a bucket. A request which is conditional is the
 // backend's.
@@ -217,7 +218,10 @@ func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest)
 			}
 		}
 		return self.Filer.GetObject(ctx, req)
-	case self.mode != ModeObjects:
+	case self.mode != ModeObjects || !completeListing(self.Filer):
+		// A file is the backend's, unless files are indexed, and its
+		// listing, which the index is of, is as complete as the backend's,
+		// which a bucket's isn't, as it hasn't the metadata
 		return self.Filer.GetObject(ctx, req)
 	}
 	return self.getFile(ctx, req)
@@ -708,6 +712,13 @@ func (self *Indexer) all(ctx context.Context, req store.ListRequest) ([]*schema.
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
+
+// completeListing returns true when a backend's listing has its files as
+// GetObject returns them, so the index, of its listings, is
+func completeListing(backend gofiler.Filer) bool {
+	c, ok := backend.(interface{ CompleteListing() bool })
+	return ok && c.CompleteListing()
+}
 
 // sameObject returns true when two versions of a file are the same, of their
 // entity tags, when they both have one, and otherwise of their sizes, and

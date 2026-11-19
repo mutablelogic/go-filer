@@ -33,6 +33,12 @@ type pathFS interface {
 // running is sent its rescan at once. Each is sent each change, and one
 // which falls behind is sent a rescan of the directory, rather than holding
 // up the others.
+// CompleteListing returns true, as a listing's files are as GetObject
+// returns them, with their types and metadata
+func (self *FS) CompleteListing() bool {
+	return true
+}
+
 // WatchesLive returns true when the filesystem's changes are sent as they
 // happen, which they are of a directory, when its platform can be watched
 func (self *FS) WatchesLive() bool {
