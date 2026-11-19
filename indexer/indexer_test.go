@@ -1,12 +1,14 @@
 package indexer_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	iofs "io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,7 +57,7 @@ func run(t *testing.T, i *indexer.Indexer) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- i.Run(ctx) }()
+	go func() { done <- i.Run(ctx, nil) }()
 	t.Cleanup(func() {
 		cancel()
 		assert.NoError(t, <-done)
@@ -423,7 +425,7 @@ func Test_ObjectsToFolders(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- i.Run(ctx) }()
+	go func() { done <- i.Run(ctx, nil) }()
 	files(t, s, "/a/y.txt", "/x.txt")
 	require.Eventually(t, func() bool {
 		state, err := s.State(context.Background(), "media")
@@ -959,7 +961,7 @@ func Test_ScanPages(t *testing.T) {
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- i.Run(ctx) }()
+		go func() { done <- i.Run(ctx, nil) }()
 		return cancel, done
 	}
 
@@ -1101,7 +1103,7 @@ func Test_CatchUpChanges(t *testing.T) {
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- i.Run(ctx) }()
+		go func() { done <- i.Run(ctx, nil) }()
 		return i, func() {
 			cancel()
 			require.NoError(t, <-done)
@@ -1170,6 +1172,7 @@ type sizer struct {
 	mu    sync.Mutex
 	calls map[string]int
 	fail  map[string]bool
+	bad   map[string]bool // The files which can't be read, as they aren't valid
 	gone  map[string]bool // The files which are gone, once they're read
 }
 
@@ -1179,9 +1182,11 @@ func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataSto
 		z.calls = make(map[string]int)
 	}
 	z.calls[object.Path]++
-	fail, gone := z.fail[object.Path], z.gone[object.Path]
+	fail, bad, gone := z.fail[object.Path], z.bad[object.Path], z.gone[object.Path]
 	z.mu.Unlock()
-	if fail {
+	if bad {
+		return gofiler.ErrBadParameter.With("not a valid file")
+	} else if fail {
 		return errors.New("it can't be read")
 	} else if gone {
 		return &iofs.PathError{Op: "read", Path: object.Path, Err: iofs.ErrNotExist}
@@ -1255,6 +1260,55 @@ func Test_MetadataTask(t *testing.T) {
 	assert.Zero(t, objects.count("/x.txt"), "of index=objects")
 }
 
+// syncBuffer is a buffer which is written from more than one goroutine
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func Test_MetadataTaskUnreadable(t *testing.T) {
+	backend, _ := newBackend(t)
+	z := &sizer{bad: map[string]bool{"/a/y.txt": true}}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	var logs syncBuffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- i.Run(ctx, slog.New(slog.NewTextHandler(&logs, nil))) }()
+	defer func() {
+		cancel()
+		require.NoError(t, <-done)
+	}()
+
+	// A file which can't be read is given up at once, rather than tried
+	// again, and is failed, with why, which is logged, of its volume
+	require.Eventually(t, func() bool {
+		state, err := i.Metadata(context.Background())
+		return err == nil && state != nil && state.Queued == 0 && state.Failed == 1
+	}, 10*time.Second, 5*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, z.count("/a/y.txt"), "it isn't tried again")
+	state, err := i.Metadata(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, state.Error, "not a valid file")
+	assert.Contains(t, logs.String(), "level=WARN")
+	assert.Contains(t, logs.String(), "volume=media")
+	assert.Contains(t, logs.String(), "key=/a/y.txt")
+	assert.Contains(t, logs.String(), "not a valid file")
+}
+
 func Test_MetadataTaskUpgrade(t *testing.T) {
 	backend, _ := newBackend(t)
 	s := newStore(t)
@@ -1263,7 +1317,7 @@ func Test_MetadataTaskUpgrade(t *testing.T) {
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- i.Run(ctx) }()
+		go func() { done <- i.Run(ctx, nil) }()
 		return func() {
 			cancel()
 			require.NoError(t, <-done)
@@ -1297,7 +1351,7 @@ func Test_MetadataTaskUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- i.Run(ctx) }()
+	go func() { done <- i.Run(ctx, nil) }()
 	defer func() {
 		cancel()
 		require.NoError(t, <-done)
@@ -1330,7 +1384,7 @@ func Test_MetadataTaskDowngrade(t *testing.T) {
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- i.Run(ctx) }()
+		go func() { done <- i.Run(ctx, nil) }()
 		return func() {
 			cancel()
 			require.NoError(t, <-done)
@@ -1491,7 +1545,7 @@ func Test_RunStuckWatcher(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- i.Run(ctx) }()
+	go func() { done <- i.Run(ctx, nil) }()
 
 	// A watcher which doesn't read its changes, but isn't cancelled
 	stuck := make(chan schema.Event)

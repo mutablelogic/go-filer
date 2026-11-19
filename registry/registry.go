@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"runtime"
@@ -51,6 +52,10 @@ type Registry struct {
 	// failed is why the volumes which are enabled can't be mounted, by their
 	// names, which is read and set with the registry locked
 	failed map[string]error
+
+	// logger is the logger which Run is given, which the indexers of
+	// volumes are run with, or nil before it runs
+	logger atomic.Pointer[slog.Logger]
 
 	// The volumes which Run syncs with the store, and its workers which
 	// sync them
@@ -439,7 +444,7 @@ func (self *Registry) register(e *entry, volume string, b gofiler.Filer) (gofile
 		e.wg.Add(1)
 		go func(ctx context.Context) {
 			defer e.wg.Done()
-			_ = i.Run(ctx)
+			_ = i.Run(ctx, self.logger.Load())
 		}(e.ctx)
 	}
 	self.changedVolumes()
