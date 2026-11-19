@@ -103,7 +103,7 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 * **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata, as `task:title` and `dc:title`, and `folder:children` and `folder:children-count`, whether they have tasks, and how many. The API doesn't count them, so they're read: one request a list, for each 100 tasks.
 * **Tasks** are iCalendar files, `text/calendar; component=VTODO`, named by their ids, such as `/MTA3NjI/Q2xvdWQ.ics`, so a path stays the same when a task is renamed.
 * **Content:** one `VTODO`, which calendar and task apps can import: the task's id as its `UID`, its title, notes, due date, status, completion, parent as `RELATED-TO`, URL, and update time.
-* **Metadata:** `task:title`, `status`, `due`, `completed` and `parent`, and what iCalendar can't have, `task:hidden`, of a completed task cleared from its list, and `task:links`, such as to the email a task was created from.
+* **Metadata:** `dc:identifier`, its id, which is its iCalendar's UID, `task:title`, `url` (its link), `status`, `due`, `completed` and `parent`, and what iCalendar can't have, `task:hidden`, of a completed task cleared from its list, and `task:links`, such as to the email a task was created from.
 * **Writing:** a volume with `readonly=false`, which asks for write access when its user signs in, writes a task as an iCalendar of one `VTODO`:
   * **Creating:** `PUT /LIST/~new.ics` creates a task, beneath its `RELATED-TO`, when it has one, and returns it at its path, of the id Google gives it, as `~` is never in one.
   * **Updating:** `PUT` of a task's path replaces its title, notes, due date and status, clearing those the `VTODO` doesn't have, and moves it, when its `RELATED-TO` changes. Its other fields, such as its links, are kept. Its `UID`, when it has one, must be the task's id, and a task which doesn't exist isn't found, as its id can't be chosen.
@@ -137,7 +137,7 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 
 `google.NewContactFiler` returns a filer of a person's Google Contacts, of the People API, with the same Google sign-in as Google Tasks, which asks for the `contacts.readonly` scope, keeping the scopes it has, so one sign-in can have both:
 
-* **Contacts** are vCard files, `text/vcard`, at the root, named by their ids, such as `/c123.vcf`, with `dc:title` and `contact:name`, of their names.
+* **Contacts** are vCard files, `text/vcard`, at the root, named by their ids, such as `/c123.vcf`, with `dc:title` and `contact:name`, of their names, `dc:identifier`, their ids, which are their vCards' UIDs, and `contact:url`, their links in Google Contacts.
 * **Content:** written with go-metadata's `pkg/vcard`: names, nicknames, emails, phones, URLs, addresses, organisations, titles, birthday, notes, a photo, as a link, but not Google's default one, of initials, and when it was updated, as `REV`. A primary value is preferred.
 * **No birthdays as objects**, only contacts: birthdays are events of the Google Calendar volume.
 * **Options:** `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has, whose description is `Google Contacts for <email>` by default. It's read-only, so far: `readonly=false` isn't implemented.

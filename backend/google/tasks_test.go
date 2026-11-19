@@ -547,7 +547,7 @@ func Test_TaskObjects(t *testing.T) {
 		require.NoError(t, json.Unmarshal(m.Value, &value))
 		meta[m.Namespace+":"+m.Key] = value
 	}
-	assert.Equal(t, map[string]string{"task:title": "Buy  milk\n", "dc:title": "Buy  milk\n", "task:status": "needsAction", "task:due": "2026-11-20"}, meta)
+	assert.Equal(t, map[string]string{"task:title": "Buy  milk\n", "dc:title": "Buy  milk\n", "task:status": "needsAction", "task:due": "2026-11-20", "dc:identifier": "T1", "task:url": "https://tasks.google.com/task/T1"}, meta)
 
 	// Its content, whose size is its file's
 	read, object, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}})

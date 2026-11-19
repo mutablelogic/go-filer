@@ -138,6 +138,8 @@ func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.O
 	if task.Title != "" {
 		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(task.Title))})
 	}
+	object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "identifier", Value: json.RawMessage(quote(task.Id))})
+	object.Meta = appendMeta(object.Meta, "url", task.WebViewLink)
 	object.Meta = appendMeta(object.Meta, "status", task.Status)
 	if task.Due != nil {
 		object.Meta = appendMeta(object.Meta, "due", task.Due.UTC().Format(dateFormat))

@@ -62,6 +62,9 @@ const (
 
 	// contactExt is the extension of a contact's file
 	contactExt = ".vcf"
+
+	// contactURL is the link of a contact, of its id, in Google Contacts
+	contactURL = "https://contacts.google.com/person/"
 )
 
 // peopleEndpoint is the endpoint of the People API, which is Google's,
@@ -421,6 +424,10 @@ func (self *ContactFiler) contactObject(person *httpclient.Person) (*schema.Obje
 	if person.ETag != "" {
 		object.ETag = types.Ptr(person.ETag)
 	}
+	object.Meta = append(object.Meta,
+		schema.Meta{Namespace: DCNamespace, Key: "identifier", Value: json.RawMessage(quote(id))},
+		schema.Meta{Namespace: ContactNamespace, Key: "url", Value: json.RawMessage(quote(contactURL + url.PathEscape(id)))},
+	)
 	if name := card.DisplayName(); name != "" {
 		object.Meta = append(object.Meta,
 			schema.Meta{Namespace: ContactNamespace, Key: "name", Value: json.RawMessage(quote(name))},
