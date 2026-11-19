@@ -80,6 +80,10 @@ func (self *Store) Failed(context.Context, string, store.Work, error, time.Durat
 	return errNotImplemented
 }
 
+func (self *Store) Pending(context.Context, string, string) (bool, error) {
+	return false, errNotImplemented
+}
+
 func (self *Store) Get(context.Context, string, string) (*schema.Object, error) {
 	return nil, errNotImplemented
 }

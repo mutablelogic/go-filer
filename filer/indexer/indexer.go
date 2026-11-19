@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	// Packages
@@ -42,6 +43,11 @@ type Indexer struct {
 	// mu serialises changes to the index, of its worker's work, so a folder
 	// isn't reconciled with two listings at once
 	mu sync.Mutex
+
+	// live is true while the backend's watch sends its changes as they
+	// happen, so the index is up to date, but for the changes which are
+	// queued
+	live atomic.Bool
 
 	// The calls to WatchObjects, which are sent the backend's changes, once
 	// they're indexed, so the backend is watched once
@@ -191,19 +197,61 @@ func (self *Indexer) WatchObjects(ctx context.Context, ch chan<- schema.Event) e
 	}
 }
 
-// GetObject returns an object, which is a folder of the index, once it's
-// ready, when the path is a folder's, which ends with "/", or is the root,
-// or otherwise the backend's, which resolves a path without one, which can
-// be a file, and a folder, of a bucket
+// GetObject returns an object: a folder, of the index, once it's ready, when
+// the path is a folder's, which ends with "/", or is the root, and a file,
+// of the index, when its files are indexed, and it's up to date, and
+// otherwise the backend's, which resolves a path without one, which can be
+// a file, and a folder, of a bucket. A request which is conditional is the
+// backend's.
 func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	conditional := len(req.IfNoneMatch) > 0 || !req.IfModifiedSince.IsZero()
 	isFolder := strings.HasSuffix(req.Path, "/") || folderPath(req.Path) == "/"
-	if isFolder && len(req.IfNoneMatch) == 0 && req.IfModifiedSince.IsZero() && self.ready(ctx) {
-		if object, err := self.store.Get(ctx, self.name, folderPath(req.Path)); err == nil && object.IsDir {
-			object.Name = self.name
-			return object, nil
+	switch {
+	case conditional:
+		return self.Filer.GetObject(ctx, req)
+	case isFolder:
+		if self.ready(ctx) {
+			if object, err := self.store.Get(ctx, self.name, folderPath(req.Path)); err == nil && object.IsDir {
+				object.Name = self.name
+				return object, nil
+			}
 		}
+		return self.Filer.GetObject(ctx, req)
+	case self.mode != ModeObjects:
+		return self.Filer.GetObject(ctx, req)
 	}
-	return self.Filer.GetObject(ctx, req)
+	return self.getFile(ctx, req)
+}
+
+// getFile returns a file, of the index, when it's there, and up to date,
+// which it is when the backend is watched live, and it has no work queued,
+// or, when it isn't watched live, the backend's is the same. Otherwise it's
+// the backend's, and a file which isn't the index's is queued to be indexed.
+func (self *Indexer) getFile(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	indexed, err := self.store.Get(ctx, self.name, req.Path)
+	if err != nil || indexed.IsDir {
+		return self.Filer.GetObject(ctx, req)
+	}
+	pending, err := self.store.Pending(ctx, self.name, req.Path)
+	if err != nil || pending {
+		return self.Filer.GetObject(ctx, req)
+	}
+	indexed.Name = self.name
+	if self.live.Load() {
+		return indexed, nil
+	}
+
+	// It isn't watched live, so the backend's is compared with it
+	object, err := self.Filer.GetObject(ctx, req)
+	if err != nil {
+		return nil, err
+	} else if sameObject(indexed, object) {
+		return indexed, nil
+	}
+	if err := self.queue.index(ctx, req.Path); err != nil {
+		self.failed(ctx, err)
+	}
+	return object, nil
 }
 
 // ListFolders lists the folders of a folder, or every folder beneath it,
@@ -633,6 +681,17 @@ func (self *Indexer) all(ctx context.Context, req store.ListRequest) ([]*schema.
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
+
+// sameObject returns true when two versions of a file are the same, of their
+// entity tags, when they both have one, and otherwise of their sizes, and
+// when they were modified
+func sameObject(a, b *schema.Object) bool {
+	if a.ETag != nil && b.ETag != nil {
+		return *a.ETag == *b.ETag
+	}
+	sameSize := (a.Size == nil) == (b.Size == nil) && (a.Size == nil || *a.Size == *b.Size)
+	return sameSize && a.ModTime.Equal(b.ModTime)
+}
 
 // folderPath returns the path of a folder, without a "/" after it, unless
 // it's the root

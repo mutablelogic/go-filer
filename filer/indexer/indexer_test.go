@@ -117,6 +117,45 @@ func (u *unwatched) WatchObjects(ctx context.Context, ch chan<- schema.Event) er
 	return u.Filer.WatchObjects(ctx, ch)
 }
 
+// counting is a backend which counts its calls to GetObject, whose watch is
+// live when the backend's is
+type counting struct {
+	gofiler.Filer
+	gets atomic.Int32
+}
+
+func (c *counting) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	c.gets.Add(1)
+	return c.Filer.GetObject(ctx, req)
+}
+
+func (c *counting) WatchesLive() bool {
+	l, ok := c.Filer.(interface{ WatchesLive() bool })
+	return ok && l.WatchesLive()
+}
+
+// unwatchedCounting is a backend which can't be watched, which counts its
+// calls to GetObject
+type unwatchedCounting struct {
+	counting
+}
+
+func (u *unwatchedCounting) WatchObjects(context.Context, chan<- schema.Event) error {
+	return gofiler.ErrNotImplemented.With("it can't be watched")
+}
+
+func (u *unwatchedCounting) WatchesLive() bool { return false }
+
+// gets returns how many times a file is got from the backend, of a call to
+// GetObject of the indexer, and the file
+func gets(t *testing.T, i *indexer.Indexer, c *counting, req schema.GetObjectRequest) (int32, *schema.Object) {
+	t.Helper()
+	before := c.gets.Load()
+	object, err := i.GetObject(context.Background(), req)
+	require.NoError(t, err)
+	return c.gets.Load() - before, object
+}
+
 // bursty is a backend whose watch sends a burst of rescans of the root, and
 // which counts the recursive listings of it, which are scans
 type bursty struct {
@@ -423,6 +462,72 @@ func Test_ObjectsToFolders(t *testing.T) {
 	after, err := s.State(context.Background(), "media")
 	require.NoError(t, err)
 	assert.Zero(t, after.Files)
+}
+
+func Test_GetFile(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+	c := &counting{Filer: backend}
+	s := newStore(t)
+	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
+
+	// A file of a volume which is watched live is the index's, without the
+	// backend, with its volume's name
+	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects))
+	require.NoError(t, err)
+	run(t, i)
+	files(t, s, "/a/y.txt", "/x.txt")
+	time.Sleep(100 * time.Millisecond)
+	n, object := gets(t, i, c, x)
+	assert.Zero(t, n, "it's the index's")
+	assert.Equal(t, "media", object.Name)
+	assert.Equal(t, int64(len("x.txt")), *object.Size)
+
+	// But not a file which isn't indexed, a request which is conditional, or
+	// a file which has work queued, which would change it
+	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
+	assert.Zero(t, n, "a folder is the index's")
+	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: x.ObjectKey, IfModifiedSince: time.Unix(1, 0)})
+	assert.Equal(t, int32(1), n, "a conditional request is the backend's")
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Path: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	n, _ = gets(t, i, c, x)
+	assert.Equal(t, int32(1), n, "a file with work queued is the backend's")
+
+	// A volume whose files aren't indexed gets them from the backend
+	folders, err := indexer.New("media", c, newStore(t))
+	require.NoError(t, err)
+	run(t, folders)
+	n, _ = gets(t, folders, c, x)
+	assert.Equal(t, int32(1), n)
+}
+
+func Test_GetFileUnwatched(t *testing.T) {
+	backend, dir := newBackend(t)
+	c := &unwatchedCounting{counting{Filer: backend}}
+	s := newStore(t)
+	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
+
+	// A file of a volume which isn't watched live is compared with the
+	// backend's, and is the index's, when it's the same
+	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	run(t, i)
+	files(t, s, "/a/y.txt", "/x.txt")
+	n, object := gets(t, i, &c.counting, x)
+	assert.Equal(t, int32(1), n, "it's compared")
+	assert.Equal(t, int64(len("x.txt")), *object.Size)
+
+	// One which changed, which isn't known, is the backend's, and is indexed
+	// again
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("longer"), 0o644))
+	_, object = gets(t, i, &c.counting, x)
+	assert.Equal(t, int64(len("longer")), *object.Size, "it's the backend's")
+	require.Eventually(t, func() bool {
+		file, err := s.Get(context.Background(), "media", "/x.txt")
+		return err == nil && *file.Size == int64(len("longer"))
+	}, 10*time.Second, 10*time.Millisecond, "it's indexed again")
 }
 
 func Test_Poll(t *testing.T) {

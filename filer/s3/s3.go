@@ -196,6 +196,13 @@ func (self *S3) Readonly() bool {
 // option, and otherwise it's ErrNotImplemented, as a bucket of S3 needs its
 // event notifications, and a queue. The first change is a rescan of the
 // root, once the objects are watched.
+// WatchesLive returns true when the bucket's changes are sent as they
+// happen, which they are of a SeaweedFS filer's metadata, with the
+// seaweedfs-filer-grpc option
+func (self *S3) WatchesLive() bool {
+	return self.watcher != nil
+}
+
 func (self *S3) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	if self.watcher == nil {
 		return gofiler.ErrNotImplemented.With("a bucket can't be watched, without the seaweedfs-filer-grpc option")

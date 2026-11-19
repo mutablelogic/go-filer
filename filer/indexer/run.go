@@ -67,11 +67,23 @@ func (self *Indexer) watch(ctx context.Context) error {
 	go func() {
 		done <- self.Filer.WatchObjects(ctx, events)
 	}()
+
+	// It's watching live once a backend whose changes are sent as they happen
+	// sends its first, until its watch ends, so the index is up to date,
+	// but for the changes which are queued
+	defer self.live.Store(false)
+	live := false
+	if l, ok := self.Filer.(interface{ WatchesLive() bool }); ok {
+		live = l.WatchesLive()
+	}
 	for {
 		select {
 		case err := <-done:
 			return err
 		case event := <-events:
+			if live {
+				self.live.Store(true)
+			}
 			// The change is queued, which is quick, and then sent to the
 			// watchers, who aren't held up by indexing it, which is done in
 			// the background, and a watcher which doesn't read its changes

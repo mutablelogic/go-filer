@@ -33,6 +33,13 @@ type pathFS interface {
 // running is sent its rescan at once. Each is sent each change, and one
 // which falls behind is sent a rescan of the directory, rather than holding
 // up the others.
+// WatchesLive returns true when the filesystem's changes are sent as they
+// happen, which they are of a directory, when its platform can be watched
+func (self *FS) WatchesLive() bool {
+	fsys, ok := self.fs.(pathFS)
+	return ok && fsys.Path() != "" && fsevents.Supported()
+}
+
 func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	if err := self.checkRequest(ctx); err != nil {
 		return err
