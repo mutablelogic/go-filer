@@ -163,7 +163,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **Indexing:** the `index` option sets what's indexed.
   * `index=none`, or no option, indexes nothing; `index=folders` indexes folders; `index=objects` indexes files too, with their size, modified time, type, entity tag and the backend's metadata.
   * Folders are listed from the index.
-  * With `index=objects`, `GetObject` of a file comes from the index when the backend's listing is complete (a directory's is; a bucket's lacks the metadata), no work is queued for the file, and it isn't a link. Otherwise it comes from the backend.
+  * With `index=objects`, `GetObject` of a file comes from the index when the backend's listing is complete (a directory's is; a bucket's lacks the metadata), and no work is queued for the file. Otherwise it comes from the backend.
   * The index follows a backend's changes when it can be watched, and otherwise rescans it at an interval.
   * Files aren't listed from the index yet.
   * Lowering it to `folders` removes the files from the index after the next scan.
@@ -178,7 +178,9 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 - A directory exists when an object exists beneath it. Directories have no size or modification time, and their content type is `inode/directory`.
 - The key of a file is its path, and the key of a directory is its path followed by `/`. Listings are in the byte order of keys, as in S3.
 - Empty parent directories are removed by the filesystem backend when an object is deleted, as an S3 prefix with no objects beneath it does not exist.
-- Files which are not regular files, such as sockets, named pipes and devices, are not objects, nor are symbolic links which are broken, or lead outside the volume.
+- Files which are not regular files, such as sockets, named pipes and devices, are not objects.
+- Symbolic links are not objects, as S3 has none, nor are files beneath a linked directory. An object can't be created over a link or beneath one. Deleting a directory deletes the links in it, not what they lead to.
+- There are no renames, as in S3. A file renamed on disk is a delete and a create.
 - Files and directories whose names are skipped (see `skip`) are not objects, and can't be created.
 - A package, such as a macOS sparse disk image, is a directory which is an object, as Finder shows it as one file. It has a modification time, and the content type of its extension, but no size, and can't be read. The files in it are not objects, and are deleted with it.
 - Paths which aren't valid `fs.FS` paths, with `//`, `.` or `..` elements, or a trailing `/`, are `fs.ErrInvalid`.

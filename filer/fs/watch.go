@@ -2,7 +2,6 @@ package fs
 
 import (
 	"context"
-	iofs "io/fs"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -25,14 +24,6 @@ type pathFS interface {
 // returns them, with their types and metadata
 func (self *FS) CompleteListing() bool {
 	return true
-}
-
-// IsLink returns true when the object at the path is a symbolic link, or
-// can't be checked, as a change to a link's target is sent for the target,
-// not the link, so the link's object isn't known to be up to date
-func (self *FS) IsLink(path string) bool {
-	info, err := iofs.Lstat(self.fs, fsPath(path))
-	return err != nil || info.Mode()&iofs.ModeSymlink != 0
 }
 
 // WatchObjects sends each change to the objects in the filesystem to the
@@ -74,8 +65,8 @@ func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error 
 // when the file isn't listed. The changes to files are the changes to
 // objects, with the same values (see Test_eventTypes). A change within a package is an update to the
 // package, which is a file. A file which is created or updated must be one
-// which is listed, so not a socket, or a link which is broken or leads out of
-// the filesystem, but a deleted file can't be checked, so only its name is.
+// which is listed, so not a socket, or a link, or beneath one, but a deleted
+// file can't be checked, so only its name is.
 func (self *FS) event(event fsevents.Event) (schema.Event, bool) {
 	name, eventType := event.Path, schema.EventType(event.Op)
 	if pkg, ok := self.packageOf(name); ok {

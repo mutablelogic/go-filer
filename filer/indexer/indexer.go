@@ -223,8 +223,7 @@ func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest)
 
 // getFile returns a file, of the index, when it's there, and has no work
 // queued, as the backend's changes, which are watched, or polled, are
-// indexed. Otherwise it's the backend's, as is a file which is a link, as
-// a change to its target is the target's, not the link's.
+// indexed. Otherwise it's the backend's.
 func (self *Indexer) getFile(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
 	// Work which is pending is checked first, so work which is done between
 	// the two isn't missed, as it's done before the index is read
@@ -234,9 +233,6 @@ func (self *Indexer) getFile(ctx context.Context, req schema.GetObjectRequest) (
 	}
 	indexed, err := self.store.Get(ctx, self.name, req.Path)
 	if err != nil || indexed.IsDir {
-		return self.Filer.GetObject(ctx, req)
-	}
-	if l, ok := self.Filer.(interface{ IsLink(path string) bool }); ok && l.IsLink(req.Path) {
 		return self.Filer.GetObject(ctx, req)
 	}
 	indexed.Name = self.name

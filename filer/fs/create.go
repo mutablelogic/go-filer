@@ -59,6 +59,8 @@ func (self *FS) CreateObject(ctx context.Context, req schema.CreateObjectRequest
 		return nil, filer.ErrUnprocessableContent.Withf("%q is skipped, as its name isn't stored", req.Path)
 	} else if self.inPackage(name) {
 		return nil, filer.ErrUnprocessableContent.Withf("%q is in a package, whose files aren't listed", req.Path)
+	} else if link := self.link(name); link != "" {
+		return nil, filer.ErrConflict.Withf("%q is a symbolic link, which isn't an object", objectPath(link))
 	}
 
 	// Check for an existing directory or object at the path, which fails

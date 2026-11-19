@@ -182,23 +182,6 @@ func Test_WatchObjectsClosed(t *testing.T) {
 	assert.ErrorIs(t, self.WatchObjects(context.Background(), make(chan schema.Event)), fs.ErrClosed)
 }
 
-func Test_IsLink(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
-	if err := os.Symlink("a.txt", filepath.Join(dir, "b.txt")); err != nil {
-		t.Skipf("can't create a link: %v", err)
-	}
-	self, err := New("test", dir, nil, filer.Opts{})
-	require.NoError(t, err)
-	defer self.Close()
-
-	// A link is a link, and a file isn't, and one which can't be checked is,
-	// so it isn't taken to be watched
-	assert.False(t, self.IsLink("/a.txt"))
-	assert.True(t, self.IsLink("/b.txt"))
-	assert.True(t, self.IsLink("/missing.txt"))
-}
-
 // Test_eventTypes checks the changes to files have the values of the changes
 // to objects, as they're cast from one to the other
 func Test_eventTypes(t *testing.T) {

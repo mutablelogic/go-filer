@@ -131,11 +131,6 @@ func (c *counting) GetObject(ctx context.Context, req schema.GetObjectRequest) (
 	return c.Filer.GetObject(ctx, req)
 }
 
-func (c *counting) IsLink(path string) bool {
-	l, ok := c.Filer.(interface{ IsLink(string) bool })
-	return ok && l.IsLink(path)
-}
-
 func (c *counting) CompleteListing() bool {
 	l, ok := c.Filer.(interface{ CompleteListing() bool })
 	return ok && l.CompleteListing()
@@ -617,10 +612,7 @@ func Test_GetFile(t *testing.T) {
 	if !fsevents.Supported() {
 		t.Skip(fsevents.ErrNotSupported)
 	}
-	backend, dir := newBackend(t)
-	if err := os.Symlink("x.txt", filepath.Join(dir, "link.txt")); err != nil {
-		t.Skipf("can't create a link: %v", err)
-	}
+	backend, _ := newBackend(t)
 	c := &counting{Filer: backend}
 	s := newStore(t)
 	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
@@ -630,7 +622,7 @@ func Test_GetFile(t *testing.T) {
 	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects))
 	require.NoError(t, err)
 	run(t, i)
-	files(t, s, "/a/y.txt", "/link.txt", "/x.txt")
+	files(t, s, "/a/y.txt", "/x.txt")
 	time.Sleep(100 * time.Millisecond)
 	n, object := gets(t, i, c, x)
 	assert.Zero(t, n, "it's the index's")
@@ -643,8 +635,6 @@ func Test_GetFile(t *testing.T) {
 	assert.Zero(t, n, "a folder is the index's")
 	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: x.ObjectKey, IfModifiedSince: time.Unix(1, 0)})
 	assert.Equal(t, int32(1), n, "a conditional request is the backend's")
-	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/link.txt"}})
-	assert.Equal(t, int32(1), n, "a link is the backend's, as its target's changes aren't its")
 	require.NoError(t, s.Push(context.Background(), "media", store.Work{Path: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
 	n, _ = gets(t, i, c, x)
 	assert.Equal(t, int32(1), n, "a file with work queued is the backend's")
@@ -730,12 +720,12 @@ func Test_Symlink(t *testing.T) {
 	backend, dir := newBackend(t)
 	require.NoError(t, os.Symlink(".", filepath.Join(dir, "a", "loop")))
 
-	// A link to a directory, which the backend lists, but doesn't descend
-	// into, as it could loop, is a folder, which isn't descended into
+	// A link to a directory isn't an object, as a bucket has no links, so
+	// it isn't a folder, and isn't descended into
 	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithRescanInterval(time.Hour))
 	require.NoError(t, err)
 	run(t, i)
-	assert.Equal(t, []string{"/a", "/a/b", "/a/loop", "/c"}, folders(t, i, "/", true))
+	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
 }
 
 func Test_DeleteParents(t *testing.T) {

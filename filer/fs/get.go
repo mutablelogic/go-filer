@@ -51,8 +51,7 @@ func (self *FS) GetObject(ctx context.Context, req schema.GetObjectRequest) (_ *
 
 // children returns how many objects a directory lists: its files, its
 // directories, and its packages, but not the names it skips, nor what isn't
-// an object, such as a socket. A symbolic link is counted, as it's checked
-// once it's resolved, when it's listed.
+// an object, such as a socket, or a symbolic link.
 func (self *FS) children(name string) (int, error) {
 	entries, err := fs.ReadDir(self.fs, name)
 	if err != nil {
@@ -60,7 +59,7 @@ func (self *FS) children(name string) (int, error) {
 	}
 	count := 0
 	for _, entry := range entries {
-		if self.skip(entry.Name()) || (entry.Type()&fs.ModeSymlink == 0 && !isObject(entry.Type())) {
+		if self.skip(entry.Name()) || !isObject(entry.Type()) {
 			continue
 		}
 		count++
