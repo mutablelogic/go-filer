@@ -1,14 +1,12 @@
 // Package sqlite is a store of volumes, and their indexes, in a SQLite
-// database, which is created when it doesn't exist. It has volumes, and the
-// state of their indexes, but not their objects yet (#71), whose methods
-// return ErrNotImplemented.
+// database, which is created when it doesn't exist, or in memory, of
+// sqlite.Memory, such as for tests
 package sqlite
 
 import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -28,10 +26,8 @@ import (
 
 // Store is a store of volumes, and their indexes, in a SQLite database
 type Store struct {
-	pool    sqlite.PoolConn
-	conn    sqlite.Conn     // The pool's connection, with the schema's queries
-	queries *sqlite.Queries // The schema's queries, of their keys
-	opts    store.Opts
+	conn sqlite.PoolConn // The pool's connection, with the schema's queries
+	opts store.Opts
 }
 
 var _ store.Store = (*Store)(nil)
@@ -74,12 +70,12 @@ func New(ctx context.Context, path string, opts ...store.Opt) (_ *Store, err err
 	} else if err := schema.Create(ctx, pool); err != nil {
 		return nil, errors.Join(storeErr(err), pool.Close())
 	}
-	return &Store{pool: pool, conn: pool.WithQueries(queries), queries: queries, opts: o}, nil
+	return &Store{conn: pool.WithQueries(queries).(sqlite.PoolConn), opts: o}, nil
 }
 
 // Close closes the database
 func (self *Store) Close() error {
-	return self.pool.Close()
+	return self.conn.Close()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -101,9 +97,7 @@ func (self *Store) PutVolume(ctx context.Context, volume filer.VolumeMeta) (_ *f
 		if err := conn.Get(ctx, &existing, schema.VolumeName(volume.Name)); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
 			return err
 		}
-		if err := conn.With(
-			sqlite.TraceSpanNameArg, "volume.put", "name", volume.Name, "url", volume.URL, "enabled", volume.Enabled, "now", time.Now().UTC(),
-		).Exec(ctx, self.queries.Query("volume.put")); err != nil {
+		if err := conn.Insert(ctx, nil, schema.VolumePut(volume)); err != nil {
 			return err
 		}
 		return conn.Get(ctx, &result, schema.VolumeName(volume.Name))
@@ -182,26 +176,60 @@ func (self *Store) SetState(ctx context.Context, volume string, state filer.Inde
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - OBJECTS
 
-// Get isn't implemented yet (#71): the store has volumes, without their
-// objects
-func (self *Store) Get(context.Context, string, string) (*filer.Object, error) {
-	return nil, errNotImplemented
+// Get returns the object of the volume at the path, with its metadata, or
+// ErrNotFound
+func (self *Store) Get(ctx context.Context, volume, path string) (_ *filer.Object, err error) {
+	ctx, end := self.span(ctx, "Get", attribute.String("arg.volume", volume), attribute.String("arg.path", path))
+	defer func() { end(err) }()
+	var result schema.ObjectList
+	if err := self.conn.Get(ctx, &result, schema.ObjectKey{Volume: volume, Path: path}); errors.Is(err, sqlite.ErrNotFound) {
+		return nil, gofiler.ErrNotFound.Withf("%q isn't indexed in volume %q", path, volume)
+	} else if err != nil {
+		return nil, storeErr(err)
+	}
+	return result[0], nil
 }
 
-func (self *Store) Put(context.Context, string, ...*filer.Object) error {
-	return errNotImplemented
+// Put stores the objects of the volume, replacing those at their paths, and
+// their metadata, in one transaction, or returns ErrNotFound when the
+// volume isn't stored
+func (self *Store) Put(ctx context.Context, volume string, objects ...*filer.Object) (err error) {
+	ctx, end := self.span(ctx, "Put", attribute.String("arg.volume", volume), attribute.Int("arg.objects", len(objects)))
+	defer func() { end(err) }()
+	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
+		var exists schema.VolumeList
+		if err := conn.Get(ctx, &exists, schema.VolumeName(volume)); err != nil {
+			return volumeErr(err, volume)
+		}
+		for _, object := range objects {
+			if err := conn.Insert(ctx, nil, schema.ObjectPut{Volume: volume, Object: object}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
 }
 
-func (self *Store) Delete(context.Context, string, string) error {
-	return errNotImplemented
+// Delete removes the object of the volume at the path, and every object
+// beneath it, with their metadata, which isn't an error when there's none
+func (self *Store) Delete(ctx context.Context, volume, path string) (err error) {
+	ctx, end := self.span(ctx, "Delete", attribute.String("arg.volume", volume), attribute.String("arg.path", path))
+	defer func() { end(err) }()
+	return storeErr(self.conn.Delete(ctx, nil, schema.ObjectKey{Volume: volume, Path: path}))
 }
 
-func (self *Store) List(context.Context, string, store.ListRequest) ([]*filer.Object, error) {
-	return nil, errNotImplemented
+// List returns, in the order of their keys, up to the request's limit of
+// the objects of a folder, or every object beneath it when it's recursive,
+// after the key it starts after, without the folder
+func (self *Store) List(ctx context.Context, volume string, req store.ListRequest) (_ []*filer.Object, err error) {
+	ctx, end := self.span(ctx, "List", attribute.String("arg.volume", volume), attribute.String("arg.req", types.Stringify(req)))
+	defer func() { end(err) }()
+	result := schema.ObjectList{}
+	if err := self.conn.List(ctx, &result, schema.ObjectListRequest{Volume: volume, ListRequest: req}); err != nil {
+		return nil, storeErr(err)
+	}
+	return result, nil
 }
-
-// errNotImplemented is the error of the object methods, until they are
-var errNotImplemented = gofiler.ErrNotImplemented.With("the SQLite store's objects aren't implemented yet")
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS

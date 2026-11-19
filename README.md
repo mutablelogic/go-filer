@@ -18,8 +18,7 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/filer/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 | `github.com/mutablelogic/go-filer/filer/indexer` | A filer which wraps a backend, and keeps an index of its folders in a `Store`, which follows its changes |
 | `github.com/mutablelogic/go-filer/filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
-| `github.com/mutablelogic/go-filer/filer/store/memory` | A store in memory |
-| `github.com/mutablelogic/go-filer/filer/store/sqlite` | A store in a SQLite database: volumes so far, not objects |
+| `github.com/mutablelogic/go-filer/filer/store/sqlite` | A store in a SQLite database, in a file, or in memory |
 | `github.com/mutablelogic/go-filer/filer/store/storetest` | The conformance tests every store runs |
 
 ## Usage
@@ -141,7 +140,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **Writes and deletes** through it update the index as they're made.
 * **Everything else**, such as files, is the backend's. Files are indexed later.
 * **`State`** is the index's status (never indexed, scanning, or ready), how many folders the scan has indexed, when it started and finished, and why it last failed.
-* **Stores:** `store/memory`, and `store/sqlite`, which has volumes but not objects yet. Postgres comes later. Every store passes `store/storetest`.
+* **Stores:** `store/sqlite`, in a file, or in memory with `sqlite.Memory`. Postgres comes later (#72). Every store passes `store/storetest`.
 
 In the registry, `filer.WithIndexerStore(store)` lets volumes be indexed, of their `index` option:
 
@@ -263,7 +262,7 @@ The test workflow vets the packages, and runs the race tests on Linux, macOS and
 `make` builds the `filer` server with the store of its indexes chosen by `INDEXER_BACKEND`, as the build tag `indexer_<backend>`:
 
 * **`sqlite`**, the default, is a SQLite database, `<name>-index.db`, such as `filer-index.db`, in the user's cache folder.
-* **`memory`** keeps them in memory, so volumes are scanned again when the server starts.
+* **`memory`** is a SQLite database in memory, so volumes aren't kept, and are scanned again, when the server starts.
 * **`pg`** is a Postgres database, of go-pg's flags, `--pg.url` and `--pg.password`, or `PG_URL` and `PG_PASSWORD`.
 
-The SQLite and Postgres stores aren't implemented yet (#71, #72), so their volumes' indexes fail with `ErrNotImplemented`, until they are. `make INDEXER_BACKEND=memory` indexes volumes now.
+The Postgres store isn't implemented yet (#72), so its volumes' indexes fail with `ErrNotImplemented`, until it is.

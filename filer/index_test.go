@@ -16,7 +16,7 @@ import (
 	fsevents "github.com/mutablelogic/go-filer/filer/fs/fsevents"
 	indexer "github.com/mutablelogic/go-filer/filer/indexer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
-	memory "github.com/mutablelogic/go-filer/filer/store/memory"
+	store "github.com/mutablelogic/go-filer/filer/store"
 	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
 	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
@@ -25,11 +25,12 @@ import (
 
 // newIndexedRegistry returns a running registry, with an index store, and
 // a directory for its volumes
-func newIndexedRegistry(t *testing.T) (*Registry, *memory.Store, string) {
+func newIndexedRegistry(t *testing.T) (*Registry, *sqlite.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := memory.New()
+	s, err := sqlite.New(context.Background(), gosqlite.Memory)
 	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
 	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(s))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
@@ -212,12 +213,17 @@ func Test_Registry_ListType(t *testing.T) {
 	assert.Equal(t, []string{"/a", "/a/b", "/a/photo.png"}, list("plain", ""))
 
 	// Of folders, of an indexed volume, it's its index's, once it's ready,
-	// which has a folder the backend doesn't, until it's watched
+	// which has a folder the backend doesn't, until it's scanned again, which
+	// the watch's first rescan can do, so it's put until it stays
 	_, err = r.Add(context.Background(), "media", indexedURL(t, dir, "media", "folders"))
 	require.NoError(t, err)
 	ready(t, r, "media")
 	s := r.indexStore
-	require.NoError(t, s.Put(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
+	require.Eventually(t, func() bool {
+		require.NoError(t, s.Put(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
+		time.Sleep(50 * time.Millisecond)
+		return len(list("media", "inode")) == 3
+	}, 10*time.Second, time.Millisecond, "the index keeps a folder the backend doesn't")
 	for _, typ := range []string{"inode", "directory", "inode/directory", "inode/directory; charset=binary"} {
 		assert.Equal(t, []string{"/a", "/a/b", "/only-in-the-index"}, list("media", typ), typ)
 	}
@@ -252,15 +258,23 @@ func Test_Registry_DelCancelledIndex(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }
 
+// failingStore is a store whose objects can't be put
+type failingStore struct {
+	store.Store
+}
+
+func (failingStore) Put(context.Context, string, ...*schema.Object) error {
+	return gofiler.ErrNotImplemented.With("objects can't be put")
+}
+
 func Test_Registry_IndexStoreError(t *testing.T) {
-	// A store which can't index, such as one whose objects aren't
-	// implemented, is why the volume isn't indexed, in its index, while the
-	// volume is stored
+	// A store which can't index, as its objects can't be put, is why the
+	// volume isn't indexed, in its index, while the volume is stored
 	s, err := sqlite.New(context.Background(), gosqlite.Memory)
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(s))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(failingStore{s}))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -268,7 +282,7 @@ func Test_Registry_IndexStoreError(t *testing.T) {
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		v, err := r.Volume("media")
-		return err == nil && v.Index != nil && strings.Contains(v.Index.Error, "implemented")
+		return err == nil && v.Index != nil && strings.Contains(v.Index.Error, "can't be put")
 	}, 10*time.Second, 5*time.Millisecond, "the index has the store's error")
 	v, err := r.Volume("media")
 	require.NoError(t, err)

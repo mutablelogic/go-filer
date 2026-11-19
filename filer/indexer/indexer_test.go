@@ -19,7 +19,8 @@ import (
 	indexer "github.com/mutablelogic/go-filer/filer/indexer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
 	store "github.com/mutablelogic/go-filer/filer/store"
-	memory "github.com/mutablelogic/go-filer/filer/store/memory"
+	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -362,10 +363,11 @@ func Test_RunStuckWatcher(t *testing.T) {
 
 // newStore returns a store in memory, with the volume media, which the
 // registry puts before it indexes a volume
-func newStore(t *testing.T) *memory.Store {
+func newStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := memory.New()
+	s, err := sqlite.New(context.Background(), gosqlite.Memory)
 	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
 	_, err = s.PutVolume(context.Background(), schema.VolumeMeta{Name: "media", URL: "file://media/tmp?index=folders", Enabled: true})
 	require.NoError(t, err)
 	return s
