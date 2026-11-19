@@ -173,3 +173,55 @@ func (list *WorkList) Scan(row sqlite.Row) error {
 	*list = append(*list, work)
 	return nil
 }
+
+// QueueDid is the revision of a file which a task's work was done of
+type QueueDid struct {
+	Volume string
+	Key    string
+	Kind   store.Kind
+	Now    time.Time
+}
+
+// QueueStale is the work of a task of the files beneath a folder, which are
+// stale
+type QueueStale struct {
+	Volume string
+	Folder string
+	Kind   store.Kind
+	Now    time.Time
+}
+
+// Did returns the kind of the rows of the revisions which a task's work is
+// done of, which is its kind, with _done after it
+func Did(kind store.Kind) string {
+	return string(kind) + "_done"
+}
+
+// Insert binds the file, and the kind of its task
+func (did QueueDid) Insert(bind *sqlite.Bind) (string, error) {
+	bind.Set("volume", did.Volume)
+	bind.Set("key", did.Key)
+	bind.Set("did", Did(did.Kind))
+	bind.Set("now", did.Now.UTC())
+	return bind.Query("queue.did"), nil
+}
+
+func (did QueueDid) Update(*sqlite.Bind) error {
+	return sqlite.ErrNotImplemented.With("what a task did is put")
+}
+
+// Insert binds the folder, and the kind of the task
+func (stale QueueStale) Insert(bind *sqlite.Bind) (string, error) {
+	bind.Set("volume", stale.Volume)
+	bind.Set("kind", string(stale.Kind))
+	bind.Set("did", Did(stale.Kind))
+	bind.Set("now", stale.Now.UTC())
+	lower, upper := store.Subtree(stale.Folder)
+	bind.Set("lower", lower)
+	bind.Set("upper", upper)
+	return bind.Query("queue.push_stale"), nil
+}
+
+func (stale QueueStale) Update(*sqlite.Bind) error {
+	return sqlite.ErrNotImplemented.With("stale work is pushed")
+}

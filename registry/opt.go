@@ -9,6 +9,7 @@ import (
 	credential "github.com/mutablelogic/go-auth/credential"
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
+	indexer "github.com/mutablelogic/go-filer/indexer"
 	store "github.com/mutablelogic/go-filer/store"
 	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	metric "go.opentelemetry.io/otel/metric"
@@ -28,6 +29,7 @@ type opt struct {
 	store       store.Store   // where the volumes, and their indexes, are kept, which is required
 	worker      string        // the name of the worker, which is in the metrics
 	debounce    time.Duration // how long a change is held, until its object is quiet
+	metadata    indexer.Task  // the task which enriches the files of volumes with index=metadata, or nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -115,6 +117,19 @@ func WithTracer(tracer trace.Tracer) Opt {
 func WithMeter(meter metric.Meter) Opt {
 	return func(o *opt) error {
 		o.meter = meter
+		return nil
+	}
+}
+
+// WithMetadataTask sets the task which enriches the files of the volumes
+// which are indexed with index=metadata, with their metadata, such as
+// go-metadata's, which each volume's indexer does, apart from indexing it
+func WithMetadataTask(task indexer.Task) Opt {
+	return func(o *opt) error {
+		if task == nil {
+			return gofiler.ErrBadParameter.With("a metadata task is nil")
+		}
+		o.metadata = task
 		return nil
 	}
 }

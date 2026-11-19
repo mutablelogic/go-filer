@@ -150,7 +150,7 @@ func Test_Registry_Indexed(t *testing.T) {
 	state, err = s.State(context.Background(), "media")
 	require.NoError(t, err)
 	assert.Equal(t, schema.IndexStatusNone, state.Status)
-	_, err = s.Get(context.Background(), "media", "/")
+	_, err = s.GetObject(context.Background(), "media", "/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }
 
@@ -215,7 +215,7 @@ func Test_Registry_ListType(t *testing.T) {
 	ready(t, r, "media")
 	s := r.store
 	require.Eventually(t, func() bool {
-		require.NoError(t, s.Put(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
+		require.NoError(t, s.PutObject(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
 		time.Sleep(50 * time.Millisecond)
 		return len(list("media", "inode")) == 3
 	}, 10*time.Second, time.Millisecond, "the index keeps a folder the backend doesn't")
@@ -238,7 +238,7 @@ func Test_Registry_DeleteIndex(t *testing.T) {
 	state, err := s.State(context.Background(), "media")
 	require.NoError(t, err)
 	assert.Equal(t, schema.IndexStatusNone, state.Status)
-	_, err = s.Get(context.Background(), "media", "/")
+	_, err = s.GetObject(context.Background(), "media", "/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	require.Eventually(t, func() bool { return get(r, "media") == nil }, mountTimeout, 5*time.Millisecond)
 }
@@ -248,7 +248,7 @@ type failingStore struct {
 	store.Store
 }
 
-func (failingStore) Put(context.Context, string, ...*schema.Object) error {
+func (failingStore) PutObject(context.Context, string, ...*schema.Object) error {
 	return gofiler.ErrNotImplemented.With("objects can't be put")
 }
 
@@ -377,7 +377,7 @@ func Test_Registry_AnotherBackend(t *testing.T) {
 	disabled.URL = third.String()
 	_, err = r.UpdateVolume(ctx, disabled)
 	require.NoError(t, err)
-	_, err = s.Get(ctx, "media", "/c/")
+	_, err = s.GetObject(ctx, "media", "/c/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound, "the old backend's index is removed")
 }
 
@@ -399,7 +399,7 @@ func Test_Registry_DisabledIndex(t *testing.T) {
 		if err != nil || state.Status != schema.IndexStatusNone {
 			return false
 		}
-		_, err = s.Get(ctx, "media", "/a/")
+		_, err = s.GetObject(ctx, "media", "/a/")
 		return errors.Is(err, gofiler.ErrNotFound) && get(r, "media") == nil
 	}, mountTimeout, 5*time.Millisecond, "its index is removed")
 }
@@ -473,7 +473,7 @@ func Test_Registry_IndexObjects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "objects", stored.Query().Get(indexer.IndexParam))
 	require.Eventually(t, func() bool {
-		_, err := s.Get(ctx, "media", "/a/photo.png")
+		_, err := s.GetObject(ctx, "media", "/a/photo.png")
 		return err == nil
 	}, mountTimeout, 5*time.Millisecond, "its file is indexed")
 
@@ -486,7 +486,7 @@ func Test_Registry_IndexObjects(t *testing.T) {
 		if err != nil || v.Index == nil || v.Index.Mode != "folders" {
 			return false
 		}
-		_, err = s.Get(ctx, "media", "/a/photo.png")
+		_, err = s.GetObject(ctx, "media", "/a/photo.png")
 		return errors.Is(err, gofiler.ErrNotFound)
 	}, mountTimeout, 5*time.Millisecond, "its file isn't indexed")
 	assert.Equal(t, []string{"/a", "/a/b"}, indexedFolders(t, r, "media"))
@@ -501,7 +501,7 @@ func Test_Registry_IndexObjects(t *testing.T) {
 		if err != nil || v.Index == nil || v.Index.Mode != "objects" {
 			return false
 		}
-		_, err = s.Get(ctx, "media", "/a/photo.png")
+		_, err = s.GetObject(ctx, "media", "/a/photo.png")
 		return err == nil
 	}, mountTimeout, 5*time.Millisecond, "its file is indexed again")
 }

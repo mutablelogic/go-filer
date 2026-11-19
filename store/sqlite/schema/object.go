@@ -27,6 +27,15 @@ type ObjectPut struct {
 	*filer.Object
 }
 
+// ObjectMetaPut is the metadata of an object of a volume, of a source, which
+// replaces the source's
+type ObjectMetaPut struct {
+	Volume string
+	Key    string
+	Source string
+	Meta   []filer.Meta
+}
+
 // ObjectListRequest selects the objects of a folder, or every object
 // beneath it, in the order of their keys
 type ObjectListRequest struct {
@@ -186,6 +195,27 @@ func (put ObjectPut) Insert(bind *sqlite.Bind) (string, error) {
 
 func (put ObjectPut) Update(*sqlite.Bind) error {
 	return sqlite.ErrNotImplemented.With("an object is put")
+}
+
+// Insert binds the metadata, as a JSON array, of its source, and returns the
+// query which replaces the source's metadata of the object
+func (put ObjectMetaPut) Insert(bind *sqlite.Bind) (string, error) {
+	meta := []byte("[]")
+	if len(put.Meta) > 0 {
+		var err error
+		if meta, err = json.Marshal(put.Meta); err != nil {
+			return "", sqlite.ErrBadParameter.Withf("metadata of %q: %v", put.Key, err)
+		}
+	}
+	bind.Set("volume", put.Volume)
+	bind.Set("key", put.Key)
+	bind.Set("source", put.Source)
+	bind.Set("meta", string(meta))
+	return bind.Query("object.set_meta"), nil
+}
+
+func (put ObjectMetaPut) Update(*sqlite.Bind) error {
+	return sqlite.ErrNotImplemented.With("an object's metadata is put")
 }
 
 ////////////////////////////////////////////////////////////////////////////////

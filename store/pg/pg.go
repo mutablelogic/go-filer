@@ -80,6 +80,10 @@ func (self *Store) Failed(context.Context, string, store.Work, error, time.Durat
 	return errNotImplemented
 }
 
+func (self *Store) PushStale(context.Context, string, string, store.Kind) error {
+	return errNotImplemented
+}
+
 func (self *Store) Pending(context.Context, string, string) (bool, error) {
 	return false, errNotImplemented
 }
@@ -88,7 +92,7 @@ func (self *Store) PendingBeneath(context.Context, string, string) (bool, error)
 	return false, errNotImplemented
 }
 
-func (self *Store) Count(context.Context, string, store.ListRequest) (uint64, error) {
+func (self *Store) CountObjects(context.Context, string, store.ListRequest) (uint64, error) {
 	return 0, errNotImplemented
 }
 
@@ -120,19 +124,23 @@ func (self *Store) SetRevisions(context.Context, string, map[string]string) erro
 	return errNotImplemented
 }
 
-func (self *Store) Get(context.Context, string, string) (*schema.Object, error) {
+func (self *Store) GetObject(context.Context, string, string) (*schema.Object, error) {
 	return nil, errNotImplemented
 }
 
-func (self *Store) Put(context.Context, string, ...*schema.Object) error {
+func (self *Store) PutObject(context.Context, string, ...*schema.Object) error {
 	return errNotImplemented
 }
 
-func (self *Store) Delete(context.Context, string, string) error {
+func (self *Store) SetMetadata(context.Context, string, string, string, []schema.Meta) error {
 	return errNotImplemented
 }
 
-func (self *Store) List(context.Context, string, store.ListRequest) ([]*schema.Object, error) {
+func (self *Store) DeleteObject(context.Context, string, string) error {
+	return errNotImplemented
+}
+
+func (self *Store) ListObjects(context.Context, string, store.ListRequest) ([]*schema.Object, error) {
 	return nil, errNotImplemented
 }
 

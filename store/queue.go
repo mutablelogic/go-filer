@@ -33,8 +33,18 @@ type QueueStore interface {
 	Claim(ctx context.Context, volume string, kinds []Kind, max int, lease time.Duration) ([]Work, error)
 
 	// Done removes the work, which is claimed, unless it's pushed again
-	// since, when it's kept, so it's claimed again
+	// since, when it's kept, so it's claimed again. Work of a task, such as
+	// KindMetadata, records the revision of the file it was done of, its
+	// listing's (see Revision), so it isn't done again until it changes
+	// (see PushStale).
 	Done(ctx context.Context, volume string, work ...Work) error
+
+	// PushStale queues the work of a task, such as KindMetadata, of the
+	// files beneath the folder's key whose listings' revisions aren't those
+	// the task was last done of, as they're new, or changed, or the task
+	// hasn't been done of them, which is due now, and isn't queued again
+	// when it's queued
+	PushStale(ctx context.Context, volume, folder string, kind Kind) error
 
 	// Failed counts an attempt of the work, which is claimed, with why it
 	// failed, and makes it due again after the retry
@@ -72,8 +82,9 @@ type Work struct {
 // GLOBALS
 
 const (
-	KindIndex  Kind = "index"  // Index an object, a file, or a folder, of the backend
-	KindRescan Kind = "rescan" // Rescan a folder, and what's beneath it, of its key
+	KindIndex    Kind = "index"    // Index an object, a file, or a folder, of the backend
+	KindRescan   Kind = "rescan"   // Rescan a folder, and what's beneath it, of its key
+	KindMetadata Kind = "metadata" // Enrich a file with its metadata, of a task, which records the revision it's done of
 )
 
 ////////////////////////////////////////////////////////////////////////////////

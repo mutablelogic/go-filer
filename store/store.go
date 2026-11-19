@@ -16,38 +16,17 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// Store is where volumes, and their indexes, are kept: the objects of
-// volumes, by their keys, and the state of each volume's index. A volume's
+// Store is where volumes, and their indexes, are kept: the volumes, the
+// objects of volumes, by their keys, the metadata tasks find of them, the
+// work of indexing them, and the state of each volume's index. A volume's
 // objects, and its state, are stored once it's been created. It's safe to use
-// from more than one goroutine. Folders are indexed first, and their files
-// later, so an object is a folder, or a file, which a bucket can have of the
-// same path, as their keys differ (see Key).
+// from more than one goroutine.
 type Store interface {
 	VolumeStore
+	ObjectStore
+	MetadataStore
 	QueueStore
 	ScanStore
-
-	// Get returns the object of the volume of the key, or ErrNotFound when
-	// it isn't indexed
-	Get(ctx context.Context, volume, key string) (*schema.Object, error)
-
-	// Put stores the objects of the volume, replacing those of their keys,
-	// or returns ErrNotFound when the volume isn't stored
-	Put(ctx context.Context, volume string, objects ...*schema.Object) error
-
-	// Delete removes the object of the volume of the key, and, of a folder's,
-	// every object beneath it, which isn't an error when there's none
-	Delete(ctx context.Context, volume, key string) error
-
-	// List returns, in the order of their keys, up to the request's limit
-	// of the objects of a folder, or every object beneath it when it's
-	// recursive, after the key it starts after, without the folder, and of
-	// its type, when it has one (see schema.MatchType)
-	List(ctx context.Context, volume string, req ListRequest) ([]*schema.Object, error)
-
-	// Count returns how many objects a listing has, of every page, without
-	// the key it starts after, or its limit
-	Count(ctx context.Context, volume string, req ListRequest) (uint64, error)
 
 	// State returns the state of the volume's index, which is IndexStatusNone
 	// when it's never been indexed
@@ -56,6 +35,35 @@ type Store interface {
 	// SetState stores the state of the volume's index, or returns
 	// ErrNotFound when the volume isn't stored
 	SetState(ctx context.Context, volume string, state schema.IndexState) error
+}
+
+// ObjectStore is the objects of volumes' indexes, by their keys, with the
+// backend's metadata, and the revisions of their listings. Folders are
+// indexed first, and their files later, so an object is a folder, or a file,
+// which a bucket can have of the same path, as their keys differ (see Key).
+type ObjectStore interface {
+	// GetObject returns the object of the volume of the key, with its metadata,
+	// the backend's, and its tasks', or ErrNotFound when it isn't indexed
+	GetObject(ctx context.Context, volume, key string) (*schema.Object, error)
+
+	// PutObject stores the objects of the volume, replacing those of their keys,
+	// and the backend's metadata, but not the metadata of tasks, or returns
+	// ErrNotFound when the volume isn't stored
+	PutObject(ctx context.Context, volume string, objects ...*schema.Object) error
+
+	// DeleteObject removes the object of the volume of the key, and, of a folder's,
+	// every object beneath it, which isn't an error when there's none
+	DeleteObject(ctx context.Context, volume, key string) error
+
+	// ListObjects returns, in the order of their keys, up to the request's limit
+	// of the objects of a folder, or every object beneath it when it's
+	// recursive, after the key it starts after, without the folder, and of
+	// its type, when it has one (see schema.MatchType)
+	ListObjects(ctx context.Context, volume string, req ListRequest) ([]*schema.Object, error)
+
+	// CountObjects returns how many objects a listing has, of every page, without
+	// the key it starts after, or its limit
+	CountObjects(ctx context.Context, volume string, req ListRequest) (uint64, error)
 
 	// Revisions returns, by their keys, the revisions of the files of a
 	// folder, or of every file beneath it, when it's recursive, which are
@@ -68,6 +76,17 @@ type Store interface {
 	// SetRevisions stores the revisions of the files, by their keys, or
 	// returns ErrNotFound when the volume isn't stored
 	SetRevisions(ctx context.Context, volume string, revisions map[string]string) error
+}
+
+// MetadataStore is the metadata which tasks find of the objects of volumes'
+// indexes, such as go-metadata's, of each task's kind, its source, which a
+// read of an object merges with the backend's, replacing the backend's of
+// the same namespace and key
+type MetadataStore interface {
+	// SetMetadata replaces the metadata of the object of the volume of the key,
+	// of the source, which is a task's kind, such as metadata, or returns
+	// ErrNotFound when the object isn't indexed
+	SetMetadata(ctx context.Context, volume, key, source string, meta []schema.Meta) error
 }
 
 // ListRequest is a request for the objects of a folder

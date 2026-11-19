@@ -6,6 +6,7 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	store "github.com/mutablelogic/go-filer/store"
 	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
 	sqlite "github.com/mutablelogic/go-sqlite"
@@ -88,13 +89,43 @@ func (self *Store) Claim(ctx context.Context, volume string, kinds []store.Kind,
 func (self *Store) Done(ctx context.Context, volume string, work ...store.Work) (err error) {
 	ctx, end := self.span(ctx, "Done", attribute.String("arg.volume", volume), attribute.Int("arg.work", len(work)))
 	defer func() { end(err) }()
+	now := time.Now()
 	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
 		for _, w := range work {
-			if err := conn.Delete(ctx, nil, schema.QueueKey{Volume: volume, Work: w}); err != nil {
+			var done schema.WorkList
+			if err := conn.Delete(ctx, &done, schema.QueueKey{Volume: volume, Work: w}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
 				return err
+			}
+
+			// A task's work, which was done, rather than pushed again, records
+			// the revision of the file it was done of
+			if len(done) > 0 && w.Kind != store.KindIndex && w.Kind != store.KindRescan {
+				if err := conn.Insert(ctx, nil, schema.QueueDid{Volume: volume, Key: w.Key, Kind: w.Kind, Now: now}); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
+	}))
+}
+
+// PushStale queues the work of a task of the files beneath the folder's key
+// whose listings' revisions aren't those the task was last done of, or
+// returns ErrNotFound when the volume isn't stored
+func (self *Store) PushStale(ctx context.Context, volume, folder string, kind store.Kind) (err error) {
+	ctx, end := self.span(ctx, "PushStale", attribute.String("arg.volume", volume), attribute.String("arg.folder", folder), attribute.String("arg.kind", string(kind)))
+	defer func() { end(err) }()
+	if err := store.ValidateFolderKey(folder); err != nil {
+		return err
+	} else if kind == "" || kind == store.KindIndex || kind == store.KindRescan {
+		return gofiler.ErrBadParameter.Withf("stale work is of a task's kind, such as %s, not %q", store.KindMetadata, kind)
+	}
+	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
+		var exists schema.VolumeList
+		if err := conn.Get(ctx, &exists, schema.VolumeName(volume)); err != nil {
+			return volumeErr(err, volume)
+		}
+		return conn.Insert(ctx, nil, schema.QueueStale{Volume: volume, Folder: folder, Kind: kind, Now: time.Now()})
 	}))
 }
 

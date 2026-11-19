@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	// Packages
@@ -24,15 +25,17 @@ import (
 // and indexed by a worker, in the background, so the work which is queued
 // when it stops is done when it runs again.
 func (self *Indexer) Run(ctx context.Context) error {
+	// The worker of the index, and the workers of the tasks, apart from it,
+	// which are waited for once it's cancelled
 	ctx, cancel := context.WithCancel(ctx)
-	worked := make(chan struct{})
-	go func() {
-		defer close(worked)
-		self.work(ctx)
-	}()
+	var workers sync.WaitGroup
+	workers.Go(func() { self.work(ctx) })
+	if self.tasked() {
+		workers.Go(func() { self.enrich(ctx) })
+	}
 	defer func() {
 		cancel()
-		<-worked
+		workers.Wait()
 	}()
 	retry := self.retry
 	for {
