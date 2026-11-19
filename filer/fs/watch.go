@@ -20,12 +20,6 @@ type pathFS interface {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// CompleteListing returns true, as a listing's files are as GetObject
-// returns them, with their types and metadata
-func (self *FS) CompleteListing() bool {
-	return true
-}
-
 // WatchObjects sends each change to the objects in the filesystem to the
 // channel, until the context is cancelled, or the filesystem is closed, when
 // fs.ErrClosed is returned. Changes to files which aren't listed, such as

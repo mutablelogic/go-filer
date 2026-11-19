@@ -163,7 +163,8 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **Indexing:** the `index` option sets what's indexed.
   * `index=none`, or no option, indexes nothing; `index=folders` indexes folders; `index=objects` indexes files too, with their size, modified time, type, entity tag and the backend's metadata.
   * Folders are listed from the index.
-  * With `index=objects`, `GetObject` of a file comes from the index when the backend's listing is complete (a directory's is; a bucket's lacks the metadata), and no work is queued for the file. Otherwise it comes from the backend.
+  * With `index=objects`, a new or changed file is stored from `GetObject`, not from the listing, which on S3 lacks the metadata. That's one HEAD request per new or changed object.
+  * `GetObject` of a file comes from the index when no work is queued for it. Otherwise it comes from the backend.
   * The index follows a backend's changes when it can be watched, and otherwise rescans it at an interval.
   * Files aren't listed from the index yet.
   * Lowering it to `folders` removes the files from the index after the next scan.

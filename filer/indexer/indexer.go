@@ -193,8 +193,7 @@ func (self *Indexer) WatchObjects(ctx context.Context, ch chan<- schema.Event) e
 
 // GetObject returns an object: a folder, of the index, once it's ready, when
 // the path is a folder's, which ends with "/", or is the root, and a file,
-// of the index, when its files are indexed, of a backend whose listing is
-// complete (CompleteListing), and it's up to date, and
+// of the index, when its files are indexed, and it's up to date, and
 // otherwise the backend's, which resolves a path without one, which can be
 // a file, and a folder, of a bucket. A request which is conditional is the
 // backend's.
@@ -212,10 +211,8 @@ func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest)
 			}
 		}
 		return self.Filer.GetObject(ctx, req)
-	case self.mode != ModeObjects || !completeListing(self.Filer):
-		// A file is the backend's, unless files are indexed, and its
-		// listing, which the index is of, is as complete as the backend's,
-		// which a bucket's isn't, as it hasn't the metadata
+	case self.mode != ModeObjects:
+		// A file is the backend's, unless files are indexed
 		return self.Filer.GetObject(ctx, req)
 	}
 	return self.getFile(ctx, req)
@@ -443,24 +440,38 @@ func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
 	for p, folder := range t.folders {
 		objects = append(objects, withCount(folder, t.counts[p]))
 	}
-	return self.put(ctx, append(objects, t.changed(files)...))
+	changed, err := self.changed(ctx, t, files)
+	if err != nil {
+		return err
+	}
+	return self.put(ctx, append(objects, changed...))
 }
 
-// changed returns the files of the tree which are indexed, and aren't the
-// same as those which are, by their entity tags, or sizes and modified
-// times, so a file which is stored of the backend, which can have more than
-// its listing, such as a bucket's metadata, isn't replaced by its listing
-func (t tree) changed(indexed map[string]*schema.Object) []*schema.Object {
+// changed returns the files of the tree which are new, or aren't the same
+// as those which are indexed, by their entity tags, or sizes and modified
+// times, of the backend, rather than of its listing, which can have less,
+// such as a bucket's, which hasn't its metadata, so the index's files are
+// as GetObject returns them. A file which isn't there any more is removed.
+func (self *Indexer) changed(ctx context.Context, t tree, indexed map[string]*schema.Object) ([]*schema.Object, error) {
 	result := make([]*schema.Object, 0, len(t.files))
-	for p, file := range t.files {
+	for p, listed := range t.files {
 		if _, exists := t.folders[p]; exists {
 			continue
-		} else if previous, exists := indexed[p]; exists && sameObject(previous, file) {
+		} else if previous, exists := indexed[p]; exists && sameObject(previous, listed) {
 			continue
 		}
-		result = append(result, file)
+		file, err := self.file(ctx, p)
+		if err != nil {
+			return nil, err
+		} else if file != nil {
+			result = append(result, file)
+		} else if _, exists := indexed[p]; exists {
+			if err := self.store.Delete(ctx, self.name, p); err != nil {
+				return nil, err
+			}
+		}
 	}
-	return result
+	return result, nil
 }
 
 // indexedFiles returns how many files of the tree are indexed, which are
@@ -565,7 +576,11 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		child.Meta = mergeCount(child.Meta, counts[p])
 		objects = append(objects, child)
 	}
-	return self.put(ctx, append(objects, t.changed(files)...))
+	changed, err := self.changed(ctx, t, files)
+	if err != nil {
+		return err
+	}
+	return self.put(ctx, append(objects, changed...))
 }
 
 // refresh changes the index, of an object which is created, updated or
@@ -693,13 +708,6 @@ func (self *Indexer) all(ctx context.Context, req store.ListRequest) ([]*schema.
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
-
-// completeListing returns true when a backend's listing has its files as
-// GetObject returns them, so the index, of its listings, is
-func completeListing(backend gofiler.Filer) bool {
-	c, ok := backend.(interface{ CompleteListing() bool })
-	return ok && c.CompleteListing()
-}
 
 // sameObject returns true when two versions of a file are the same, of their
 // entity tags, when they both have one, and otherwise of their sizes, and

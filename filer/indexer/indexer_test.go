@@ -131,11 +131,6 @@ func (c *counting) GetObject(ctx context.Context, req schema.GetObjectRequest) (
 	return c.Filer.GetObject(ctx, req)
 }
 
-func (c *counting) CompleteListing() bool {
-	l, ok := c.Filer.(interface{ CompleteListing() bool })
-	return ok && l.CompleteListing()
-}
-
 // unwatchedCounting is a backend which can't be watched, which counts its
 // calls to GetObject
 type unwatchedCounting struct {
@@ -145,14 +140,6 @@ type unwatchedCounting struct {
 func (u *unwatchedCounting) WatchObjects(context.Context, chan<- schema.Event) error {
 	return gofiler.ErrNotImplemented.With("it can't be watched")
 }
-
-// incompleteCounting is a backend whose listing isn't complete, which counts
-// its calls to GetObject
-type incompleteCounting struct {
-	counting
-}
-
-func (i *incompleteCounting) CompleteListing() bool { return false }
 
 // gets returns how many times a file is got from the backend, of a call to
 // GetObject of the indexer, and the file
@@ -561,6 +548,11 @@ func Test_ObjectsKeepMeta(t *testing.T) {
 		object, err := s.Get(context.Background(), "media", path)
 		return err == nil && len(object.Meta) == 1 && string(object.Meta[0].Value) == `"full"`
 	}
+
+	// The files of its scan are stored of the backend, rather than its
+	// listing, which has less
+	assert.True(t, title("/x.txt"), "a file of its scan is stored of the backend")
+	assert.True(t, title("/a/y.txt"), "a file of its scan is stored of the backend")
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}, Body: strings.NewReader("z")})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return title("/c/z.txt") }, 10*time.Second, 10*time.Millisecond, "it's stored of the backend")
@@ -645,15 +637,6 @@ func Test_GetFile(t *testing.T) {
 	run(t, folders)
 	n, _ = gets(t, folders, c, x)
 	assert.Equal(t, int32(1), n)
-
-	// As does one whose listing isn't complete, as a bucket's isn't
-	incomplete := &incompleteCounting{counting{Filer: backend}}
-	bucket, err := indexer.New("media", incomplete, newStore(t), indexer.WithMode(indexer.ModeObjects))
-	require.NoError(t, err)
-	run(t, bucket)
-	time.Sleep(100 * time.Millisecond)
-	n, _ = gets(t, bucket, &incomplete.counting, x)
-	assert.Equal(t, int32(1), n, "a listing which isn't complete is the backend's")
 }
 
 func Test_GetFileUnwatched(t *testing.T) {
