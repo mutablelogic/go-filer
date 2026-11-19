@@ -10,6 +10,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 	pg "github.com/mutablelogic/go-pg"
 )
 
@@ -136,7 +137,7 @@ func (self *Store) PutObject(context.Context, string, ...*schema.Object) error {
 	return errNotImplemented
 }
 
-func (self *Store) SetMetadata(context.Context, string, string, string, *schema.ObjectAttr, []schema.Meta) error {
+func (self *Store) SetMetadata(context.Context, string, string, string, *schema.ObjectAttr, []schema.Meta, []geo.Geometry) error {
 	return errNotImplemented
 }
 

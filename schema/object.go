@@ -13,6 +13,7 @@ import (
 	"time"
 
 	// Packages
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 	tui "github.com/mutablelogic/go-server/pkg/tui"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -58,6 +59,7 @@ type Object struct {
 	ObjectKey
 	ObjectMeta
 	ObjectAttr
+	Geo []geo.Geometry `json:"geo,omitempty" readonly:"" help:"Where it is, such as where a photo was taken, of the shapes which its index found of it, of GeoJSON"`
 }
 
 // Create an object in the filesystem

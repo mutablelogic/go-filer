@@ -76,6 +76,28 @@ CREATE TABLE IF NOT EXISTS metadata (
 -- schema.metadata_key
 CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, object, source, ifnull(namespace, ''), key);
 
+-- schema.object_geo
+-- The shapes of where the objects are, of GeoJSON, such as where a photo
+-- was taken, of their sources, as metadata is, which a task finds, and the
+-- boxes of them, of their longitudes and latitudes, of which a search finds
+-- them
+CREATE TABLE IF NOT EXISTS object_geo (
+  volume          TEXT NOT NULL,
+  object          TEXT NOT NULL,          -- the key of its object
+  source          TEXT NOT NULL DEFAULT '' CHECK (source = '' OR (
+                    source GLOB '[a-z]*' AND source NOT GLOB '*[^a-z_]*')),   -- the backend's, or a task's kind
+  shape           TEXT NOT NULL CHECK (json_valid(shape) AND shape ->> '$.type' IN ('Point', 'Polygon', 'MultiPolygon')),   -- its GeoJSON
+  min_long        REAL NOT NULL CHECK (min_long BETWEEN -180 AND 180),
+  min_lat         REAL NOT NULL CHECK (min_lat BETWEEN -90 AND 90),
+  max_long        REAL NOT NULL CHECK (max_long BETWEEN min_long AND 180),
+  max_lat         REAL NOT NULL CHECK (max_lat BETWEEN min_lat AND 90),
+  FOREIGN KEY (volume, object) REFERENCES object (volume, key) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- schema.object_geo_shape
+-- An object has a shape once, of a source
+CREATE UNIQUE INDEX IF NOT EXISTS object_geo_shape ON object_geo (volume, object, source, shape);
+
 -- schema.object_state
 -- The state of the objects of the volumes, by key and kind: the work of
 -- indexing them, which is the queue, which outlasts a restart, whose key

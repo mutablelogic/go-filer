@@ -35,7 +35,18 @@ RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coales
 
 -- object.put
 -- An object, which replaces the one of its key, and its metadata, of a JSON
--- array of entries, which replaces the backend's metadata, but not a task's
+-- array of entries, which replaces the backend's metadata, but not a task's,
+-- unless it changed, as of its entity tag, size or modification time, when
+-- what tasks found of it, their metadata and shapes, is out of date, which
+-- is removed, until they're done of it again
+DELETE FROM metadata WHERE volume = @volume AND object = @key AND source <> '' AND EXISTS (
+  SELECT 1 FROM object WHERE volume = @volume AND key = @key
+    AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
+);
+DELETE FROM object_geo WHERE volume = @volume AND object = @key AND source <> '' AND EXISTS (
+  SELECT 1 FROM object WHERE volume = @volume AND key = @key
+    AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
+);
 INSERT INTO object (volume, key, type, size, etag, modified_at)
 VALUES (@volume, @key, nullif(@type, ''), @size, @etag, @modified_at)
 ON CONFLICT (volume, key) DO UPDATE SET
@@ -54,6 +65,13 @@ INSERT INTO metadata (volume, object, source, namespace, key, value)
 SELECT @volume, @key, @source, nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null')
 FROM json_each(@meta) AS entry
 ORDER BY entry.id;
+DELETE FROM object_geo WHERE volume = @volume AND object = @key AND source = @source;
+INSERT INTO object_geo (volume, object, source, shape, min_long, min_lat, max_long, max_lat)
+SELECT @volume, @key, @source, json(entry.value -> '$.shape'), entry.value ->> '$.min_long', entry.value ->> '$.min_lat', entry.value ->> '$.max_long', entry.value ->> '$.max_lat'
+FROM json_each(@geo) AS entry
+WHERE true
+ORDER BY entry.id
+ON CONFLICT (volume, object, source, shape) DO NOTHING;
 
 -- object.get
 SELECT key, coalesce(type, ''), size, etag, modified_at, (
@@ -64,6 +82,9 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
       WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
         AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key
     ))
+), (
+  SELECT json_group_array(json(shape) ORDER BY source, rowid)
+  FROM object_geo WHERE object_geo.volume = object.volume AND object_geo.object = object.key
 )
 FROM object WHERE volume = @volume AND key = @key;
 
@@ -78,6 +99,9 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
       WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
         AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key
     ))
+), (
+  SELECT json_group_array(json(shape) ORDER BY source, rowid)
+  FROM object_geo WHERE object_geo.volume = object.volume AND object_geo.object = object.key
 )
 FROM object WHERE volume = @volume AND ${where} AND key > @after
 ORDER BY key;
@@ -88,8 +112,9 @@ SELECT count(*) FROM object WHERE volume = @volume AND ${where};
 
 -- object.delete_meta
 -- The metadata of a source, a task's kind, of every object of a volume, and
--- its task's work, and the revisions it was done of
+-- the shapes it found, and its task's work, and the revisions it was done of
 DELETE FROM metadata WHERE volume = @volume AND source = @source;
+DELETE FROM object_geo WHERE volume = @volume AND source = @source;
 DELETE FROM object_state WHERE volume = @volume AND kind IN (@source, @did);
 
 -- object.delete

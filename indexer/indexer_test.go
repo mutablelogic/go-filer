@@ -1186,7 +1186,7 @@ func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataSto
 	} else if gone {
 		return &iofs.PathError{Op: "read", Path: object.Path, Err: iofs.ErrNotExist}
 	}
-	return s.SetMetadata(ctx, object.Path, []schema.Meta{{Namespace: "test", Key: "size", Value: json.RawMessage(fmt.Sprint(*object.Size))}})
+	return s.SetMetadata(ctx, object.Path, []schema.Meta{{Namespace: "test", Key: "size", Value: json.RawMessage(fmt.Sprint(*object.Size))}}, nil)
 }
 
 func (z *sizer) count(path string) int {

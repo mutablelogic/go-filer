@@ -11,6 +11,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -28,8 +29,10 @@ type Task func(ctx context.Context, backend gofiler.Filer, store MetadataStore, 
 // replacing the backend's of the same namespace and key
 type MetadataStore interface {
 	// SetMetadata replaces the metadata the task found of the file of the
-	// key, or returns ErrNotFound when the file isn't indexed
-	SetMetadata(ctx context.Context, key string, meta []schema.Meta) error
+	// key, and the shapes of where it is, such as where a photo was taken,
+	// or returns ErrNotFound when the file isn't indexed, or
+	// ErrBadParameter when a shape isn't valid
+	SetMetadata(ctx context.Context, key string, meta []schema.Meta, shapes []geo.Geometry) error
 }
 
 // taskStore is the metadata store of a task, of a volume, of its kind, of
@@ -67,11 +70,11 @@ const (
 
 // SetMetadata replaces the metadata the task found of the file of the key,
 // which is the file it's done of, when it's the version it read
-func (self taskStore) SetMetadata(ctx context.Context, key string, meta []schema.Meta) error {
+func (self taskStore) SetMetadata(ctx context.Context, key string, meta []schema.Meta, shapes []geo.Geometry) error {
 	if key != self.key {
 		return gofiler.ErrBadParameter.Withf("a task of %q sets the metadata of %q", self.key, key)
 	}
-	return self.store.SetMetadata(ctx, self.volume, key, string(self.kind), &self.of, meta)
+	return self.store.SetMetadata(ctx, self.volume, key, string(self.kind), &self.of, meta, shapes)
 }
 
 ////////////////////////////////////////////////////////////////////////////////

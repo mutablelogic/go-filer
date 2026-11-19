@@ -8,6 +8,7 @@ import (
 	// Packages
 	filer "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 	sqlite "github.com/mutablelogic/go-sqlite"
 )
 
@@ -34,6 +35,13 @@ type ObjectMetaPut struct {
 	Key    string
 	Source string
 	Meta   []filer.Meta
+	Geo    []geo.Geometry
+}
+
+// geoPut is a shape which is put, with its box
+type geoPut struct {
+	Shape geo.Geometry `json:"shape"`
+	geo.Bounds
 }
 
 // ObjectMetaSource selects the metadata of a source of a volume, and its
@@ -224,10 +232,19 @@ func (put ObjectMetaPut) Insert(bind *sqlite.Bind) (string, error) {
 			return "", sqlite.ErrBadParameter.Withf("metadata of %q: %v", put.Key, err)
 		}
 	}
+	shapes := make([]geoPut, 0, len(put.Geo))
+	for _, shape := range put.Geo {
+		shapes = append(shapes, geoPut{Shape: shape, Bounds: shape.Bounds()})
+	}
+	geo, err := json.Marshal(shapes)
+	if err != nil {
+		return "", sqlite.ErrBadParameter.Withf("shapes of %q: %v", put.Key, err)
+	}
 	bind.Set("volume", put.Volume)
 	bind.Set("key", put.Key)
 	bind.Set("source", put.Source)
 	bind.Set("meta", string(meta))
+	bind.Set("geo", string(geo))
 	return bind.Query("object.set_meta"), nil
 }
 
@@ -256,8 +273,8 @@ func (revisions *Revisions) Scan(row sqlite.Row) error {
 
 func (list *ObjectList) Scan(row sqlite.Row) error {
 	var object filer.Object
-	var key, meta string
-	if err := row.Scan(&key, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta); err != nil {
+	var key, meta, geo string
+	if err := row.Scan(&key, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta, &geo); err != nil {
 		return err
 	}
 	object.Path, object.IsDir = store.PathOf(key)
@@ -265,6 +282,11 @@ func (list *ObjectList) Scan(row sqlite.Row) error {
 		return err
 	} else if len(object.Meta) == 0 {
 		object.Meta = nil
+	}
+	if err := json.Unmarshal([]byte(geo), &object.Geo); err != nil {
+		return err
+	} else if len(object.Geo) == 0 {
+		object.Geo = nil
 	}
 	*list = append(*list, &object)
 	return nil
