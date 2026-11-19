@@ -79,28 +79,52 @@ type ObjectListCmd struct {
 	StartAfter string  `name:"start-after" help:"Return objects whose keys sort after this key, which is the next key of the previous page."`
 	Limit      *uint64 `name:"limit" help:"Maximum number of objects to return, which defaults to and is capped at 100."`
 	Type       string  `name:"type" placeholder:"TYPE" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters. Folders of an indexed volume are listed from its index."`
-	NoTitle    bool    `name:"no-title" help:"Show each object's key, rather than its title (dc:title), when it has one."`
+	NoTitle    bool    `name:"no-title" help:"Show each object's name, rather than its title (dc:title), when it has one."`
 }
 
-// titled is an object of a table, whose first column is its title, of its
-// metadata, dc:title, when it has one, and otherwise its key
-type titled struct {
+// listed is an object of a table of a listing, whose first column is its
+// name, with a "/" after a folder's, indented by how far beneath the folder
+// which is listed it is, rather than its key, or its title, of its metadata,
+// dc:title, when it has one, and titles are shown
+type listed struct {
 	*schema.Object
+	folder string // The key of the folder which is listed, such as "/", or "/a/"
+	titles bool   // Whether its title is shown, rather than its name
 }
 
-func (o titled) Header() []string {
+func (o listed) Header() []string {
 	header := o.Object.Header()
-	header[0] = "Title"
+	if header[0] = "Name"; o.titles {
+		header[0] = "Title"
+	}
 	return header
 }
 
-func (o titled) Cell(col int) tui.CellText {
-	if col == 0 {
-		if title := objectTitle(o.Object); title != "" {
-			return title
-		}
+func (o listed) Cell(col int) tui.CellText {
+	if col != 0 {
+		return o.Object.Cell(col)
 	}
-	return o.Object.Cell(col)
+	key := o.Key()
+	name := path.Base(strings.TrimSuffix(key, "/"))
+	if title := objectTitle(o.Object); o.titles && title != "" {
+		name = title
+	} else if strings.HasSuffix(key, "/") && key != "/" {
+		name += "/"
+	}
+	depth := 0
+	if rel, ok := strings.CutPrefix(key, o.folder); ok {
+		depth = strings.Count(strings.TrimSuffix(rel, "/"), "/")
+	}
+	return strings.Repeat("  ", depth) + name
+}
+
+// listedFolder returns the key of the folder of a listing of a path, which
+// is the root, of an empty path
+func listedFolder(p string) string {
+	if p = strings.Trim(p, "/"); p == "" {
+		return "/"
+	}
+	return "/" + p + "/"
 }
 
 // objectTitle returns the title of an object, of its metadata, dc:title,
@@ -141,21 +165,15 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 			return nil
 		}
 
-		// Objects table, of their titles, unless they're of their keys
-		if cmd.NoTitle {
-			table := tui.TableFor[*schema.Object](tui.SetWidth(width))
-			if _, err := table.Write(os.Stdout, list.Body...); err != nil {
-				return err
-			}
-		} else {
-			rows := make([]titled, 0, len(list.Body))
-			for _, object := range list.Body {
-				rows = append(rows, titled{object})
-			}
-			table := tui.TableFor[titled](tui.SetWidth(width))
-			if _, err := table.Write(os.Stdout, rows...); err != nil {
-				return err
-			}
+		// Objects table, of their names, or titles, indented beneath the
+		// folder which is listed
+		rows := make([]listed, 0, len(list.Body))
+		for _, object := range list.Body {
+			rows = append(rows, listed{Object: object, folder: listedFolder(cmd.Path), titles: !cmd.NoTitle})
+		}
+		table := tui.TableFor[listed](tui.SetWidth(width))
+		if _, err := table.Write(os.Stdout, rows...); err != nil {
+			return err
 		}
 
 		// Objects summary, which is of a page, of the total, when it's known,
