@@ -46,6 +46,13 @@ type CalendarFiler struct {
 	// now returns the time, which the months listed are of
 	now func() time.Time
 
+	// What's got from Google, for the refresh interval, which a watch
+	// clears when what it's of changes: the calendars, and the events of
+	// each directory which is listed, of its path, which an event is read
+	// from, rather than got again, when one of them has it
+	calendarList *cache[[]httpclient.Calendar]
+	listings     *cache[[]calendarEvent]
+
 	// The paths of the events, by their calendars, and ids (see eventKey),
 	// as the index has them, so a watch knows where an event was, which a
 	// change doesn't say, of those it sent, and those which were listed,
@@ -165,6 +172,9 @@ func NewCalendarFiler(ctx context.Context, name string, params url.Values, opts 
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
 	self := &CalendarFiler{calendarOpt: opt, name: name, opts: opts, now: time.Now}
+	ttl := func() time.Duration { return self.refreshInterval }
+	self.calendarList = newCache[[]httpclient.Calendar](func() time.Time { return self.now() }, ttl)
+	self.listings = newCache[[]calendarEvent](func() time.Time { return self.now() }, ttl)
 
 	// The user's sign-in, which can read calendars
 	required := []string{httpclient.CalendarReadonlyScope, httpclient.CalendarScope}
@@ -510,8 +520,16 @@ func (self *CalendarFiler) stat(ctx context.Context, op, p string) (*schema.Obje
 		return dirObject(self.name, pathOfDir(path), len(events), modtime), nil, nil
 	}
 
-	// An event, of its calendar, of its name, which is where it is now
-	calendars, err := self.client.Calendars(ctx)
+	// An event, of a listing which has it, or else of its calendar, of its
+	// name, which is where it is now
+	if e, ok := self.cached(path, pathOfEvent(p)); ok {
+		if e == nil {
+			return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
+		}
+		object, content := self.eventObject(e.calendar, e.event)
+		return object, content, nil
+	}
+	calendars, err := self.calendars(ctx)
 	if err != nil {
 		return nil, nil, self.apiError(op, p, err)
 	}
@@ -535,7 +553,16 @@ func (self *CalendarFiler) stat(ctx context.Context, op, p string) (*schema.Obje
 // days, in its own zone, in the order of their paths, which are those of
 // the directory, which replace those which were, for a watch
 func (self *CalendarFiler) events(ctx context.Context, op, p, dir string, from, to time.Time) ([]calendarEvent, error) {
-	calendars, err := self.client.Calendars(ctx)
+	return self.listings.get(ctx, dir, func() ([]calendarEvent, error) {
+		return self.listEvents(ctx, op, p, from, to)
+	})
+}
+
+// listEvents gets the events of every calendar which start on one of the
+// days, in its own zone, in the order of their paths, whose paths are added
+// for a watch
+func (self *CalendarFiler) listEvents(ctx context.Context, op, p string, from, to time.Time) ([]calendarEvent, error) {
+	calendars, err := self.calendars(ctx)
 	if err != nil {
 		return nil, self.apiError(op, p, err)
 	}
@@ -555,6 +582,39 @@ func (self *CalendarFiler) events(ctx context.Context, op, p, dir string, from, 
 	slices.SortFunc(result, func(a, b calendarEvent) int { return strings.Compare(a.path, b.path) })
 	self.listedPaths(from, to, result)
 	return result, nil
+}
+
+// calendars returns the user's calendars, or those which were got, for
+// the refresh interval
+func (self *CalendarFiler) calendars(ctx context.Context) ([]httpclient.Calendar, error) {
+	return self.calendarList.get(ctx, "", func() ([]httpclient.Calendar, error) {
+		return self.client.Calendars(ctx)
+	})
+}
+
+// cached returns an event, of its path, of a listing which has its month,
+// which is its month's, its year's, or the root's, which was got, for the
+// refresh interval, or false when there's none, so it's got. An event which
+// isn't in it isn't there.
+func (self *CalendarFiler) cached(p calendarPath, eventPath string) (*calendarEvent, bool) {
+	for _, dir := range []string{pathOfDir(calendarPath{year: p.year, month: p.month}), pathOfDir(calendarPath{year: p.year}), "/"} {
+		if events, ok := self.listings.peek(dir); ok {
+			for i := range events {
+				if events[i].path == eventPath {
+					return &events[i], true
+				}
+			}
+			return nil, true
+		}
+	}
+	return nil, false
+}
+
+// clearCache removes what's got from Google, as what it's of changed, so
+// it's got again, of a watch, before it sends what changed
+func (self *CalendarFiler) clearCache() {
+	self.calendarList.clear()
+	self.listings.clear()
 }
 
 // listedPaths adds the paths of the events which were listed, of the days,
