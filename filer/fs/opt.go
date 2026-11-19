@@ -7,6 +7,7 @@ import (
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -15,9 +16,10 @@ import (
 // opt is the options of a filesystem, which are parsed from the query
 // parameters of its URL, or from the command line
 type opt struct {
-	skip     []*regexp.Regexp // the names of files and directories which aren't listed
-	packages []*regexp.Regexp // the names of directories which are packages
-	readonly bool             // objects can't be created or deleted
+	skip        []*regexp.Regexp // the names of files and directories which aren't listed
+	packages    []*regexp.Regexp // the names of directories which are packages
+	readonly    bool             // objects can't be created or deleted
+	description string           // what the volume is, which is its folder's, by default
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -56,7 +58,7 @@ func parseOpts(values url.Values) (opt, error) {
 	// Check the options are known
 	for key := range values {
 		switch key {
-		case optSkip, optPackage, optReadonly:
+		case optSkip, optPackage, optReadonly, schema.OptDescription:
 		default:
 			return opt{}, filer.ErrBadParameter.Withf("Unknown option: %q", key)
 		}
@@ -86,6 +88,9 @@ func parseOpts(values url.Values) (opt, error) {
 		}
 	}
 
+	// Set what the volume is, which is set of its folder, when it isn't set
+	self.description = values.Get(schema.OptDescription)
+
 	// Return success
 	return self, nil
 }
@@ -98,6 +103,7 @@ func (self opt) values() url.Values {
 	setExprs(values, optSkip, self.skip)
 	setExprs(values, optPackage, self.packages)
 	values.Set(optReadonly, strconv.FormatBool(self.readonly))
+	values.Set(schema.OptDescription, self.description)
 	return values
 }
 

@@ -119,7 +119,7 @@ func Test_NewContactFiler(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, status(err))
 	signIn := authclient.SignInOf(err)
 	require.NotNil(t, signIn)
-	assert.Equal(t, []string{httpclient.ContactsReadonlyScope, httpclient.TasksScope}, signIn.Scopes)
+	assert.Equal(t, []string{httpclient.ContactsReadonlyScope, httpclient.EmailScope, httpclient.TasksScope}, signIn.Scopes)
 
 	// Writing isn't implemented, so far, and parameters which aren't known,
 	// or can't be parsed, are bad
@@ -132,7 +132,7 @@ func Test_NewContactFiler(t *testing.T) {
 
 	// Its URL has each of its parameters
 	filer := newContactFiler(t, endpoint, nil)
-	assert.Equal(t, "gcontacts://contacts?credential=GOOGLE_TOKEN&quota=0&readonly=true&refresh_interval=1m0s", filer.URL().String())
+	assert.Equal(t, "gcontacts://contacts?credential=GOOGLE_TOKEN&description=Google+Contacts&quota=0&readonly=true&refresh_interval=1m0s", filer.URL().String())
 	assert.True(t, filer.Readonly())
 }
 

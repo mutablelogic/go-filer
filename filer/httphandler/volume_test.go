@@ -282,7 +282,7 @@ func TestVolumeCreateSignIn(t *testing.T) {
 	assert.Equal(t, google.Google, body.Detail.Server)
 	assert.Equal(t, "client-1", body.Detail.ClientID)
 	assert.Equal(t, google.DefaultCredential, body.Detail.Credential)
-	assert.Equal(t, []string{"https://www.googleapis.com/auth/tasks.readonly"}, body.Detail.Scopes)
+	assert.Equal(t, []string{"https://www.googleapis.com/auth/tasks.readonly", "https://www.googleapis.com/auth/userinfo.email"}, body.Detail.Scopes)
 	assert.NotContains(t, string(raw), "client-secret")
 
 	// A volume of Google Tasks with a path isn't one

@@ -44,6 +44,7 @@ type contactOpt struct {
 	refreshInterval time.Duration // How often changes are polled for, or zero not to
 	endpoint        string        // The endpoint of the API, which is Google's, but a test's
 	credential      string        // The key of the user's sign-in
+	description     string        // What the volume is, which is of the user who signed in, by default
 }
 
 var _ gofiler.Filer = (*ContactFiler)(nil)
@@ -90,7 +91,7 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, opts g
 
 	// The user's sign-in, which can read contacts
 	required := []string{httpclient.ContactsReadonlyScope, httpclient.ContactsScope}
-	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, []string{httpclient.ContactsReadonlyScope}); err != nil {
+	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, []string{httpclient.ContactsReadonlyScope, httpclient.EmailScope}); err != nil {
 		return nil, err
 	}
 
@@ -114,6 +115,11 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, opts g
 	if err := self.client.Check(ctx); err != nil {
 		return nil, self.apiError("check", "/", err)
 	}
+
+	// What the volume is, when it isn't set, is of the user who signed in
+	if self.description == "" {
+		self.description = describe(ctx, "Google Contacts", self.tokens, opts.ClientOpts)
+	}
 	return self, nil
 }
 
@@ -123,11 +129,12 @@ func parseContactOpts(params url.Values) (contactOpt, error) {
 	opt := contactOpt{quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: peopleEndpoint}
 	for key := range params {
 		switch key {
-		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential:
+		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, schema.OptDescription:
 		default:
 			return opt, gofiler.ErrBadParameter.Withf("unknown parameter: %q", key)
 		}
 	}
+	opt.description = params.Get(schema.OptDescription)
 	if value := params.Get(paramReadonly); value != "" {
 		if readonly, err := strconv.ParseBool(value); err != nil {
 			return opt, gofiler.ErrBadParameter.Withf("%s: %q", paramReadonly, value)
@@ -176,7 +183,12 @@ func (self *ContactFiler) URL() *url.URL {
 // the patch, and the same client options, which is checked as a new filer
 // is
 func (self *ContactFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
-	clone, err := NewContactFiler(ctx, self.name, gofiler.PatchValues(self.params(), patch), self.opts)
+	// A clone of another sign-in, without a description, is described of it
+	params := gofiler.PatchValues(self.params(), patch)
+	if patch.Has(paramCredential) && !patch.Has(schema.OptDescription) {
+		params.Del(schema.OptDescription)
+	}
+	clone, err := NewContactFiler(ctx, self.name, params, self.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -322,10 +334,11 @@ func (self *ContactFiler) WatchObjects(ctx context.Context, ch chan<- schema.Eve
 // set up
 func (self *ContactFiler) params() url.Values {
 	return url.Values{
-		paramReadonly:        {"true"},
-		paramQuota:           {strconv.FormatUint(uint64(self.quota), 10)},
-		paramRefreshInterval: {self.refreshInterval.String()},
-		paramCredential:      {self.credential},
+		paramReadonly:         {"true"},
+		paramQuota:            {strconv.FormatUint(uint64(self.quota), 10)},
+		paramRefreshInterval:  {self.refreshInterval.String()},
+		paramCredential:       {self.credential},
+		schema.OptDescription: {self.description},
 	}
 }
 

@@ -155,7 +155,7 @@ func Test_Clone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clone.(io.Closer).Close()
-	if got, want := clone.URL().Query(), (url.Values{"skip": {"^x"}, "package": defaultPackage, "readonly": {"true"}}); got.Encode() != want.Encode() {
+	if got, want := clone.URL().Query(), (url.Values{"skip": {"^x"}, "package": defaultPackage, "readonly": {"true"}, "description": {"Folder " + self.path}}); got.Encode() != want.Encode() {
 		t.Errorf("clone: got %q, want %q", got, want)
 	} else if clone.URL().Path != self.URL().Path {
 		t.Errorf("clone: got %q, want %q", clone.URL().Path, self.URL().Path)
@@ -174,6 +174,54 @@ func Test_Clone(t *testing.T) {
 		if _, err := other.Clone(context.Background(), nil); !errors.Is(err, filer.ErrNotImplemented) {
 			t.Errorf("clone of %T: %v", fsys, err)
 		}
+	}
+}
+
+func Test_Description(t *testing.T) {
+	dir := t.TempDir()
+
+	// A folder's description is set of its path, when it isn't set, and is
+	// its option otherwise, which a clone keeps, or changes
+	self, err := New("test", dir, nil, filer.Opts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer self.Close()
+	if got, want := self.URL().Query().Get("description"), "Folder "+self.path; got != want {
+		t.Errorf("default: got %q, want %q", got, want)
+	}
+	described, err := New("test", dir, url.Values{"description": {"My media"}}, filer.Opts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer described.Close()
+	if got := described.URL().Query().Get("description"); got != "My media" {
+		t.Errorf("set: got %q", got)
+	}
+	clone, err := described.Clone(context.Background(), url.Values{"readonly": {"true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clone.(io.Closer).Close()
+	if got := clone.URL().Query().Get("description"); got != "My media" {
+		t.Errorf("kept: got %q", got)
+	}
+	reset, err := described.Clone(context.Background(), url.Values{"description": {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reset.(io.Closer).Close()
+	if got, want := reset.URL().Query().Get("description"), "Folder "+self.path; got != want {
+		t.Errorf("removed: got %q, want %q", got, want)
+	}
+
+	// A filesystem which isn't a folder is described by its name
+	other, err := NewFS("test", fstest.MapFS{}, nil, filer.Opts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := other.URL().Query().Get("description"); got != "Files of test" {
+		t.Errorf("fs: got %q", got)
 	}
 }
 

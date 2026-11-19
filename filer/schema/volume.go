@@ -23,6 +23,11 @@ const (
 	IndexStatusReady    IndexStatus = "ready"    // It's indexed, and the index follows its changes
 )
 
+// OptDescription is the option of every backend's URL which describes what
+// the volume is, such as "Folder /mnt/media", which a backend sets, when
+// it isn't set
+const OptDescription = "description"
+
 // The schemes of the URLs of volumes' backends
 const (
 	// SchemeFile is the scheme of a volume which is a directory, such as
@@ -94,6 +99,16 @@ func (v Volume) Readonly() (bool, error) {
 		return true, fmt.Errorf("volume %q: invalid readonly option %q", v.Name, value)
 	}
 	return readonly, nil
+}
+
+// Description returns what the volume is, of its URL's description option,
+// or empty, when it hasn't one, or its URL can't be parsed
+func (v Volume) Description() string {
+	u, err := url.Parse(v.URL)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get(OptDescription)
 }
 
 // VolumeIndex is a volume's index: what's indexed, and its state

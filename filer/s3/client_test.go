@@ -227,6 +227,27 @@ func Test_S3_Trace(t *testing.T) {
 	assert.Equal(t, codes.Error, spans[1].Status().Code)
 }
 
+func Test_S3_Description(t *testing.T) {
+	endpoint := fakeS3(t)
+	ctx := context.Background()
+
+	// A bucket's description is of the bucket, its prefix, and its
+	// endpoint, when it isn't set, and is its option otherwise
+	b, err := New(ctx, bucketURL(t, endpoint, "photos/2026", ""), gofiler.Opts{})
+	require.NoError(t, err)
+	assert.Equal(t, "S3 bucket photos/2026 at "+strings.TrimPrefix(endpoint, "http://"), b.URL().Query().Get("description"))
+	described, err := New(ctx, bucketURL(t, endpoint, "photos", "&description=Holidays"), gofiler.Opts{})
+	require.NoError(t, err)
+	assert.Equal(t, "Holidays", described.URL().Query().Get("description"))
+	clone, err := described.Clone(ctx, url.Values{"readonly": {"true"}})
+	require.NoError(t, err)
+	assert.Equal(t, "Holidays", clone.URL().Query().Get("description"), "a clone keeps it")
+
+	// Of a bucket of AWS, it's of its region
+	aws := &S3{opt: opt{region: "eu-west-1"}, bucket: "photos"}
+	assert.Equal(t, "S3 bucket photos in eu-west-1", aws.describe())
+}
+
 func Test_S3_StoreCredentials(t *testing.T) {
 	endpoint := fakeS3(t)
 	ctx := context.Background()
@@ -250,7 +271,7 @@ func Test_S3_StoreCredentials(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, provider, 6)
 	assert.NotEqual(t, storedKey(t, b, "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_"), storedKey(t, other, "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_"))
-	assert.Equal(t, "s3://keys/?anonymous=false&endpoint="+url.QueryEscape(endpoint)+"&name=photos&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
+	assert.Equal(t, "s3://keys/?anonymous=false&description="+url.QueryEscape("S3 bucket keys at "+strings.TrimPrefix(endpoint, "http://"))+"&endpoint="+url.QueryEscape(endpoint)+"&name=photos&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
 	_, err = New(ctx, b.url(true), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
 

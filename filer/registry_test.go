@@ -457,7 +457,7 @@ func Test_Registry_S3(t *testing.T) {
 	// as it can't be, and can be removed
 	b, err := add(t, r, "photos", mustURL(t, "s3://bucket/photos?name=photos&readonly&"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+endpoint+"&name=photos&profile=&readonly=true&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+url.Values{"description": {"S3 bucket bucket/photos at " + strings.TrimPrefix(fakeEndpoint(endpoint), "http://")}}.Encode()+"&"+endpoint+"&name=photos&profile=&readonly=true&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
 	volume, err := r.GetVolume(context.Background(), "photos")
 	require.NoError(t, err)
 	assert.Equal(t, "photos", volume.Name)
@@ -472,7 +472,7 @@ func Test_Registry_S3(t *testing.T) {
 	// A bucket's name is the volume's, unless the name option is set
 	b, err = add(t, r, "bucket", mustURL(t, "s3://bucket/photos?"+endpoint))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+endpoint+"&name=bucket&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
+	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+url.Values{"description": {"S3 bucket bucket/photos at " + strings.TrimPrefix(fakeEndpoint(endpoint), "http://")}}.Encode()+"&"+endpoint+"&name=bucket&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
 	require.NoError(t, del(t, r, "bucket"))
 
 	// The name must be the volume's
@@ -510,6 +510,12 @@ func Test_Registry_UpdateRename(t *testing.T) {
 	volume, err := r.GetVolume(context.Background(), "photos")
 	require.NoError(t, err)
 	assert.Equal(t, withIndex(t, b.URL(), "none"), volume.URL)
+}
+
+// fakeEndpoint returns the URL of the fake S3 service, of its option
+func fakeEndpoint(option string) string {
+	values, _ := url.ParseQuery(option)
+	return values.Get("endpoint")
 }
 
 // credentials expands a placeholder of a credential, such as ${ID}, to its
@@ -919,7 +925,9 @@ func Test_Registry_Update(t *testing.T) {
 		require.NoError(t, err)
 		u, err := url.Parse(volume.URL)
 		require.NoError(t, err)
-		return u.Query()
+		query := u.Query()
+		query.Del("description")
+		return query
 	}
 	create := func(path string) error {
 		_, err := r.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Name: "media", Path: path}})
@@ -931,6 +939,7 @@ func Test_Registry_Update(t *testing.T) {
 	validated, err := validate(r, fileURL(t, dir, "defaults"))
 	require.NoError(t, err)
 	defaults := validated.Query()
+	defaults.Del("description")
 	options := func(changed url.Values) url.Values {
 		result := url.Values{}
 		for key, values := range defaults {
