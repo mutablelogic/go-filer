@@ -23,4 +23,17 @@ func Test_SearchCmd(t *testing.T) {
 	assert.Equal(t, []string{"beethoven", "-symphony", `"spiegel im spiegel"`}, cli.Search.Query)
 	require.NotNil(t, cli.Search.Limit)
 	assert.Equal(t, uint64(5), *cli.Search.Limit)
+
+	// A query which starts with an exclusion, which Kong splits as short
+	// flags, is of the words as they're written, with flags before it, or
+	// after --
+	for _, args := range [][]string{
+		{"search", "-symphony", "beethoven"},
+		{"search", "--limit", "5", "-symphony", "beethoven"},
+		{"search", "--", "-symphony", "beethoven"},
+	} {
+		_, err = parser.Parse(args)
+		require.NoError(t, err, args)
+		assert.Equal(t, []string{"-symphony", "beethoven"}, cli.Search.Query, args)
+	}
 }

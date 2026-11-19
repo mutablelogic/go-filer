@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
 	// Packages
+	kong "github.com/alecthomas/kong"
 	httpclient "github.com/mutablelogic/go-filer/registry/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
 	server "github.com/mutablelogic/go-server"
@@ -33,6 +35,42 @@ type SearchCmd struct {
 type searched struct {
 	*schema.SearchObject
 	titles bool // Whether its title is shown, rather than its path
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// HOOKS
+
+// AfterApply sets the query to the words of the command line as they're
+// written, as Kong splits a word which starts with -, which is excluded, as
+// short flags, when it's the first of the query, such as -symphony, of -s
+// and ymphony, which are its characters, so the query is the fewest words,
+// at the end of the command line, which are of the same characters, without
+// a -- before them
+func (cmd *SearchCmd) AfterApply(kctx *kong.Context) error {
+	cmd.Query = rawQuery(kctx.Args, cmd.Query)
+	if len(cmd.Query) > 0 && cmd.Query[0] == "--" {
+		// Kong keeps --, before the words of a passthrough argument
+		cmd.Query = cmd.Query[1:]
+	}
+	return nil
+}
+
+// rawQuery returns the words at the end of the arguments which are of the
+// characters of the query which Kong parsed, or the query, when they aren't
+func rawQuery(args, query []string) []string {
+	want := strings.Join(query, "")
+	if want == "" {
+		return query
+	}
+	got := ""
+	for i := len(args) - 1; i >= 0; i-- {
+		if got = args[i] + got; got == want {
+			return slices.Clone(args[i:])
+		} else if len(got) > len(want) {
+			break
+		}
+	}
+	return query
 }
 
 ///////////////////////////////////////////////////////////////////////////////
