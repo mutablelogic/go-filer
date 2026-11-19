@@ -14,11 +14,12 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Search returns the objects of every volume which match the request's
-// query, best first, with their volumes' names, of its page, and how many
-// match, of every page, which is none of a query without terms
+// Search returns the objects of the query's volumes, or of every volume,
+// without any, which match the request's query, best first, with their
+// volumes' names, of its page, and how many match, of every page, which is
+// none of a query without terms
 func (self *Store) Search(ctx context.Context, req filer.SearchRequest) (_ *filer.SearchResponse, err error) {
-	ctx, end := self.span(ctx, "Search", attribute.String("arg.req", types.Stringify(req)))
+	ctx, end := self.span(ctx, "Search", attribute.String("arg.req", types.Stringify(req)), attribute.StringSlice("arg.volumes", req.Query.Volumes))
 	defer func() { end(err) }()
 	result := &filer.SearchResponse{SearchRequest: req, Body: []*filer.SearchObject{}}
 	if schema.Match(req.Query) == "" {

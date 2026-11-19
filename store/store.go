@@ -110,9 +110,10 @@ type MetadataStore interface {
 // SearchStore is the search of the objects of volumes' indexes, of their
 // names, folders, and metadata (see schema.Query)
 type SearchStore interface {
-	// Search returns the objects of every volume which match the request's
-	// query, best first, with their volumes' names, of its page, and how
-	// many match, of every page, which is none of a query without terms
+	// Search returns the objects of the query's volumes, or of every volume,
+	// without any, which match the request's query, best first, with their
+	// volumes' names, of its page, and how many match, of every page, which
+	// is none of a query without terms
 	Search(ctx context.Context, req schema.SearchRequest) (*schema.SearchResponse, error)
 }
 

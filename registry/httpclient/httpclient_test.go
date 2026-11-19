@@ -544,3 +544,39 @@ func TestObjectDirPath(t *testing.T) {
 		"GET /api/object/media/x/",
 	}, paths)
 }
+
+func TestSearch(t *testing.T) {
+	client, tempDir := newClient(t)
+	ctx := context.Background()
+	dir := tempDir()
+	for _, name := range []string{"Arvo Pärt/spiegel.txt", "notes/other.txt"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(name)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644))
+	}
+	_, err := client.CreateVolume(ctx, schema.VolumeCreateRequest{Name: "media", URL: fileURL("media", dir, "index=objects")})
+	require.NoError(t, err)
+	mounted(t, client, "media")
+
+	// The objects of the mounted volumes which match the query, of its text,
+	// best first, of a page, once they're indexed
+	var resp *schema.SearchResponse
+	require.Eventually(t, func() bool {
+		resp, err = client.Search(ctx, `part -other`, schema.OffsetLimit{})
+		return err == nil && resp.Count == 2
+	}, 10*time.Second, 10*time.Millisecond)
+	require.Len(t, resp.Body, 2)
+	assert.Equal(t, "media", resp.Body[0].Name)
+	assert.Equal(t, "/Arvo Pärt/", resp.Body[0].Key(), "its name is weighed more than its folder")
+	assert.Equal(t, float32(1), resp.Body[0].Rank)
+	assert.Equal(t, schema.Query{Terms: []string{"part"}, Exclude: []string{"other"}}, resp.Query)
+	one := uint64(1)
+	resp, err = client.Search(ctx, "part", schema.OffsetLimit{Offset: 1, Limit: &one})
+	require.NoError(t, err)
+	require.Len(t, resp.Body, 1)
+	assert.Equal(t, "/Arvo Pärt/spiegel.txt", resp.Body[0].Key())
+	assert.Equal(t, uint64(2), resp.Count)
+
+	// Text which isn't a query is a bad request
+	_, err = client.Search(ctx, `"not ended`, schema.OffsetLimit{})
+	assert.Equal(t, http.StatusBadRequest, status(err))
+}

@@ -104,6 +104,14 @@ func (r SearchRefresh) Update(*sqlite.Bind) error {
 // of a list, or of a get, its count
 func (req SearchRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 	bind.Set("match", Match(req.Query))
+	volumes := []byte("null")
+	if len(req.Query.Volumes) > 0 {
+		var err error
+		if volumes, err = json.Marshal(req.Query.Volumes); err != nil {
+			return "", err
+		}
+	}
+	bind.Set("volumes", string(volumes))
 	switch op {
 	case sqlite.List:
 		// Of SQLite's, which are signed, so one which is greater is the

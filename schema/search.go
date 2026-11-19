@@ -25,7 +25,16 @@ type Query struct {
 	// doesn't, which are of the text's words which start with -, such as
 	// -symphony, which a query without terms has no use of
 	Exclude []string `json:"exclude,omitempty" help:"What an object which matches doesn't, such as symphony, of -symphony"`
+
+	// Volumes are the volumes which are searched, or every one, without
+	// any, which isn't of the query's text, as the registry sets it, of the
+	// volumes which are mounted
+	Volumes []string `json:"-"`
 }
+
+// SearchLimit is the most objects of a page of a search, which is the
+// limit, unless a request sets fewer
+const SearchLimit = 100
 
 var _ encoding.TextMarshaler = Query{}
 var _ encoding.TextUnmarshaler = (*Query)(nil)
