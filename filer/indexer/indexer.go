@@ -430,15 +430,13 @@ func (self *Indexer) keysAt(ctx context.Context, p string) []string {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS - SCANNING
 
-// tree is a folder's subtree, of the backend: the folder, and the folders
-// beneath it, by their keys, with how many objects each lists, and its
-// files, by their keys, when they're indexed, so a file, and a folder, of
-// the same path, which a bucket can have, are both indexed
+// tree is a folder's objects, of the backend, of one listing of it, which
+// index indexes: its folders, and its files, when they're indexed, by their
+// keys, so a file, and a folder, of the same path, which a bucket can have,
+// are both indexed
 type tree struct {
-	root    *schema.Object
 	folders map[string]*schema.Object
 	files   map[string]*schema.Object
-	counts  map[string]int
 }
 
 // scan indexes the folder of the key, and every folder beneath it, of one
@@ -447,7 +445,7 @@ type tree struct {
 // removed. The root's scan is the whole volume's, whose state is scanning,
 // and then ready. A scan clears why the index last failed, as it starts, as
 // it's of what failed, or after it, so the error is of this scan, or later.
-func (self *Indexer) scan(ctx context.Context, root string) error {
+func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 	whole := root == "/"
 	state, err := self.store.State(ctx, self.name)
 	if err != nil {
@@ -476,10 +474,20 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 				_ = self.store.SetState(ctx, self.name, state)
 			}
 		}
-		state.Started, state.Error = time.Now(), ""
+		// It's scanning, and then indexing, of its files, and idle, once
+		// it's done, or it fails, so it isn't of a scan which isn't
+		state.Started, state.Error, state.Phase = time.Now(), "", schema.IndexPhaseScanning
 		if err := self.store.SetState(ctx, self.name, state); err != nil {
 			return err
 		}
+		defer func() {
+			if err != nil {
+				if state, e := self.store.State(context.WithoutCancel(ctx), self.name); e == nil {
+					state.Phase = schema.IndexPhaseIdle
+					_ = self.store.SetState(context.WithoutCancel(ctx), self.name, state)
+				}
+			}
+		}()
 	}
 
 	// List it, of what's seen, which the store keeps, of its files, so a
@@ -520,6 +528,12 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 	if err != nil {
 		return err
 	}
+	if whole {
+		state.Phase = schema.IndexPhaseIndexing
+		if err := self.store.SetState(ctx, self.name, state); err != nil {
+			return err
+		}
+	}
 	done := l.files - int(changed)
 	if stored != nil {
 		stored(done)
@@ -550,7 +564,7 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		}
 	}
 	if whole {
-		state.Status, state.Folders, state.Files, state.Mode, state.Scanned = schema.IndexStatusReady, uint64(len(l.folders)+1), uint64(done), string(self.mode), time.Now()
+		state.Status, state.Folders, state.Files, state.Mode, state.Phase, state.Scanned = schema.IndexStatusReady, uint64(len(l.folders)+1), uint64(done), string(self.mode), schema.IndexPhaseIdle, time.Now()
 		return self.store.SetState(ctx, self.name, state)
 	}
 	return nil

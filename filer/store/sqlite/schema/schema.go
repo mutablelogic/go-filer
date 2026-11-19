@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 9
+const Version = 10
 
 var (
 	//go:embed objects.sql
@@ -101,6 +101,13 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 		if version >= 6 && version < 9 {
 			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_9").Exec(ctx, `ALTER TABLE object ADD COLUMN media_subtype TEXT GENERATED ALWAYS AS (
 				substr(media_type, instr(media_type, '/') + 1)) VIRTUAL`); err != nil {
+				return err
+			}
+		}
+		// Version 10's volumes have what their scan in progress is doing,
+		// which a volume of version 1 to 9 is added, as NULL, so it's idle
+		if version >= 1 && version < 10 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_10").Exec(ctx, `ALTER TABLE volume ADD COLUMN phase TEXT`); err != nil {
 				return err
 			}
 		}

@@ -963,8 +963,8 @@ func Test_ScanPages(t *testing.T) {
 	cancel, done := start(first)
 	require.Eventually(t, func() bool {
 		state := state()
-		return state.Status == schema.IndexStatusScanning && state.Files >= 100
-	}, 10*time.Second, time.Millisecond, "its files are stored while it's scanning")
+		return state.Status == schema.IndexStatusScanning && state.Phase == schema.IndexPhaseIndexing && state.Files >= 100
+	}, 10*time.Second, time.Millisecond, "its files are stored while it's indexing them, once they're listed")
 	assert.Equal(t, uint64(5), state().Folders, "of the folders it's listed")
 	cancel()
 	require.NoError(t, <-done)
@@ -981,8 +981,8 @@ func Test_ScanPages(t *testing.T) {
 	}()
 	require.Eventually(t, func() bool {
 		state := state()
-		return state.Status == schema.IndexStatusReady && state.Files == files
-	}, 10*time.Second, time.Millisecond, "it's scanned")
+		return state.Status == schema.IndexStatusReady && state.Files == files && state.Phase == schema.IndexPhaseIdle
+	}, 10*time.Second, time.Millisecond, "it's scanned, and idle")
 	assert.Equal(t, int32(files-stored), second.gets.Load(), "only the files which weren't stored are got")
 	assert.Len(t, indexed(t, s), files)
 }

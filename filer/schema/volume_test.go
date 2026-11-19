@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/url"
 	"testing"
-	"time"
 )
 
 func Test_VolumePatch(t *testing.T) {
@@ -149,6 +148,9 @@ func Test_VolumeCells(t *testing.T) {
 	indexed := func(state IndexState) Volume {
 		return Volume{VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "folders", IndexState: state}}
 	}
+	objects := func(state IndexState) Volume {
+		return Volume{VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "objects", IndexState: state}}
+	}
 	for want, volume := range map[string]Volume{
 		"mounted":                v,
 		"disabled":               {VolumeMeta: VolumeMeta{Name: "media"}},
@@ -161,14 +163,17 @@ func Test_VolumeCells(t *testing.T) {
 	}
 	for want, volume := range map[string]Volume{
 		"none":                               v,
-		"indexing, 3 folders":                indexed(IndexState{Status: IndexStatusScanning, Folders: 3}),
-		"idle, 12 folders":                   indexed(IndexState{Status: IndexStatusReady, Folders: 12, Started: time.Unix(100, 0), Scanned: time.Unix(200, 0)}),
-		"indexing, 12 folders":               indexed(IndexState{Status: IndexStatusReady, Folders: 12, Scanned: time.Unix(100, 0), Started: time.Unix(200, 0)}),
+		"scanning, 3 folders":                indexed(IndexState{Status: IndexStatusScanning, Folders: 3}),
+		"scanning, 3 folders, 2 files":       objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseScanning, Folders: 3, Files: 2}),
+		"indexing, 3 folders, 2 files":       objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseIndexing, Folders: 3, Files: 2}),
+		"idle, 12 folders":                   indexed(IndexState{Status: IndexStatusReady, Folders: 12}),
+		"scanning, 12 folders":               indexed(IndexState{Status: IndexStatusReady, Phase: IndexPhaseScanning, Folders: 12}),
+		"indexing, 12 folders":               indexed(IndexState{Status: IndexStatusReady, Phase: IndexPhaseIndexing, Folders: 12}),
 		"failed: it isn't implemented":       indexed(IndexState{Error: "it isn't implemented"}),
-		"idle, 12 folders: the watch failed": indexed(IndexState{Status: IndexStatusReady, Folders: 12, Scanned: time.Unix(100, 0), Started: time.Unix(200, 0), Error: "the watch failed"}),
-		"idle, 4 folders, 9 files":           {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "objects", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}}},
-		"idle, 4 folders, 0 files":           {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "objects", IndexState: IndexState{Status: IndexStatusReady, Folders: 4}}},
-		"indexing, 4 folders, 9 files":       {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "objects", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9, Started: time.Unix(200, 0), Scanned: time.Unix(100, 0)}}},
+		"idle, 12 folders: the watch failed": indexed(IndexState{Status: IndexStatusReady, Folders: 12, Error: "the watch failed"}),
+		"idle, 4 folders, 9 files":           objects(IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}),
+		"idle, 4 folders, 0 files":           objects(IndexState{Status: IndexStatusReady, Folders: 4}),
+		"indexing, 4 folders, 9 files":       objects(IndexState{Status: IndexStatusReady, Phase: IndexPhaseIndexing, Folders: 4, Files: 9}),
 	} {
 		if got := volume.IndexStatus(); got != want {
 			t.Errorf("index: got %q, want %q", got, want)

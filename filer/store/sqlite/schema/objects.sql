@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS volume (
   folders         INTEGER,                -- how many folders the scan in progress, or the last, has indexed
   files           INTEGER,                -- how many files the last scan indexed, when its files are
   scan_mode       TEXT,                   -- what the last scan which finished indexed: folders, or objects
+  phase           TEXT,                   -- what the scan in progress is doing: scanning, or indexing, or NULL, when it's idle
   index_started   TIMESTAMP,              -- when the scan in progress, or the last, started
   index_timestamp TIMESTAMP,              -- when the last scan which finished did
   error           TEXT                    -- why the last scan, or the watch, failed
