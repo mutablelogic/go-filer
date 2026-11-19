@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 1
+const Version = 2
 
 var (
 	//go:embed objects.sql

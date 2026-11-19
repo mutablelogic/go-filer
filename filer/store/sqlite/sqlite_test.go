@@ -12,6 +12,7 @@ import (
 	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
 	storetest "github.com/mutablelogic/go-filer/filer/store/storetest"
 	gosqlite "github.com/mutablelogic/go-sqlite"
+	ncruces "github.com/mutablelogic/go-sqlite/ncruces"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 	codes "go.opentelemetry.io/otel/codes"
@@ -29,8 +30,8 @@ func newStore(t *testing.T, opts ...store.Opt) store.Store {
 }
 
 func Test_Store(t *testing.T) {
-	// Its volumes, and the state of their indexes, are as every store's
-	storetest.RunVolumes(t, newStore)
+	// It's as every store is
+	storetest.Run(t, newStore)
 }
 
 func Test_New(t *testing.T) {
@@ -53,18 +54,6 @@ func Test_New(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "file://media/mnt/media?index=folders", volume.URL)
 	assert.True(t, volume.Enabled)
-}
-
-func Test_Objects(t *testing.T) {
-	// Its objects aren't implemented yet
-	ctx := context.Background()
-	s := newStore(t)
-	_, err := s.Get(ctx, "media", "/")
-	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
-	assert.ErrorIs(t, s.Put(ctx, "media"), gofiler.ErrNotImplemented)
-	assert.ErrorIs(t, s.Delete(ctx, "media", "/"), gofiler.ErrNotImplemented)
-	_, err = s.List(ctx, "media", store.ListRequest{Parent: "/"})
-	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 }
 
 func Test_Trace(t *testing.T) {
@@ -112,4 +101,29 @@ func attrs(span sdktrace.ReadOnlySpan) map[string]string {
 		result[string(attr.Key)] = attr.Value.Emit()
 	}
 	return result
+}
+
+func Test_Migrate(t *testing.T) {
+	// A database of version 1, which had volumes, but not objects, gets
+	// them, and keeps its volumes
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "index.db")
+	s, err := sqlite.New(ctx, path)
+	require.NoError(t, err)
+	_, err = s.PutVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	db, err := ncruces.Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(ctx, `DROP TABLE metadata; DROP TABLE object; PRAGMA user_version = 1`))
+	require.NoError(t, db.Close())
+
+	s, err = sqlite.New(ctx, path)
+	require.NoError(t, err)
+	defer s.Close()
+	_, err = s.GetVolume(ctx, "media")
+	require.NoError(t, err)
+	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
+	_, err = s.Get(ctx, "media", "/a")
+	assert.NoError(t, err)
 }
