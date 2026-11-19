@@ -32,6 +32,14 @@ type seekReader struct {
 	s io.Seeker
 }
 
+// readAtReader is a reader which can seek, and read at an offset, as a file
+// can, so a function which reads parts of it, such as go-metadata's, doesn't
+// copy it first
+type readAtReader struct {
+	seekReader
+	ra io.ReaderAt
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
@@ -116,16 +124,33 @@ func (self *FS) open(ctx context.Context, name string, want fs.FileInfo) (fs.Fil
 	return f, nil
 }
 
-// newReader returns a reader of the file, by its name, which can seek when
-// the file can, so the function reading it can check if it's an
-// io.ReadSeeker. Its errors are of the file's object, unless the name is
-// empty, such as a request's body, which isn't a file.
+// newReader returns a reader of the file, by its name, which can seek, and
+// read at an offset, when the file can, so the function reading it can
+// check if it's an io.ReadSeeker, or an io.ReaderAt. Its errors are of the
+// file's object, unless the name is empty, such as a request's body, which
+// isn't a file.
 func newReader(ctx context.Context, fs *FS, f io.Reader, name string) io.Reader {
 	r := reader{ctx: ctx, fs: fs, r: f, name: name}
-	if s, ok := f.(io.Seeker); ok {
+	s, seeks := f.(io.Seeker)
+	if ra, ok := f.(io.ReaderAt); ok && seeks {
+		return &readAtReader{seekReader: seekReader{reader: r, s: s}, ra: ra}
+	} else if seeks {
 		return &seekReader{reader: r, s: s}
 	}
 	return &r
+}
+
+// ReadAt returns an error once the context is cancelled, or the filesystem
+// is closed, rather than reading
+func (r *readAtReader) ReadAt(data []byte, offset int64) (int, error) {
+	if err := r.fs.checkRequest(r.ctx); err != nil {
+		return 0, err
+	}
+	n, err := r.ra.ReadAt(data, offset)
+	if err != nil && !errors.Is(err, io.EOF) && r.name != "" {
+		err = objectError("read", r.name, err)
+	}
+	return n, err
 }
 
 // Read returns an error once the context is cancelled, or the filesystem is
