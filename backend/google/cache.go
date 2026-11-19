@@ -1,6 +1,7 @@
 package google
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -62,10 +63,12 @@ func newCache[T any](now func() time.Time, ttl func() time.Duration) *cache[T] {
 
 // get returns the value kept with the key, or when there's none, or it's
 // been kept for longer than the cache keeps values, gets it with fn, and
-// keeps it, unless fn returns an error, or the cache was cleared while it
-// was got. When it's already being got, it waits for it, and returns it, or
-// when it couldn't be got, such as when what got it was cancelled, gets it.
-func (c *cache[T]) get(key string, fn func() (T, error)) (T, error) {
+// keeps it, unless fn returns an error, the cache was cleared while it was
+// got, or the cache keeps values for no time. When it's already being got,
+// it waits for it, until the context is cancelled, when it returns the
+// context's error, without cancelling what gets it, and returns it, or when
+// it couldn't be got, such as when what got it was cancelled, gets it.
+func (c *cache[T]) get(ctx context.Context, key string, fn func() (T, error)) (T, error) {
 	if c == nil {
 		// A cache which there isn't keeps nothing
 		return fn()
@@ -77,10 +80,16 @@ func (c *cache[T]) get(key string, fn func() (T, error)) (T, error) {
 			return value.value, nil
 		} else if l, exists := c.loading[key]; exists {
 			c.mu.Unlock()
-			if <-l.done; l.err == nil {
-				return l.value, nil
+			select {
+			case <-l.done:
+				if l.err == nil {
+					return l.value, nil
+				}
+				continue
+			case <-ctx.Done():
+				var zero T
+				return zero, ctx.Err()
 			}
-			continue
 		}
 		l := &loading[T]{done: make(chan struct{})}
 		c.loading[key] = l
@@ -97,7 +106,7 @@ func (c *cache[T]) load(key string, l *loading[T], fn func() (T, error)) (T, err
 		if c.loading[key] == l {
 			delete(c.loading, key)
 		}
-		if l.err == nil && !l.cleared {
+		if l.err == nil && !l.cleared && c.ttl() > 0 {
 			c.values[key] = cached[T]{value: l.value, at: c.now()}
 		}
 		c.mu.Unlock()

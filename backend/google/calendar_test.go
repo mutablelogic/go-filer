@@ -679,3 +679,28 @@ func Test_CalendarCache(t *testing.T) {
 	_, _, after := counts()
 	assert.Equal(t, g+1, after, "it's got again")
 }
+
+func Test_CalendarWatchClearsCache(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	filer := newCalendarFiler(t, calendarCredentials(t, endpoint), url.Values{"refresh_interval": {"1h"}})
+	const p = "/2026/2026-11/20-work@example.com-e1.ics"
+
+	// What's listed before it's watched, which changes, is got again of the
+	// first rescan, as the watch doesn't send what it found changed
+	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-11"})
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Changed before" })
+	ch, done := make(chan schema.Event, 4), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	select {
+	case event := <-ch:
+		require.Equal(t, schema.EventTypeRescan, event.EventType)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no rescan")
+	}
+	assert.Contains(t, read(t, filer, p), "SUMMARY:Changed before")
+}

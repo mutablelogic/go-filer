@@ -312,6 +312,10 @@ func (self *ContactFiler) WatchObjects(ctx context.Context, ch chan<- schema.Eve
 	if err != nil {
 		return err
 	}
+
+	// What was got before it's watched may be out of date, of the snapshot,
+	// which isn't sent, so it's got again, of the rescan
+	self.people.clear()
 	select {
 	case ch <- schema.Rescan(self.name):
 	case <-ctx.Done():
@@ -417,7 +421,7 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 // connections returns the contacts, with their fields, or those which were
 // got, for the refresh interval
 func (self *ContactFiler) connections(ctx context.Context) ([]httpclient.Person, error) {
-	return self.people.get("", func() ([]httpclient.Person, error) {
+	return self.people.get(ctx, "", func() ([]httpclient.Person, error) {
 		return self.client.Connections(ctx, httpclient.PersonFields)
 	})
 }

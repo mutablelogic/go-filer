@@ -77,6 +77,10 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 	if _, _, err := self.poll(ctx, state); err != nil {
 		return err
 	}
+
+	// What was got before it's watched may be out of date, of what the poll
+	// found, which isn't sent, so it's got again, of the rescan
+	self.clearCache()
 	send := func(event schema.Event) error {
 		select {
 		case ch <- event:

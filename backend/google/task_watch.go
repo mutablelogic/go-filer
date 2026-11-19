@@ -71,6 +71,10 @@ func (self *TaskFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event)
 	if err != nil {
 		return err
 	}
+
+	// What was got before it's watched may be out of date, of the snapshot,
+	// which isn't sent, so it's got again, of the rescan
+	self.clearCache()
 	select {
 	case ch <- schema.Rescan(self.name):
 	case <-ctx.Done():

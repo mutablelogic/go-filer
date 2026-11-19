@@ -235,7 +235,7 @@ func (self *taskIterator) readList(ctx context.Context, item listItem) error {
 // taskLists returns the lists, or those which were got, for the refresh
 // interval, which can be sorted, as they're a copy
 func (self *TaskFiler) taskLists(ctx context.Context) ([]httpclient.TaskList, error) {
-	lists, err := self.lists.get("", func() ([]httpclient.TaskList, error) {
+	lists, err := self.lists.get(ctx, "", func() ([]httpclient.TaskList, error) {
 		return self.client.TaskLists(ctx)
 	})
 	return slices.Clone(lists), err
@@ -258,7 +258,7 @@ func (self *TaskFiler) taskList(ctx context.Context, id string) (*httpclient.Tas
 // listTasks returns the tasks of a list, or those which were got, for the
 // refresh interval, which can be sorted, as they're a copy
 func (self *TaskFiler) listTasks(ctx context.Context, list string) ([]httpclient.Task, error) {
-	tasks, err := self.tasks.get(list, func() ([]httpclient.Task, error) {
+	tasks, err := self.tasks.get(ctx, list, func() ([]httpclient.Task, error) {
 		return self.client.Tasks(ctx, list)
 	})
 	return slices.Clone(tasks), err

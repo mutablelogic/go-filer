@@ -553,7 +553,7 @@ func (self *CalendarFiler) stat(ctx context.Context, op, p string) (*schema.Obje
 // days, in its own zone, in the order of their paths, which are those of
 // the directory, which replace those which were, for a watch
 func (self *CalendarFiler) events(ctx context.Context, op, p, dir string, from, to time.Time) ([]calendarEvent, error) {
-	return self.listings.get(dir, func() ([]calendarEvent, error) {
+	return self.listings.get(ctx, dir, func() ([]calendarEvent, error) {
 		return self.listEvents(ctx, op, p, from, to)
 	})
 }
@@ -587,7 +587,7 @@ func (self *CalendarFiler) listEvents(ctx context.Context, op, p string, from, t
 // calendars returns the user's calendars, or those which were got, for
 // the refresh interval
 func (self *CalendarFiler) calendars(ctx context.Context) ([]httpclient.Calendar, error) {
-	return self.calendarList.get("", func() ([]httpclient.Calendar, error) {
+	return self.calendarList.get(ctx, "", func() ([]httpclient.Calendar, error) {
 		return self.client.Calendars(ctx)
 	})
 }
