@@ -125,7 +125,12 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 		case err != nil && w.Attempts+1 < taskAttempts:
 			_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
 		default:
-			// It's done, or given up, until the file changes
+			// It's done, or given up, until the file changes, with why
+			if err != nil {
+				w.Error = err.Error()
+			} else {
+				w.Error = ""
+			}
 			if err := self.store.Done(context.WithoutCancel(ctx), self.name, w); err != nil {
 				self.failed(ctx, err)
 			}

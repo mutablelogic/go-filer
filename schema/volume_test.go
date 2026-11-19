@@ -174,6 +174,9 @@ func Test_VolumeCells(t *testing.T) {
 		"idle, 4 folders, 9 files":           objects(IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}),
 		"idle, 4 folders, 0 files":           objects(IndexState{Status: IndexStatusReady, Folders: 4}),
 		"indexing, 4 folders, 9 files":       objects(IndexState{Status: IndexStatusReady, Phase: IndexPhaseIndexing, Folders: 4, Files: 9}),
+		"indexing, 4 folders, 9 files, 0 indexed, 9 queued": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}, Metadata: &TaskState{Queued: 9}}},
+		"idle, 4 folders, 9 files, 9 indexed, 1 failed": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}, Metadata: &TaskState{Indexed: 9, Failed: 1}}},
+		"indexing, 4 folders, 9 files, 7 indexed, 2 queued, 1 failed": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}, Metadata: &TaskState{Queued: 2, Indexed: 7, Failed: 1, Error: "it failed"}}},
 	} {
 		if got := volume.IndexStatus(); got != want {
 			t.Errorf("index: got %q, want %q", got, want)

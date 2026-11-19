@@ -223,6 +223,11 @@ func (self *Registry) view(stored *schema.Volume) *schema.Volume {
 			} else {
 				volume.Index.IndexState = state
 			}
+			if task, err := i.Metadata(context.Background()); err != nil && volume.Index.Error == "" {
+				volume.Index.Error = err.Error()
+			} else {
+				volume.Index.Metadata = task
+			}
 		}
 	}
 	return &volume

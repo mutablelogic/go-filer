@@ -126,6 +126,16 @@ func (v Volume) Description() string {
 type VolumeIndex struct {
 	Mode string `json:"mode" help:"What's indexed, such as folders"`
 	IndexState
+	Metadata *TaskState `json:"metadata,omitempty" help:"The metadata of the files, which is indexed of each file, apart from scans, of index=metadata"`
+}
+
+// TaskState is the work of a task, such as indexing the metadata of files,
+// of a volume's files
+type TaskState struct {
+	Queued  uint64 `json:"queued,omitempty" help:"How many files are queued, or being done, including those which failed, and are tried again"`
+	Indexed uint64 `json:"indexed,omitempty" help:"How many files it's done of, of their revisions, including those it failed of too often, which are given up until they change"`
+	Failed  uint64 `json:"failed,omitempty" help:"How many files it failed of too often, which are given up until they change"`
+	Error   string `json:"error,omitempty" help:"Why it last failed of a file"`
 }
 
 // IndexState is the state of a volume's index
@@ -224,13 +234,26 @@ func (v Volume) IndexStatus() string {
 		// What its scan is doing, of the counts of the scan in progress, the
 		// first, or of its last scan, when it's ready, which is idle, when
 		// it isn't scanned
+		// it isn't scanned, unless the metadata of its files is queued, which
+		// is indexing
 		phase := string(v.Index.Phase)
-		if phase == "" {
+		if phase == "" && v.Index.Metadata != nil && v.Index.Metadata.Queued > 0 {
+			phase = string(IndexPhaseIndexing)
+		} else if phase == "" {
 			phase = "idle"
 		}
 		result = fmt.Sprintf("%s, %d folders", phase, v.Index.Folders)
 		if (v.Index.Mode == "objects" || v.Index.Mode == "metadata") && (v.Index.Status == IndexStatusReady || v.Index.Files > 0) {
 			result += fmt.Sprintf(", %d files", v.Index.Files)
+		}
+		if task := v.Index.Metadata; task != nil {
+			result += fmt.Sprintf(", %d indexed", task.Indexed)
+			if task.Queued > 0 {
+				result += fmt.Sprintf(", %d queued", task.Queued)
+			}
+			if task.Failed > 0 {
+				result += fmt.Sprintf(", %d failed", task.Failed)
+			}
 		}
 	case v.Index.Error != "":
 		result = "failed"

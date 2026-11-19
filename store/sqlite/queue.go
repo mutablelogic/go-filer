@@ -7,6 +7,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
 	sqlite "github.com/mutablelogic/go-sqlite"
@@ -100,13 +101,24 @@ func (self *Store) Done(ctx context.Context, volume string, work ...store.Work) 
 			// A task's work, which was done, rather than pushed again, records
 			// the revision of the file it was done of
 			if len(done) > 0 && w.Kind != store.KindIndex && w.Kind != store.KindRescan {
-				if err := conn.Insert(ctx, nil, schema.QueueDid{Volume: volume, Key: w.Key, Kind: w.Kind, Revision: done[0].Revision, Now: now}); err != nil {
+				if err := conn.Insert(ctx, nil, schema.QueueDid{Volume: volume, Key: w.Key, Kind: w.Kind, Revision: done[0].Revision, Error: w.Error, Now: now}); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}))
+}
+
+// Tasks returns the state of the work of a task of the volume's files
+func (self *Store) Tasks(ctx context.Context, volume string, kind store.Kind) (_ filer.TaskState, err error) {
+	ctx, end := self.span(ctx, "Tasks", attribute.String("arg.volume", volume), attribute.String("arg.kind", string(kind)))
+	defer func() { end(err) }()
+	result := schema.QueueTasks{Volume: volume, Kind: kind}
+	if err := self.conn.Get(ctx, &result, result); err != nil {
+		return filer.TaskState{}, storeErr(err)
+	}
+	return result.TaskState, nil
 }
 
 // PushStale queues the work of a task of the files beneath the folder's key

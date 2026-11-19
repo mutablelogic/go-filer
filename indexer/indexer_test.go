@@ -1221,6 +1221,15 @@ func Test_MetadataTask(t *testing.T) {
 	require.Eventually(t, func() bool { return z.count("/a/y.txt") == 5 }, 10*time.Second, 5*time.Millisecond, "it's given up, after 5 attempts")
 	assert.Equal(t, 1, z.count("/x.txt"))
 
+	// Its state is of the files which are indexed, and failed, with why
+	require.Eventually(t, func() bool {
+		state, err := i.Metadata(context.Background())
+		return err == nil && state != nil && state.Queued == 0 && state.Indexed == 2 && state.Failed == 1
+	}, 10*time.Second, 5*time.Millisecond, "it's indexed, of one which failed")
+	state, err := i.Metadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "it can't be read", state.Error)
+
 	// A rescan of files which haven't changed doesn't enrich them again, but
 	// one which has changed is, and one which was given up is tried again,
 	// once it changes
