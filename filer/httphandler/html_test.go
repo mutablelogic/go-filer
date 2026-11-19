@@ -106,6 +106,7 @@ func TestObjectListHTML(t *testing.T) {
 	// A volume which is read-only, by any boolean, has nothing to upload
 	// or delete with
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"readonly": "TRUE"}`, nil))
+	readonly(t, server)
 	_, _, body = getAccept(t, server, "object/media", browser)
 	assert.Contains(t, body, "a.txt")
 	assert.NotContains(t, body, `class="delete"`)

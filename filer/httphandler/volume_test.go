@@ -155,7 +155,7 @@ func TestVolumeDelete(t *testing.T) {
 	var list schema.VolumeList
 	require.Equal(t, http.StatusOK, get(t, server, "volume", &list))
 	assert.Empty(t, list.Body)
-	assert.Equal(t, http.StatusNotFound, get(t, server, "object/media", nil))
+	require.Eventually(t, func() bool { return get(t, server, "object/media", nil) == http.StatusNotFound }, 10*time.Second, 5*time.Millisecond, "its objects aren't listed, once it's unmounted")
 	_, err := os.Stat(filepath.Join(dir, "a.txt"))
 	assert.NoError(t, err)
 
