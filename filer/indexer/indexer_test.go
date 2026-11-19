@@ -766,6 +766,28 @@ func Test_GetFileUnwatched(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond, "it's scanned again")
 }
 
+func Test_RescanClearsError(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+
+	// A rescan, of a folder, or of the root, clears why the index last
+	// failed, as it starts
+	for _, folder := range []string{"/a/", "/"} {
+		state, err := s.State(context.Background(), "media")
+		require.NoError(t, err)
+		state.Error = "it failed"
+		require.NoError(t, s.SetState(context.Background(), "media", state))
+		require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: folder, Kind: store.KindRescan}))
+		require.Eventually(t, func() bool {
+			state, err := s.State(context.Background(), "media")
+			return err == nil && state.Error == ""
+		}, 10*time.Second, 10*time.Millisecond, "a rescan of %s clears it", folder)
+	}
+}
+
 func Test_Poll(t *testing.T) {
 	backend, dir := newBackend(t)
 

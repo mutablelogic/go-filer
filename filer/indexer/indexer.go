@@ -351,12 +351,19 @@ type tree struct {
 // recursive listing, so the backend decides which folders are descended
 // into. The index's objects beneath it, which aren't there any more, are
 // removed. The root's scan is the whole volume's, whose state is scanning,
-// and then ready.
+// and then ready. A scan clears why the index last failed, as it starts, as
+// it's of what failed, or after it, so the error is of this scan, or later.
 func (self *Indexer) scan(ctx context.Context, root string) error {
 	whole := root == "/"
 	state, err := self.store.State(ctx, self.name)
 	if err != nil {
 		return err
+	}
+	if !whole && state.Error != "" {
+		state.Error = ""
+		if err := self.store.SetState(ctx, self.name, state); err != nil {
+			return err
+		}
 	}
 	var progress func(int)
 	if whole {
