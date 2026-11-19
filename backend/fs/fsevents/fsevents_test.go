@@ -81,6 +81,18 @@ func (w *watch) write(t *testing.T, rel, data string) {
 	require.NoError(t, os.WriteFile(w.path(rel), []byte(data), 0o600))
 }
 
+// removeAll removes the directory, and what's in it, which is tried again
+// for a while, as Windows can't delete a directory which the watch has open
+// for a moment, as it reads a directory which is created
+func removeAll(t *testing.T, path string) {
+	t.Helper()
+	var err error
+	require.Eventually(t, func() bool {
+		err = os.RemoveAll(path)
+		return err == nil
+	}, 5*time.Second, 50*time.Millisecond, "removing %s: %v", path, err)
+}
+
 // drain discards the events received so far, after a moment
 func (w *watch) drain() {
 	time.Sleep(200 * time.Millisecond)
@@ -175,7 +187,7 @@ func TestWatch(t *testing.T) {
 		w.expect(t, file(fsevents.Create, "x/y/z/c.txt"))
 
 		// A directory is deleted
-		require.NoError(t, os.RemoveAll(w.path("x")))
+		removeAll(t, w.path("x"))
 		w.expect(t, dir(fsevents.Delete, "x"))
 	})
 
@@ -236,7 +248,7 @@ func TestWatch(t *testing.T) {
 	t.Run("RootRemoved", func(t *testing.T) {
 		// Removing the watched directory stops watching
 		w := start(t)
-		require.NoError(t, os.RemoveAll(w.dir))
+		removeAll(t, w.dir)
 		select {
 		case err := <-w.done:
 			assert.ErrorIs(t, err, fsevents.ErrRootRemoved)
@@ -258,7 +270,7 @@ func TestWatch(t *testing.T) {
 		f, err := os.Open(w.dir)
 		require.NoError(t, err)
 		defer f.Close()
-		require.NoError(t, os.RemoveAll(w.dir))
+		removeAll(t, w.dir)
 		select {
 		case err := <-w.done:
 			assert.ErrorIs(t, err, fsevents.ErrRootRemoved)
