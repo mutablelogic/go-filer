@@ -201,6 +201,7 @@ func (self *Registry) view(stored *schema.Volume) *schema.Volume {
 	if offline != nil {
 		volume.Enabled, volume.Error = false, offline.Error()
 	}
+	volume.Mounted = backend != nil
 	if backend != nil {
 		if i, ok := backend.(*indexer.Indexer); ok {
 			volume.Index = &schema.VolumeIndex{Mode: string(indexer.ModeFolders)}

@@ -128,3 +128,32 @@ func Test_VolumeReadonly(t *testing.T) {
 		}
 	}
 }
+
+func Test_VolumeCells(t *testing.T) {
+	// The bare URL is without its options, which are listed, without the
+	// description, which is its own
+	v := Volume{VolumeMeta: VolumeMeta{Name: "media", URL: "file://media/mnt/media?skip=%5E%5C.&description=Family+photos&readonly=true&skip=~%24", Enabled: true}, Mounted: true}
+	if got := v.BareURL(); got != "file://media/mnt/media" {
+		t.Errorf("bare url: %q", got)
+	}
+	if got := v.Options(); got != `readonly=true skip=^\. skip=~$` {
+		t.Errorf("options: %q", got)
+	}
+	if got := v.Description(); got != "Family photos" {
+		t.Errorf("description: %q", got)
+	}
+
+	// The status is of whether it's enabled, mounted, offline, and indexed
+	for want, volume := range map[string]Volume{
+		"mounted":  v,
+		"disabled": {VolumeMeta: VolumeMeta{Name: "media"}},
+		"mounting": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}},
+		"offline":  {VolumeMeta: VolumeMeta{Name: "media"}, Mounted: true, Error: "sign in again"},
+		"scanning": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "folders", IndexState: IndexState{Status: IndexStatusScanning}}},
+		"indexed":  {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "folders", IndexState: IndexState{Status: IndexStatusReady}}},
+	} {
+		if got := volume.Status(); got != want {
+			t.Errorf("status: got %q, want %q", got, want)
+		}
+	}
+}

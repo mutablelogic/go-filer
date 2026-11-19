@@ -10,6 +10,7 @@ List the volumes which are stored, in order of their names, including those whic
 
 * **`url`** is the backend's, with each of its options, defaults too, such as `readonly=false`, its `index` option, and the placeholders of its credentials, but not the credentials. A volume is created again from it when the server starts.
 * **`index`** is that of a volume which is mounted and indexed, with `index=folders`: its `mode`, its `status`, `scanning` or `ready`, the `folders` its scan has indexed, when it `started` and was `scanned`, and its last `error`.
+* **`mounted`** is true once the server has mounted the volume, so its objects can be used, which an enabled volume is shortly after it's created, or updated.
 * **`enabled: false` with an `error`** is a volume which is enabled, but offline, or can't be mounted. One whose user needs to sign in again stays so until `PATCH /volume/{name}`. Others are opened again by the server, after a while.
 * **`schemes`** is the schemes of the URLs which volumes can be created from, such as `file` and `s3`.
 

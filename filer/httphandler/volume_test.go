@@ -79,7 +79,7 @@ func TestVolumeCreate(t *testing.T) {
 	var list schema.VolumeList
 	require.Equal(t, http.StatusOK, get(t, server, "volume", &list))
 	if assert.Len(t, list.Body, 2) {
-		assert.Equal(t, volume, list.Body[1])
+		assert.Equal(t, volume.VolumeMeta, list.Body[1].VolumeMeta)
 	}
 
 	// Its objects can be listed, once it's mounted
@@ -134,7 +134,9 @@ func TestVolumeGet(t *testing.T) {
 	require.Equal(t, http.StatusOK, get(t, server, "volume/media", &volume))
 	var list schema.VolumeList
 	require.Equal(t, http.StatusOK, get(t, server, "volume", &list))
-	assert.Equal(t, list.Body, []schema.Volume{volume})
+	if assert.Len(t, list.Body, 1) {
+		assert.Equal(t, volume.VolumeMeta, list.Body[0].VolumeMeta)
+	}
 
 	// A volume which isn't mounted, or was deleted, isn't found
 	assert.Equal(t, http.StatusNotFound, get(t, server, "volume/missing", nil))

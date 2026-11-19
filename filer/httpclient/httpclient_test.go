@@ -119,7 +119,9 @@ func TestVolumes(t *testing.T) {
 	assert.Equal(t, "true", u.Query().Get("readonly"))
 	list, err = client.ListVolumes(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, []schema.Volume{*volume}, list.Body)
+	if assert.Len(t, list.Body, 1) {
+		assert.Equal(t, volume.VolumeMeta, list.Body[0].VolumeMeta)
+	}
 
 	// Errors are returned with their status
 	_, err = client.CreateVolume(ctx, schema.VolumeCreateRequest{Name: "media", URL: fileURL("media", dir, "")})
@@ -205,10 +207,14 @@ func TestGetVolume(t *testing.T) {
 	require.NoError(t, err)
 	mounted(t, client, "media")
 
-	// The volume is returned as it was created
+	// The volume is returned as it was created, and is mounted, which it
+	// wasn't when it was created
 	volume, err := client.GetVolume(ctx, "media")
 	require.NoError(t, err)
-	assert.Equal(t, created, volume)
+	assert.Equal(t, created.VolumeMeta, volume.VolumeMeta)
+	assert.True(t, created.Created.Equal(volume.Created))
+	assert.True(t, volume.Mounted)
+	assert.Equal(t, "mounted", volume.Status())
 
 	// A volume which isn't mounted isn't found
 	_, err = client.GetVolume(ctx, "missing")
@@ -226,7 +232,7 @@ func TestDeleteVolume(t *testing.T) {
 	// listed
 	deleted, err := client.DeleteVolume(ctx, "media")
 	require.NoError(t, err)
-	assert.Equal(t, created, deleted)
+	assert.Equal(t, created.VolumeMeta, deleted.VolumeMeta)
 	list, err := client.ListVolumes(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, list.Body)
