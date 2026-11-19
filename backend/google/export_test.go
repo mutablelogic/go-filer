@@ -52,3 +52,9 @@ func CalendarPath(filer *CalendarFiler, calendar, id string) string {
 	defer filer.mu.Unlock()
 	return filer.paths[eventKey(calendar, id)]
 }
+
+// ClearCalendarCache clears what a calendar filer got from Google, as its
+// watch does, when what it's of changes
+func ClearCalendarCache(filer *CalendarFiler) {
+	filer.clearCache()
+}
