@@ -79,6 +79,45 @@ type ObjectListCmd struct {
 	StartAfter string  `name:"start-after" help:"Return objects whose keys sort after this key, which is the next key of the previous page."`
 	Limit      *uint64 `name:"limit" help:"Maximum number of objects to return, which defaults to and is capped at 100."`
 	Type       string  `name:"type" placeholder:"TYPE" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters. Folders of an indexed volume are listed from its index."`
+	NoTitle    bool    `name:"no-title" help:"Show each object's key, rather than its title (dc:title), when it has one."`
+}
+
+// titled is an object of a table, whose first column is its title, of its
+// metadata, dc:title, when it has one, and otherwise its key
+type titled struct {
+	*schema.Object
+}
+
+func (o titled) Header() []string {
+	header := o.Object.Header()
+	header[0] = "Title"
+	return header
+}
+
+func (o titled) Cell(col int) tui.CellText {
+	if col == 0 {
+		if title := objectTitle(o.Object); title != "" {
+			return title
+		}
+	}
+	return o.Object.Cell(col)
+}
+
+// objectTitle returns the title of an object, of its metadata, dc:title,
+// which is a string, or its JSON, when it isn't one, or empty, when it has
+// none
+func objectTitle(object *schema.Object) string {
+	for _, m := range object.Meta {
+		if m.Namespace != "dc" || m.Key != "title" {
+			continue
+		}
+		var title string
+		if err := json.Unmarshal(m.Value, &title); err == nil {
+			return strings.TrimSpace(title)
+		}
+		return strings.TrimSpace(string(m.Value))
+	}
+	return ""
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -102,10 +141,21 @@ func (cmd *ObjectListCmd) Run(ctx server.Cmd) error {
 			return nil
 		}
 
-		// Objects table
-		table := tui.TableFor[*schema.Object](tui.SetWidth(width))
-		if _, err := table.Write(os.Stdout, list.Body...); err != nil {
-			return err
+		// Objects table, of their titles, unless they're of their keys
+		if cmd.NoTitle {
+			table := tui.TableFor[*schema.Object](tui.SetWidth(width))
+			if _, err := table.Write(os.Stdout, list.Body...); err != nil {
+				return err
+			}
+		} else {
+			rows := make([]titled, 0, len(list.Body))
+			for _, object := range list.Body {
+				rows = append(rows, titled{object})
+			}
+			table := tui.TableFor[titled](tui.SetWidth(width))
+			if _, err := table.Write(os.Stdout, rows...); err != nil {
+				return err
+			}
 		}
 
 		// Objects summary, which is of a page, of the total, when it's known,

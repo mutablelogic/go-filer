@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	// Packages
 	kong "github.com/alecthomas/kong"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -202,5 +204,31 @@ func Test_ParseMeta(t *testing.T) {
 	for _, flag := range []string{"rating", "=5", "photo.=5", ".rating=5", ".=5"} {
 		_, err := parseMeta([]string{flag})
 		assert.Error(t, err, flag)
+	}
+}
+
+func Test_objectTitle(t *testing.T) {
+	object := func(meta ...schema.Meta) *schema.Object {
+		return &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.txt"}, ObjectMeta: schema.ObjectMeta{Meta: meta}}
+	}
+
+	// An object's title is its dc:title, a string, or its JSON, when it isn't
+	// one, which is its first column, and otherwise its key is
+	for _, test := range []struct {
+		object *schema.Object
+		want   string
+	}{
+		{object(), "/a.txt"},
+		{object(schema.Meta{Namespace: "dc", Key: "title", Value: json.RawMessage(`" Milk "`)}), "Milk"},
+		{object(schema.Meta{Namespace: "dc", Key: "title", Value: json.RawMessage(`42`)}), "42"},
+		{object(schema.Meta{Namespace: "dc", Key: "title", Value: json.RawMessage(`""`)}), "/a.txt"},
+		{object(schema.Meta{Namespace: "xmp", Key: "title", Value: json.RawMessage(`"Not dc"`)}), "/a.txt"},
+	} {
+		if got := (titled{test.object}).Cell(0); got != test.want {
+			t.Errorf("%v: got %q, want %q", test.object.Meta, got, test.want)
+		}
+	}
+	if header := (titled{object()}).Header(); header[0] != "Title" {
+		t.Errorf("header: %v", header)
 	}
 }
