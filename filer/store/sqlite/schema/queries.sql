@@ -72,13 +72,15 @@ WHERE volume = @volume AND (path = @path OR (path > @prefix AND path < @end));
 
 -- queue.push_index
 -- The index of a path, unless a rescan of it, or a folder above it, is
--- queued, which is due at the earlier of the two, so work which is pushed
--- again and again isn't put off, and is claimed again, when it's claimed
+-- queued, and isn't claimed, as a rescan which is claimed can have passed
+-- it, which is due at the earlier of the two, so work which is pushed again
+-- and again isn't put off, and is claimed again, when it's claimed
 INSERT INTO object_state (volume, path, kind, after)
 SELECT @volume, @path, @kind, @after
 WHERE NOT EXISTS (
   SELECT 1 FROM object_state
   WHERE volume = @volume AND kind = 'rescan' AND path IN (SELECT value FROM json_each(@ancestors))
+    AND (leased_until IS NULL OR julianday(leased_until) <= julianday('now'))
 )
 ON CONFLICT (volume, path, kind) DO UPDATE SET
   after = CASE WHEN julianday(excluded.after) < julianday(after) THEN excluded.after ELSE after END,
@@ -86,18 +88,20 @@ ON CONFLICT (volume, path, kind) DO UPDATE SET
 
 -- queue.push_rescan
 -- The rescan of a folder, which replaces the index and rescan work beneath
--- it, unless a rescan of a folder above it is queued
+-- it, unless a rescan of a folder above it is queued, and isn't claimed
 DELETE FROM object_state
 WHERE volume = @volume AND kind IN ('index', 'rescan') AND (path > @prefix AND path < @end OR (path = @path AND kind = 'index'))
 AND NOT EXISTS (
   SELECT 1 FROM object_state AS above
   WHERE above.volume = @volume AND above.kind = 'rescan' AND above.path IN (SELECT value FROM json_each(@ancestors))
+    AND (above.leased_until IS NULL OR julianday(above.leased_until) <= julianday('now'))
 );
 INSERT INTO object_state (volume, path, kind, after)
 SELECT @volume, @path, @kind, @after
 WHERE NOT EXISTS (
   SELECT 1 FROM object_state
   WHERE volume = @volume AND kind = 'rescan' AND path IN (SELECT value FROM json_each(@ancestors))
+    AND (leased_until IS NULL OR julianday(leased_until) <= julianday('now'))
 )
 ON CONFLICT (volume, path, kind) DO UPDATE SET
   after = CASE WHEN julianday(excluded.after) < julianday(after) THEN excluded.after ELSE after END,

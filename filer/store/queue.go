@@ -2,7 +2,12 @@ package store
 
 import (
 	"context"
+	"path"
+	"strings"
 	"time"
+
+	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -55,3 +60,18 @@ const (
 	KindIndex  Kind = "index"  // Index an object, of the backend
 	KindRescan Kind = "rescan" // Rescan a folder, and what's beneath it
 )
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC FUNCTIONS
+
+// ValidateWork returns ErrBadParameter when work's path isn't absolute, and
+// clean, such as "/a/b", or its kind is empty
+func ValidateWork(work Work) error {
+	switch {
+	case !strings.HasPrefix(work.Path, "/") || path.Clean(work.Path) != work.Path:
+		return gofiler.ErrBadParameter.Withf("work of a path which isn't absolute: %q", work.Path)
+	case work.Kind == "":
+		return gofiler.ErrBadParameter.Withf("work of %q has no kind", work.Path)
+	}
+	return nil
+}

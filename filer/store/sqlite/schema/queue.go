@@ -2,6 +2,7 @@ package schema
 
 import (
 	"path"
+	"strings"
 	"time"
 
 	// Packages
@@ -151,10 +152,10 @@ func (list *WorkList) Scan(row sqlite.Row) error {
 // PUBLIC FUNCTIONS
 
 // Ancestors returns the folders above a path, such as "/a" and "/" of
-// "/a/b", or none of the root
+// "/a/b", or none of the root, or of a path which isn't absolute
 func Ancestors(p string) []string {
 	result := []string{}
-	for p != "/" && p != "" {
+	for p != "/" && p != "" && p != "." && strings.HasPrefix(p, "/") {
 		p = path.Dir(p)
 		result = append(result, p)
 	}

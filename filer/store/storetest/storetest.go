@@ -536,8 +536,25 @@ func testQueueCoalesce(t *testing.T, s store.Store) {
 	// A rescan of the root replaces all the work
 	require.NoError(t, s.Push(ctx, "media", index("/x"), rescan("/y")))
 	require.NoError(t, s.Push(ctx, "media", rescan("/")))
-	_, paths = claimed(t, s, all, 10)
+	work, paths := claimed(t, s, all, 10)
 	assert.Equal(t, []string{"rescan /"}, paths)
+
+	// Work beneath a rescan which is claimed is queued, as the rescan can
+	// have passed it, and isn't done with it
+	require.NoError(t, s.Push(ctx, "media", index("/a/b"), rescan("/c")))
+	require.NoError(t, s.Done(ctx, "media", work...))
+	_, paths = claimed(t, s, []store.Kind{store.KindIndex}, 10)
+	assert.Equal(t, []string{"index /a/b"}, paths)
+	_, paths = claimed(t, s, []store.Kind{store.KindRescan}, 10)
+	assert.Equal(t, []string{"rescan /c"}, paths)
+
+	// Work of a path which isn't absolute, or clean, or without a kind, is
+	// bad, and none of the work is queued
+	for _, bad := range []store.Work{index("a/b"), index(""), index("."), index("/a/../b"), index("/a/"), {Path: "/a"}} {
+		assert.ErrorIs(t, s.Push(ctx, "media", index("/ok"), bad), gofiler.ErrBadParameter, bad)
+	}
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths)
 }
 
 func testQueueOrder(t *testing.T, s store.Store) {
