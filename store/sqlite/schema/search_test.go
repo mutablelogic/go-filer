@@ -33,3 +33,13 @@ func Test_searchFunctions(t *testing.T) {
 	assert.Equal(t, "", searchText(`not json`))
 	assert.Len(t, searchText(`"`+strings.Repeat("ä", maxSearchText)+`"`), maxSearchText, "cut at a character")
 }
+
+func Test_Match(t *testing.T) {
+	// Each term is a phrase, of FTS5's, any of which match, which is the
+	// start of a word, of a term which ends with *, and what's in it isn't
+	// FTS5's syntax
+	assert.Equal(t, `"arvo part" OR "beethov"*`, Match([]string{" arvo part ", "beethov*"}))
+	assert.Equal(t, `"a ""note"" OR -b"`, Match([]string{`a "note" OR -b`}))
+	assert.Equal(t, "", Match([]string{"", " ", "*"}))
+	assert.Equal(t, "", Match(nil))
+}

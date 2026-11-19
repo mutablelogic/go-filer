@@ -206,3 +206,37 @@ func sameAttr(a, b filer.ObjectAttr) bool {
 	sameSize := (a.Size == nil) == (b.Size == nil) && (a.Size == nil || *a.Size == *b.Size)
 	return sameETag && sameSize && a.ModTime.Equal(b.ModTime)
 }
+
+// Search returns the objects of every volume which match the request's
+// query, best first, with their volumes' names, of its page, and how many
+// match, of every page, which is none of a query without terms
+func (self *Store) Search(ctx context.Context, req filer.SearchRequest) (_ *filer.SearchResponse, err error) {
+	ctx, end := self.span(ctx, "Search", attribute.String("arg.req", types.Stringify(req)))
+	defer func() { end(err) }()
+	result := &filer.SearchResponse{SearchRequest: req, Body: []*filer.Object{}}
+	if schema.Match(req.Terms) == "" {
+		return result, nil
+	}
+	var count schema.SearchCount
+	if err := self.conn.Tx(ctx, func(conn sqlite.Conn) error {
+		var hits schema.SearchHits
+		if err := conn.List(ctx, &hits, schema.SearchRequest{SearchRequest: req}); err != nil {
+			return err
+		} else if err := conn.Get(ctx, &count, schema.SearchRequest{SearchRequest: req}); err != nil {
+			return err
+		}
+		for _, hit := range hits {
+			var objects schema.ObjectList
+			if err := conn.Get(ctx, &objects, schema.ObjectKey{Volume: hit.Volume, Key: hit.Key}); err != nil {
+				return err
+			}
+			objects[0].Name = hit.Volume
+			result.Body = append(result.Body, objects[0])
+		}
+		return nil
+	}); err != nil {
+		return nil, storeErr(err)
+	}
+	result.Count = uint64(count)
+	return result, nil
+}
