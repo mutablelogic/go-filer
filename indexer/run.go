@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -24,7 +25,12 @@ import (
 // doubles each time, up to a minute. The changes are queued, in the store,
 // and indexed by a worker, in the background, so the work which is queued
 // when it stops is done when it runs again.
-func (self *Indexer) Run(ctx context.Context) error {
+func (self *Indexer) Run(ctx context.Context, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	self.logger.Store(logger.With("volume", self.name))
+
 	// The worker of the index, and the workers of the tasks, apart from it,
 	// which are waited for once it's cancelled
 	ctx, cancel := context.WithCancel(ctx)
@@ -271,8 +277,18 @@ func (self *Indexer) fail(err error) {
 
 // failed records why the index's scan, or watch, failed
 func (self *Indexer) failed(ctx context.Context, err error) {
+	self.log().WarnContext(ctx, "indexing failed", "error", err.Error())
 	if state, e := self.store.State(ctx, self.name); e == nil {
 		state.Error = err.Error()
 		_ = self.store.SetState(ctx, self.name, state)
 	}
+}
+
+// log returns the logger which Run was given, of the volume, or the
+// default, before it runs
+func (self *Indexer) log() *slog.Logger {
+	if logger := self.logger.Load(); logger != nil {
+		return logger
+	}
+	return slog.Default().With("volume", self.name)
 }

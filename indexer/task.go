@@ -21,7 +21,10 @@ import (
 // stores what it finds in the store, of the task's kind, such as its
 // metadata. It returns an error when it fails, when it's done again, after a
 // while, which doubles with each attempt, until it's given up, until the file
-// changes. The object is the index's.
+// changes, or ErrBadParameter (of errors.Is) when the file can't be read, as
+// it isn't valid, such as a PDF which is cut short, which is given up at
+// once, as doing it again wouldn't change it. Failures are logged, to the
+// logger which Run is given. The object is the index's.
 type Task func(ctx context.Context, backend gofiler.Filer, store MetadataStore, object *schema.Object) error
 
 // MetadataStore is where a task stores the metadata it finds of a volume's
@@ -125,12 +128,15 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 		case ctx.Err() != nil:
 			self.release(claimed)
 			return
-		case err != nil && w.Attempts+1 < taskAttempts:
+		case err != nil && w.Attempts+1 < taskAttempts && !errors.Is(err, gofiler.ErrBadParameter):
+			self.log().DebugContext(ctx, "a task failed of a file, which is tried again", "task", string(kind), "key", w.Key, "attempt", w.Attempts+1, "error", err.Error())
 			_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
 		default:
-			// It's done, or given up, until the file changes, with why
+			// It's done, or given up, until the file changes, with why, as
+			// it failed too often, or can't be read, which won't change
 			if err != nil {
 				w.Error = err.Error()
+				self.log().WarnContext(ctx, "a task gave up of a file, until it changes", "task", string(kind), "key", w.Key, "attempts", w.Attempts+1, "error", err.Error())
 			} else {
 				w.Error = ""
 			}

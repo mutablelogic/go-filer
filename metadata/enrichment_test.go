@@ -109,3 +109,22 @@ func Test_EnrichFails(t *testing.T) {
 	err = e.Enrich(context.Background(), failing{backend}, store, object)
 	assert.ErrorContains(t, err, "it can't be read")
 }
+
+func Test_EnrichUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cut short.pdf"), []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog"), 0o644))
+	backend, err := fs.New("media", dir, nil, gofiler.Opts{})
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+	e, err := metadata.New()
+	require.NoError(t, err)
+	object, err := backend.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/cut short.pdf"}})
+	require.NoError(t, err)
+
+	// A file which go-metadata can't read, as it isn't valid, is go-filer's
+	// ErrBadParameter, of go-metadata's message, so it's given up at once
+	err = e.Enrich(context.Background(), backend, metadataStore{}, object)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.NotContains(t, err.Error(), "bad parameter: bad parameter")
+}
