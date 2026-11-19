@@ -41,10 +41,11 @@ type QueueStore interface {
 	Done(ctx context.Context, volume string, work ...Work) error
 
 	// PushStale queues the work of a task, such as KindMetadata, of the
-	// files beneath the folder's key whose listings' revisions aren't those
-	// the task was last done of, as they're new, or changed, or the task
-	// hasn't been done of them, which is due now, and isn't queued again
-	// when it's queued
+	// files beneath the folder's key which are indexed, whose listings'
+	// revisions aren't those the task was last done of, as they're new, or
+	// changed, or the task hasn't been done of them, including those which
+	// have no revision, such as one which is stored of a change, which is
+	// due now, and isn't queued again when it's queued
 	PushStale(ctx context.Context, volume, folder string, kind Kind) error
 
 	// Failed counts an attempt of the work, which is claimed, with why it

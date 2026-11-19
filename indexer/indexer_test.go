@@ -1268,6 +1268,16 @@ func Test_MetadataTaskUpgrade(t *testing.T) {
 		state, err := s.State(context.Background(), "media")
 		return err == nil && state.Status == schema.IndexStatusReady && state.Files == 2
 	}, 10*time.Second, 5*time.Millisecond)
+
+	// One of which is stored again, as a watch event does when it changes,
+	// so its listing's revision isn't, until it's scanned again
+	object, err := s.GetObject(context.Background(), "media", "/x.txt")
+	require.NoError(t, err)
+	require.NoError(t, s.PutObject(context.Background(), "media", object))
+	revisions, err := s.Revisions(context.Background(), "media", "/", true)
+	require.NoError(t, err)
+	require.NotContains(t, revisions, "/x.txt")
+	require.Contains(t, revisions, "/a/y.txt")
 	stop()
 
 	// Is enriched, once it's of index=metadata, at once, rather than once
@@ -1283,7 +1293,7 @@ func Test_MetadataTaskUpgrade(t *testing.T) {
 		cancel()
 		require.NoError(t, <-done)
 	}()
-	require.Eventually(t, func() bool { return z.count("/x.txt") == 1 && z.count("/a/y.txt") == 1 }, 10*time.Second, 5*time.Millisecond, "its files are enriched, while it's scanned")
+	require.Eventually(t, func() bool { return z.count("/x.txt") == 1 && z.count("/a/y.txt") == 1 }, 10*time.Second, 5*time.Millisecond, "its files are enriched, while it's scanned, as is one without a revision")
 	close(g.release)
 }
 

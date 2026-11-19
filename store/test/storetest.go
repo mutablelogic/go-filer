@@ -1058,16 +1058,18 @@ func testQueueStale(t *testing.T, s store.Store) {
 	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r1", "/b/c.txt": "r1"}))
 
 	// The files whose listings' revisions aren't those a task was done of
-	// are queued, of the folder, once, but not those without a revision, or
-	// of another kind of work
+	// are queued, of the folder, once, and those it hasn't been done of,
+	// which have no revision, such as one which is stored of a change, but
+	// not folders, or of another kind of work
 	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	_, paths := claimed(t, s, all, 10)
 	assert.Empty(t, paths, "it isn't indexing")
 	work, paths := claimed(t, s, tasks, 10)
-	assert.ElementsMatch(t, []string{"metadata /a.txt", "metadata /b/c.txt"}, paths)
+	assert.ElementsMatch(t, []string{"metadata /a.txt", "metadata /b/c.txt", "metadata /d.txt"}, paths)
 
-	// Once it's done, it isn't queued again, until its revision changes
+	// Once it's done, it isn't queued again, until its revision changes, as
+	// one without a revision isn't, while it has none
 	require.NoError(t, s.Done(ctx, "media", work...))
 	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	_, paths = claimed(t, s, tasks, 10)
