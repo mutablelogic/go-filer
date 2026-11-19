@@ -474,11 +474,14 @@ func testQueue(t *testing.T, s store.Store) {
 	assert.Empty(t, paths, "it's done")
 
 	// Work which is pushed again, while it's claimed, isn't done, and is
-	// claimed again
+	// claimed again, when the push is due
 	require.NoError(t, s.Push(ctx, "media", index("/a")))
 	work, _ = claimed(t, s, all, 10)
-	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/a", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
 	require.NoError(t, s.Done(ctx, "media", work...))
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths, "it's due when the push is")
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
 	work, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /a"}, paths, "it's pushed again")
 
@@ -579,12 +582,17 @@ func testQueueOrder(t *testing.T, s store.Store) {
 	_, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /c", "index /d"}, paths)
 
-	// Work which isn't due isn't claimed, and is due after the later of two
-	// pushes, which is the debounce
+	// Work which isn't due isn't claimed, and is due at the earlier of two
+	// pushes, so work which is pushed again and again isn't put off
 	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now.Add(time.Hour)}))
-	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now}))
 	_, paths = claimed(t, s, all, 10)
 	assert.Empty(t, paths)
+	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now.Add(2 * time.Hour)}))
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths)
+	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now}))
+	_, paths = claimed(t, s, all, 10)
+	assert.Equal(t, []string{"index /later"}, paths)
 }
 
 func testQueueLease(t *testing.T, s store.Store) {

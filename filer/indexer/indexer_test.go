@@ -117,6 +117,39 @@ func (u *unwatched) WatchObjects(ctx context.Context, ch chan<- schema.Event) er
 	return u.Filer.WatchObjects(ctx, ch)
 }
 
+// bursty is a backend whose watch sends a burst of rescans of the root, and
+// which counts the recursive listings of it, which are scans
+type bursty struct {
+	gofiler.Filer
+	burst int
+	more  chan struct{} // Sends another burst
+	scans atomic.Int32
+}
+
+func (b *bursty) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
+	for {
+		for range b.burst {
+			select {
+			case ch <- schema.Rescan(""):
+			case <-ctx.Done():
+				return nil
+			}
+		}
+		select {
+		case <-b.more:
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (b *bursty) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	if req.Recursive {
+		b.scans.Add(1)
+	}
+	return b.Filer.ListObjects(ctx, req)
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // TESTS
 
@@ -210,20 +243,64 @@ func Test_Write(t *testing.T) {
 	run(t, i)
 
 	// A file which is written through it, in folders which are created for
-	// it, is indexed as it's written, with the count of the folder's
+	// it, is indexed, in the background, with the count of the folder's
 	// objects
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/f/g/z.txt"}, Body: strings.NewReader("z")})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/a", "/a/b", "/c", "/f", "/f/g"}, folders(t, i, "/", true))
+	eventually(t, i, "/a", "/a/b", "/c", "/f", "/f/g")
 	object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/f/g/"}})
 	require.NoError(t, err)
 	assert.Equal(t, "1", count(t, object))
 
 	// A folder which is deleted through it, with what's beneath it, is
-	// removed from the index as it's deleted
+	// removed from the index
 	_, err = i.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}, Recursive: true})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/c", "/f", "/f/g"}, folders(t, i, "/", true))
+	eventually(t, i, "/c", "/f", "/f/g")
+}
+
+func Test_RescanBurst(t *testing.T) {
+	backend, _ := newBackend(t)
+
+	// A burst of rescans, from the backend, is coalesced, into one scan, and
+	// once it's scanned, another burst is deferred, by the minimum interval,
+	// unless there's none
+	for _, test := range []struct {
+		interval time.Duration
+		scans    int32
+	}{{0, 2}, {time.Minute, 1}} {
+		b := &bursty{Filer: backend, burst: 20, more: make(chan struct{})}
+		i, err := indexer.New("media", b, newStore(t), indexer.WithDebounce(500*time.Millisecond), indexer.WithRescanMinInterval(test.interval))
+		require.NoError(t, err)
+		run(t, i)
+		assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
+		time.Sleep(300 * time.Millisecond)
+		require.Equal(t, int32(1), b.scans.Load(), "one scan of the burst")
+		b.more <- struct{}{}
+		time.Sleep(2 * time.Second)
+		assert.Equal(t, test.scans, b.scans.Load(), "with a minimum interval of %v", test.interval)
+	}
+}
+
+func Test_Clone(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+	i, err := indexer.New("media", backend, newStore(t))
+	require.NoError(t, err)
+
+	// A clone is an indexer of the backend's clone, with its own queue, which
+	// runs, and whose writes are indexed
+	clone, err := i.Clone(context.Background(), nil)
+	require.NoError(t, err)
+	c, ok := clone.(*indexer.Indexer)
+	require.True(t, ok)
+	t.Cleanup(func() { c.Close() })
+	run(t, c)
+	_, err = c.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/g/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	eventually(t, c, "/a", "/a/b", "/c", "/g")
 }
 
 func Test_Poll(t *testing.T) {
@@ -231,7 +308,7 @@ func Test_Poll(t *testing.T) {
 
 	// A backend which can't be watched is scanned, and scanned again, at
 	// the rescan interval
-	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithRescanInterval(20*time.Millisecond))
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithRescanInterval(20*time.Millisecond), indexer.WithRescanMinInterval(0))
 	require.NoError(t, err)
 	run(t, i)
 	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
@@ -287,19 +364,20 @@ func Test_DeleteParents(t *testing.T) {
 	// deleted, removes them from the index, and the root's count changes
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/p/q/z.txt"}, Body: strings.NewReader("z")})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/a", "/a/b", "/c", "/p", "/p/q"}, folders(t, i, "/", true))
+	eventually(t, i, "/a", "/a/b", "/c", "/p", "/p/q")
 	_, err = i.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/p/q/z.txt"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
-	root, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
-	require.NoError(t, err)
-	assert.Equal(t, "3", count(t, root), "a, c and x.txt")
+	eventually(t, i, "/a", "/a/b", "/c")
+	require.Eventually(t, func() bool {
+		root, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+		return err == nil && count(t, root) == "3"
+	}, 10*time.Second, 10*time.Millisecond, "a, c and x.txt")
 }
 
 func Test_Bucket(t *testing.T) {
 	// A bucket, whose file, /a, is beside a folder of the same name, /a/
 	b := newBucket("a", "a/b/c.txt", "x.txt")
-	i, err := indexer.New("media", b, newStore(t), indexer.WithRescanInterval(time.Hour))
+	i, err := indexer.New("media", b, newStore(t), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
 	require.NoError(t, err)
 	run(t, i)
 	assert.Equal(t, []string{"/a", "/a/b"}, folders(t, i, "/", true))
@@ -317,12 +395,13 @@ func Test_Bucket(t *testing.T) {
 	// beneath it
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}, Body: strings.NewReader("a")})
 	require.NoError(t, err)
+	time.Sleep(200 * time.Millisecond)
 	assert.Equal(t, []string{"/a", "/a/b"}, folders(t, i, "/", true))
 
 	// Deleting the folder's last file removes it, but not the file
 	_, err = i.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/b/c.txt"}})
 	require.NoError(t, err)
-	assert.Empty(t, folders(t, i, "/", true))
+	eventually(t, i)
 	object, err = i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
 	require.NoError(t, err)
 	assert.False(t, object.IsDir)

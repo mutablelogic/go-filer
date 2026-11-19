@@ -2,7 +2,8 @@
 // folders, in a Store, which it follows the backend's changes in, so its
 // folder tree is listed from the index, rather than the backend, which can
 // be slow, such as a bucket, or a network mount. Its files are indexed
-// later; until then, everything but its folders comes from the backend.
+// later; until then, everything but its folders comes from the backend. The
+// changes are queued in the store, and indexed in the background.
 package indexer
 
 import (
@@ -35,9 +36,10 @@ type Indexer struct {
 	opt
 	name  string
 	store store.Store
+	queue *queue
 
-	// mu serialises changes to the index, of Run, and of writes and
-	// deletes, so a folder isn't reconciled with two listings at once
+	// mu serialises changes to the index, of its worker's work, so a folder
+	// isn't reconciled with two listings at once
 	mu sync.Mutex
 
 	// The calls to WatchObjects, which are sent the backend's changes, once
@@ -66,7 +68,18 @@ const (
 	// progressEvery is how many folders a scan lists between storing its
 	// progress
 	progressEvery = 100
+
+	// workBatch is how much work is claimed at a time, workLease is how long
+	// it's leased for, so it's claimed again, when it isn't done, and
+	// workIdle is how often the queue is checked, when there's no work,
+	// for work which is due later
+	workBatch = 100
+	workLease = time.Minute
+	workIdle  = time.Second
 )
+
+// kinds are the kinds of work which the indexer does
+var kinds = []store.Kind{store.KindIndex, store.KindRescan}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -86,39 +99,12 @@ func New(name string, backend gofiler.Filer, s store.Store, opts ...Opt) (*Index
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
 	}
+	self.queue = newQueue(s, name, self.debounce, self.rescanMin)
 	return self, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
-
-// Run indexes the backend's folders, and follows its changes, until the
-// context is cancelled. It watches the backend, and scans it once it's
-// watching, so a change while it scans isn't missed, and scans a folder
-// again when the backend says its changes may have been missed. A backend
-// which can't be watched is scanned again at the rescan interval. When
-// watching fails, it's watched, and scanned, again, after a while, which
-// doubles each time, up to a minute.
-func (self *Indexer) Run(ctx context.Context) error {
-	retry := self.retry
-	for {
-		err := self.watch(ctx)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if errors.Is(err, gofiler.ErrNotImplemented) {
-			return self.poll(ctx)
-		}
-		self.failed(ctx, err)
-		self.fail(err)
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(retry):
-		}
-		retry = min(retry*2, maxRetry)
-	}
-}
 
 // State returns the state of the index
 func (self *Indexer) State(ctx context.Context) (schema.IndexState, error) {
@@ -148,7 +134,7 @@ func (self *Indexer) Clone(ctx context.Context, patch url.Values) (gofiler.Filer
 	if err != nil {
 		return nil, err
 	}
-	return &Indexer{Filer: backend, opt: self.opt, name: self.name, store: self.store}, nil
+	return &Indexer{Filer: backend, opt: self.opt, name: self.name, store: self.store, queue: newQueue(self.store, self.name, self.debounce, self.rescanMin)}, nil
 }
 
 // Readonly returns true when the backend says its objects can't be written
@@ -251,136 +237,34 @@ func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequ
 	return self.Filer.ListObjects(ctx, req)
 }
 
-// CreateObject writes an object to the backend, and updates the index, of
-// its folder, and of a folder which is created for it
+// CreateObject writes an object to the backend, and queues the index of
+// it, which updates its folder, and a folder which is created for it
 func (self *Indexer) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	object, err := self.Filer.CreateObject(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	self.mu.Lock()
-	defer self.mu.Unlock()
-	if err := self.refresh(ctx, object.Path, schema.EventTypeCreated); err != nil {
+	if err := self.queue.index(ctx, object.Path); err != nil {
 		self.failed(ctx, err)
 	}
 	return object, nil
 }
 
-// DeleteObjects deletes objects of the backend, and updates the index, of
-// a folder which is deleted, and of its parent
+// DeleteObjects deletes objects of the backend, and queues the index of
+// what's deleted, which updates a folder which is deleted, and its parent
 func (self *Indexer) DeleteObjects(ctx context.Context, req schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
 	resp, err := self.Filer.DeleteObjects(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	self.mu.Lock()
-	defer self.mu.Unlock()
-	if err := self.refresh(ctx, folderPath(req.Path), schema.EventTypeDeleted); err != nil {
+	if err := self.queue.index(ctx, folderPath(req.Path)); err != nil {
 		self.failed(ctx, err)
 	}
 	return resp, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// PRIVATE METHODS - WATCHING
-
-// watch watches the backend, and scans it, once it's watching, which is its
-// first change, a rescan of the root, and follows its changes, until
-// watching fails, or the context is cancelled
-func (self *Indexer) watch(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	events, done := make(chan schema.Event, 64), make(chan error, 1)
-	go func() {
-		done <- self.Filer.WatchObjects(ctx, events)
-	}()
-	for {
-		select {
-		case err := <-done:
-			return err
-		case event := <-events:
-			if err := self.apply(ctx, event); err != nil {
-				return err
-			}
-			self.forward(ctx, event)
-		}
-	}
-}
-
-// poll scans a backend which can't be watched, now, and at the rescan
-// interval, until the context is cancelled
-func (self *Indexer) poll(ctx context.Context) error {
-	for {
-		if err := self.scan(ctx, "/"); err != nil && ctx.Err() == nil {
-			self.failed(ctx, err)
-		} else if err == nil {
-			// Its watchers compare what they know with it, as its changes
-			// aren't known
-			self.forward(ctx, schema.Rescan(self.name))
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(self.rescanInterval):
-		}
-	}
-}
-
-// apply changes the index, of a change to the backend: a rescan scans the
-// folder again, and an object which is created, updated or deleted is
-// refreshed, with its folder
-func (self *Indexer) apply(ctx context.Context, event schema.Event) error {
-	switch event.EventType {
-	case schema.EventTypeRescan:
-		return self.scan(ctx, folderPath(event.Path))
-	case schema.EventTypeCreated, schema.EventTypeUpdated, schema.EventTypeDeleted:
-		self.mu.Lock()
-		defer self.mu.Unlock()
-		return self.refresh(ctx, folderPath(event.Path), event.EventType)
-	default:
-		return nil
-	}
-}
-
-// forward sends a change, which is indexed, to the watchers, each until it's
-// sent, or the watcher, or Run, is cancelled, so a watcher which doesn't
-// read its changes doesn't hold Run up, once it's cancelled
-func (self *Indexer) forward(ctx context.Context, event schema.Event) {
-	self.smu.Lock()
-	watchers := make([]*watcher, 0, len(self.watchers))
-	for w := range self.watchers {
-		watchers = append(watchers, w)
-	}
-	self.smu.Unlock()
-	for _, w := range watchers {
-		select {
-		case w.ch <- event:
-		case <-w.ctx.Done():
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// fail tells the watchers the backend's watch failed, with why
-func (self *Indexer) fail(err error) {
-	self.smu.Lock()
-	defer self.smu.Unlock()
-	for w := range self.watchers {
-		select {
-		case w.failed <- err:
-		default:
-		}
-	}
-}
-
-// failed records why the index's scan, or watch, failed
-func (self *Indexer) failed(ctx context.Context, err error) {
-	if state, e := self.store.State(ctx, self.name); e == nil {
-		state.Error = err.Error()
-		_ = self.store.SetState(ctx, self.name, state)
-	}
-}
+// PRIVATE METHODS
 
 // ready returns true when the index is ready, so folders are read from it
 func (self *Indexer) ready(ctx context.Context) bool {

@@ -18,7 +18,8 @@ import (
 // more than one goroutine, and process, as work is leased when it's claimed.
 type QueueStore interface {
 	// Push queues work of the volume, which is coalesced: work of the same
-	// path and kind is queued once, after the later of the two, and an index
+	// path and kind is queued once, due at the earlier of the two, so work
+	// which is pushed again and again isn't put off, and an index
 	// of a path, or a rescan, beneath a rescan of a folder which is queued
 	// isn't, as the rescan does it, and a rescan of a folder replaces the
 	// index and rescan work beneath it. Returns ErrNotFound when the volume
