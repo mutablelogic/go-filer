@@ -40,6 +40,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueuePendingBeneath", func(t *testing.T) { testQueuePendingBeneath(t, withVolumes(t, newStore(t))) })
 	t.Run("Revisions", func(t *testing.T) { testRevisions(t, withVolumes(t, newStore(t))) })
 	t.Run("ListType", func(t *testing.T) { testListType(t, withVolumes(t, newStore(t))) })
+	t.Run("Scan", func(t *testing.T) { testScan(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -890,4 +891,66 @@ func testListType(t *testing.T, s store.Store) {
 			assert.Equal(t, uint64(len(want)), count, "%q recursive=%v is counted", kind, recursive)
 		}
 	}
+}
+
+func testScan(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	require.NoError(t, s.Put(ctx, "media", folder("/"), folder("/a"), file("/a/b.txt"), file("/c.txt"), folder("/d"), file("/d/e.txt")))
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a/b.txt": "r1", "/c.txt": "r1", "/d/e.txt": "r1"}))
+	changed := func(folder, after string, limit int) []store.Seen {
+		t.Helper()
+		result, err := s.Changed(ctx, "media", folder, after, limit)
+		require.NoError(t, err)
+		return result
+	}
+	count := func(folder string) uint64 {
+		t.Helper()
+		n, err := s.CountChanged(ctx, "media", folder)
+		require.NoError(t, err)
+		return n
+	}
+
+	// What a scan sees is recorded, and its files which aren't indexed, or
+	// whose revisions aren't those they were stored of, have changed, in
+	// the order of their keys, a page at a time
+	require.NoError(t, s.Seen(ctx, "media", map[string]string{"/a/": "", "/a/b.txt": "r1", "/c.txt": "r2", "/f.txt": "r1"}))
+	assert.Equal(t, []store.Seen{{Key: "/c.txt", Revision: "r2", Indexed: true}, {Key: "/f.txt", Revision: "r1"}}, changed("/", "", 0))
+	assert.Equal(t, []store.Seen{{Key: "/c.txt", Revision: "r2", Indexed: true}}, changed("/", "", 1))
+	assert.Equal(t, []store.Seen{{Key: "/f.txt", Revision: "r1"}}, changed("/", "/c.txt", 1))
+	assert.Equal(t, uint64(2), count("/"))
+	assert.Empty(t, changed("/a/", "", 0), "of a folder whose files haven't")
+	assert.Equal(t, uint64(0), count("/a/"))
+
+	// It isn't work, so it isn't claimed, or pending
+	_, paths := claimed(t, s, all, 10)
+	assert.Empty(t, paths)
+	pending, err := s.Pending(ctx, "media", "/c.txt")
+	require.NoError(t, err)
+	assert.False(t, pending)
+
+	// What wasn't seen, beneath the folder, is swept, with what's beneath it,
+	// but not the folder
+	require.NoError(t, s.Sweep(ctx, "media", "/"))
+	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a/", "/a/b.txt", "/c.txt"}, keys(objects))
+	_, err = s.Get(ctx, "media", "/")
+	assert.NoError(t, err, "the folder is kept")
+
+	// What's seen is forgotten, of a folder, but not beside it
+	require.NoError(t, s.Seen(ctx, "media", map[string]string{"/ab.txt": "r9"}))
+	require.NoError(t, s.Unsee(ctx, "media", "/a/"))
+	assert.Equal(t, uint64(3), count("/"), "/c.txt, /f.txt and /ab.txt")
+	require.NoError(t, s.Unsee(ctx, "media", "/"))
+	assert.Equal(t, uint64(0), count("/"))
+	require.NoError(t, s.Sweep(ctx, "media", "/a/"))
+	_, err = s.Get(ctx, "media", "/a/b.txt")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound, "what isn't seen, once it's forgotten, is swept")
+
+	// A key which isn't a folder's is bad, and a volume which isn't stored
+	// isn't found
+	_, err = s.Changed(ctx, "media", "/a", "", 0)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.Sweep(ctx, "media", "/a"), gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.Seen(ctx, "missing", map[string]string{"/a": ""}), gofiler.ErrNotFound)
 }

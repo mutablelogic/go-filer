@@ -25,6 +25,7 @@ import (
 type Store interface {
 	VolumeStore
 	QueueStore
+	ScanStore
 
 	// Get returns the object of the volume of the key, or ErrNotFound when
 	// it isn't indexed

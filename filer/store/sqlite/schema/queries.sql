@@ -173,3 +173,45 @@ WHERE volume = @volume AND kind = 'listed' AND ${where};
 INSERT INTO object_state (volume, key, kind, after, revision)
 VALUES (@volume, @key, 'listed', @now, @revision)
 ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision;
+
+-- scan.seen
+-- A key which a scan has seen, with the revision of its listing
+INSERT INTO object_state (volume, key, kind, after, revision)
+VALUES (@volume, @key, 'seen', @now, nullif(@revision, ''))
+ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision;
+
+-- scan.unsee
+-- What a scan has seen beneath a folder
+DELETE FROM object_state
+WHERE volume = @volume AND kind = 'seen' AND key > @lower AND key < @upper;
+
+-- scan.sweep
+-- The objects beneath a folder which a scan of it hasn't seen, and their
+-- metadata, which cascades, and their revisions, of their triggers
+DELETE FROM object
+WHERE volume = @volume AND key > @lower AND key < @upper AND key NOT IN (
+  SELECT key FROM object_state WHERE volume = @volume AND kind = 'seen' AND key > @lower AND key < @upper
+);
+
+-- scan.changed
+-- The files beneath a folder which a scan of it has seen, which aren't
+-- indexed, or whose revisions aren't those they were stored of, after the
+-- key, in the order of their keys
+SELECT seen.key, coalesce(seen.revision, ''), object.key IS NOT NULL
+FROM object_state AS seen
+LEFT JOIN object ON object.volume = seen.volume AND object.key = seen.key
+LEFT JOIN object_state AS listed ON listed.volume = seen.volume AND listed.key = seen.key AND listed.kind = 'listed'
+WHERE seen.volume = @volume AND seen.kind = 'seen' AND seen.key > @lower AND seen.key < @upper
+  AND seen.key NOT GLOB '*/' AND seen.key > @after
+  AND (object.key IS NULL OR listed.revision IS NOT seen.revision)
+ORDER BY seen.key;
+
+-- scan.count_changed
+-- How many files scan.changed returns, of every page
+SELECT count(*)
+FROM object_state AS seen
+LEFT JOIN object ON object.volume = seen.volume AND object.key = seen.key
+LEFT JOIN object_state AS listed ON listed.volume = seen.volume AND listed.key = seen.key AND listed.kind = 'listed'
+WHERE seen.volume = @volume AND seen.kind = 'seen' AND seen.key > @lower AND seen.key < @upper
+  AND seen.key NOT GLOB '*/'
+  AND (object.key IS NULL OR listed.revision IS NOT seen.revision);
