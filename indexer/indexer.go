@@ -500,9 +500,16 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 	defer func() { _ = self.store.Unsee(context.WithoutCancel(ctx), self.name, root) }()
 	l, err := self.list(ctx, root, progress)
 	if errors.Is(err, fs.ErrNotExist) {
+		// A folder which isn't there any more, such as one which is removed
+		// before its rescan, which a change queued, is removed, with what's
+		// beneath it, and the folders above it are indexed again, as their
+		// counts changed
 		self.mu.Lock()
 		defer self.mu.Unlock()
-		return self.store.Delete(ctx, self.name, root)
+		if err := self.store.Delete(ctx, self.name, root); err != nil {
+			return err
+		}
+		return self.parents(ctx, root)
 	} else if err != nil {
 		return err
 	}
@@ -857,8 +864,27 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		}
 	}
 
-	// The folders above it are indexed again, up to the first which was
-	// indexed
+	// The folders above it are indexed again
+	if err := self.parents(ctx, key); err != nil {
+		return err
+	}
+	if full != nil {
+		return self.put(ctx, []*schema.Object{full})
+	}
+
+	// A folder which is there is rescanned, which is queued once the
+	// folders above it are indexed, as queueing it replaces its index,
+	// which is the work this is, which isn't retried, when they fail
+	if rescan {
+		return self.queue.rescan(ctx, key)
+	}
+	return nil
+}
+
+// parents indexes the folders above a key again, as their counts, or
+// folders, changed, up to the first which was indexed, removing those which
+// aren't there any more. It's called with the indexer locked.
+func (self *Indexer) parents(ctx context.Context, key string) error {
 	for parent := store.ParentKey(key); parent != ""; parent = store.ParentKey(parent) {
 		_, err := self.store.Get(ctx, self.name, parent)
 		if err != nil && !errors.Is(err, gofiler.ErrNotFound) {
@@ -875,16 +901,6 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		if indexed {
 			break
 		}
-	}
-	if full != nil {
-		return self.put(ctx, []*schema.Object{full})
-	}
-
-	// A folder which is there is rescanned, which is queued once the
-	// folders above it are indexed, as queueing it replaces its index,
-	// which is the work this is, which isn't retried, when they fail
-	if rescan {
-		return self.queue.rescan(ctx, key)
 	}
 	return nil
 }
