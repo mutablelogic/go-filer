@@ -4,8 +4,8 @@ package main
 
 import (
 	// Packages
-	store "github.com/mutablelogic/go-filer/filer/store"
-	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
+	store "github.com/mutablelogic/go-filer/store"
+	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	server "github.com/mutablelogic/go-server"
 	gosqlite "github.com/mutablelogic/go-sqlite"
 )

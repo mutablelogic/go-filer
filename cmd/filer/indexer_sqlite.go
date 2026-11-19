@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 
 	// Packages
-	store "github.com/mutablelogic/go-filer/filer/store"
-	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
+	store "github.com/mutablelogic/go-filer/store"
+	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	server "github.com/mutablelogic/go-server"
 )
 

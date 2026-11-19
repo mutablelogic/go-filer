@@ -7,10 +7,10 @@ import (
 
 	// Packages
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
-	filer "github.com/mutablelogic/go-filer/filer"
-	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
-	google "github.com/mutablelogic/go-filer/filer/google"
-	store "github.com/mutablelogic/go-filer/filer/store"
+	google "github.com/mutablelogic/go-filer/backend/google"
+	registry "github.com/mutablelogic/go-filer/registry"
+	filercmd "github.com/mutablelogic/go-filer/registry/cmd"
+	store "github.com/mutablelogic/go-filer/store"
 	server "github.com/mutablelogic/go-server"
 	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	changes "github.com/mutablelogic/go-server/broadcaster/httphandler"
@@ -86,7 +86,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
 	// when the registry, and its volumes, are closed
-	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*filer.Registry) error {
+	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*registry.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, filer.WithCredentials(credentials), filer.WithStore(s))
+	}, registry.WithCredentials(credentials), registry.WithStore(s))
 }

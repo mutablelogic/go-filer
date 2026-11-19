@@ -57,8 +57,8 @@ jobs:
       # before it, such as v7.36.2 for 36.2
       - name: Install protoc and its plugins
         run: |
-          header=filer/s3/seaweedfs/filer_pb/filer.pb.go
-          grpc_header=filer/s3/seaweedfs/filer_pb/filer_grpc.pb.go
+          header=backend/s3/seaweedfs/filer_pb/filer.pb.go
+          grpc_header=backend/s3/seaweedfs/filer_pb/filer_grpc.pb.go
           protoc=$(sed -n 's|^//[[:space:]]*protoc[[:space:]]*v[0-9]*\.\([0-9][0-9.]*\)$|\1|p' $header)
           protoc_gen_go=$(sed -n 's|^//[[:space:]]*protoc-gen-go[[:space:]]*\(v[0-9][0-9.]*\)$|\1|p' $header)
           protoc_gen_go_grpc=$(sed -n 's|^//[[:space:]]*-[[:space:]]*protoc-gen-go-grpc[[:space:]]*\(v[0-9][0-9.]*\)$|\1|p' $grpc_header)
