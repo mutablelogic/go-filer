@@ -31,6 +31,7 @@ type fakePeople struct {
 	people   []httpclient.Person
 	profiles map[string]httpclient.Person // Which are got, by their ids, but aren't contacts, so aren't listed
 	pages    int
+	gets     int // How many times a person is got
 }
 
 func newFakePeople(t *testing.T) (*fakePeople, string) {
@@ -75,6 +76,7 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, page)
 	case len(parts) == 2 && parts[0] == "people":
+		f.gets++
 		if profile, exists := f.profiles[parts[1]]; exists {
 			writeJSON(w, profile)
 			return
@@ -344,4 +346,37 @@ func Test_ContactReadCancelled(t *testing.T) {
 		return err
 	})
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func Test_ContactCache(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFakePeople(t)
+	fake.add("c1", func(p *httpclient.Person) {
+		p.Names = []httpclient.PersonName{{DisplayName: "Ada"}}
+	})
+	filer := newContactFiler(t, endpoint, url.Values{"refresh_interval": {"1h"}})
+	counts := func() (int, int) {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.pages, fake.gets
+	}
+
+	// Once the contacts are listed, a contact is read of them, rather than
+	// got again, for the refresh interval, until it's cleared, as a watch
+	// does when it finds what changed
+	_, err := filer.ListObjects(ctx, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+	require.NoError(t, err)
+	pages, gets := counts()
+	object, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c1.vcf"}})
+	require.NoError(t, err)
+	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.DCNamespace, Key: "title", Value: []byte(`"Ada"`)})
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+	require.NoError(t, err)
+	p, g := counts()
+	assert.Equal(t, []int{pages, gets}, []int{p, g}, "nothing is got again")
+	google.ClearContactCache(filer)
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c1.vcf"}})
+	require.NoError(t, err)
+	_, g = counts()
+	assert.Equal(t, gets+1, g)
 }

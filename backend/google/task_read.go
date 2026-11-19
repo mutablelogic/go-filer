@@ -97,7 +97,7 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		// The list's tasks, once it's known to exist
 		if !googleId(p.list) {
 			return nil, &fs.PathError{Op: "list", Path: req.Path, Err: fs.ErrNotExist}
-		} else if _, err := self.client.TaskList(ctx, p.list); err != nil {
+		} else if _, err := self.taskList(ctx, p.list); err != nil {
 			return nil, self.apiError("list", req.Path, err)
 		}
 		if !iter.before(p.list) {
@@ -105,7 +105,7 @@ func (self *TaskFiler) ListObjects(ctx context.Context, req schema.ListObjectsRe
 		}
 	default:
 		// The lists, each followed by its tasks, when it's recursive
-		lists, err := self.client.TaskLists(ctx)
+		lists, err := self.taskLists(ctx)
 		if err != nil {
 			return nil, self.apiError("list", "/", err)
 		}
@@ -182,17 +182,17 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 	case path.task == "":
 		// A list, with the count of its tasks, which are read, as the API
 		// doesn't count them
-		list, err := self.client.TaskList(ctx, path.list)
+		list, err := self.taskList(ctx, path.list)
 		if err != nil {
 			return nil, nil, self.apiError(op, p, err)
 		}
-		tasks, err := self.client.Tasks(ctx, path.list)
+		tasks, err := self.listTasks(ctx, path.list)
 		if err != nil {
 			return nil, nil, self.apiError(op, p, err)
 		}
 		return self.listObject(list, tasks), nil, nil
 	default:
-		task, err := self.client.Task(ctx, path.list, path.task)
+		task, err := self.task(ctx, path.list, path.task)
 		if err != nil {
 			return nil, nil, self.apiError(op, p, err)
 		} else if !self.visible(task) {
@@ -208,7 +208,7 @@ func (self *TaskFiler) stat(ctx context.Context, op, p string) (*schema.Object, 
 // which must be locked
 func (self *taskIterator) readList(ctx context.Context, item listItem) error {
 	list := item.list
-	tasks, err := self.client.Tasks(ctx, list)
+	tasks, err := self.listTasks(ctx, list)
 	if err != nil {
 		return self.apiError("list", listPath(list), err)
 	}
@@ -230,6 +230,59 @@ func (self *taskIterator) readList(ctx context.Context, item listItem) error {
 	}
 	self.pending = append(items, self.pending...)
 	return nil
+}
+
+// taskLists returns the lists, or those which were got, for the refresh
+// interval, which can be sorted, as they're a copy
+func (self *TaskFiler) taskLists(ctx context.Context) ([]httpclient.TaskList, error) {
+	lists, err := self.lists.get(ctx, "", func() ([]httpclient.TaskList, error) {
+		return self.client.TaskLists(ctx)
+	})
+	return slices.Clone(lists), err
+}
+
+// taskList returns a list, of the lists which were got, when they were, or
+// else of Google
+func (self *TaskFiler) taskList(ctx context.Context, id string) (*httpclient.TaskList, error) {
+	if lists, ok := self.lists.peek(""); ok {
+		for i := range lists {
+			if lists[i].Id == id {
+				list := lists[i]
+				return &list, nil
+			}
+		}
+	}
+	return self.client.TaskList(ctx, id)
+}
+
+// listTasks returns the tasks of a list, or those which were got, for the
+// refresh interval, which can be sorted, as they're a copy
+func (self *TaskFiler) listTasks(ctx context.Context, list string) ([]httpclient.Task, error) {
+	tasks, err := self.tasks.get(ctx, list, func() ([]httpclient.Task, error) {
+		return self.client.Tasks(ctx, list)
+	})
+	return slices.Clone(tasks), err
+}
+
+// task returns a task of a list, of its tasks which were got, when they
+// were, which aren't deleted, as one which isn't there, or else of Google
+func (self *TaskFiler) task(ctx context.Context, list, id string) (*httpclient.Task, error) {
+	if tasks, ok := self.tasks.peek(list); ok {
+		for i := range tasks {
+			if tasks[i].Id == id {
+				task := tasks[i]
+				return &task, nil
+			}
+		}
+	}
+	return self.client.Task(ctx, list, id)
+}
+
+// clearCache removes what's got from Google, as what it's of changed, so
+// it's got again
+func (self *TaskFiler) clearCache() {
+	self.lists.clear()
+	self.tasks.clear()
 }
 
 // before returns true when the list's tasks all sort before where the

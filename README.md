@@ -98,6 +98,8 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 
 ## Google Tasks
 
+**Caching, of every Google volume:** what's listed is kept for the refresh interval, a minute by default, so a task, contact or event which is read after it's listed, such as by indexing, isn't got from Google again. It's cleared when the volume's watch finds what changed, before it sends it, and when the volume writes. A volume which isn't watched, of a refresh interval of zero, keeps nothing.
+
 `google.NewTaskFiler` returns a filer of a person's Google Tasks:
 
 * **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata, as `task:title` and `dc:title`, and `folder:children` and `folder:children-count`, whether they have tasks, and how many. The API doesn't count them, so they're read: one request a list, for each 100 tasks.
