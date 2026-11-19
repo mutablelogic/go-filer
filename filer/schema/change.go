@@ -31,9 +31,14 @@ const (
 // volume as its table, and its path as its row. A rescan is an update, of
 // the volume, without a row, or of a directory, whose row ends with "/", so
 // the objects beneath it are read again, as a broadcaster sends a watcher
-// which misses a change of a volume.
+// which misses a change of a volume. A change of a folder, whose path is its
+// key, with a "/" after it, has its path as its row, without it, and the
+// data {"folder":true}.
 func (e Event) Change() changes.Change {
 	change := changes.Change{Schema: ChangeSchema, Table: e.Name, Row: e.Path}
+	if e.EventType != EventTypeRescan && len(e.Path) > 1 && strings.HasSuffix(e.Path, "/") {
+		change.Row, change.Data = strings.TrimSuffix(e.Path, "/"), json.RawMessage(folderData)
+	}
 	switch e.EventType {
 	case EventTypeCreated:
 		change.Action = changes.ChangeCreate
@@ -66,7 +71,8 @@ func VolumeChange(action changes.ChangeAction, volume *Volume) changes.Change {
 
 // ChangeEvent returns the event of a change of ChangeSchema, or false when
 // it's of another schema: a change without a row, or whose row ends with
-// "/", is a rescan, of the volume, or of the directory
+// "/", is a rescan, of the volume, or of the directory, and a change whose
+// data is {"folder":true} is of a folder, whose path is its key
 func ChangeEvent(change changes.Change) (Event, bool) {
 	if change.Schema != ChangeSchema || change.Table == "" {
 		return Event{}, false
@@ -82,10 +88,28 @@ func ChangeEvent(change changes.Change) (Event, bool) {
 		}
 	case change.Action == changes.ChangeCreate:
 		event.EventType = EventTypeCreated
+		event.Path = folderKey(event.Path, change.Data)
 	case change.Action == changes.ChangeDelete:
 		event.EventType = EventTypeDeleted
+		event.Path = folderKey(event.Path, change.Data)
 	default:
 		event.EventType = EventTypeUpdated
+		event.Path = folderKey(event.Path, change.Data)
 	}
 	return event, true
+}
+
+// folderData is the data of a change of a folder
+const folderData = `{"folder":true}`
+
+// folderKey returns the path of a change, with a "/" after it, when its data
+// says it's a folder's
+func folderKey(p string, data json.RawMessage) string {
+	var folder struct {
+		Folder bool `json:"folder"`
+	}
+	if len(data) > 0 && json.Unmarshal(data, &folder) == nil && folder.Folder {
+		return p + "/"
+	}
+	return p
 }

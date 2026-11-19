@@ -262,16 +262,25 @@ func (self *Watcher) events(response *filer_pb.SubscribeMetadataResponse) []sche
 	case oldPath != "" && newPath != "" && oldPath == newPath && new.IsDirectory:
 		return nil
 	case oldPath != "" && newPath != "" && oldPath == newPath:
-		events = append(events, event(schema.EventTypeUpdated, newPath))
+		events = append(events, event(schema.EventTypeUpdated, key(newPath, new)))
 	default:
 		if oldPath != "" {
-			events = append(events, event(schema.EventTypeDeleted, oldPath))
+			events = append(events, event(schema.EventTypeDeleted, key(oldPath, old)))
 		}
 		if newPath != "" {
-			events = append(events, event(schema.EventTypeCreated, newPath))
+			events = append(events, event(schema.EventTypeCreated, key(newPath, new)))
 		}
 	}
 	return events
+}
+
+// key returns the key of the object of the entry, at the path, which is the
+// path, with a "/" after a directory's
+func key(p string, entry *filer_pb.Entry) string {
+	if entry.IsDirectory {
+		return p + "/"
+	}
+	return p
 }
 
 // add returns true when the change is new, and records it, which is false

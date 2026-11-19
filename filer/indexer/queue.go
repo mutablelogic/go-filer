@@ -48,18 +48,18 @@ func newQueue(s store.QueueStore, volume string, debounce, every time.Duration) 
 ////////////////////////////////////////////////////////////////////////////////
 // METHODS
 
-// index queues the index of each path, after the debounce, so a burst of
-// changes of a path, within it, is one
-func (q *queue) index(ctx context.Context, paths ...string) error {
+// index queues the index of each key, after the debounce, so a burst of
+// changes of a key, within it, is one
+func (q *queue) index(ctx context.Context, keys ...string) error {
 	after := q.now().Add(q.debounce)
-	work := make([]store.Work, 0, len(paths))
-	for _, p := range paths {
-		work = append(work, store.Work{Path: p, Kind: store.KindIndex, After: after})
+	work := make([]store.Work, 0, len(keys))
+	for _, key := range keys {
+		work = append(work, store.Work{Key: key, Kind: store.KindIndex, After: after})
 	}
 	return q.push(ctx, work...)
 }
 
-// rescan queues a rescan of the folder, after the debounce, and no sooner
+// rescan queues a rescan of the folder's key, after the debounce, and no sooner
 // than the minimum interval since it was last rescanned, so it's deferred,
 // rather than dropped
 func (q *queue) rescan(ctx context.Context, folder string) error {
@@ -69,7 +69,7 @@ func (q *queue) rescan(ctx context.Context, folder string) error {
 		after = last.Add(q.every)
 	}
 	q.mu.Unlock()
-	return q.push(ctx, store.Work{Path: folder, Kind: store.KindRescan, After: after})
+	return q.push(ctx, store.Work{Key: folder, Kind: store.KindRescan, After: after})
 }
 
 // rescanned records that the folder is rescanned now, for the minimum

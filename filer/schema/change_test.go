@@ -22,6 +22,12 @@ func Test_Change(t *testing.T) {
 		{event(schema.EventTypeDeleted, "/dir"), changes.Change{Action: changes.ChangeDelete, Schema: "filer", Table: "media", Row: "/dir"}},
 		{event(schema.EventTypeRescan, "/"), changes.Change{Action: changes.ChangeUpdate, Schema: "filer", Table: "media"}},
 		{event(schema.EventTypeRescan, "/photos"), changes.Change{Action: changes.ChangeUpdate, Schema: "filer", Table: "media", Row: "/photos/"}},
+
+		// A change of a folder, of its key, is of its path, and says it's a
+		// folder's, as a row which ends with "/" is a rescan
+		{event(schema.EventTypeCreated, "/dir/"), changes.Change{Action: changes.ChangeCreate, Schema: "filer", Table: "media", Row: "/dir", Data: []byte(`{"folder":true}`)}},
+		{event(schema.EventTypeUpdated, "/dir/"), changes.Change{Action: changes.ChangeUpdate, Schema: "filer", Table: "media", Row: "/dir", Data: []byte(`{"folder":true}`)}},
+		{event(schema.EventTypeDeleted, "/dir/"), changes.Change{Action: changes.ChangeDelete, Schema: "filer", Table: "media", Row: "/dir", Data: []byte(`{"folder":true}`)}},
 	} {
 		assert.Equal(t, test.change, test.event.Change(), test.event)
 		back, ok := schema.ChangeEvent(test.change)

@@ -17,32 +17,31 @@ CREATE TABLE IF NOT EXISTS volume (
 );
 
 -- schema.object
--- The objects of the volumes, by their paths, which are in byte order, so a
--- folder's subtree is a range of them
+-- The objects of the volumes, by their keys, which are their paths, with a
+-- / after a folder's, so a file, and a folder, of the same path, which a
+-- bucket can have, are two, in byte order, so a folder's subtree is a range
+-- of them, and its parent is the key of its folder, of its key
 CREATE TABLE IF NOT EXISTS object (
   volume          TEXT NOT NULL REFERENCES volume (name) ON DELETE CASCADE ON UPDATE CASCADE,
-  path            TEXT NOT NULL,          -- such as /a/b.txt
-  key             TEXT NOT NULL,          -- its path, with a / after a folder's, the order of a listing
-  parent          TEXT NOT NULL,          -- the folder it's in, or empty for the root
-  is_dir          BOOLEAN NOT NULL,
+  key             TEXT NOT NULL CHECK (key GLOB '/*' AND key NOT GLOB '*//*'),  -- such as /a/b.txt, or /a/, or the root, /
   type            TEXT,                   -- its content type
   size            INTEGER,                -- a file's size, or NULL
   etag            TEXT,
   modified_at     TIMESTAMP,              -- or NULL, such as of a filesystem's folder
-  PRIMARY KEY (volume, path)
+  parent          TEXT GENERATED ALWAYS AS (
+                    rtrim(rtrim(key, '/'), replace(rtrim(key, '/'), '/', ''))
+                  ) VIRTUAL,              -- the key of its folder, such as /a/, or empty for the root
+  PRIMARY KEY (volume, key)
 );
 
 -- schema.object_parent
 CREATE INDEX IF NOT EXISTS object_parent ON object (volume, parent, key);
 
--- schema.object_key
-CREATE INDEX IF NOT EXISTS object_key ON object (volume, key);
-
 -- schema.metadata
 -- The metadata of the objects, one row per entry, in the order they're put
 CREATE TABLE IF NOT EXISTS metadata (
   volume          TEXT NOT NULL,
-  path            TEXT NOT NULL,
+  object          TEXT NOT NULL,          -- the key of its object
   namespace       TEXT CHECK (namespace IS NULL OR (
                     length(namespace) <= 64 AND namespace GLOB '[a-zA-Z]*'
                     AND namespace NOT GLOB '*[^a-zA-Z0-9_-]*')),   -- an identifier, or NULL for none
@@ -51,26 +50,26 @@ CREATE TABLE IF NOT EXISTS metadata (
                     AND key NOT GLOB '*[^a-zA-Z0-9_-]*'),          -- an identifier
   value           TEXT NOT NULL,                                  -- its JSON
   text            TEXT,                                           -- its text, or NULL when it's value's string (#77)
-  FOREIGN KEY (volume, path) REFERENCES object (volume, path) ON DELETE CASCADE ON UPDATE CASCADE
+  FOREIGN KEY (volume, object) REFERENCES object (volume, key) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- schema.metadata_key
-CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, path, ifnull(namespace, ''), key);
+CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, object, ifnull(namespace, ''), key);
 
 -- schema.object_state
--- The work of indexing the objects of the volumes, by path and kind, which is
--- the queue, which outlasts a restart. A path needn't be indexed, as it can
--- be of an object which is new, or gone.
+-- The work of indexing the objects of the volumes, by key and kind, which is
+-- the queue, which outlasts a restart. A key needn't be indexed, as it can
+-- be of an object which is new, or gone. A rescan is of a folder's key.
 CREATE TABLE IF NOT EXISTS object_state (
   volume          TEXT NOT NULL REFERENCES volume (name) ON DELETE CASCADE ON UPDATE CASCADE,
-  path            TEXT NOT NULL,
+  key             TEXT NOT NULL CHECK (key GLOB '/*' AND key NOT GLOB '*//*' AND (kind <> 'rescan' OR key GLOB '*/')),
   kind            TEXT NOT NULL CHECK (kind GLOB '[a-z]*' AND kind NOT GLOB '*[^a-z_]*'),
   etag            TEXT,                   -- of the object the work was done of, for enrichment
   after           TIMESTAMP NOT NULL,     -- when it's due
   attempts        INTEGER NOT NULL DEFAULT 0,
   leased_until    TIMESTAMP,              -- when its claim ends, which Done and Failed are of
   error           TEXT,                   -- why it last failed
-  PRIMARY KEY (volume, path, kind)
+  PRIMARY KEY (volume, key, kind)
 );
 
 -- schema.object_state_due

@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 5
+const Version = 6
 
 var (
 	//go:embed objects.sql
@@ -60,6 +60,21 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 		if version >= 1 && version < 5 {
 			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_5").Exec(ctx, `ALTER TABLE volume ADD COLUMN scan_mode TEXT`); err != nil {
 				return err
+			}
+		}
+		// Version 6's objects, their metadata, and the queue, are of keys,
+		// rather than paths, so the index of a volume of version 1 to 5 is
+		// removed, and its state, so it's scanned again, as is its work
+		if version >= 1 && version < 6 {
+			for _, query := range []string{
+				`DROP TABLE IF EXISTS metadata`,
+				`DROP TABLE IF EXISTS object_state`,
+				`DROP TABLE IF EXISTS object`,
+				`UPDATE volume SET status = NULL, folders = NULL, files = NULL, scan_mode = NULL, index_started = NULL, index_timestamp = NULL, error = NULL`,
+			} {
+				if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_6").Exec(ctx, query); err != nil {
+					return err
+				}
 			}
 		}
 		for _, key := range objects.Keys() {

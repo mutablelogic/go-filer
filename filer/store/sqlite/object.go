@@ -17,21 +17,24 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// Get returns the object of the volume at the path, with its metadata, or
+// Get returns the object of the volume of the key, with its metadata, or
 // ErrNotFound
-func (self *Store) Get(ctx context.Context, volume, path string) (_ *filer.Object, err error) {
-	ctx, end := self.span(ctx, "Get", attribute.String("arg.volume", volume), attribute.String("arg.path", path))
+func (self *Store) Get(ctx context.Context, volume, key string) (_ *filer.Object, err error) {
+	ctx, end := self.span(ctx, "Get", attribute.String("arg.volume", volume), attribute.String("arg.key", key))
 	defer func() { end(err) }()
+	if err := store.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	var result schema.ObjectList
-	if err := self.conn.Get(ctx, &result, schema.ObjectKey{Volume: volume, Path: path}); errors.Is(err, sqlite.ErrNotFound) {
-		return nil, gofiler.ErrNotFound.Withf("%q isn't indexed in volume %q", path, volume)
+	if err := self.conn.Get(ctx, &result, schema.ObjectKey{Volume: volume, Key: key}); errors.Is(err, sqlite.ErrNotFound) {
+		return nil, gofiler.ErrNotFound.Withf("%q isn't indexed in volume %q", key, volume)
 	} else if err != nil {
 		return nil, storeErr(err)
 	}
 	return result[0], nil
 }
 
-// Put stores the objects of the volume, replacing those at their paths, and
+// Put stores the objects of the volume, replacing those of their keys, and
 // their metadata, in one transaction, or returns ErrNotFound when the
 // volume isn't stored
 func (self *Store) Put(ctx context.Context, volume string, objects ...*filer.Object) (err error) {
@@ -51,12 +54,16 @@ func (self *Store) Put(ctx context.Context, volume string, objects ...*filer.Obj
 	}))
 }
 
-// Delete removes the object of the volume at the path, and every object
-// beneath it, with their metadata, which isn't an error when there's none
-func (self *Store) Delete(ctx context.Context, volume, path string) (err error) {
-	ctx, end := self.span(ctx, "Delete", attribute.String("arg.volume", volume), attribute.String("arg.path", path))
+// Delete removes the object of the volume of the key, and, of a folder's,
+// every object beneath it, with their metadata, which isn't an error when
+// there's none
+func (self *Store) Delete(ctx context.Context, volume, key string) (err error) {
+	ctx, end := self.span(ctx, "Delete", attribute.String("arg.volume", volume), attribute.String("arg.key", key))
 	defer func() { end(err) }()
-	return storeErr(self.conn.Delete(ctx, nil, schema.ObjectKey{Volume: volume, Path: path}))
+	if err := store.ValidateKey(key); err != nil {
+		return err
+	}
+	return storeErr(self.conn.Delete(ctx, nil, schema.ObjectKey{Volume: volume, Key: key}))
 }
 
 // List returns, in the order of their keys, up to the request's limit of

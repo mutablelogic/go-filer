@@ -77,7 +77,11 @@ func receive(t *testing.T, events chan schema.Event, path string) []schema.Event
 				return result
 			}
 		case <-timeout:
-			t.Fatalf("no change to %q, but %v", path, result)
+			paths := []string{}
+			for _, e := range result {
+				paths = append(paths, e.Path)
+			}
+			t.Fatalf("no change to %q, but %v %v", path, result, paths)
 		}
 	}
 }
@@ -93,6 +97,22 @@ func Test_WatchObjects(t *testing.T) {
 		require.NoError(t, os.Remove(filepath.Join(dir, "a.txt")))
 		for {
 			if event := receive(t, events, "/a.txt"); event[len(event)-1].EventType == schema.EventTypeDeleted {
+				break
+			}
+		}
+	})
+
+	t.Run("Folder", func(t *testing.T) {
+		// A folder which is created is of its key, with a "/" after its
+		// path, and one which is deleted is of its path, as it can't be
+		// checked
+		dir, events := watchVolume(t)
+		require.NoError(t, os.Mkdir(filepath.Join(dir, "d"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "d", "e.txt"), []byte("e"), 0o600))
+		receive(t, events, "/d/")
+		require.NoError(t, os.RemoveAll(filepath.Join(dir, "d")))
+		for {
+			if event := receive(t, events, "/d"); event[len(event)-1].EventType == schema.EventTypeDeleted {
 				break
 			}
 		}

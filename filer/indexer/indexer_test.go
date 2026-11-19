@@ -236,7 +236,7 @@ func Test_Scan(t *testing.T) {
 	assert.True(t, object.IsDir)
 	assert.Equal(t, "media", object.Name)
 	assert.Equal(t, "2", count(t, object), "its folder, and its file")
-	indexed, err := s.Get(context.Background(), "media", "/a")
+	indexed, err := s.Get(context.Background(), "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", indexed.Path, "it's got from the index")
 
@@ -566,9 +566,10 @@ func Test_ObjectsKeepMeta(t *testing.T) {
 func Test_BucketFileAndFolder(t *testing.T) {
 	// A bucket's file, /a, beside which a folder, /a/, is created, isn't
 	// mistaken for the folder, so the root, which lists both, is indexed
-	// again
+	// again, and both are indexed, of their keys
 	b := newBucket("a", "x.txt")
-	i, err := indexer.New("media", b, newStore(t), indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
+	s := newStore(t)
+	i, err := indexer.New("media", b, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
 	require.NoError(t, err)
 	run(t, i)
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/b/c.txt"}, Body: strings.NewReader("c")})
@@ -577,6 +578,17 @@ func Test_BucketFileAndFolder(t *testing.T) {
 		root, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
 		return err == nil && count(t, root) == "3"
 	}, 10*time.Second, 10*time.Millisecond, "a, a/ and x.txt")
+	require.Eventually(t, func() bool {
+		file, fileErr := s.Get(context.Background(), "media", "/a")
+		folder, folderErr := s.Get(context.Background(), "media", "/a/")
+		return fileErr == nil && !file.IsDir && folderErr == nil && folder.IsDir
+	}, 10*time.Second, 10*time.Millisecond, "the file, and the folder, are indexed")
+	file, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
+	require.NoError(t, err)
+	assert.False(t, file.IsDir, "the file is got of its key")
+	folder, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
+	require.NoError(t, err)
+	assert.True(t, folder.IsDir, "and the folder of its")
 }
 
 func Test_ObjectsParentRetry(t *testing.T) {
@@ -628,7 +640,7 @@ func Test_GetFile(t *testing.T) {
 	assert.Zero(t, n, "a folder is the index's")
 	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: x.ObjectKey, IfModifiedSince: time.Unix(1, 0)})
 	assert.Equal(t, int32(1), n, "a conditional request is the backend's")
-	require.NoError(t, s.Push(context.Background(), "media", store.Work{Path: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
 	n, _ = gets(t, i, c, x)
 	assert.Equal(t, int32(1), n, "a file with work queued is the backend's")
 

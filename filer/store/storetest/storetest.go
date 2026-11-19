@@ -147,6 +147,15 @@ func paths(objects []*schema.Object) []string {
 	return result
 }
 
+// keys returns the keys of the objects
+func keys(objects []*schema.Object) []string {
+	result := []string{}
+	for _, object := range objects {
+		result = append(result, store.Key(object))
+	}
+	return result
+}
+
 func testVolume(t *testing.T, s store.Store) {
 	ctx := context.Background()
 
@@ -249,7 +258,7 @@ func testIndex(t *testing.T, s store.Store) {
 	volume.Enabled = false
 	_, err = s.UpdateVolume(ctx, volume)
 	require.NoError(t, err)
-	_, err = s.Get(ctx, "media", "/a")
+	_, err = s.Get(ctx, "media", "/a/")
 	assert.NoError(t, err, "its index is kept")
 }
 
@@ -263,12 +272,12 @@ func testDeleteVolume(t *testing.T, s store.Store) {
 	require.NoError(t, s.DeleteVolume(ctx, "media"))
 	_, err := s.GetVolume(ctx, "media")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
-	_, err = s.Get(ctx, "media", "/a")
+	_, err = s.Get(ctx, "media", "/a/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	state, err := s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Equal(t, schema.IndexStatusNone, state.Status)
-	_, err = s.Get(ctx, "photos", "/b")
+	_, err = s.Get(ctx, "photos", "/b/")
 	assert.NoError(t, err)
 
 	// Created again, it has no index, or state
@@ -285,19 +294,24 @@ func testDeleteVolume(t *testing.T, s store.Store) {
 func testGet(t *testing.T, s store.Store) {
 	ctx := context.Background()
 
-	// An object which isn't indexed isn't found
-	_, err := s.Get(ctx, "media", "/a")
+	// An object which isn't indexed isn't found, and a key which isn't
+	// absolute, and clean, is bad
+	_, err := s.Get(ctx, "media", "/a/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
+	for _, bad := range []string{"", "a", "/a//", "/a/../b", "/a/./"} {
+		_, err := s.Get(ctx, "media", bad)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
+	}
 
-	// An object is got as it was put, with its attributes and metadata,
-	// and is replaced when it's put again
+	// An object is got as it was put, of its key, with its attributes and
+	// metadata
 	etag := "etag-1"
 	modtime := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	put := folder("/a")
 	put.ETag, put.ModTime, put.ContentType = &etag, modtime, "inode/directory"
 	put.Meta = []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"A"`)}}
 	require.NoError(t, s.Put(ctx, "media", put))
-	got, err := s.Get(ctx, "media", "/a")
+	got, err := s.Get(ctx, "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", got.Path)
 	assert.True(t, got.IsDir)
@@ -306,13 +320,29 @@ func testGet(t *testing.T, s store.Store) {
 	assert.Equal(t, "inode/directory", got.ContentType)
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"A"}]`, string(mustJSON(t, got.Meta)))
 
+	// A file of the same path, which a bucket can have, is another object,
+	// with its own metadata
+	_, err = s.Get(ctx, "media", "/a")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound, "it's the folder's key")
+	same := file("/a")
+	same.Meta = []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"file"`)}}
+	require.NoError(t, s.Put(ctx, "media", same))
+	got, err = s.Get(ctx, "media", "/a")
+	require.NoError(t, err)
+	assert.False(t, got.IsDir)
+	assert.JSONEq(t, `"file"`, string(got.Meta[0].Value))
+	got, err = s.Get(ctx, "media", "/a/")
+	require.NoError(t, err)
+	assert.True(t, got.IsDir)
+	assert.JSONEq(t, `"A"`, string(got.Meta[0].Value), "the folder's is kept")
+
 	// The object which was put isn't changed by changing what's returned,
 	// or what was put
 	got.Path, *got.ETag = "/changed", "changed"
 	got.Meta[0].Value[1] = 'X'
 	*put.ETag = "changed"
 	put.Meta[0].Value[1] = 'Y'
-	again, err := s.Get(ctx, "media", "/a")
+	again, err := s.Get(ctx, "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", again.Path)
 	assert.Equal(t, "etag-1", *again.ETag)
@@ -322,16 +352,23 @@ func testGet(t *testing.T, s store.Store) {
 	replaced := folder("/a")
 	replaced.Meta = nil
 	require.NoError(t, s.Put(ctx, "media", replaced))
-	again, err = s.Get(ctx, "media", "/a")
+	again, err = s.Get(ctx, "media", "/a/")
 	require.NoError(t, err)
 	assert.Nil(t, again.ETag)
 	assert.Empty(t, again.Meta)
+
+	// The root's key is "/"
+	require.NoError(t, s.Put(ctx, "media", folder("/")))
+	root, err := s.Get(ctx, "media", "/")
+	require.NoError(t, err)
+	assert.Equal(t, "/", root.Path)
+	assert.True(t, root.IsDir)
 }
 
 func testList(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	require.NoError(t, s.Put(ctx, "media",
-		folder("/"), file("/a.txt"), folder("/a"), file("/a0.txt"), folder("/a/b"), file("/a/b/c.txt"), folder("/ab"),
+		folder("/"), file("/a.txt"), folder("/a"), file("/a0.txt"), folder("/a/b"), file("/a/b/c.txt"), folder("/ab"), file("/ab"),
 	))
 
 	// A folder's objects, in the order of their keys, as S3 lists them,
@@ -340,40 +377,49 @@ func testList(t *testing.T, s store.Store) {
 		t.Helper()
 		objects, err := s.List(ctx, "media", req)
 		require.NoError(t, err)
-		return paths(objects)
+		return keys(objects)
 	}
-	assert.Equal(t, []string{"/a.txt", "/a", "/a0.txt", "/ab"}, list(store.ListRequest{Parent: "/"}))
-	assert.Equal(t, []string{"/a/b"}, list(store.ListRequest{Parent: "/a"}))
-	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/ab"}))
-	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/missing"}))
+	assert.Equal(t, []string{"/a.txt", "/a/", "/a0.txt", "/ab", "/ab/"}, list(store.ListRequest{Parent: "/"}))
+	assert.Equal(t, []string{"/a/b/"}, list(store.ListRequest{Parent: "/a/"}))
+	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/ab/"}))
+	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/missing/"}))
 
 	// Every object beneath it, when it's recursive
-	assert.Equal(t, []string{"/a.txt", "/a", "/a/b", "/a/b/c.txt", "/a0.txt", "/ab"}, list(store.ListRequest{Parent: "/", Recursive: true}))
-	assert.Equal(t, []string{"/a/b", "/a/b/c.txt"}, list(store.ListRequest{Parent: "/a", Recursive: true}))
+	assert.Equal(t, []string{"/a.txt", "/a/", "/a/b/", "/a/b/c.txt", "/a0.txt", "/ab", "/ab/"}, list(store.ListRequest{Parent: "/", Recursive: true}))
+	assert.Equal(t, []string{"/a/b/", "/a/b/c.txt"}, list(store.ListRequest{Parent: "/a/", Recursive: true}))
 
 	// A page at a time, after the key of the last object returned
 	page := list(store.ListRequest{Parent: "/", Limit: 2})
-	assert.Equal(t, []string{"/a.txt", "/a"}, page)
-	assert.Equal(t, []string{"/a0.txt", "/ab"}, list(store.ListRequest{Parent: "/", After: store.Key(folder("/a")), Limit: 2}))
-	assert.Equal(t, []string{"/a/b/c.txt", "/a0.txt"}, list(store.ListRequest{Parent: "/", Recursive: true, After: store.Key(folder("/a/b")), Limit: 2}))
-	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/", After: store.Key(folder("/ab"))}))
+	assert.Equal(t, []string{"/a.txt", "/a/"}, page)
+	assert.Equal(t, []string{"/a0.txt", "/ab"}, list(store.ListRequest{Parent: "/", After: "/a/", Limit: 2}))
+	assert.Equal(t, []string{"/a/b/c.txt", "/a0.txt"}, list(store.ListRequest{Parent: "/", Recursive: true, After: "/a/b/", Limit: 2}))
+	assert.Equal(t, []string{}, list(store.ListRequest{Parent: "/", After: "/ab/"}))
 }
 
 func testDelete(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "media", folder("/"), folder("/a"), folder("/a/b"), file("/a/b/c.txt"), folder("/ab"), file("/a.txt")))
+	require.NoError(t, s.Put(ctx, "media", folder("/"), folder("/a"), folder("/a/b"), file("/a/b/c.txt"), folder("/ab"), file("/a.txt"), file("/a")))
 
-	// A folder is deleted with what's beneath it, but not a path which only
-	// starts with its path
-	require.NoError(t, s.Delete(ctx, "media", "/a"))
+	// A folder is deleted with what's beneath it, but not a key which only
+	// starts with its path, or a file of its path
+	require.NoError(t, s.Delete(ctx, "media", "/a/"))
 	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/a.txt", "/ab"}, paths(objects))
+	assert.Equal(t, []string{"/a", "/a.txt", "/ab/"}, keys(objects))
 	_, err = s.Get(ctx, "media", "/a/b/c.txt")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 
-	// Deleting what isn't there isn't an error, and the root deletes it all
+	// A file is deleted on its own
+	require.NoError(t, s.Put(ctx, "media", folder("/a"), file("/a/b.txt")))
+	require.NoError(t, s.Delete(ctx, "media", "/a"))
+	objects, err = s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a.txt", "/a/", "/a/b.txt", "/ab/"}, keys(objects))
+
+	// Deleting what isn't there isn't an error, a bad key is, and the root
+	// deletes it all
 	require.NoError(t, s.Delete(ctx, "media", "/missing"))
+	assert.ErrorIs(t, s.Delete(ctx, "media", "a"), gofiler.ErrBadParameter)
 	require.NoError(t, s.Delete(ctx, "media", "/"))
 	objects, err = s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
 	require.NoError(t, err)
@@ -388,13 +434,13 @@ func testVolumes(t *testing.T, s store.Store) {
 	// Each volume's objects are its own
 	require.NoError(t, s.Put(ctx, "media", folder("/a")))
 	require.NoError(t, s.Put(ctx, "photos", folder("/b")))
-	_, err := s.Get(ctx, "photos", "/a")
+	_, err := s.Get(ctx, "photos", "/a/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	objects, err := s.List(ctx, "photos", store.ListRequest{Parent: "/"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/b"}, paths(objects))
 	require.NoError(t, s.Delete(ctx, "photos", "/"))
-	_, err = s.Get(ctx, "media", "/a")
+	_, err = s.Get(ctx, "media", "/a/")
 	assert.NoError(t, err)
 }
 
@@ -444,20 +490,20 @@ func mustJSON(t *testing.T, v any) []byte {
 // all is every kind of work of indexing
 var all = []store.Kind{store.KindIndex, store.KindRescan}
 
-// claimed returns the paths of the work which is claimed, of the kinds
+// claimed returns the keys of the work which is claimed, of the kinds
 func claimed(t *testing.T, s store.Store, kinds []store.Kind, max int) ([]store.Work, []string) {
 	t.Helper()
 	work, err := s.Claim(context.Background(), "media", kinds, max, time.Hour)
 	require.NoError(t, err)
 	result := []string{}
 	for _, w := range work {
-		result = append(result, string(w.Kind)+" "+w.Path)
+		result = append(result, string(w.Kind)+" "+w.Key)
 	}
 	return work, result
 }
 
-func index(path string) store.Work  { return store.Work{Path: path, Kind: store.KindIndex} }
-func rescan(path string) store.Work { return store.Work{Path: path, Kind: store.KindRescan} }
+func index(key string) store.Work  { return store.Work{Key: key, Kind: store.KindIndex} }
+func rescan(key string) store.Work { return store.Work{Key: key, Kind: store.KindRescan} }
 
 func testQueue(t *testing.T, s store.Store) {
 	ctx := context.Background()
@@ -481,7 +527,7 @@ func testQueue(t *testing.T, s store.Store) {
 	// claimed again, when the push is due
 	require.NoError(t, s.Push(ctx, "media", index("/a")))
 	work, _ = claimed(t, s, all, 10)
-	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/a", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/a", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
 	require.NoError(t, s.Done(ctx, "media", work...))
 	_, paths = claimed(t, s, all, 10)
 	assert.Empty(t, paths, "it's due when the push is")
@@ -501,13 +547,13 @@ func testQueue(t *testing.T, s store.Store) {
 	assert.Empty(t, paths, "it's due later")
 
 	// Of the kinds which are claimed, and none of none
-	require.NoError(t, s.Push(ctx, "media", rescan("/r")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/r/")))
 	_, paths = claimed(t, s, []store.Kind{store.KindIndex}, 10)
 	assert.Empty(t, paths)
 	_, paths = claimed(t, s, nil, 10)
 	assert.Empty(t, paths)
 	_, paths = claimed(t, s, []store.Kind{store.KindRescan}, 10)
-	assert.Equal(t, []string{"rescan /r"}, paths)
+	assert.Equal(t, []string{"rescan /r/"}, paths)
 
 	// Deleting the volume deletes its work
 	require.NoError(t, s.Push(ctx, "media", index("/z")))
@@ -521,43 +567,43 @@ func testQueue(t *testing.T, s store.Store) {
 func testQueueCoalesce(t *testing.T, s store.Store) {
 	ctx := context.Background()
 
-	// Work of the same path, and kind, is queued once
+	// Work of the same key, and kind, is queued once
 	require.NoError(t, s.Push(ctx, "media", index("/a/b"), index("/a/b"), index("/a/c"), index("/d")))
 
 	// A rescan of a folder replaces the work beneath it, and the index of
-	// its own path, but not that of other folders, including those whose
-	// paths only start with its path
-	require.NoError(t, s.Push(ctx, "media", index("/a"), index("/ab"), rescan("/a/x")))
-	require.NoError(t, s.Push(ctx, "media", rescan("/a")))
+	// its own key, but not that of other folders, including those whose
+	// paths only start with its path, or of a file of its path
+	require.NoError(t, s.Push(ctx, "media", index("/a/"), index("/a"), index("/ab"), rescan("/a/x/")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/a/")))
 
-	// Work beneath a rescan which is queued, or of its own path, isn't
+	// Work beneath a rescan which is queued, or of its own key, isn't
 	// queued
-	require.NoError(t, s.Push(ctx, "media", index("/a/e"), rescan("/a/f"), index("/a")))
+	require.NoError(t, s.Push(ctx, "media", index("/a/e"), rescan("/a/f/"), index("/a/")))
 	_, paths := claimed(t, s, []store.Kind{store.KindIndex}, 10)
-	assert.ElementsMatch(t, []string{"index /ab", "index /d"}, paths)
+	assert.ElementsMatch(t, []string{"index /a", "index /ab", "index /d"}, paths)
 	_, paths = claimed(t, s, []store.Kind{store.KindRescan}, 10)
-	assert.Equal(t, []string{"rescan /a"}, paths)
+	assert.Equal(t, []string{"rescan /a/"}, paths)
 	_, paths = claimed(t, s, all, 10)
 	assert.Empty(t, paths)
 
 	// A rescan of the root replaces all the work
-	require.NoError(t, s.Push(ctx, "media", index("/x"), rescan("/y")))
+	require.NoError(t, s.Push(ctx, "media", index("/x"), rescan("/y/")))
 	require.NoError(t, s.Push(ctx, "media", rescan("/")))
 	work, paths := claimed(t, s, all, 10)
 	assert.Equal(t, []string{"rescan /"}, paths)
 
 	// Work beneath a rescan which is claimed is queued, as the rescan can
 	// have passed it, and isn't done with it
-	require.NoError(t, s.Push(ctx, "media", index("/a/b"), rescan("/c")))
+	require.NoError(t, s.Push(ctx, "media", index("/a/b"), rescan("/c/")))
 	require.NoError(t, s.Done(ctx, "media", work...))
 	_, paths = claimed(t, s, []store.Kind{store.KindIndex}, 10)
 	assert.Equal(t, []string{"index /a/b"}, paths)
 	_, paths = claimed(t, s, []store.Kind{store.KindRescan}, 10)
-	assert.Equal(t, []string{"rescan /c"}, paths)
+	assert.Equal(t, []string{"rescan /c/"}, paths)
 
-	// Work of a path which isn't absolute, or clean, or without a kind, is
-	// bad, and none of the work is queued
-	for _, bad := range []store.Work{index("a/b"), index(""), index("."), index("/a/../b"), index("/a/"), {Path: "/a"}} {
+	// Work of a key which isn't absolute, or clean, or without a kind, or a
+	// rescan of a file's key, is bad, and none of the work is queued
+	for _, bad := range []store.Work{index("a/b"), index(""), index("."), index("/a/../b"), index("/a//"), {Key: "/a"}, rescan("/a")} {
 		assert.ErrorIs(t, s.Push(ctx, "media", index("/ok"), bad), gofiler.ErrBadParameter, bad)
 	}
 	_, paths = claimed(t, s, all, 10)
@@ -571,30 +617,30 @@ func testQueueOrder(t *testing.T, s store.Store) {
 	// Work is claimed earliest first, a rescan on its own, and other work
 	// up to the first rescan, and up to the most which are claimed
 	require.NoError(t, s.Push(ctx, "media",
-		store.Work{Path: "/b", Kind: store.KindIndex, After: now.Add(-3 * time.Second)},
-		store.Work{Path: "/a", Kind: store.KindIndex, After: now.Add(-2 * time.Second)},
-		store.Work{Path: "/r", Kind: store.KindRescan, After: now.Add(-1500 * time.Millisecond)},
-		store.Work{Path: "/c", Kind: store.KindIndex, After: now.Add(-time.Second)},
-		store.Work{Path: "/d", Kind: store.KindIndex, After: now.Add(-500 * time.Millisecond)},
+		store.Work{Key: "/b", Kind: store.KindIndex, After: now.Add(-3 * time.Second)},
+		store.Work{Key: "/a", Kind: store.KindIndex, After: now.Add(-2 * time.Second)},
+		store.Work{Key: "/r/", Kind: store.KindRescan, After: now.Add(-1500 * time.Millisecond)},
+		store.Work{Key: "/c", Kind: store.KindIndex, After: now.Add(-time.Second)},
+		store.Work{Key: "/d", Kind: store.KindIndex, After: now.Add(-500 * time.Millisecond)},
 	))
 	_, paths := claimed(t, s, all, 1)
 	assert.Equal(t, []string{"index /b"}, paths)
 	_, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /a"}, paths, "up to the rescan")
 	_, paths = claimed(t, s, all, 10)
-	assert.Equal(t, []string{"rescan /r"}, paths, "on its own")
+	assert.Equal(t, []string{"rescan /r/"}, paths, "on its own")
 	_, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /c", "index /d"}, paths)
 
 	// Work which isn't due isn't claimed, and is due at the earlier of two
 	// pushes, so work which is pushed again and again isn't put off
-	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now.Add(time.Hour)}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/later", Kind: store.KindIndex, After: now.Add(time.Hour)}))
 	_, paths = claimed(t, s, all, 10)
 	assert.Empty(t, paths)
-	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now.Add(2 * time.Hour)}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/later", Kind: store.KindIndex, After: now.Add(2 * time.Hour)}))
 	_, paths = claimed(t, s, all, 10)
 	assert.Empty(t, paths)
-	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/later", Kind: store.KindIndex, After: now}))
 	_, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /later"}, paths)
 }
@@ -636,66 +682,75 @@ func testQueuePendingBeneath(t *testing.T, s store.Store) {
 		require.NoError(t, s.Done(ctx, "media", work...))
 	}
 
-	// A folder's listing has work pending when a path beneath it is indexed,
+	// A folder's listing has work pending when a key beneath it is indexed,
 	// or rescanned, whether the work is queued, or claimed, until it's done
-	assert.False(t, pending("/a"))
+	assert.False(t, pending("/a/"))
 	require.NoError(t, s.Push(ctx, "media", index("/a/b/c.txt")))
-	assert.True(t, pending("/a"), "of a file beneath it")
-	assert.True(t, pending("/a/b"), "of a file in it")
+	assert.True(t, pending("/a/"), "of a file beneath it")
+	assert.True(t, pending("/a/b/"), "of a file in it")
 	assert.True(t, pending("/"), "of the root")
-	assert.False(t, pending("/a/b/c"), "of a folder beneath it")
-	assert.False(t, pending("/ab"), "of a folder whose path only starts with it")
-	assert.False(t, pending("/a/bc"), "of another folder")
+	assert.False(t, pending("/a/b/c/"), "of a folder beneath it")
+	assert.False(t, pending("/ab/"), "of a folder whose path only starts with it")
+	assert.False(t, pending("/a/bc/"), "of another folder")
 	work, _ := claimed(t, s, all, 10)
-	assert.True(t, pending("/a"), "while it's claimed")
+	assert.True(t, pending("/a/"), "while it's claimed")
 	require.NoError(t, s.Done(ctx, "media", work...))
-	assert.False(t, pending("/a"))
+	assert.False(t, pending("/a/"))
 
 	// Or of a rescan beneath it, and of the work Pending is of: an index, or
-	// a rescan, of it, or of a folder above it
-	require.NoError(t, s.Push(ctx, "media", rescan("/a/b")))
-	assert.True(t, pending("/a"), "of a rescan beneath it")
+	// a rescan, of it, or of a folder above it, but not of a file of its
+	// path
+	require.NoError(t, s.Push(ctx, "media", rescan("/a/b/")))
+	assert.True(t, pending("/a/"), "of a rescan beneath it")
+	done()
+	require.NoError(t, s.Push(ctx, "media", index("/a/")))
+	assert.True(t, pending("/a/"), "of an index of it")
+	assert.True(t, pending("/a/b/"), "of an index above it")
+	assert.False(t, pending("/c/"))
 	done()
 	require.NoError(t, s.Push(ctx, "media", index("/a")))
-	assert.True(t, pending("/a"), "of an index of it")
-	assert.True(t, pending("/a/b"), "of an index above it")
-	assert.False(t, pending("/c"))
+	assert.False(t, pending("/a/"), "of a file of its path")
 	done()
 	require.NoError(t, s.Push(ctx, "media", rescan("/")))
-	assert.True(t, pending("/a/b"), "of a rescan above it")
+	assert.True(t, pending("/a/b/"), "of a rescan above it")
 	done()
 	assert.False(t, pending("/"))
-	_, err := s.PendingBeneath(ctx, "media", "a")
-	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+
+	// A key which isn't a folder's is bad
+	for _, bad := range []string{"a", "/a"} {
+		_, err := s.PendingBeneath(ctx, "media", bad)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
+	}
 }
 
 func testQueuePending(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	pending := func(path string) bool {
+	pending := func(key string) bool {
 		t.Helper()
-		result, err := s.Pending(ctx, "media", path)
+		result, err := s.Pending(ctx, "media", key)
 		require.NoError(t, err)
 		return result
 	}
 
-	// A path has work pending when it's indexed, or it, or a folder above it,
+	// A key has work pending when it's indexed, or it, or a folder above it,
 	// is rescanned, whether the work is queued, or claimed, until it's done
 	assert.False(t, pending("/a/b.txt"))
 	require.NoError(t, s.Push(ctx, "media", index("/a/b.txt")))
 	assert.True(t, pending("/a/b.txt"))
-	assert.False(t, pending("/a/c.txt"), "of another path")
-	assert.False(t, pending("/a"), "of the folder of the path")
+	assert.False(t, pending("/a/c.txt"), "of another key")
+	assert.False(t, pending("/a/"), "of the folder of the key")
 	work, _ := claimed(t, s, all, 10)
 	assert.True(t, pending("/a/b.txt"), "while it's claimed")
 	require.NoError(t, s.Done(ctx, "media", work...))
 	assert.False(t, pending("/a/b.txt"))
-	require.NoError(t, s.Push(ctx, "media", rescan("/a")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/a/")))
 	assert.True(t, pending("/a/b.txt"), "of a folder above it")
-	assert.True(t, pending("/a"), "of itself")
-	assert.False(t, pending("/ab"), "of a folder whose path only starts with it")
+	assert.True(t, pending("/a/"), "of itself")
+	assert.False(t, pending("/ab"), "of a key which only starts with its path")
+	assert.False(t, pending("/a"), "of a file of its path")
 	work, _ = claimed(t, s, all, 10)
 	require.NoError(t, s.Done(ctx, "media", work...))
-	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	require.NoError(t, s.Push(ctx, "media", index("/a/")))
 	assert.True(t, pending("/a/b.txt"), "of an index of a folder above it")
 	assert.False(t, pending("/"), "of the folder above the folder")
 	_, err := s.Pending(ctx, "media", "a/b")

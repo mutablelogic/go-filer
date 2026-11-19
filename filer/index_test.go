@@ -376,7 +376,7 @@ func Test_Registry_AnotherBackend(t *testing.T) {
 	disabled.URL = third.String()
 	_, err = r.UpdateVolume(ctx, disabled)
 	require.NoError(t, err)
-	_, err = s.Get(ctx, "media", "/c")
+	_, err = s.Get(ctx, "media", "/c/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound, "the old backend's index is removed")
 }
 
@@ -398,7 +398,7 @@ func Test_Registry_DisabledIndex(t *testing.T) {
 		if err != nil || state.Status != schema.IndexStatusNone {
 			return false
 		}
-		_, err = s.Get(ctx, "media", "/a")
+		_, err = s.Get(ctx, "media", "/a/")
 		return errors.Is(err, gofiler.ErrNotFound) && get(r, "media") == nil
 	}, mountTimeout, 5*time.Millisecond, "its index is removed")
 }
