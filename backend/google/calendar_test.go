@@ -93,6 +93,13 @@ func (f *fakeCalendar) add(calendar string, events ...httpclient.Event) {
 	}
 }
 
+// put adds an event to a calendar, of its next version
+func (f *fakeCalendar) put(calendar string, event httpclient.Event) {
+	f.Lock()
+	defer f.Unlock()
+	f.add(calendar, event)
+}
+
 // change changes an event of a calendar, of its next version
 func (f *fakeCalendar) change(calendar, id string, fn func(*httpclient.Event)) {
 	f.Lock()
@@ -133,7 +140,7 @@ func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.lists++
 		var items []httpclient.Event
 		for _, e := range f.events[parts[1]] {
-			if start := fakeStart(e.Event); !start.Before(from) && start.Before(to) {
+			if start := fakeStart(e.Event); len(e.Recurrence) == 0 && e.Status != "cancelled" && !start.Before(from) && start.Before(to) {
 				items = append(items, e.Event)
 			}
 		}
@@ -150,9 +157,11 @@ func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			f.syncs[calendar]++
 		}
-		var items []map[string]string
+		var items []any
 		for _, e := range f.events[calendar] {
-			if e.version > since {
+			if e.version > since && since > 0 {
+				items = append(items, httpclient.Event{Id: e.Id, Status: e.Status, Start: e.Start, Recurrence: e.Recurrence, RecurringEventId: e.RecurringEventId})
+			} else if e.version > since {
 				items = append(items, map[string]string{"id": e.Id})
 			}
 		}
@@ -527,4 +536,63 @@ func Test_CalendarWatchRename(t *testing.T) {
 	event := next()
 	require.NotNil(t, event)
 	assert.Equal(t, schema.EventTypeRescan, event.EventType)
+}
+
+func Test_CalendarWatchHints(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	filer := newCalendarFiler(t, calendarCredentials(t, endpoint), url.Values{"refresh_interval": {"10ms"}})
+	ch, done := make(chan schema.Event, 16), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		assert.ErrorIs(t, <-done, context.Canceled)
+	}()
+	// events returns the events which are sent, until none are, for a while
+	events := func() []string {
+		t.Helper()
+		var result []string
+		for {
+			select {
+			case event := <-ch:
+				result = append(result, event.EventType.String()+" "+event.Path)
+			case <-time.After(150 * time.Millisecond):
+				return result
+			}
+		}
+	}
+	const e1 = "/2026/2026-11/20-work@example.com-e1.ics"
+
+	// Before anything is listed, where an event was isn't known, so a change
+	// is a rescan
+	assert.Equal(t, []string{"rescan /"}, events(), "the first rescan")
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Changed" })
+	assert.Equal(t, []string{"rescan /"}, events())
+
+	// Once it's listed, an event which changes is updated, one which moves
+	// is deleted where it was, and created where it is, and one which is
+	// created is, but not one which isn't of the days which are listed
+	listed(t, filer, schema.ListObjectsRequest{Path: "/", Recursive: true})
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Changed again" })
+	assert.Equal(t, []string{"updated " + e1}, events())
+	fake.change(work, "e1", func(e *httpclient.Event) {
+		e.Start.DateTime, e.End.DateTime = "2026-11-22T09:00:00+01:00", "2026-11-22T10:00:00+01:00"
+	})
+	moved := "/2026/2026-11/22-work@example.com-e1.ics"
+	assert.Equal(t, []string{"deleted " + e1, "created " + moved}, events())
+	fake.put(work, httpclient.Event{Id: "new", Status: "confirmed", Start: httpclient.EventTime{Date: "2026-12-03"}, End: httpclient.EventTime{Date: "2026-12-04"}})
+	fake.put(work, httpclient.Event{Id: "far", Status: "confirmed", Start: httpclient.EventTime{Date: "2027-06-01"}, End: httpclient.EventTime{Date: "2027-06-02"}})
+	assert.Equal(t, []string{"created /2026/2026-12/03-work@example.com-new.ics"}, events())
+
+	// An event which is cancelled is deleted, as is each time one which
+	// repeats occurs, when it's cancelled
+	fake.change(work, "e2", func(e *httpclient.Event) { e.Status = "cancelled" })
+	assert.Equal(t, []string{"deleted /2026/2026-12/25-work@example.com-e2.ics"}, events())
+	fake.put(work, httpclient.Event{Id: "rec", Status: "cancelled"})
+	assert.Equal(t, []string{"deleted /2026/2026-11/05-work@example.com-rec_20261105T100000Z.ics"}, events())
+
+	// An event which repeats, which changed, is a rescan, as the times it
+	// occurs aren't said
+	fake.put(work, httpclient.Event{Id: "series", Status: "confirmed", Recurrence: []string{"RRULE:FREQ=WEEKLY"}, Start: httpclient.EventTime{DateTime: "2026-11-02T09:00:00Z"}})
+	assert.Equal(t, []string{"rescan /"}, events())
 }

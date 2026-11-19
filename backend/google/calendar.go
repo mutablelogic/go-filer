@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/url"
 	"path"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	// Packages
@@ -44,6 +46,13 @@ type CalendarFiler struct {
 
 	// now returns the time, which the months listed are of
 	now func() time.Time
+
+	// The paths of the events which were listed, by their calendars, and
+	// ids (see eventKey), so a watch knows where an event was, which a
+	// change doesn't say, and whether any were
+	mu    sync.Mutex
+	paths map[string]string
+	known bool
 }
 
 // calendarOpt are the options of a calendar filer, of its parameters
@@ -338,7 +347,7 @@ func (self *CalendarFiler) ListObjects(ctx context.Context, req schema.ListObjec
 	var events []calendarEvent
 	if p.year != 0 || req.Recursive {
 		from, to := self.span(p)
-		if events, err = self.events(ctx, "list", req.Path, from, to); err != nil {
+		if events, err = self.events(ctx, "list", req.Path, pathOfDir(p), from, to); err != nil {
 			return nil, err
 		}
 	}
@@ -489,7 +498,7 @@ func (self *CalendarFiler) stat(ctx context.Context, op, p string) (*schema.Obje
 	case path.event == "":
 		// A month, of its events, and when they were last changed
 		from, to := self.span(path)
-		events, err := self.events(ctx, op, p, from, to)
+		events, err := self.events(ctx, op, p, pathOfDir(path), from, to)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -522,8 +531,9 @@ func (self *CalendarFiler) stat(ctx context.Context, op, p string) (*schema.Obje
 }
 
 // events returns the events of every calendar which start on one of the
-// days, in its own zone, in the order of their paths
-func (self *CalendarFiler) events(ctx context.Context, op, p string, from, to time.Time) ([]calendarEvent, error) {
+// days, in its own zone, in the order of their paths, which are those of
+// the directory, which replace those which were, for a watch
+func (self *CalendarFiler) events(ctx context.Context, op, p, dir string, from, to time.Time) ([]calendarEvent, error) {
 	calendars, err := self.client.Calendars(ctx)
 	if err != nil {
 		return nil, self.apiError(op, p, err)
@@ -542,7 +552,87 @@ func (self *CalendarFiler) events(ctx context.Context, op, p string, from, to ti
 		}
 	}
 	slices.SortFunc(result, func(a, b calendarEvent) int { return strings.Compare(a.path, b.path) })
+	self.listedPaths(dir, result)
 	return result, nil
+}
+
+// listedPaths replaces the paths of the events of a directory, which were
+// listed, with those which are
+func (self *CalendarFiler) listedPaths(dir string, events []calendarEvent) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	if self.paths == nil || dir == "/" {
+		self.paths = make(map[string]string, len(events))
+	} else {
+		prefix := strings.TrimSuffix(dir, "/") + "/"
+		maps.DeleteFunc(self.paths, func(_, p string) bool { return strings.HasPrefix(p, prefix) })
+	}
+	for _, e := range events {
+		self.paths[eventKey(e.calendar.Id, e.event.Id)] = e.path
+	}
+	self.known = true
+}
+
+// hinted returns the events of what changed of a calendar, of its sync: an
+// event which is created, updated, or moved, which is deleted where it was,
+// of the paths which were listed, and one which is cancelled, or isn't of
+// the days which are listed any more, which is deleted, when it was there.
+// Returns false when it can't say, so the root is rescanned: when an event
+// which repeats changed, as a sync doesn't say which times it occurs, or
+// nothing has been listed, so where events were isn't known.
+func (self *CalendarFiler) hinted(calendar *httpclient.Calendar, changed []httpclient.Event) ([]schema.Event, bool) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	if !self.known {
+		return nil, false
+	}
+	for i := range changed {
+		if len(changed[i].Recurrence) > 0 {
+			return nil, false
+		}
+	}
+	from, to := self.days()
+	var deleted, created []schema.Event
+	event := func(t schema.EventType, p string) schema.Event {
+		return schema.Event{EventType: t, ObjectKey: schema.ObjectKey{Name: self.name, Path: p}}
+	}
+	for i := range changed {
+		e := &changed[i]
+		key := eventKey(calendar.Id, e.Id)
+		old, had := self.paths[key]
+		switch {
+		case e.Status == "cancelled":
+			// An event, or a time one which repeats occurs, or, of one which
+			// repeats, each time it occurs, of their ids, which are its, and
+			// when they start
+			prefix := eventKey(calendar.Id, e.Id+"_")
+			for k, p := range self.paths {
+				if k == key || strings.HasPrefix(k, prefix) {
+					deleted = append(deleted, event(schema.EventTypeDeleted, p))
+					delete(self.paths, k)
+				}
+			}
+		case !reEventId.MatchString(e.Id) || !onDays(e, from, to):
+			if had {
+				deleted = append(deleted, event(schema.EventTypeDeleted, old))
+				delete(self.paths, key)
+			}
+		default:
+			p := self.eventPath(calendar, e)
+			if had && old != p {
+				deleted = append(deleted, event(schema.EventTypeDeleted, old))
+			}
+			if had && old == p {
+				created = append(created, event(schema.EventTypeUpdated, p))
+			} else {
+				created = append(created, event(schema.EventTypeCreated, p))
+			}
+			self.paths[key] = p
+		}
+	}
+	slices.SortFunc(deleted, func(a, b schema.Event) int { return strings.Compare(a.Path, b.Path) })
+	slices.SortFunc(created, func(a, b schema.Event) int { return strings.Compare(a.Path, b.Path) })
+	return append(deleted, created...), true
 }
 
 // tree returns the objects of a directory, of its events: its years, of
@@ -747,6 +837,11 @@ func onDays(event *httpclient.Event, from, to time.Time) bool {
 	}
 	t := time.Date(year, time.Month(month), d, 0, 0, 0, 0, time.UTC)
 	return !t.Before(from) && t.Before(to)
+}
+
+// eventKey returns the key of an event, of its calendar, and its id
+func eventKey(calendar, id string) string {
+	return calendar + "\x00" + id
 }
 
 // calendarName returns the name of a calendar in its events' paths, of its

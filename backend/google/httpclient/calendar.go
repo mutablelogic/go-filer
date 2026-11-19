@@ -52,6 +52,7 @@ type Event struct {
 	Location          string        `json:"location,omitempty"`
 	Start             EventTime     `json:"start,omitzero"`
 	End               EventTime     `json:"end,omitzero"`
+	Recurrence        []string      `json:"recurrence,omitempty"` // Of an event which repeats, rather than a time it occurs
 	RecurringEventId  string        `json:"recurringEventId,omitempty"`
 	OriginalStartTime EventTime     `json:"originalStartTime,omitzero"`
 	Transparency      string        `json:"transparency,omitempty"` // opaque, or transparent, which isn't busy
@@ -217,36 +218,39 @@ func (c *CalendarClient) Event(ctx context.Context, calendar, id string) (*Event
 	return &result, nil
 }
 
-// Sync returns how many of a calendar's events changed since the sync
-// token, which are its events, of every time, without one, and the token
-// of the changes after them. Only their identifiers are got, as what changed
-// is listed again, of the times it's listed. Returns ErrSyncTokenGone when
-// Google no longer accepts the token, so it's synced again without one.
+// Sync returns a calendar's events which changed since the sync token, of
+// their ids, status, start, and what repeats, and those which are
+// cancelled, which say they are, and the token of the changes after them.
+// An event which repeats is itself, rather than the times it occurs, unless
+// one of them changed on its own. Without a token, it's every event, of its
+// id alone, for a token. Returns ErrSyncTokenGone when Google no longer
+// accepts the token, so it's synced again without one.
 // Reference: https://developers.google.com/calendar/api/guides/sync
-func (c *CalendarClient) Sync(ctx context.Context, calendar, token string) (int, string, error) {
+func (c *CalendarClient) Sync(ctx context.Context, calendar, token string) ([]Event, string, error) {
 	query := url.Values{
 		"maxResults": {strconv.Itoa(eventPageSize)},
 		"fields":     {"items(id),nextPageToken,nextSyncToken"},
 	}
 	if token != "" {
 		query.Set("syncToken", token)
+		query.Set("fields", "items(id,status,start,recurrence,recurringEventId),nextPageToken,nextSyncToken")
 	}
-	changed := 0
+	var changed []Event
 	for range maxPages {
 		var page events
 		if err := c.DoAuthWithContext(ctx, client.NewRequest(), &page,
 			client.OptPath("calendars", calendar, "events"),
 			client.OptQuery(query),
 		); errors.Is(err, httpresponse.Err(http.StatusGone)) {
-			return 0, "", ErrSyncTokenGone
+			return nil, "", ErrSyncTokenGone
 		} else if err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
-		changed += len(page.Items)
+		changed = append(changed, page.Items...)
 		if page.NextPageToken == "" {
 			return changed, page.NextSyncToken, nil
 		}
 		query.Set("pageToken", page.NextPageToken)
 	}
-	return 0, "", errTooManyPages
+	return nil, "", errTooManyPages
 }
