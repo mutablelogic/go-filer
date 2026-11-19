@@ -42,9 +42,22 @@ func newFakePeople(t *testing.T) (*fakePeople, string) {
 	return fake, server.URL
 }
 
+// photo is a contact's photo, which the fake serves, without a token, at
+// photoSize
+var photo = []byte("\x89PNG\r\n\x1a\nphoto")
+
 func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.Lock()
 	defer f.Unlock()
+	if strings.HasPrefix(r.URL.Path, "/photos/") {
+		if r.URL.Path != "/photos/ada=s512" || r.Header.Get("Authorization") != "" {
+			writeError(w, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(photo)
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer "+token {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="https://accounts.google.com/", error="invalid_token"`)
 		writeError(w, http.StatusUnauthorized)
@@ -149,10 +162,11 @@ func Test_ContactObjects(t *testing.T) {
 		p.Birthdays = []httpclient.PersonDate{{}}
 		p.Birthdays[0].Date.Month, p.Birthdays[0].Date.Day = 12, 10
 		p.Biographies = []httpclient.PersonValue{{Value: "The first programmer"}}
-		p.Photos = []httpclient.PersonPhoto{{URL: "https://example.com/default.png", Default: true}, {URL: "https://example.com/ada.jpg"}}
+		p.Photos = []httpclient.PersonPhoto{{URL: endpoint + "/photos/default=s100", Default: true}, {URL: endpoint + "/photos/ada=s100"}}
 	})
 	fake.add("c1", func(p *httpclient.Person) {
 		p.Names = []httpclient.PersonName{{DisplayName: "Charles Babbage"}}
+		p.Photos = []httpclient.PersonPhoto{{URL: endpoint + "/photos/missing=s100"}}
 	})
 	fake.add("c3", func(p *httpclient.Person) { p.Metadata.Deleted = true })
 	fake.add("c4", func(p *httpclient.Person) {
@@ -184,6 +198,7 @@ func Test_ContactObjects(t *testing.T) {
 	assert.Equal(t, "c2-1", *object.ETag)
 	assert.True(t, object.ModTime.Equal(updated))
 	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.DCNamespace, Key: "title", Value: []byte(`"Ada Lovelace"`)})
+	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.ContactNamespace, Key: "url", Value: []byte(`"https://contacts.google.com/person/c2"`)})
 	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c2.vcf"}, IfNoneMatch: []string{"c2-1"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotModified)
 
@@ -217,7 +232,29 @@ func Test_ContactObjects(t *testing.T) {
 	require.NotNil(t, card.Birthday)
 	assert.Equal(t, vcard.Date{Month: 12, Day: 10}, *card.Birthday)
 	require.NotNil(t, card.Photo)
-	assert.Equal(t, "https://example.com/ada.jpg", card.Photo.URI)
+	assert.Equal(t, photo, card.Photo.Data, "its photo, at 512 pixels, is embedded, rather than a link")
+	assert.Equal(t, "image/png", card.Photo.MediaType)
+	assert.Empty(t, card.Photo.URI)
+
+	// It has no size until it's read, as its photo isn't got for a listing,
+	// or a get
+	object, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c2.vcf"}})
+	require.NoError(t, err)
+	assert.Nil(t, object.Size)
+
+	// A photo which can't be got is a link
+	read, _, err = filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c1.vcf"}})
+	require.NoError(t, err)
+	require.NoError(t, read(ctx, func(r io.Reader) error {
+		data, err := io.ReadAll(r)
+		content = string(data)
+		return err
+	}))
+	cards, err = vcard.Decode(strings.NewReader(content))
+	require.NoError(t, err)
+	require.Len(t, cards, 1)
+	require.NotNil(t, cards[0].Photo)
+	assert.Equal(t, endpoint+"/photos/missing=s100", cards[0].Photo.URI)
 	assert.Equal(t, []string{"The first programmer"}, card.Notes)
 
 	// A contact which is deleted, or isn't there, or a path which isn't a

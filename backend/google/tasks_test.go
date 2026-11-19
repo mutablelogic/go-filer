@@ -539,7 +539,7 @@ func Test_TaskObjects(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, file.IsDir)
 	assert.Equal(t, ical.TaskType, file.ContentType)
-	assert.Equal(t, "T1-1", *file.ETag)
+	assert.Equal(t, "T1-1/v2", *file.ETag, "of the task's, and of its representation's version")
 	assert.Equal(t, completed, file.ModTime)
 	meta := make(map[string]string)
 	for _, m := range file.Meta {
@@ -547,7 +547,7 @@ func Test_TaskObjects(t *testing.T) {
 		require.NoError(t, json.Unmarshal(m.Value, &value))
 		meta[m.Namespace+":"+m.Key] = value
 	}
-	assert.Equal(t, map[string]string{"task:title": "Buy  milk\n", "dc:title": "Buy  milk\n", "task:status": "needsAction", "task:due": "2026-11-20"}, meta)
+	assert.Equal(t, map[string]string{"dc:title": "Buy  milk\n"}, meta, "only what its iCalendar can't have, and its title")
 
 	// Its content, whose size is its file's
 	read, object, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}})
@@ -611,7 +611,7 @@ func Test_TaskObjects(t *testing.T) {
 	assert.Equal(t, map[string]string{"hidden": "true", "links": `[{"type":"email","description":"From Sam","link":"https://mail.google.com/x"}]`}, extra)
 
 	// Not modified, of its entity tag
-	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}, IfNoneMatch: []string{"T1-1"}})
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/T1.ics"}, IfNoneMatch: []string{"T1-1/v2"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotModified)
 
 	// What doesn't exist: a list, a task, a deleted task, a task as a
@@ -1458,7 +1458,7 @@ func Test_TaskWriteConcurrent(t *testing.T) {
 		}
 	}
 	fake.Unlock()
-	assert.Equal(t, etag, *object.ETag)
+	assert.Equal(t, etag+"/v2", *object.ETag)
 	select {
 	case event := <-events:
 		assert.Equal(t, "updated /L1/A.ics", event.EventType.String()+" "+event.Path)

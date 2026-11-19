@@ -449,3 +449,34 @@ func Test_VolumeDescription(t *testing.T) {
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, value)
 	}
 }
+
+func Test_VolumeCreateGCalendarCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateGCalendar VolumeCreateGCalendarCmd `cmd:"" name:"volume-create-gcalendar"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		_, err := parser.Parse(append([]string{"volume-create-gcalendar"}, args...))
+		if err != nil {
+			return "", err
+		}
+		v, err := cli.VolumeCreateGCalendar.volume()
+		return v.URL, err
+	}
+
+	// A volume of calendars, and of another sign-in, of a window, a quota,
+	// and another option
+	u, err := volume("calendar")
+	require.NoError(t, err)
+	assert.Equal(t, "gcalendar://calendar", u)
+	u, err = volume("work", "--credential", "GOOGLE_WORK", "--window", "30d", "--quota", "60", "-o", "index=metadata")
+	require.NoError(t, err)
+	assert.Equal(t, "gcalendar://work?credential=GOOGLE_WORK&index=metadata&quota=60&window=30d", u)
+
+	// A name which isn't an identifier, or a credential which isn't a key
+	_, err = volume("not-a-name!")
+	assert.Error(t, err)
+	_, err = volume("work", "--credential", "not a key")
+	assert.Error(t, err)
+}
