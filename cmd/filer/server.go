@@ -8,6 +8,7 @@ import (
 	// Packages
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	google "github.com/mutablelogic/go-filer/backend/google"
+	enrichmentcmd "github.com/mutablelogic/go-filer/enrichment/cmd"
 	registry "github.com/mutablelogic/go-filer/registry"
 	filercmd "github.com/mutablelogic/go-filer/registry/cmd"
 	store "github.com/mutablelogic/go-filer/store"
@@ -32,10 +33,10 @@ type ServerCommands struct {
 }
 
 type RunServer struct {
-	Filer       filercmd.Flags  `embed:""`
-	Credentials CredentialFlags `embed:""`
-	Indexer     IndexerFlags    `embed:""`
-	Enrichment  EnrichmentFlags `embed:""`
+	Filer       filercmd.Flags      `embed:""`
+	Credentials CredentialFlags     `embed:""`
+	Indexer     IndexerFlags        `embed:""`
+	Enrichment  enrichmentcmd.Flags `embed:""`
 	servercmd.RunServer
 }
 
@@ -86,7 +87,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 
 	// The task which enriches the files of volumes with index=metadata, of
 	// go-metadata, which reads media, too, when it's built with cgo
-	task, err := runner.Enrichment.task(ctx)
+	task, err := runner.Enrichment.WithMetadataEnrichment(ctx)
 	if err != nil {
 		return err
 	}

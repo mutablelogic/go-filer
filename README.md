@@ -24,6 +24,8 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/registry/httphandler` | The registry's HTTP API |
 | `github.com/mutablelogic/go-filer/registry/httpclient` | A client of the registry's HTTP API |
 | `github.com/mutablelogic/go-filer/registry/cmd` | The `filer` command's subcommands |
+| `github.com/mutablelogic/go-filer/enrichment` | The task which enriches files with go-metadata's metadata |
+| `github.com/mutablelogic/go-filer/enrichment/cmd` | The enrichment flags of a server, and `WithMetadataEnrichment`, its registry option |
 
 ## Building
 
@@ -175,7 +177,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **`--volume`** creates a volume when the server starts, or updates the stored one of the same name.
 * **Indexing:** the `index` option sets what's indexed.
   * `index=none`, or no option, indexes nothing; `index=folders` indexes folders; `index=objects` indexes files too, with their size, modified time, type, entity tag and the backend's metadata.
-  * `index=metadata` indexes files as `objects` does, and enriches each new or changed file with a task, such as go-metadata's. The server passes the task with `registry.WithMetadataTask`, from the `enrichment` package: `enrichment.New(WithTMDB(key), WithAcoustID(key), ...)`, whose flags are `--tmdb-key` (`TMDB_TOKEN`), `--acoustid-key` (`ACOUSTID_KEY`) and `--enrich-max-size`.
+  * `index=metadata` indexes files as `objects` does, and enriches each new or changed file with a task, such as go-metadata's. The server passes the task with `registry.WithMetadataTask`, from the `enrichment` package: `enrichment.New(WithTMDB(key), WithAcoustID(key), ...)`. A server embeds `enrichment/cmd`'s `Flags`, which are `--tmdb-key` (`TMDB_TOKEN`), `--acoustid-key` (`ACOUSTID_KEY`) and `--enrich-max-size`, and passes `Flags.WithMetadataEnrichment(ctx)` to the registry.
     * Task workers run separately from indexing, so a slow read never holds it up.
     * A task stores what it finds with `SetMetadata`, as its own metadata rows, which the backend's metadata never replaces. Reads merge the two, and the task's value wins for the same key.
     * A file is enriched again only when its listing's revision changes. A file whose task keeps failing is given up after five attempts, until it changes.
