@@ -632,6 +632,8 @@ func (self *CalendarFiler) eventObject(calendar *httpclient.Calendar, event *htt
 		}
 	}
 	addMeta(DCNamespace, "title", strings.Join(strings.Fields(event.Summary), " "))
+	addMeta(DCNamespace, "identifier", firstOf(event.ICalUID, event.Id))
+	addMeta(CalendarNamespace, "url", event.HTMLLink)
 	addMeta(CalendarNamespace, "calendar", calendar.Id)
 	addMeta(CalendarNamespace, "name", calendarTitle(calendar))
 	addMeta(CalendarNamespace, "start", firstOf(event.Start.Date, event.Start.DateTime))
@@ -645,26 +647,29 @@ func (self *CalendarFiler) eventObject(calendar *httpclient.Calendar, event *htt
 // ICALENDAR
 
 // eventCalendar returns an event as an iCalendar, of its VEVENT, of its
-// calendar's name, and zone: its id, as its UID, its title, description,
+// calendar's name, and zone: its UID, which is Google's iCalendar UID, as
+// an invitation's is, or its id, and, of a time an event which repeats
+// occurs, its RECURRENCE-ID, of when it was to start, its title, description,
 // location, link, start and end, which are dates, or times in their zones,
 // status, organiser, attendees, its type, as a category, whether it's busy,
 // and when it was created, and updated
 func eventCalendar(calendar *httpclient.Calendar, event *httpclient.Event) *ical.Calendar {
 	vevent := &ical.Event{
-		Kind:        ical.KindEvent,
-		UID:         event.Id,
-		Summary:     strings.Join(strings.Fields(event.Summary), " "),
-		Description: strings.TrimSpace(event.Description),
-		Location:    strings.TrimSpace(event.Location),
-		URL:         event.HTMLLink,
-		Start:       eventTime(event.Start),
-		End:         eventTime(event.End),
-		Status:      strings.ToUpper(event.Status),
-		Organizer:   event.Organizer.Email,
-		Transparent: event.Transparency == "transparent",
-		Stamp:       event.Updated,
-		Created:     event.Created,
-		Modified:    event.Updated,
+		Kind:         ical.KindEvent,
+		UID:          firstOf(event.ICalUID, event.Id),
+		RecurrenceID: eventTime(event.OriginalStartTime),
+		Summary:      strings.Join(strings.Fields(event.Summary), " "),
+		Description:  strings.TrimSpace(event.Description),
+		Location:     strings.TrimSpace(event.Location),
+		URL:          event.HTMLLink,
+		Start:        eventTime(event.Start),
+		End:          eventTime(event.End),
+		Status:       strings.ToUpper(event.Status),
+		Organizer:    event.Organizer.Email,
+		Transparent:  event.Transparency == "transparent",
+		Stamp:        event.Updated,
+		Created:      event.Created,
+		Modified:     event.Updated,
 	}
 	for _, attendee := range event.Attendees {
 		if attendee.Email != "" {
@@ -701,8 +706,10 @@ func eventTime(t httpclient.EventTime) ical.Time {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
 
-// eventDay returns the day an event starts on, in its own zone, of its date,
-// or its time's offset, or false when it can't be parsed
+// eventDay returns the day an event starts on, in its own zone, of its
+// date, or its time, in its zone, when it's known, as the time's offset can
+// be of another, such as its calendar's, or else of its offset, or false
+// when it can't be parsed
 func eventDay(event *httpclient.Event) (int, int, int, bool) {
 	if event.Start.Date != "" {
 		d, err := time.Parse(time.DateOnly, event.Start.Date)
@@ -714,6 +721,10 @@ func eventDay(event *httpclient.Event) (int, int, int, bool) {
 	t, err := time.Parse(time.RFC3339, event.Start.DateTime)
 	if err != nil {
 		return 0, 0, 0, false
+	} else if event.Start.TimeZone != "" {
+		if location, err := time.LoadLocation(event.Start.TimeZone); err == nil {
+			t = t.In(location)
+		}
 	}
 	return t.Year(), int(t.Month()), t.Day(), true
 }

@@ -64,12 +64,15 @@ func newFakeCalendar(t *testing.T) (*fakeCalendar, string) {
 	}
 	occurrence := timed("rec_20261105T100000Z", "2026-11-05T10:00:00Z", "2026-11-05T11:00:00Z", "")
 	occurrence.RecurringEventId = "rec"
+	occurrence.ICalUID = "rec@google.com"
+	occurrence.HTMLLink = "https://calendar.google.com/event?eid=rec"
+	occurrence.OriginalStartTime = httpclient.EventTime{DateTime: "2026-11-05T10:00:00Z"}
 	cancelled := timed("gone", "2026-11-21T10:00:00Z", "2026-11-21T11:00:00Z", "")
 	cancelled.Status = "cancelled"
 	fake.add(work,
 		timed("e1", "2026-11-20T09:00:00+01:00", "2026-11-20T10:00:00+01:00", "Europe/Berlin"),
 		allDay("e2", "2026-12-25", "2026-12-26"),
-		timed("e3", "2026-11-30T23:30:00-08:00", "2026-12-01T00:30:00-08:00", "America/Los_Angeles"),
+		timed("e3", "2026-12-01T07:30:00Z", "2026-12-01T08:30:00Z", "America/Los_Angeles"),
 		timed("later", "2027-03-01T09:00:00Z", "2027-03-01T10:00:00Z", ""),
 		occurrence, cancelled,
 	)
@@ -283,6 +286,20 @@ func Test_CalendarObjects(t *testing.T) {
 	assert.Contains(t, read(t, filer, all[5]), "DTSTART;TZID=Europe/Berlin:20261120T090000")
 	assert.Contains(t, read(t, filer, all[8]), "DTSTART;VALUE=DATE:20261225")
 	assert.Contains(t, read(t, filer, all[2]), "X-WR-CALNAME:Holidays in the UK")
+
+	// An event's UID is Google's iCalendar UID, as an invitation's is, or
+	// its id, and a time an event which repeats occurs is of when it was to
+	// start, and an event is of the day of its zone, rather than its offset,
+	// which can be another's
+	assert.Contains(t, read(t, filer, all[5]), "UID:e1")
+	object, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: all[4]}})
+	require.NoError(t, err)
+	assert.Contains(t, metaValues(object, "dc"), `"rec@google.com"`, "its dc:identifier is its UID")
+	assert.Contains(t, metaValues(object, google.CalendarNamespace), `"https://calendar.google.com/event?eid=rec"`, "its link")
+	occurrence := read(t, filer, all[4])
+	assert.Contains(t, occurrence, "UID:rec@google.com")
+	assert.Contains(t, occurrence, "RECURRENCE-ID:20261105T100000Z")
+	assert.Contains(t, read(t, filer, all[6]), "DTSTART;TZID=America/Los_Angeles:20261130T233000")
 
 	// An event which is cancelled, isn't listed, isn't of its day, or its
 	// calendar, or a directory which isn't listed, isn't there
