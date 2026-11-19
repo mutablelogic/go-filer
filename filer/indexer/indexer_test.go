@@ -799,10 +799,20 @@ func Test_RescanClearsError(t *testing.T) {
 	}
 }
 
-// listing is a backend which can't be watched, which counts its listings
+// listing is a backend which can't be watched, which counts its listings,
+// and the files it gets
 type listing struct {
 	gofiler.Filer
 	lists atomic.Int32
+	gets  atomic.Int32
+}
+
+func (l *listing) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	object, err := l.Filer.GetObject(ctx, req)
+	if err == nil && !object.IsDir {
+		l.gets.Add(1)
+	}
+	return object, err
 }
 
 func (l *listing) WatchObjects(context.Context, chan<- schema.Event) error {
@@ -1043,6 +1053,38 @@ func Test_RefreshRetry(t *testing.T) {
 		root, rootErr := s.Get(context.Background(), "media", "/")
 		return fileErr == nil && folderErr == nil && rootErr == nil && count(t, root) == "4"
 	}, 10*time.Second, 10*time.Millisecond, "the folders above it are indexed, and the root's count")
+}
+
+func Test_CatchUp(t *testing.T) {
+	backend, _ := newBackend(t)
+	l := &listing{Filer: backend}
+	s := newStore(t)
+	i, err := indexer.New("media", l, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
+	root := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}
+
+	// While a rescan of the root, which is a catch-up, such as after a
+	// restart, is queued, the index is served
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/", Kind: store.KindRescan, After: time.Now().Add(time.Hour)}))
+	gets, lists := l.gets.Load(), l.lists.Load()
+	_, err = i.GetObject(context.Background(), x)
+	require.NoError(t, err)
+	_, err = listed(t, i, root)
+	require.NoError(t, err)
+	assert.Equal(t, gets, l.gets.Load(), "a file is the index's")
+	assert.Equal(t, lists, l.lists.Load(), "a listing is the index's")
+
+	// But a change, which is queued while it is, isn't of it, so its file,
+	// and the listings of it, are the backend's
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	_, err = i.GetObject(context.Background(), x)
+	require.NoError(t, err)
+	_, err = listed(t, i, root)
+	require.NoError(t, err)
+	assert.Equal(t, gets+1, l.gets.Load(), "a changed file is the backend's")
+	assert.Equal(t, lists+1, l.lists.Load(), "a listing of it is the backend's")
 }
 
 func Test_Poll(t *testing.T) {

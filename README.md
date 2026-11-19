@@ -168,6 +168,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
   * A file counts as changed when its listing's ETag, size or modified time differs from when it was stored. The index records these in `object_state`. On S3 a metadata-only overwrite keeps the ETag but changes the modified time, so it's caught.
   * `GetObject` of a file comes from the index when no work is queued for it. Otherwise it comes from the backend.
   * The index follows a backend's changes when it can be watched, and otherwise rescans it at an interval.
+  * A rescan of the root is a catch-up for changes that may have been missed: after a restart, when a watcher falls behind, or on each poll. It doesn't count as queued work, so the index keeps serving while it runs. A change event still queues its own work, which sends reads of that path to the backend until it's done.
   * With `index=objects`, `ListObjects` of a folder or a file comes from the index when all of these hold:
     * the index is ready, and its last full scan was an `objects` scan;
     * the index has the folder or file;
