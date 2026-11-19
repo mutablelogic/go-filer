@@ -131,11 +131,6 @@ func (c *counting) GetObject(ctx context.Context, req schema.GetObjectRequest) (
 	return c.Filer.GetObject(ctx, req)
 }
 
-func (c *counting) WatchesLive() bool {
-	l, ok := c.Filer.(interface{ WatchesLive() bool })
-	return ok && l.WatchesLive()
-}
-
 func (c *counting) IsLink(path string) bool {
 	l, ok := c.Filer.(interface{ IsLink(string) bool })
 	return ok && l.IsLink(path)
@@ -154,35 +149,6 @@ type unwatchedCounting struct {
 
 func (u *unwatchedCounting) WatchObjects(context.Context, chan<- schema.Event) error {
 	return gofiler.ErrNotImplemented.With("it can't be watched")
-}
-
-func (u *unwatchedCounting) WatchesLive() bool { return false }
-
-// endingCounting is a backend which is watched live, until its watch ends,
-// when stop is closed, and which isn't watching while watching is false,
-// which counts its calls to GetObject
-type endingCounting struct {
-	counting
-	stop     chan struct{}
-	watching atomic.Bool
-}
-
-func (e *endingCounting) WatchesLive() bool { return true }
-
-func (e *endingCounting) Watching() bool { return e.watching.Load() }
-
-func (e *endingCounting) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	select {
-	case ch <- schema.Rescan(""):
-	case <-ctx.Done():
-		return nil
-	}
-	select {
-	case <-e.stop:
-		return errors.New("the watch ended")
-	case <-ctx.Done():
-		return nil
-	}
 }
 
 // incompleteCounting is a backend whose listing isn't complete, which counts
@@ -506,9 +472,13 @@ func Test_ObjectsToFolders(t *testing.T) {
 	stop()
 	<-watched
 	assert.Equal(t, before.Folders, lowest, "its count isn't the progress of the scan")
-	after, err := s.State(context.Background(), "media")
-	require.NoError(t, err)
-	assert.Zero(t, after.Files)
+
+	// Its count of files is stored once the scan is done, after its files
+	// are removed
+	assert.Eventually(t, func() bool {
+		after, err := s.State(context.Background(), "media")
+		return err == nil && after.Files == 0
+	}, 10*time.Second, 5*time.Millisecond, "it has no files")
 }
 
 // faultyStore is a store whose reads of a path fail, and whose listings
@@ -648,12 +618,14 @@ func Test_GetFile(t *testing.T) {
 		t.Skip(fsevents.ErrNotSupported)
 	}
 	backend, dir := newBackend(t)
-	require.NoError(t, os.Symlink("x.txt", filepath.Join(dir, "link.txt")))
+	if err := os.Symlink("x.txt", filepath.Join(dir, "link.txt")); err != nil {
+		t.Skipf("can't create a link: %v", err)
+	}
 	c := &counting{Filer: backend}
 	s := newStore(t)
 	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
 
-	// A file of a volume which is watched live is the index's, without the
+	// A file of a volume which is watched is the index's, without the
 	// backend, with its volume's name
 	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects))
 	require.NoError(t, err)
@@ -694,60 +666,28 @@ func Test_GetFile(t *testing.T) {
 	assert.Equal(t, int32(1), n, "a listing which isn't complete is the backend's")
 }
 
-func Test_GetFileWatchEnds(t *testing.T) {
-	backend, _ := newBackend(t)
-	e := &endingCounting{counting: counting{Filer: backend}, stop: make(chan struct{})}
-	e.watching.Store(true)
-	s := newStore(t)
-	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
-
-	// A file is the index's while the backend is watched live
-	i, err := indexer.New("media", e, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0), indexer.WithRetry(time.Hour))
-	require.NoError(t, err)
-	run(t, i)
-	files(t, s, "/a/y.txt", "/x.txt")
-	n, _ := gets(t, i, &e.counting, x)
-	assert.Zero(t, n, "it's the index's")
-
-	// But not while the backend isn't watching, as it subscribes again
-	e.watching.Store(false)
-	n, _ = gets(t, i, &e.counting, x)
-	assert.Equal(t, int32(1), n, "it's the backend's while it isn't watching")
-	e.watching.Store(true)
-
-	// Or once its watch ends, until it's watched again
-	close(e.stop)
-	assert.Eventually(t, func() bool {
-		n, _ := gets(t, i, &e.counting, x)
-		return n == 1
-	}, 5*time.Second, 10*time.Millisecond, "it's the backend's once its watch ends")
-}
-
 func Test_GetFileUnwatched(t *testing.T) {
 	backend, dir := newBackend(t)
 	c := &unwatchedCounting{counting{Filer: backend}}
 	s := newStore(t)
 	x := schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}}
 
-	// A file of a volume which isn't watched live is compared with the
-	// backend's, and is the index's, when it's the same
-	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
+	// A file of a volume which is polled, rather than watched, is the
+	// index's too, as of its last scan
+	i, err := indexer.New("media", c, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(50*time.Millisecond), indexer.WithRescanMinInterval(0), indexer.WithDebounce(0))
 	require.NoError(t, err)
 	run(t, i)
 	files(t, s, "/a/y.txt", "/x.txt")
 	n, object := gets(t, i, &c.counting, x)
-	assert.Equal(t, int32(1), n, "it's compared")
+	assert.Zero(t, n, "it's the index's")
 	assert.Equal(t, int64(len("x.txt")), *object.Size)
 
-	// One which changed, which isn't known, is the backend's, and is indexed
-	// again
+	// One which changed is the index's once it's scanned again
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("longer"), 0o644))
-	_, object = gets(t, i, &c.counting, x)
-	assert.Equal(t, int64(len("longer")), *object.Size, "it's the backend's")
 	require.Eventually(t, func() bool {
-		file, err := s.Get(context.Background(), "media", "/x.txt")
-		return err == nil && *file.Size == int64(len("longer"))
-	}, 10*time.Second, 10*time.Millisecond, "it's indexed again")
+		_, object := gets(t, i, &c.counting, x)
+		return *object.Size == int64(len("longer"))
+	}, 10*time.Second, 10*time.Millisecond, "it's scanned again")
 }
 
 func Test_Poll(t *testing.T) {

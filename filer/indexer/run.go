@@ -3,7 +3,6 @@ package indexer
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	// Packages
@@ -64,35 +63,9 @@ func (self *Indexer) Run(ctx context.Context) error {
 func (self *Indexer) watch(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	// It's watching live once a backend whose changes are sent as they happen
-	// sends its first, which is queued, until its watch ends, so the index is
-	// up to date, but for the changes which are queued. Its watch ends when
-	// WatchObjects returns, before the changes it sent are read, so a change
-	// which is read after it doesn't set it again.
-	live := false
-	if l, ok := self.Filer.(interface{ WatchesLive() bool }); ok {
-		live = l.WatchesLive()
-	}
-	var mu sync.Mutex
-	stopped := false
-	setLive := func(watching bool) {
-		mu.Lock()
-		defer mu.Unlock()
-		if !watching {
-			stopped = true
-		}
-		self.live.Store(watching && !stopped)
-	}
-	events, done, ended := make(chan schema.Event, 64), make(chan error, 1), make(chan struct{})
+	events, done := make(chan schema.Event, 64), make(chan error, 1)
 	go func() {
-		defer close(ended)
-		err := self.Filer.WatchObjects(ctx, events)
-		setLive(false)
-		done <- err
-	}()
-	defer func() {
-		cancel()
-		<-ended
+		done <- self.Filer.WatchObjects(ctx, events)
 	}()
 	for {
 		select {
@@ -106,9 +79,6 @@ func (self *Indexer) watch(ctx context.Context) error {
 			// is started again, with a rescan, so it isn't missed.
 			if err := self.apply(ctx, event); err != nil {
 				return err
-			}
-			if live {
-				setLive(true)
 			}
 			self.forward(ctx, event)
 		}

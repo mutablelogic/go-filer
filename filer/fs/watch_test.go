@@ -185,7 +185,9 @@ func Test_WatchObjectsClosed(t *testing.T) {
 func Test_IsLink(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
-	require.NoError(t, os.Symlink("a.txt", filepath.Join(dir, "b.txt")))
+	if err := os.Symlink("a.txt", filepath.Join(dir, "b.txt")); err != nil {
+		t.Skipf("can't create a link: %v", err)
+	}
 	self, err := New("test", dir, nil, filer.Opts{})
 	require.NoError(t, err)
 	defer self.Close()

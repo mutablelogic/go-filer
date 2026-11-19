@@ -190,19 +190,6 @@ func (self *S3) Readonly() bool {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - OBJECTS
 
-// WatchesLive returns true when the bucket's changes are sent as they
-// happen, which they are of a SeaweedFS filer's metadata, with the
-// seaweedfs-filer-grpc option
-func (self *S3) WatchesLive() bool {
-	return self.watcher != nil
-}
-
-// Watching returns true while the bucket's changes are sent as they happen,
-// which they aren't while the watch of a SeaweedFS filer subscribes again
-func (self *S3) Watching() bool {
-	return self.watcher != nil && self.watcher.Watching()
-}
-
 // WatchObjects sends the changes to the bucket's objects, beneath the
 // prefix, to the channel, until the context is cancelled, when the endpoint
 // is a SeaweedFS filer's, whose gRPC service is the seaweedfs-filer-grpc

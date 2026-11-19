@@ -27,13 +27,6 @@ func (self *FS) CompleteListing() bool {
 	return true
 }
 
-// WatchesLive returns true when the filesystem's changes are sent as they
-// happen, which they are of a directory, when its platform can be watched
-func (self *FS) WatchesLive() bool {
-	fsys, ok := self.fs.(pathFS)
-	return ok && fsys.Path() != "" && fsevents.Supported()
-}
-
 // IsLink returns true when the object at the path is a symbolic link, or
 // can't be checked, as a change to a link's target is sent for the target,
 // not the link, so the link's object isn't known to be up to date

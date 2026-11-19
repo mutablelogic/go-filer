@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	// Packages
@@ -43,11 +42,6 @@ type Indexer struct {
 	// mu serialises changes to the index, of its worker's work, so a folder
 	// isn't reconciled with two listings at once
 	mu sync.Mutex
-
-	// live is true while the backend's watch sends its changes as they
-	// happen, so the index is up to date, but for the changes which are
-	// queued
-	live atomic.Bool
 
 	// The calls to WatchObjects, which are sent the backend's changes, once
 	// they're indexed, so the backend is watched once
@@ -227,10 +221,10 @@ func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest)
 	return self.getFile(ctx, req)
 }
 
-// getFile returns a file, of the index, when it's there, and up to date,
-// which it is when the backend is watched live, and it has no work queued,
-// or, when it isn't watched live, the backend's is the same. Otherwise it's
-// the backend's, and a file which isn't the index's is queued to be indexed.
+// getFile returns a file, of the index, when it's there, and has no work
+// queued, as the backend's changes, which are watched, or polled, are
+// indexed. Otherwise it's the backend's, as is a file which is a link, as
+// a change to its target is the target's, not the link's.
 func (self *Indexer) getFile(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
 	// Work which is pending is checked first, so work which is done between
 	// the two isn't missed, as it's done before the index is read
@@ -242,22 +236,11 @@ func (self *Indexer) getFile(ctx context.Context, req schema.GetObjectRequest) (
 	if err != nil || indexed.IsDir {
 		return self.Filer.GetObject(ctx, req)
 	}
+	if l, ok := self.Filer.(interface{ IsLink(path string) bool }); ok && l.IsLink(req.Path) {
+		return self.Filer.GetObject(ctx, req)
+	}
 	indexed.Name = self.name
-	if self.watched(req.Path) {
-		return indexed, nil
-	}
-
-	// It isn't watched live, so the backend's is compared with it
-	object, err := self.Filer.GetObject(ctx, req)
-	if err != nil {
-		return nil, err
-	} else if sameObject(indexed, object) {
-		return indexed, nil
-	}
-	if err := self.queue.index(ctx, req.Path); err != nil {
-		self.failed(ctx, err)
-	}
-	return object, nil
+	return indexed, nil
 }
 
 // ListFolders lists the folders of a folder, or every folder beneath it,
@@ -779,20 +762,4 @@ func mergeCount(meta, indexed []schema.Meta) []schema.Meta {
 		}
 	}
 	return meta
-}
-
-// watched returns true when the changes to the object at the path are sent
-// as they happen: the backend is watched live, and is still, and the object
-// isn't a link, whose target's changes are sent for the target
-func (self *Indexer) watched(path string) bool {
-	if !self.live.Load() {
-		return false
-	}
-	if w, ok := self.Filer.(interface{ Watching() bool }); ok && !w.Watching() {
-		return false
-	}
-	if l, ok := self.Filer.(interface{ IsLink(path string) bool }); ok && l.IsLink(path) {
-		return false
-	}
-	return true
 }
