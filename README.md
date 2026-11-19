@@ -17,8 +17,10 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/filer/google` | Backends of Google's services: Google Tasks and Google Contacts |
 | `github.com/mutablelogic/go-filer/filer/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 | `github.com/mutablelogic/go-filer/filer/indexer` | A filer which wraps a backend, and keeps an index of its folders in a `Store`, which follows its changes |
-| `github.com/mutablelogic/go-filer/filer/indexer/memory` | An index store in memory |
-| `github.com/mutablelogic/go-filer/filer/indexer/storetest` | The conformance tests every index store runs |
+| `github.com/mutablelogic/go-filer/filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
+| `github.com/mutablelogic/go-filer/filer/store/memory` | A store in memory |
+| `github.com/mutablelogic/go-filer/filer/store/sqlite` | A store in a SQLite database: volumes so far, not objects |
+| `github.com/mutablelogic/go-filer/filer/store/storetest` | The conformance tests every store runs |
 
 ## Usage
 
@@ -139,17 +141,19 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **Writes and deletes** through it update the index as they're made.
 * **Everything else**, such as files, is the backend's. Files are indexed later.
 * **`State`** is the index's status (never indexed, scanning, or ready), how many folders the scan has indexed, when it started and finished, and why it last failed.
-* **Stores:** `indexer/memory` so far. SQLite and Postgres stores come next, and every store passes `indexer/storetest`.
+* **Stores:** `store/memory`, and `store/sqlite`, which has volumes but not objects yet. Postgres comes later. Every store passes `store/storetest`.
 
 In the registry, `filer.WithIndexerStore(store)` lets volumes be indexed, of their `index` option:
 
 * **`index=folders`** indexes a volume's folders, and `index=none`, or no option, doesn't. The registry takes it off the URL before the backend sees it.
 * **Running:** the registry runs each indexer until the volume is removed. Its watchers get the backend's changes through the indexer, so the backend is watched once.
 * **`Update`** turns it on, or off, which removes the index, and keeps it through other changes.
-* **`Del`** removes the volume's index.
+* **`Del`** removes the volume, with its index, from the store.
+* **Stored volumes:** each volume is put in the store when it's added, or updated: its URL, with `index`, and `enabled`. Mounting the enabled volumes when the server starts comes next (#101).
+* **Volume changes:** with `store.WithBroadcaster`, a store publishes a change when a volume is created, updated or deleted, of schema `store`, table `volume`, whose row is the volume's name, and whose data is the volume. The `filer` server serves them on `/changes`, with its objects' changes.
 * **The volume** has `index`, with its mode, status, folders scanned, and last error, and its URL has `index=folders`, or `index=none`, when it isn't indexed.
 * **Listing folders:** `ListObjects` with `Type` `inode/directory`, `inode`, or `directory`, which is `GET /object/{name}?type=directory`, or `filer objects --type directory`, lists an indexed volume's folders from its index, once it's ready. A listing of a type is filtered for every volume.
-* **The `filer` server** keeps its indexes in memory, so they're scanned again when it starts.
+* **The `filer` server** keeps its store in `<name>-index.db`, in the user's cache folder, with `make INDEXER_BACKEND=sqlite`, the default.
 
 ## Object Model
 

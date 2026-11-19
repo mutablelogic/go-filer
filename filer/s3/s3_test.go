@@ -45,7 +45,8 @@ func Test_S3_Parse(t *testing.T) {
 		{"s3://my-bucket/?access-key-id=${ID}&secret-access-key=$SECRET&session-token=${TOKEN}", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"${ID}"}, "secret-access-key": {"$SECRET"}, "session-token": {"${TOKEN}"}}, false},
 		{"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}&profile=&anonymous=false", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"AKID"}, "secret-access-key": {"${SECRET}"}}, false},
 		{"s3://my-bucket/?name=photos&readonly=false", "s3://my-bucket/", nil, false},
-		{"s3://my-bucket/?name=photos&anonymous=true", "s3://my-bucket/", url.Values{"anonymous": {"true"}}, true},
+		{"s3://my-bucket/?name=photos&anonymous=true", "s3://my-bucket/", url.Values{"anonymous": {"true"}, "readonly": {"true"}}, true},
+		{"s3://my-bucket/?name=photos&anonymous=true&readonly=false", "s3://my-bucket/", url.Values{"anonymous": {"true"}, "readonly": {"true"}}, true},
 	} {
 		// The options which aren't in the test are their defaults, and the
 		// name is photos

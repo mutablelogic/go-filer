@@ -83,6 +83,11 @@ type entry struct {
 	// indexed any more. It's only set with the registry locked, before it's
 	// closed.
 	forget bool
+
+	// remove is true when the volume is removed from the registry's store,
+	// with its index, once its backend is closed, as it's deleted. It's only
+	// set with the registry locked, before it's closed.
+	remove bool
 }
 
 // usingKey is the key of the value in the context which With passes to its
@@ -247,34 +252,36 @@ func VolumeName(u *url.URL) string {
 }
 
 // volumeOf returns the volume of an entry, with the URL of its backend,
-// whether it's read-only, when the backend says, why it's offline, when it
-// is, and its index's state, when it's indexed. With the registry's store,
-// a volume which isn't indexed has index=none. The registry must be locked.
+// whether it's enabled, which it isn't while it's offline, with why, and its
+// index's state, when it's indexed. The registry must be locked.
 func (self *Registry) volumeOf(name string, e *entry) schema.Volume {
-	u := e.URL()
-	if _, indexed := e.Filer.(*indexer.Indexer); !indexed && self.indexStore != nil {
-		query := u.Query()
-		query.Set(indexer.IndexParam, string(indexer.ModeNone))
-		u.RawQuery = query.Encode()
-	}
-	volume := schema.Volume{Name: name, URL: u.String()}
-	if b, ok := e.Filer.(interface{ Readonly() bool }); ok {
-		volume.Readonly = b.Readonly()
-	}
+	volume := schema.Volume{VolumeMeta: self.metaOf(name, e.Filer)}
 	if e.offline != nil {
-		volume.Offline = e.offline.Error()
+		volume.Enabled, volume.Error = false, e.offline.Error()
 	}
 	if i, ok := e.Filer.(*indexer.Indexer); ok {
 		volume.Index = &schema.VolumeIndex{Mode: string(indexer.ModeFolders)}
 		if state, err := i.State(context.Background()); err != nil {
-			// Its state can't be read, such as of a store which isn't
-			// implemented, which is why it isn't indexed
+			// Its state can't be read, which is why it isn't indexed
 			volume.Index.Error = err.Error()
 		} else {
-			volume.Index.Status, volume.Index.Folders, volume.Index.Started, volume.Index.Scanned, volume.Index.Error = string(state.Status), state.Folders, state.Started, state.Scanned, state.Error
+			volume.Index.IndexState = state
 		}
 	}
 	return volume
+}
+
+// metaOf returns what's stored of a volume, of its backend: its name, its
+// URL, which, with the registry's store, has index=none when it isn't
+// indexed, and that it's enabled
+func (self *Registry) metaOf(name string, b gofiler.Filer) schema.VolumeMeta {
+	u := b.URL()
+	if _, indexed := b.(*indexer.Indexer); !indexed && self.indexStore != nil {
+		query := u.Query()
+		query.Set(indexer.IndexParam, string(indexer.ModeNone))
+		u.RawQuery = query.Encode()
+	}
+	return schema.VolumeMeta{Name: name, URL: u.String(), Enabled: true}
 }
 
 // setOffline records why the volume of the entry is offline
@@ -379,6 +386,8 @@ func (self *Registry) update(ctx context.Context, e *entry, volume string, patch
 		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", clone.URL(), volume), closeFiler(clone))
 	} else if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, closeFiler(clone))
+	} else if err := self.put(ctx, volume, clone); err != nil {
+		return nil, err
 	}
 
 	// Close the backend, keeping its name, unless it's changed meanwhile
@@ -431,9 +440,9 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 		return gofiler.ErrConflict.Withf("volume %q can't be removed by a function which is using it", volume)
 	}
 	if exists = exists && e.state != stateAdding; exists && e.state == stateReady {
-		// Its index is removed, once it's closed, before its name is
-		// released
-		_, e.forget = e.Filer.(*indexer.Indexer)
+		// It's removed from the store, with its index, once it's closed,
+		// before its name is released
+		e.remove = true
 		self.startClose(e, volume)
 	}
 	self.Unlock()
@@ -453,8 +462,28 @@ func (self *Registry) Del(ctx context.Context, volume string) error {
 func (self *Registry) forget(ctx context.Context, volume string) {
 	if self.indexStore != nil {
 		_ = self.indexStore.Delete(ctx, volume, "/")
-		_ = self.indexStore.SetState(ctx, volume, indexer.State{})
+		_ = self.indexStore.SetState(ctx, volume, schema.IndexState{})
 	}
+}
+
+// remove removes a volume, with its index, from the registry's store
+func (self *Registry) remove(ctx context.Context, volume string) {
+	if self.indexStore != nil {
+		_ = self.indexStore.DeleteVolume(ctx, volume)
+	}
+}
+
+// put stores a volume, of its backend, in the registry's store, so it's
+// mounted when the server starts: its URL, with its index option, and that
+// it's enabled. The backend is closed when it can't be.
+func (self *Registry) put(ctx context.Context, volume string, b gofiler.Filer) error {
+	if self.indexStore == nil {
+		return nil
+	}
+	if _, err := self.indexStore.PutVolume(ctx, self.metaOf(volume, b)); err != nil {
+		return errors.Join(err, closeFiler(b))
+	}
+	return nil
 }
 
 // With calls fn with the backend for the specified volume, or returns an error
@@ -644,6 +673,8 @@ func (self *Registry) open(ctx context.Context, e *entry, volume string, u *url.
 		return nil, err
 	} else if name := VolumeName(b.URL()); name != volume {
 		return nil, errors.Join(gofiler.ErrBadParameter.Withf("url %q is not for volume %q", b.URL(), volume), closeFiler(b))
+	} else if err := self.put(ctx, volume, b); err != nil {
+		return nil, err
 	}
 	return self.register(e, volume, b)
 }
@@ -698,7 +729,9 @@ func (self *Registry) startClose(e *entry, volume string) {
 		// Its index is removed, when it's deleted, or isn't indexed any
 		// more, once its indexer has stopped, and before its name is
 		// released, with a context which outlives the request
-		if e.forget {
+		if e.remove {
+			self.remove(context.Background(), volume)
+		} else if e.forget {
 			self.forget(context.Background(), volume)
 		}
 		self.Lock()

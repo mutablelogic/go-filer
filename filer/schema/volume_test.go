@@ -100,3 +100,31 @@ func Test_MatchType(t *testing.T) {
 		}
 	}
 }
+
+func Test_VolumeReadonly(t *testing.T) {
+	// It's of the URL's readonly option, which is true when it's empty, or
+	// there's none
+	for u, want := range map[string]bool{
+		"file://media/mnt/media?readonly=false": false,
+		"file://media/mnt/media?readonly=true":  true,
+		"file://media/mnt/media?readonly=0":     false,
+		"file://media/mnt/media?readonly":       true,
+		"file://media/mnt/media?readonly=":      true,
+		"file://media/mnt/media":                true,
+	} {
+		readonly, err := Volume{VolumeMeta: VolumeMeta{Name: "media", URL: u}}.Readonly()
+		if err != nil {
+			t.Errorf("%s: %v", u, err)
+		} else if readonly != want {
+			t.Errorf("%s: readonly is %v, not %v", u, readonly, want)
+		}
+	}
+
+	// An option, or a URL, which can't be parsed is an error, and read-only
+	for _, u := range []string{"file://media/mnt/media?readonly=maybe", "file://media/mnt/media?readonly=%zz", "://"} {
+		readonly, err := Volume{VolumeMeta: VolumeMeta{Name: "media", URL: u}}.Readonly()
+		if err == nil || !readonly {
+			t.Errorf("%s: readonly is %v, with error %v", u, readonly, err)
+		}
+	}
+}

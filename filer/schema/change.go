@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"strings"
 
 	// Packages
@@ -14,6 +15,14 @@ import (
 // published to a go-server broadcaster, whose table is the volume, and whose
 // row is the object's path
 const ChangeSchema = "filer"
+
+// StoreChangeSchema and VolumeChangeTable are of the changes of a store's
+// volumes, which are published to a go-server broadcaster, whose row is the
+// volume's name, and whose data is the volume, unless it's deleted
+const (
+	StoreChangeSchema = "store"
+	VolumeChangeTable = "volume"
+)
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -39,6 +48,18 @@ func (e Event) Change() changes.Change {
 		}
 	default:
 		change.Action = changes.ChangeUpdate
+	}
+	return change
+}
+
+// VolumeChange returns the change of a store's volume: its action, its name
+// as its row, and the volume as its data, unless it's deleted
+func VolumeChange(action changes.ChangeAction, volume *Volume) changes.Change {
+	change := changes.Change{Action: action, Schema: StoreChangeSchema, Table: VolumeChangeTable, Row: volume.Name}
+	if action != changes.ChangeDelete {
+		if data, err := json.Marshal(volume); err == nil {
+			change.Data = data
+		}
 	}
 	return change
 }

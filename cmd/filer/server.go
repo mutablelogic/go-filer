@@ -3,13 +3,19 @@
 package main
 
 import (
+	"context"
+
 	// Packages
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	filer "github.com/mutablelogic/go-filer/filer"
 	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
 	google "github.com/mutablelogic/go-filer/filer/google"
+	store "github.com/mutablelogic/go-filer/filer/store"
 	server "github.com/mutablelogic/go-server"
+	broadcaster "github.com/mutablelogic/go-server/broadcaster"
+	changes "github.com/mutablelogic/go-server/broadcaster/httphandler"
 	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
+	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -50,9 +56,28 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// the filer command's credential-set, and listed, without their values
 	runner.RunServer.Register(credentialhandler.RegisterManagerHandlers(credentials, false, credentialhandler.WithSignIn(google.SignInPrefix, google.Google, google.ClientCredential)))
 
-	// The store of the indexes of volumes with the index option, which make's
-	// INDEXER_BACKEND chooses: sqlite, by default, memory or pg
-	store, closeStore, err := runner.Indexer.store(ctx)
+	// The broadcaster, of the changes of the volumes' objects, and of the
+	// store's volumes, which is served as /changes, and runs until the
+	// registry, and the store, are closed
+	b := broadcaster.New()
+	runner.RunServer.Register(func(router *httprouter.Router) error {
+		return changes.RegisterHandlers(b, router)
+	})
+	runCtx, cancel := context.WithCancel(ctx.Context())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		_ = b.Run(runCtx)
+	}()
+	defer func() {
+		cancel()
+		<-stopped
+	}()
+
+	// The store of the volumes, and their indexes, which make's
+	// INDEXER_BACKEND chooses: sqlite, by default, memory or pg, which
+	// publishes the changes of its volumes
+	s, closeStore, err := runner.Indexer.store(ctx, store.WithTracer(ctx.Tracer()), store.WithBroadcaster(b))
 	if err != nil {
 		return err
 	}
@@ -61,7 +86,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
 	// when the registry, and its volumes, are closed
-	return runner.Filer.WithRegistry(ctx, &runner.RunServer, nil, func(*filer.Registry) error {
+	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*filer.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, filer.WithCredentials(credentials), filer.WithIndexerStore(store))
+	}, filer.WithCredentials(credentials), filer.WithIndexerStore(s))
 }

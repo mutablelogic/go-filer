@@ -16,6 +16,13 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
+// The statuses of an index
+const (
+	IndexStatusNone     IndexStatus = ""         // It's never been indexed
+	IndexStatusScanning IndexStatus = "scanning" // It's being scanned, for the first time, or again
+	IndexStatusReady    IndexStatus = "ready"    // It's indexed, and the index follows its changes
+)
+
 // The schemes of the URLs of volumes' backends
 const (
 	// SchemeFile is the scheme of a volume which is a directory, such as
@@ -34,25 +41,65 @@ const (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// Volume is a volume which is registered, with the URL of its backend, which
-// it can be added again from
+// VolumeMeta is what's kept of a volume, so it outlasts a restart: its name,
+// the URL of its backend, which it's added again from, and whether it's
+// mounted when the server starts
+type VolumeMeta struct {
+	Name    string `json:"name" help:"Volume name"`
+	URL     string `json:"url" help:"URL of the volume's backend, with each of its options, defaults too, such as index, but without secrets"`
+	Enabled bool   `json:"enabled,omitempty" help:"Whether the volume is mounted, when the server starts"`
+}
+
+// Volume is a volume which is registered, or stored
 type Volume struct {
-	Name     string       `json:"name" help:"Volume name"`
-	URL      string       `json:"url" help:"URL of the volume's backend, with each of its options, defaults too, but without secrets"`
-	Readonly bool         `json:"readonly,omitempty" readonly:"" help:"Objects can't be created or deleted, by its options, or as its backend can't be written"`
-	Offline  string       `json:"offline,omitempty" readonly:"" help:"Why the volume's backend isn't working, when watching it failed, until it's opened again, such as when its user needs to sign in again, which volume-update does"`
+	VolumeMeta
+	Created  time.Time    `json:"created,omitzero" readonly:"" help:"When the volume was first stored"`
+	Modified time.Time    `json:"modified,omitzero" readonly:"" help:"When the volume's URL, or whether it's enabled, last changed"`
+	Error    string       `json:"error,omitempty" readonly:"" help:"Why the volume isn't enabled, such as when watching its backend failed, until it's opened again, or its user needs to sign in again, which volume-update does"`
 	Index    *VolumeIndex `json:"index,omitempty" readonly:"" help:"The volume's index, when it's indexed, of its index option, such as index=folders"`
 }
 
-// VolumeIndex is the state of a volume's index
-type VolumeIndex struct {
-	Mode    string    `json:"mode" help:"What's indexed, such as folders"`
-	Status  string    `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
-	Folders uint64    `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
-	Started time.Time `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
-	Scanned time.Time `json:"scanned,omitzero" help:"When the last scan which finished did"`
-	Error   string    `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`
+// Readonly returns true when the volume's objects can't be created or
+// deleted, of its URL's readonly option, which is true when it's empty, or
+// there's none. Returns an error when the URL, or the option, can't be
+// parsed.
+func (v Volume) Readonly() (bool, error) {
+	u, err := url.Parse(v.URL)
+	if err != nil {
+		return true, fmt.Errorf("volume %q: invalid url", v.Name)
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return true, fmt.Errorf("volume %q: invalid options", v.Name)
+	}
+	value := query.Get("readonly")
+	if value == "" {
+		return true, nil
+	}
+	readonly, err := strconv.ParseBool(value)
+	if err != nil {
+		return true, fmt.Errorf("volume %q: invalid readonly option %q", v.Name, value)
+	}
+	return readonly, nil
 }
+
+// VolumeIndex is a volume's index: what's indexed, and its state
+type VolumeIndex struct {
+	Mode string `json:"mode" help:"What's indexed, such as folders"`
+	IndexState
+}
+
+// IndexState is the state of a volume's index
+type IndexState struct {
+	Status  IndexStatus `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
+	Folders uint64      `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
+	Started time.Time   `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
+	Scanned time.Time   `json:"scanned,omitzero" help:"When the last scan which finished did"`
+	Error   string      `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`
+}
+
+// IndexStatus is how far a volume is indexed
+type IndexStatus string
 
 // VolumeList is the volumes which are registered, in order of their names,
 // and the schemes of the URLs which volumes can be added from

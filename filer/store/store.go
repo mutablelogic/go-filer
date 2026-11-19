@@ -1,28 +1,52 @@
-package indexer
+package store
 
 import (
 	"context"
 	"path"
 	"strings"
-	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// Store is where an index is kept: the objects of volumes, by their paths,
-// and the state of each volume's index. It's safe to use from more than one
-// goroutine. Folders are indexed first, and their files later, so an object
-// is a folder, or a file.
+// VolumeStore is where the volumes are kept, so they outlast a restart,
+// which mounts those which are enabled. It's safe to use from more than one
+// goroutine.
+type VolumeStore interface {
+	// PutVolume stores a volume, or replaces its URL, and whether it's
+	// enabled, keeping its index, and returns it, with when it was created,
+	// and modified
+	PutVolume(ctx context.Context, volume schema.VolumeMeta) (*schema.Volume, error)
+
+	// GetVolume returns a volume, or ErrNotFound
+	GetVolume(ctx context.Context, name string) (*schema.Volume, error)
+
+	// ListVolumes returns the volumes, in the order of their names
+	ListVolumes(ctx context.Context) ([]*schema.Volume, error)
+
+	// DeleteVolume removes a volume, with its index, or returns ErrNotFound
+	DeleteVolume(ctx context.Context, name string) error
+}
+
+// Store is where volumes, and their indexes, are kept: the objects of
+// volumes, by their paths, and the state of each volume's index. A volume's
+// objects, and its state, are stored once it's been put. It's safe to use
+// from more than one goroutine. Folders are indexed first, and their files
+// later, so an object is a folder, or a file.
 type Store interface {
+	VolumeStore
+
 	// Get returns the object of the volume at the path, or ErrNotFound
 	// when it isn't indexed
 	Get(ctx context.Context, volume, path string) (*schema.Object, error)
 
-	// Put stores the objects of the volume, replacing those at their paths
+	// Put stores the objects of the volume, replacing those at their paths,
+	// or returns ErrNotFound when the volume hasn't been put
 	Put(ctx context.Context, volume string, objects ...*schema.Object) error
 
 	// Delete removes the object of the volume at the path, and every object
@@ -34,12 +58,13 @@ type Store interface {
 	// recursive, after the key it starts after, without the folder
 	List(ctx context.Context, volume string, req ListRequest) ([]*schema.Object, error)
 
-	// State returns the state of the volume's index, which is StatusNone
+	// State returns the state of the volume's index, which is IndexStatusNone
 	// when it's never been indexed
-	State(ctx context.Context, volume string) (State, error)
+	State(ctx context.Context, volume string) (schema.IndexState, error)
 
-	// SetState stores the state of the volume's index
-	SetState(ctx context.Context, volume string, state State) error
+	// SetState stores the state of the volume's index, or returns
+	// ErrNotFound when the volume hasn't been put
+	SetState(ctx context.Context, volume string, state schema.IndexState) error
 }
 
 // ListRequest is a request for the objects of a folder
@@ -49,27 +74,6 @@ type ListRequest struct {
 	After     string // The Key of the last object returned, or empty
 	Limit     int    // The most objects returned, or zero for every one
 }
-
-// State is the state of a volume's index
-type State struct {
-	Status  Status    `json:"status"`
-	Folders uint64    `json:"folders,omitempty"` // How many folders the scan in progress, or the last, has indexed
-	Started time.Time `json:"started,omitzero"`  // When the scan in progress, or the last, started
-	Scanned time.Time `json:"scanned,omitzero"`  // When the last scan which finished did
-	Error   string    `json:"error,omitempty"`   // Why the last scan, or the watch, failed
-}
-
-// Status is how far a volume is indexed
-type Status string
-
-////////////////////////////////////////////////////////////////////////////////
-// GLOBALS
-
-const (
-	StatusNone     Status = ""         // It's never been indexed
-	StatusScanning Status = "scanning" // It's being scanned, for the first time, or again
-	StatusReady    Status = "ready"    // It's indexed, and the index follows its changes
-)
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC FUNCTIONS
@@ -100,4 +104,16 @@ func Beneath(folder, p string) bool {
 		return p != "/" && strings.HasPrefix(p, "/")
 	}
 	return strings.HasPrefix(p, folder+"/")
+}
+
+// ValidateVolume returns ErrBadParameter when a volume's name isn't an
+// identifier, or it has no URL
+func ValidateVolume(volume schema.VolumeMeta) error {
+	switch {
+	case !types.IsIdentifier(volume.Name):
+		return gofiler.ErrBadParameter.Withf("invalid volume name: %q", volume.Name)
+	case strings.TrimSpace(volume.URL) == "":
+		return gofiler.ErrBadParameter.Withf("volume %q has no url", volume.Name)
+	}
+	return nil
 }

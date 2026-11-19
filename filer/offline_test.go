@@ -119,14 +119,16 @@ func Test_Registry_OfflineSignIn(t *testing.T) {
 	// It's still listed, and used, offline
 	v, err := r.Volume("tasks")
 	require.NoError(t, err)
-	assert.NotEmpty(t, v.Offline)
+	assert.False(t, v.Enabled)
+	assert.NotEmpty(t, v.Error)
 
 	// Updating it, once its user has signed in, opens it again, which isn't
 	// offline
 	f.failWith(nil)
 	volume, err := r.Update(context.Background(), "tasks", nil)
 	require.NoError(t, err)
-	assert.Empty(t, volume.Offline)
+	assert.True(t, volume.Enabled)
+	assert.Empty(t, volume.Error)
 	assert.Empty(t, offline(t, r, "tasks"))
 }
 

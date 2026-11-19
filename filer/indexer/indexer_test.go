@@ -17,8 +17,9 @@ import (
 	fs "github.com/mutablelogic/go-filer/filer/fs"
 	fsevents "github.com/mutablelogic/go-filer/filer/fs/fsevents"
 	indexer "github.com/mutablelogic/go-filer/filer/indexer"
-	memory "github.com/mutablelogic/go-filer/filer/indexer/memory"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	store "github.com/mutablelogic/go-filer/filer/store"
+	memory "github.com/mutablelogic/go-filer/filer/store/memory"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -56,7 +57,7 @@ func run(t *testing.T, i *indexer.Indexer) {
 	})
 	require.Eventually(t, func() bool {
 		state, err := i.State(context.Background())
-		return err == nil && state.Status == indexer.StatusReady
+		return err == nil && state.Status == schema.IndexStatusReady
 	}, 10*time.Second, 5*time.Millisecond, "the index isn't ready")
 }
 
@@ -123,16 +124,16 @@ func Test_New(t *testing.T) {
 	for name, test := range map[string]struct {
 		name    string
 		backend gofiler.Filer
-		store   indexer.Store
+		store   store.Store
 	}{
-		"Name":    {"not a name", backend, memory.New()},
-		"Backend": {"media", nil, memory.New()},
+		"Name":    {"not a name", backend, newStore(t)},
+		"Backend": {"media", nil, newStore(t)},
 		"Store":   {"media", backend, nil},
 	} {
 		_, err := indexer.New(test.name, test.backend, test.store)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, name)
 	}
-	_, err := indexer.New("media", backend, memory.New(), indexer.WithRescanInterval(0))
+	_, err := indexer.New("media", backend, newStore(t), indexer.WithRescanInterval(0))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
@@ -141,14 +142,14 @@ func Test_Scan(t *testing.T) {
 		t.Skip(fsevents.ErrNotSupported)
 	}
 	backend, _ := newBackend(t)
-	store := memory.New()
-	i, err := indexer.New("media", backend, store)
+	s := newStore(t)
+	i, err := indexer.New("media", backend, s)
 	require.NoError(t, err)
 
 	// Until it's indexed, its folders are the backend's
 	state, err := i.State(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, indexer.StatusNone, state.Status)
+	assert.Equal(t, schema.IndexStatusNone, state.Status)
 	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
 
 	// Once it's indexed, they're the index's: its folders, in the order a
@@ -167,7 +168,7 @@ func Test_Scan(t *testing.T) {
 	assert.True(t, object.IsDir)
 	assert.Equal(t, "media", object.Name)
 	assert.Equal(t, "2", count(t, object), "its folder, and its file")
-	indexed, err := store.Get(context.Background(), "media", "/a")
+	indexed, err := s.Get(context.Background(), "media", "/a")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", indexed.Path, "it's got from the index")
 
@@ -187,7 +188,7 @@ func Test_Watch(t *testing.T) {
 		t.Skip("a directory which is watched can't be removed on Windows")
 	}
 	backend, dir := newBackend(t)
-	i, err := indexer.New("media", backend, memory.New())
+	i, err := indexer.New("media", backend, newStore(t))
 	require.NoError(t, err)
 	run(t, i)
 
@@ -203,7 +204,7 @@ func Test_Write(t *testing.T) {
 		t.Skip(fsevents.ErrNotSupported)
 	}
 	backend, _ := newBackend(t)
-	i, err := indexer.New("media", backend, memory.New())
+	i, err := indexer.New("media", backend, newStore(t))
 	require.NoError(t, err)
 	run(t, i)
 
@@ -229,7 +230,7 @@ func Test_Poll(t *testing.T) {
 
 	// A backend which can't be watched is scanned, and scanned again, at
 	// the rescan interval
-	i, err := indexer.New("media", &unwatched{Filer: backend}, memory.New(), indexer.WithRescanInterval(20*time.Millisecond))
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithRescanInterval(20*time.Millisecond))
 	require.NoError(t, err)
 	run(t, i)
 	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
@@ -246,8 +247,8 @@ func Test_Retry(t *testing.T) {
 	// A watch which fails is watched again, after a while, with why it
 	// failed, until it's scanned again
 	failing := &unwatched{Filer: backend, fail: true}
-	store := memory.New()
-	i, err := indexer.New("media", failing, store, indexer.WithRetry(10*time.Millisecond))
+	s := newStore(t)
+	i, err := indexer.New("media", failing, s, indexer.WithRetry(10*time.Millisecond))
 	require.NoError(t, err)
 	run(t, i)
 	assert.GreaterOrEqual(t, failing.watches.Load(), int32(2))
@@ -266,7 +267,7 @@ func Test_Symlink(t *testing.T) {
 
 	// A link to a directory, which the backend lists, but doesn't descend
 	// into, as it could loop, is a folder, which isn't descended into
-	i, err := indexer.New("media", &unwatched{Filer: backend}, memory.New(), indexer.WithRescanInterval(time.Hour))
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithRescanInterval(time.Hour))
 	require.NoError(t, err)
 	run(t, i)
 	assert.Equal(t, []string{"/a", "/a/b", "/a/loop", "/c"}, folders(t, i, "/", true))
@@ -277,7 +278,7 @@ func Test_DeleteParents(t *testing.T) {
 		t.Skip(fsevents.ErrNotSupported)
 	}
 	backend, _ := newBackend(t)
-	i, err := indexer.New("media", backend, memory.New())
+	i, err := indexer.New("media", backend, newStore(t))
 	require.NoError(t, err)
 	run(t, i)
 
@@ -297,7 +298,7 @@ func Test_DeleteParents(t *testing.T) {
 func Test_Bucket(t *testing.T) {
 	// A bucket, whose file, /a, is beside a folder of the same name, /a/
 	b := newBucket("a", "a/b/c.txt", "x.txt")
-	i, err := indexer.New("media", b, memory.New(), indexer.WithRescanInterval(time.Hour))
+	i, err := indexer.New("media", b, newStore(t), indexer.WithRescanInterval(time.Hour))
 	require.NoError(t, err)
 	run(t, i)
 	assert.Equal(t, []string{"/a", "/a/b"}, folders(t, i, "/", true))
@@ -331,7 +332,7 @@ func Test_RunStuckWatcher(t *testing.T) {
 		t.Skip(fsevents.ErrNotSupported)
 	}
 	backend, dir := newBackend(t)
-	i, err := indexer.New("media", backend, memory.New())
+	i, err := indexer.New("media", backend, newStore(t))
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -344,7 +345,7 @@ func Test_RunStuckWatcher(t *testing.T) {
 	go func() { _ = i.WatchObjects(watchCtx, stuck) }()
 	require.Eventually(t, func() bool {
 		state, err := i.State(context.Background())
-		return err == nil && state.Status == indexer.StatusReady
+		return err == nil && state.Status == schema.IndexStatusReady
 	}, 10*time.Second, 5*time.Millisecond)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "d"), 0o755))
 	time.Sleep(100 * time.Millisecond)
@@ -357,4 +358,15 @@ func Test_RunStuckWatcher(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run waited for a watcher which doesn't read its changes")
 	}
+}
+
+// newStore returns a store in memory, with the volume media, which the
+// registry puts before it indexes a volume
+func newStore(t *testing.T) *memory.Store {
+	t.Helper()
+	s, err := memory.New()
+	require.NoError(t, err)
+	_, err = s.PutVolume(context.Background(), schema.VolumeMeta{Name: "media", URL: "file://media/tmp?index=folders", Enabled: true})
+	require.NoError(t, err)
+	return s
 }
