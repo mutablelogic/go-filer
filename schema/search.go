@@ -1,5 +1,13 @@
 package schema
 
+import (
+	"fmt"
+	"strings"
+
+	// Packages
+	tokenizer "github.com/mutablelogic/go-tokenizer"
+)
+
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
@@ -40,4 +48,44 @@ type SearchResponse struct {
 type SearchObject struct {
 	Object
 	Rank float32 `json:"rank" help:"How well it matches, of 0 to 1, which is 1 of the best match"`
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC FUNCTIONS
+
+// ParseQuery returns the query of text, of its terms, any of which match:
+// each word, which is what's between spaces, such as arvo, or
+// work@example.com, which is one term, a quoted phrase, such as "spiegel im
+// spiegel", and the start of a word, of one which ends with *, such as
+// beethov*. Returns an error of a quote which doesn't end.
+func ParseQuery(text string) (Query, error) {
+	scanner := tokenizer.NewScanner(strings.NewReader(text), tokenizer.Pos{})
+	var query Query
+	var word strings.Builder
+	end := func() {
+		if term := strings.TrimSpace(word.String()); term != "" {
+			query.Terms = append(query.Terms, term)
+		}
+		word.Reset()
+	}
+	for {
+		token := scanner.Next()
+		switch {
+		case token == nil || token.Kind == tokenizer.EOF:
+			if err := scanner.Err(); err != nil {
+				return Query{}, fmt.Errorf("invalid query %q: %w", text, err)
+			}
+			end()
+			return query, nil
+		case token.Kind == tokenizer.Space:
+			end()
+		case token.Kind == tokenizer.String:
+			// A quoted phrase is a term of its own
+			end()
+			word.WriteString(token.Val)
+			end()
+		default:
+			word.WriteString(token.Val)
+		}
+	}
 }
