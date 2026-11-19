@@ -46,6 +46,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueueStale", func(t *testing.T) { testQueueStale(t, withVolumes(t, newStore(t))) })
 	t.Run("Tasks", func(t *testing.T) { testTasks(t, withVolumes(t, newStore(t))) })
 	t.Run("Geo", func(t *testing.T) { testGeo(t, withVolumes(t, newStore(t))) })
+	t.Run("Changed", func(t *testing.T) { testChanged(t, withVolumes(t, newStore(t))) })
 	t.Run("DeleteMetadata", func(t *testing.T) { testDeleteMetadata(t, withVolumes(t, newStore(t))) })
 }
 
@@ -1179,6 +1180,67 @@ func testGeo(t *testing.T, s store.Store) {
 	object, err = s.GetObject(ctx, "photos", "/a.jpg")
 	require.NoError(t, err)
 	assert.Nil(t, object.Geo, "it's gone with the file")
+}
+
+func testChanged(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	point := geo.NewPoint(51.5, -0.12)
+	at := time.Date(2026, 1, 2, 3, 4, 5, 6000, time.UTC)
+	put := func(etag string, size int64, modified time.Time) {
+		t.Helper()
+		object := &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.jpg"}, ObjectAttr: schema.ObjectAttr{ETag: &etag, Size: &size, ModTime: modified}}
+		object.Meta = []schema.Meta{{Namespace: "dc", Key: "format", Value: json.RawMessage(`"backend"`)}}
+		require.NoError(t, s.PutObject(ctx, "media", object))
+	}
+	enrich := func() {
+		t.Helper()
+		require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"task"`)}}, []geo.Geometry{point}))
+	}
+	found := func() (bool, bool) {
+		t.Helper()
+		object, err := s.GetObject(ctx, "media", "/a.jpg")
+		require.NoError(t, err)
+		var backend, task bool
+		for _, m := range object.Meta {
+			backend = backend || m.Key == "format"
+			task = task || m.Key == "title"
+		}
+		assert.True(t, backend, "the backend's metadata is kept")
+		assert.Equal(t, task, len(object.Geo) > 0, "its shapes are of its task's metadata")
+		return task, len(object.Geo) > 0
+	}
+	require.NoError(t, s.PutObject(ctx, "media", folder("/")))
+
+	// What a task found of a file is kept when it's put again, unchanged
+	put("e1", 10, at)
+	enrich()
+	put("e1", 10, at)
+	task, shapes := found()
+	assert.True(t, task)
+	assert.True(t, shapes)
+
+	// And removed, as it's out of date, when it changed, of its entity tag,
+	// size, or modification time, each of which changes, in turn, until
+	// the task is done of it again
+	for _, change := range []struct {
+		name     string
+		etag     string
+		size     int64
+		modified time.Time
+	}{
+		{"etag", "e2", 10, at},
+		{"size", "e2", 11, at},
+		{"modified", "e2", 11, at.Add(time.Microsecond)},
+	} {
+		enrich()
+		put(change.etag, change.size, change.modified)
+		task, shapes = found()
+		assert.False(t, task, change.name)
+		assert.False(t, shapes, change.name)
+	}
+	enrich()
+	task, _ = found()
+	assert.True(t, task, "it's done again")
 }
 
 func testTasks(t *testing.T, s store.Store) {

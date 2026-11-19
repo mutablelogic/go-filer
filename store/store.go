@@ -48,8 +48,11 @@ type ObjectStore interface {
 	GetObject(ctx context.Context, volume, key string) (*schema.Object, error)
 
 	// PutObject stores the objects of the volume, replacing those of their keys,
-	// and the backend's metadata, but not the metadata of tasks, or returns
-	// ErrNotFound when the volume isn't stored
+	// and the backend's metadata, but not the metadata, or shapes, of tasks,
+	// unless an object changed, of its entity tag, size or modification
+	// time, when they're removed, as they're out of date, until its tasks
+	// are done of it again, or returns ErrNotFound when the volume isn't
+	// stored
 	PutObject(ctx context.Context, volume string, objects ...*schema.Object) error
 
 	// DeleteObject removes the object of the volume of the key, and, of a folder's,

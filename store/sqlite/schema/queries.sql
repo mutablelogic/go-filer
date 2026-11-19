@@ -35,7 +35,18 @@ RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coales
 
 -- object.put
 -- An object, which replaces the one of its key, and its metadata, of a JSON
--- array of entries, which replaces the backend's metadata, but not a task's
+-- array of entries, which replaces the backend's metadata, but not a task's,
+-- unless it changed, as of its entity tag, size or modification time, when
+-- what tasks found of it, their metadata and shapes, is out of date, which
+-- is removed, until they're done of it again
+DELETE FROM metadata WHERE volume = @volume AND object = @key AND source <> '' AND EXISTS (
+  SELECT 1 FROM object WHERE volume = @volume AND key = @key
+    AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
+);
+DELETE FROM object_geo WHERE volume = @volume AND object = @key AND source <> '' AND EXISTS (
+  SELECT 1 FROM object WHERE volume = @volume AND key = @key
+    AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
+);
 INSERT INTO object (volume, key, type, size, etag, modified_at)
 VALUES (@volume, @key, nullif(@type, ''), @size, @etag, @modified_at)
 ON CONFLICT (volume, key) DO UPDATE SET
