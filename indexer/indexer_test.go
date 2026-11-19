@@ -727,16 +727,22 @@ func Test_GetFile(t *testing.T) {
 	require.NoError(t, err)
 	run(t, i)
 	files(t, s, "/a/y.txt", "/x.txt")
-	time.Sleep(100 * time.Millisecond)
-	n, object := gets(t, i, c, x)
-	assert.Zero(t, n, "it's the index's")
+	var object *schema.Object
+	require.Eventually(t, func() bool {
+		var n int32
+		n, object = gets(t, i, c, x)
+		return n == 0
+	}, 10*time.Second, 10*time.Millisecond, "it's the index's, once the changes of its creation are indexed")
 	assert.Equal(t, "media", object.Name)
 	assert.Equal(t, int64(len("x.txt")), *object.Size)
 
 	// But not a file which isn't indexed, a request which is conditional, or
 	// a file which has work queued, which would change it
-	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
-	assert.Zero(t, n, "a folder is the index's")
+	require.Eventually(t, func() bool {
+		n, _ := gets(t, i, c, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
+		return n == 0
+	}, 10*time.Second, 10*time.Millisecond, "a folder is the index's")
+	var n int32
 	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: x.ObjectKey, IfModifiedSince: time.Unix(1, 0)})
 	assert.Equal(t, int32(1), n, "a conditional request is the backend's")
 	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
