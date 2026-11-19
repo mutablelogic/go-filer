@@ -2,7 +2,9 @@ name: Test
 
 # Pull requests and pushes to main are tested on Linux, macOS and Windows,
 # with cgo, which watching files on macOS needs, and with the race detector,
-# as each platform watches files its own way. The repository is public, so
+# as each platform watches files its own way. The builds with cgo are of
+# go-media's libraries, which make downloads from its release, which
+# enriching media needs. The repository is public, so
 # the macOS and Windows runners cost no more than Linux's.
 on:
   push:
@@ -99,8 +101,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # make, and gcc for cgo and the race detector. Keeps the Go toolchain,
-      # which is installed outside MSYS2, visible in the msys2 shell.
+      # make, and gcc and pkg-config for cgo and the race detector, and curl
+      # and unzip, which download go-media's libraries. Keeps the Go
+      # toolchain, which is installed outside MSYS2, visible in the msys2
+      # shell.
       - name: Setup MSYS2 (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -108,7 +112,15 @@ jobs:
           msystem: MINGW64
           update: false
           path-type: inherit
-          install: make mingw-w64-x86_64-gcc
+          install: make curl unzip mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf
+
+      # go-media's libraries, of its release, which link Homebrew's packages
+      # on macOS, which its Brewfile lists
+      - name: Download go-media's libraries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          make go-media
+          brew bundle --file build/go-media/Brewfile
 
       # The tests are run once, with the race detector, which tests as much
       # as they do without it

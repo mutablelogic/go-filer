@@ -25,6 +25,15 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/registry/httpclient` | A client of the registry's HTTP API |
 | `github.com/mutablelogic/go-filer/registry/cmd` | The `filer` command's subcommands |
 
+## Building
+
+`make` builds the server with cgo, which the macOS folder watcher needs, and which go-metadata's handlers of audio, video, and photos' EXIF, HEIF and RAW need too. They link go-media's libraries: FFmpeg 8, libexif, libheif, LibRaw, Chromaprint and libfvad.
+
+* `make go-media` downloads the libraries from the release of the go-media version in `go.mod`, into `build/go-media`. The builds and tests with cgo run it first.
+* `GO_MEDIA_PREFIX` uses another build of them instead, such as `build/install` in a clone of go-media, or `/opt/go-media` in its dev image. `GO_MEDIA_LICENSE=gpl` uses the GPL build of FFmpeg, rather than the LGPL one.
+* On macOS, the libraries link some Homebrew packages, listed in `build/go-media/Brewfile`: `brew bundle --file build/go-media/Brewfile` installs them.
+* `make CGO_ENABLED=0` builds without cgo, and so without the libraries. It reads less metadata, and can't watch volumes on macOS, which are polled instead.
+
 ## Usage
 
 `fs.New` returns a writable filer for a directory, and `fs.NewFS` returns a filer for any `fs.FS`, which is read-only unless it implements `fs.WriterFS`. Either can be made read-only with the `readonly` option, when creating and deleting objects is `filer.ErrForbidden`. The filer takes ownership of the filesystem, and closes it when it's closed. `filer.Filer` has no `Close`: a filer which holds resources, as these do, implements `io.Closer`, which its owner calls, rather than the code it's given to.
@@ -166,7 +175,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 * **`--volume`** creates a volume when the server starts, or updates the stored one of the same name.
 * **Indexing:** the `index` option sets what's indexed.
   * `index=none`, or no option, indexes nothing; `index=folders` indexes folders; `index=objects` indexes files too, with their size, modified time, type, entity tag and the backend's metadata.
-  * `index=metadata` indexes files as `objects` does, and enriches each new or changed file with a task, such as go-metadata's. The server passes the task with `registry.WithMetadataTask`.
+  * `index=metadata` indexes files as `objects` does, and enriches each new or changed file with a task, such as go-metadata's. The server passes the task with `registry.WithMetadataTask`, from the `enrichment` package: `enrichment.New(WithTMDB(key), WithAcoustID(key), ...)`, whose flags are `--tmdb-key` (`TMDB_TOKEN`), `--acoustid-key` (`ACOUSTID_KEY`) and `--enrich-max-size`.
     * Task workers run separately from indexing, so a slow read never holds it up.
     * A task stores what it finds with `SetMetadata`, as its own metadata rows, which the backend's metadata never replaces. Reads merge the two, and the task's value wins for the same key.
     * A file is enriched again only when its listing's revision changes. A file whose task keeps failing is given up after five attempts, until it changes.
