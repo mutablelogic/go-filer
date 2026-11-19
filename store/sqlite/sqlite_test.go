@@ -249,7 +249,7 @@ func Test_MigrateRevisions(t *testing.T) {
 	object, err := s.GetObject(ctx, "media", "/a.txt")
 	require.NoError(t, err)
 	assert.Equal(t, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"A"`)}}, object.Meta)
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"B"`)}}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"B"`)}}))
 	object, err = s.GetObject(ctx, "media", "/a.txt")
 	require.NoError(t, err)
 	assert.Equal(t, []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"B"`)}}, object.Meta)
