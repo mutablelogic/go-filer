@@ -27,6 +27,9 @@ func (self *Store) Push(ctx context.Context, volume string, work ...store.Work) 
 			return volumeErr(err, volume)
 		}
 		for _, w := range work {
+			if err := store.ValidateWork(w); err != nil {
+				return err
+			}
 			if w.After.IsZero() {
 				w.After = now
 			}
