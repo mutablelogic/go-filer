@@ -44,3 +44,11 @@ func SetCalendarEndpoint(t testing.TB, endpoint string) {
 func SetCalendarNow(filer *CalendarFiler, now func() time.Time) {
 	filer.now = now
 }
+
+// CalendarPath returns where a calendar filer knows an event is, of its
+// calendar, and id, for a watch
+func CalendarPath(filer *CalendarFiler, calendar, id string) string {
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	return filer.paths[eventKey(calendar, id)]
+}

@@ -41,6 +41,11 @@ const (
 
 	// taskExt is the extension of a task's file
 	taskExt = ".ics"
+
+	// taskVersion is of a task's entity tag, which is changed when its file,
+	// or metadata, are, so a task which hasn't changed, and is indexed, is
+	// indexed again, of them, as its revision is of its entity tag
+	taskVersion = "/v2"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -130,7 +135,7 @@ func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.O
 		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: task.Updated},
 	}
 	if task.ETag != "" {
-		object.ETag = types.Ptr(task.ETag)
+		object.ETag = types.Ptr(task.ETag + taskVersion)
 	}
 	if task.Title != "" {
 		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(task.Title))})

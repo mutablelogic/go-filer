@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"net/http"
 	"net/url"
 	"path"
@@ -47,12 +46,14 @@ type CalendarFiler struct {
 	// now returns the time, which the months listed are of
 	now func() time.Time
 
-	// The paths of the events which were listed, by their calendars, and
-	// ids (see eventKey), so a watch knows where an event was, which a
-	// change doesn't say, and whether any were
-	mu    sync.Mutex
-	paths map[string]string
-	known bool
+	// The paths of the events, by their calendars, and ids (see eventKey),
+	// as the index has them, so a watch knows where an event was, which a
+	// change doesn't say, of those it sent, and those which were listed,
+	// which it didn't know, and the months which were listed, of their
+	// directories
+	mu     sync.Mutex
+	paths  map[string]string
+	months map[string]bool
 }
 
 // calendarOpt are the options of a calendar filer, of its parameters
@@ -552,25 +553,44 @@ func (self *CalendarFiler) events(ctx context.Context, op, p, dir string, from, 
 		}
 	}
 	slices.SortFunc(result, func(a, b calendarEvent) int { return strings.Compare(a.path, b.path) })
-	self.listedPaths(dir, result)
+	self.listedPaths(from, to, result)
 	return result, nil
 }
 
-// listedPaths replaces the paths of the events of a directory, which were
-// listed, with those which are
-func (self *CalendarFiler) listedPaths(dir string, events []calendarEvent) {
+// listedPaths adds the paths of the events which were listed, of the days,
+// which aren't known, and the months of the days, as they're listed. A path
+// which is known isn't replaced, nor removed, as only a watch, which sends
+// what changed, does, so a listing which is of an event which moved, or
+// which finishes after what changed was sent, doesn't lose where it was,
+// which would be sent as deleted.
+func (self *CalendarFiler) listedPaths(from, to time.Time, events []calendarEvent) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	if self.paths == nil || dir == "/" {
-		self.paths = make(map[string]string, len(events))
-	} else {
-		prefix := strings.TrimSuffix(dir, "/") + "/"
-		maps.DeleteFunc(self.paths, func(_, p string) bool { return strings.HasPrefix(p, prefix) })
+	if self.paths == nil {
+		self.paths, self.months = make(map[string]string, len(events)), make(map[string]bool)
 	}
 	for _, e := range events {
-		self.paths[eventKey(e.calendar.Id, e.event.Id)] = e.path
+		if key := eventKey(e.calendar.Id, e.event.Id); self.paths[key] == "" {
+			self.paths[key] = e.path
+		}
 	}
-	self.known = true
+	for t := time.Date(from.Year(), from.Month(), 1, 0, 0, 0, 0, time.UTC); t.Before(to); t = t.AddDate(0, 1, 0) {
+		self.months[pathOfDir(calendarPath{year: t.Year(), month: int(t.Month())})] = true
+	}
+}
+
+// known returns true when every month which is listed was, so where each of
+// their events is, is known, which must be locked
+func (self *CalendarFiler) known() bool {
+	years, months := self.calendarMonths()
+	for _, year := range years {
+		for _, month := range months[year] {
+			if !self.months[pathOfDir(calendarPath{year: year, month: month})] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // hinted returns the events of what changed of a calendar, of its sync: an
@@ -578,12 +598,14 @@ func (self *CalendarFiler) listedPaths(dir string, events []calendarEvent) {
 // of the paths which were listed, and one which is cancelled, or isn't of
 // the days which are listed any more, which is deleted, when it was there.
 // Returns false when it can't say, so the root is rescanned: when an event
-// which repeats changed, as a sync doesn't say which times it occurs, or
-// nothing has been listed, so where events were isn't known.
+// which repeats changed, as a sync doesn't say which times it occurs, or not
+// every month which is listed has been, so where events were isn't known. A
+// path which is out of date, as a change was missed, and the root was
+// rescanned instead, is deleted again, which it already is.
 func (self *CalendarFiler) hinted(calendar *httpclient.Calendar, changed []httpclient.Event) ([]schema.Event, bool) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	if !self.known {
+	if !self.known() {
 		return nil, false
 	}
 	for i := range changed {

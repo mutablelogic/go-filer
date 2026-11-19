@@ -31,6 +31,11 @@ type calendarSync struct {
 // GLOBALS
 
 const (
+	// calendarSyncSuffix is the suffix of the keys of calendars' sync tokens,
+	// of their sign-ins' keys, which a sign-in's key can't have, so they're
+	// never the same
+	calendarSyncSuffix = "_CALENDAR_SYNC"
+
 	// calendarResyncInterval is how often a calendar whose sync token was
 	// rejected is synced again, at most
 	calendarResyncInterval = time.Hour
@@ -230,5 +235,5 @@ func (self *CalendarFiler) storeTokens(ctx context.Context, tokens map[string]st
 // GOOGLE_TOKEN_CALENDAR_SYNC, of GOOGLE_TOKEN, which isn't a sign-in, as
 // it's only signed in to by its own key
 func calendarSyncKey(credential string) string {
-	return credential + "_CALENDAR_SYNC"
+	return credential + calendarSyncSuffix
 }

@@ -247,7 +247,7 @@ func Test_NewCalendarFiler(t *testing.T) {
 	// or can't be parsed, are bad
 	_, err = google.NewCalendarFiler(ctx, "calendar", url.Values{"readonly": {"false"}}, gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
 	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
-	for _, params := range []url.Values{{"hidden": {"true"}}, {"window": {"-1d"}}, {"window": {"3651d"}}, {"window": {"a year"}}, {"credential": {"S3_SECRET"}}} {
+	for _, params := range []url.Values{{"hidden": {"true"}}, {"window": {"-1d"}}, {"window": {"3651d"}}, {"window": {"a year"}}, {"credential": {"S3_SECRET"}}, {"credential": {"GOOGLE_TOKEN_CALENDAR_SYNC"}}} {
 		_, err := google.NewCalendarFiler(ctx, "calendar", params, gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
@@ -591,8 +591,37 @@ func Test_CalendarWatchHints(t *testing.T) {
 	fake.put(work, httpclient.Event{Id: "rec", Status: "cancelled"})
 	assert.Equal(t, []string{"deleted /2026/2026-11/05-work@example.com-rec_20261105T100000Z.ics"}, events())
 
+	// An event which moves, which a listing of where it is now has, before
+	// the move is synced, is still deleted where it was, as a listing doesn't
+	// replace where an event is known to be
+	fake.change(work, "e3", func(e *httpclient.Event) {
+		e.Start.DateTime, e.End.DateTime = "2026-12-10T09:00:00Z", "2026-12-10T10:00:00Z"
+	})
+	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-12"})
+	assert.Equal(t, []string{"deleted /2026/2026-11/30-work@example.com-e3.ics", "created /2026/2026-12/10-work@example.com-e3.ics"}, events())
+
 	// An event which repeats, which changed, is a rescan, as the times it
 	// occurs aren't said
 	fake.put(work, httpclient.Event{Id: "series", Status: "confirmed", Recurrence: []string{"RRULE:FREQ=WEEKLY"}, Start: httpclient.EventTime{DateTime: "2026-11-02T09:00:00Z"}})
 	assert.Equal(t, []string{"rescan /"}, events())
+}
+
+func Test_CalendarListedPaths(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	filer := newCalendarFiler(t, calendarCredentials(t, endpoint), url.Values{"refresh_interval": {"0"}})
+
+	// A listing of where an event is now, which moved, doesn't replace
+	// where it's known to be, so a watch deletes it there, as the index has it
+	listed(t, filer, schema.ListObjectsRequest{Path: "/", Recursive: true})
+	assert.Equal(t, "/2026/2026-11/30-work@example.com-e3.ics", google.CalendarPath(filer, work, "e3"))
+	fake.change(work, "e3", func(e *httpclient.Event) {
+		e.Start.DateTime, e.End.DateTime = "2026-12-10T09:00:00Z", "2026-12-10T10:00:00Z"
+	})
+	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-12"})
+	assert.Equal(t, "/2026/2026-11/30-work@example.com-e3.ics", google.CalendarPath(filer, work, "e3"))
+
+	// But one which isn't known is added
+	fake.put(work, httpclient.Event{Id: "added", Status: "confirmed", Start: httpclient.EventTime{Date: "2026-12-11"}, End: httpclient.EventTime{Date: "2026-12-12"}})
+	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-12"})
+	assert.Equal(t, "/2026/2026-12/11-work@example.com-added.ics", google.CalendarPath(filer, work, "added"))
 }
