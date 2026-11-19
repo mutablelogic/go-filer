@@ -28,6 +28,14 @@ CREATE TABLE IF NOT EXISTS object (
   size            INTEGER,                -- a file's size, or NULL
   etag            TEXT,
   modified_at     TIMESTAMP,              -- or NULL, such as of a filesystem's folder
+  media_type      TEXT GENERATED ALWAYS AS (
+                    CASE WHEN type IS NULL AND key GLOB '*/' THEN 'inode/directory'
+                    ELSE lower(trim(CASE WHEN instr(type, ';') > 0 THEN substr(type, 1, instr(type, ';') - 1) ELSE type END))
+                    END
+                  ) VIRTUAL,              -- its type, without its parameters, in lower case, of a listing of a type
+  media_subtype   TEXT GENERATED ALWAYS AS (
+                    substr(media_type, instr(media_type, '/') + 1)
+                  ) VIRTUAL,              -- its subtype, such as jpeg, of a listing of a subtype
   parent          TEXT GENERATED ALWAYS AS (
                     rtrim(rtrim(key, '/'), replace(rtrim(key, '/'), '/', ''))
                   ) VIRTUAL,              -- the key of its folder, such as /a/, or empty for the root
@@ -36,6 +44,12 @@ CREATE TABLE IF NOT EXISTS object (
 
 -- schema.object_parent
 CREATE INDEX IF NOT EXISTS object_parent ON object (volume, parent, key);
+
+-- schema.object_type
+CREATE INDEX IF NOT EXISTS object_type ON object (volume, media_type, key);
+
+-- schema.object_subtype
+CREATE INDEX IF NOT EXISTS object_subtype ON object (volume, media_subtype, key);
 
 -- schema.metadata
 -- The metadata of the objects, one row per entry, in the order they're put

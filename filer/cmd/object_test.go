@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	// Packages
 	kong "github.com/alecthomas/kong"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -202,5 +204,50 @@ func Test_ParseMeta(t *testing.T) {
 	for _, flag := range []string{"rating", "=5", "photo.=5", ".rating=5", ".=5"} {
 		_, err := parseMeta([]string{flag})
 		assert.Error(t, err, flag)
+	}
+}
+
+func Test_listed(t *testing.T) {
+	object := func(p string, dir bool, meta ...schema.Meta) *schema.Object {
+		return &schema.Object{ObjectKey: schema.ObjectKey{Path: p}, ObjectAttr: schema.ObjectAttr{IsDir: dir}, ObjectMeta: schema.ObjectMeta{Meta: meta}}
+	}
+	title := func(value string) schema.Meta {
+		return schema.Meta{Namespace: "dc", Key: "title", Value: json.RawMessage(value)}
+	}
+
+	// An object is its name, with a "/" after a folder's, indented by how far
+	// beneath the folder which is listed it is, or its title, its dc:title,
+	// a string, or its JSON, when it isn't one, when titles are shown
+	for _, test := range []struct {
+		object *schema.Object
+		folder string
+		titles bool
+		want   string
+	}{
+		{object("/a", true), "/", true, "a/"},
+		{object("/a/b", true), "/", true, "  b/"},
+		{object("/a/b/c.mp3", false), "/", true, "    c.mp3"},
+		{object("/a/b/c.mp3", false), "/a/", true, "  c.mp3"},
+		{object("/a/b/c.mp3", false), "/a/b/c.mp3/", true, "c.mp3"},
+		{object("/a/b.txt", false, title(`" Milk "`)), "/", true, "  Milk"},
+		{object("/a/b.txt", false, title(`" Milk "`)), "/", false, "  b.txt"},
+		{object("/a.txt", false, title(`42`)), "/", true, "42"},
+		{object("/a.txt", false, title(`""`)), "/", true, "a.txt"},
+		{object("/a.txt", false, schema.Meta{Namespace: "xmp", Key: "title", Value: json.RawMessage(`"Not dc"`)}), "/", true, "a.txt"},
+	} {
+		if got := (listed{Object: test.object, folder: test.folder, titles: test.titles}).Cell(0); got != test.want {
+			t.Errorf("%s of %s: got %q, want %q", test.object.Path, test.folder, got, test.want)
+		}
+	}
+	if header := (listed{Object: object("/", true), titles: true}).Header(); header[0] != "Title" {
+		t.Errorf("header: %v", header)
+	}
+	if header := (listed{Object: object("/", true)}).Header(); header[0] != "Name" {
+		t.Errorf("header: %v", header)
+	}
+	for p, want := range map[string]string{"": "/", "/": "/", "a": "/a/", "/a/": "/a/", "a/b": "/a/b/"} {
+		if got := listedFolder(p); got != want {
+			t.Errorf("listedFolder(%q): got %q, want %q", p, got, want)
+		}
 	}
 }

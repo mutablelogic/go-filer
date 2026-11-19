@@ -86,6 +86,21 @@ func (self *Store) List(ctx context.Context, volume string, req store.ListReques
 	return result, nil
 }
 
+// Count returns how many objects a listing has, of every page, without the
+// key it starts after, or its limit
+func (self *Store) Count(ctx context.Context, volume string, req store.ListRequest) (_ uint64, err error) {
+	ctx, end := self.span(ctx, "Count", attribute.String("arg.volume", volume), attribute.String("arg.req", types.Stringify(req)))
+	defer func() { end(err) }()
+	if err := store.ValidateFolderKey(req.Parent); err != nil {
+		return 0, err
+	}
+	var count schema.ObjectCount
+	if err := self.conn.Get(ctx, &count, schema.ObjectCountRequest{Volume: volume, ListRequest: req}); err != nil {
+		return 0, storeErr(err)
+	}
+	return uint64(count), nil
+}
+
 // Revisions returns, by their keys, the revisions of the files of a folder's
 // key, or of every file beneath it, when it's recursive
 func (self *Store) Revisions(ctx context.Context, volume, folder string, recursive bool) (_ map[string]string, err error) {

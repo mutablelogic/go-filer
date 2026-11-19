@@ -63,6 +63,10 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
 FROM object WHERE volume = @volume AND ${where} AND key > @after
 ORDER BY key;
 
+-- object.count
+-- How many objects a listing has, of the where clause, of every page
+SELECT count(*) FROM object WHERE volume = @volume AND ${where};
+
 -- object.delete
 -- An object, and, of a folder's key, those beneath it, of the range of their
 -- keys, and their metadata, which cascades

@@ -98,11 +98,21 @@ type ObjectListRequest struct {
 
 // ObjectList is a page of the objects beneath a path in a volume, in the
 // same order as S3, by their keys. When there are more, Next is the key of
-// the last object, which the next page starts after.
+// the last object, which the next page starts after. Count is how many
+// objects the listing has, of every page, without where it starts after,
+// or its limit, or nil, when its volume can't count them, such as one
+// which isn't indexed.
 type ObjectList struct {
 	ObjectListRequest
-	Next string    `json:"next,omitempty" help:"Start after this key for the next page"`
-	Body []*Object `json:"body"`
+	Next  string    `json:"next,omitempty" help:"Start after this key for the next page"`
+	Count *uint64   `json:"count" help:"How many objects the listing has, of every page, or null when it isn't known"`
+	Body  []*Object `json:"body"`
+}
+
+// Counter is a listing which can count its objects, of every page, without
+// where it starts after
+type Counter interface {
+	Count(context.Context) (uint64, error)
 }
 
 // ObjectUploadResponse is the files which were uploaded into a directory, in

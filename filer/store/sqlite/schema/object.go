@@ -2,6 +2,7 @@ package schema
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	// Packages
@@ -36,6 +37,16 @@ type ObjectListRequest struct {
 // ObjectList is the objects which are read, of a list, or a get, which reads
 // one
 type ObjectList []*filer.Object
+
+// ObjectCountRequest selects how many objects a listing has, of every page,
+// without where it starts after, or its limit
+type ObjectCountRequest struct {
+	Volume string
+	store.ListRequest
+}
+
+// ObjectCount is how many objects a listing has
+type ObjectCount uint64
 
 // RevisionListRequest selects the revisions of the files of a folder's key,
 // or beneath it
@@ -82,16 +93,44 @@ func (req ObjectListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, er
 	}
 	bind.Set("volume", req.Volume)
 	bind.Set("after", req.After)
-	if req.Recursive {
-		lower, upper := store.Subtree(req.Parent)
-		bind.Set("where", "key > "+bind.Set("lower", lower)+" AND key < "+bind.Set("upper", upper))
-	} else {
-		bind.Set("where", "parent = "+bind.Set("parent", req.Parent))
-	}
+	bind.Set("where", listWhere(bind, req.ListRequest))
 	if req.Limit > 0 {
 		bind.Set("offsetlimit", "LIMIT "+bind.Set("limit", req.Limit))
 	}
 	return bind.Query("object.list"), nil
+}
+
+func (req ObjectCountRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	if op != sqlite.Get {
+		return "", sqlite.ErrNotImplemented.Withf("object count: %v", op)
+	}
+	bind.Set("volume", req.Volume)
+	bind.Set("where", listWhere(bind, req.ListRequest))
+	return bind.Query("object.count"), nil
+}
+
+// listWhere returns the condition of the objects of a listing, of a folder,
+// or beneath it, and of a type, which binds its values
+func listWhere(bind *sqlite.Bind, req store.ListRequest) string {
+	var where string
+	if req.Recursive {
+		lower, upper := store.Subtree(req.Parent)
+		where = "key > " + bind.Set("lower", lower) + " AND key < " + bind.Set("upper", upper)
+	} else {
+		where = "parent = " + bind.Set("parent", req.Parent)
+	}
+
+	// A media type is the object's, and a major type is the start of it,
+	// which is a range of its index, and a subtype is the end of it, which
+	// is its own, which are searched for, of their indexes, rather than
+	// filtered, of the objects of the folder, or beneath it
+	if t := store.MediaType(req.Type); strings.Contains(t, "/") {
+		where += " AND rowid IN (SELECT rowid FROM object WHERE volume = @volume AND media_type = " + bind.Set("type", t) + ")"
+	} else if t != "" {
+		where += " AND rowid IN (SELECT rowid FROM object WHERE volume = @volume AND media_type >= " + bind.Set("major", t+"/") + " AND media_type < " + bind.Set("next", t+"0") +
+			" UNION ALL SELECT rowid FROM object WHERE volume = @volume AND media_subtype = " + bind.Set("type", t) + ")"
+	}
+	return where
 }
 
 func (req RevisionListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
@@ -151,6 +190,10 @@ func (put ObjectPut) Update(*sqlite.Bind) error {
 
 ////////////////////////////////////////////////////////////////////////////////
 // READERS
+
+func (count *ObjectCount) Scan(row sqlite.Row) error {
+	return row.Scan((*uint64)(count))
+}
 
 func (revisions *Revisions) Scan(row sqlite.Row) error {
 	var key, revision string

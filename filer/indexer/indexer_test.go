@@ -677,6 +677,16 @@ func Test_BucketFileAndFolder(t *testing.T) {
 	folder, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
 	require.NoError(t, err)
 	assert.True(t, folder.IsDir, "and the folder of its")
+
+	// A listing of the index has both, as the bucket's does
+	req := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}
+	want, err := listed(t, b, req)
+	require.NoError(t, err)
+	got, err := listed(t, i, req)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.Contains(t, got, "/a")
+	assert.Contains(t, got, "/a/")
 }
 
 func Test_ObjectsParentRetry(t *testing.T) {
@@ -786,6 +796,111 @@ func Test_RescanClearsError(t *testing.T) {
 			return err == nil && state.Error == ""
 		}, 10*time.Second, 10*time.Millisecond, "a rescan of %s clears it", folder)
 	}
+}
+
+// listing is a backend which can't be watched, which counts its listings
+type listing struct {
+	gofiler.Filer
+	lists atomic.Int32
+}
+
+func (l *listing) WatchObjects(context.Context, chan<- schema.Event) error {
+	return gofiler.ErrNotImplemented.With("it can't be watched")
+}
+
+func (l *listing) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	l.lists.Add(1)
+	return l.Filer.ListObjects(ctx, req)
+}
+
+// listed returns the keys of a listing, or the error, of a type, which the
+// registry filters
+func listed(t *testing.T, f gofiler.Filer, req schema.ListObjectsRequest) ([]string, error) {
+	t.Helper()
+	iter, err := f.ListObjects(context.Background(), req)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	result := []string{}
+	for {
+		object, err := iter.Next(context.Background())
+		if errors.Is(err, io.EOF) {
+			return result, nil
+		} else if err != nil {
+			return nil, err
+		} else if schema.MatchType(object, req.Type) {
+			result = append(result, object.Key())
+		}
+	}
+}
+
+func Test_ListObjects(t *testing.T) {
+	backend, dir := newBackend(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a", "b", "z.png"), []byte("z"), 0o644))
+	l := &listing{Filer: backend}
+	s := newStore(t)
+	i, err := indexer.New("media", l, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+
+	// A listing, of a folder, or beneath it, or of a file, after where it
+	// starts, of a type, is the index's, without the backend, and is the
+	// same as the backend's
+	for _, req := range []schema.ListObjectsRequest{
+		{ObjectKey: schema.ObjectKey{Path: "/"}},
+		{ObjectKey: schema.ObjectKey{Path: ""}, Recursive: true},
+		{ObjectKey: schema.ObjectKey{Path: "/a/"}},
+		{ObjectKey: schema.ObjectKey{Path: "a"}},
+		{ObjectKey: schema.ObjectKey{Path: "/a"}, Recursive: true},
+		{ObjectKey: schema.ObjectKey{Path: "/x.txt"}},
+		{ObjectKey: schema.ObjectKey{Path: "/x.txt"}, StartAfter: "/x.txt"},
+		{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "/a/"},
+		{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, StartAfter: "a/b/"},
+		{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, Type: "image"},
+		{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true, Type: "directory"},
+	} {
+		want, err := listed(t, backend, req)
+		require.NoError(t, err, req)
+		before := l.lists.Load()
+		got, err := listed(t, i, req)
+		require.NoError(t, err, req)
+		assert.Equal(t, want, got, req)
+		assert.Equal(t, before, l.lists.Load(), "%+v is the index's", req)
+	}
+
+	// But a folder which has work queued, at it, beneath it, or above it,
+	// or a path which isn't indexed, is the backend's
+	before := l.lists.Load()
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/a/b/z.png", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
+	require.NoError(t, err)
+	assert.Equal(t, before+1, l.lists.Load(), "work beneath it")
+	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}, Type: "directory"})
+	require.NoError(t, err)
+	assert.Equal(t, before+2, l.lists.Load(), "of its folders, too")
+	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/c/"}})
+	require.NoError(t, err)
+	assert.Equal(t, before+2, l.lists.Load(), "but not of another folder")
+	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/missing/"}})
+	assert.ErrorIs(t, err, iofs.ErrNotExist)
+	assert.Equal(t, before+3, l.lists.Load(), "a path which isn't indexed")
+
+	// And a path, without a "/" after it, of a folder, which a file of the
+	// same path has work queued of, as it can be created beside it
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/c", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "c"}})
+	require.NoError(t, err)
+	assert.Equal(t, before+4, l.lists.Load(), "a file of its path")
+
+	// As is a listing of a volume whose files aren't indexed
+	folders, err := indexer.New("media", l, newStore(t), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, folders)
+	before = l.lists.Load()
+	_, err = listed(t, folders, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+	require.NoError(t, err)
+	assert.Equal(t, before+1, l.lists.Load(), "its files aren't indexed")
 }
 
 func Test_Poll(t *testing.T) {
