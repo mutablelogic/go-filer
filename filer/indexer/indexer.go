@@ -134,7 +134,7 @@ func (self *Indexer) Clone(ctx context.Context, patch url.Values) (gofiler.Filer
 	if err != nil {
 		return nil, err
 	}
-	return &Indexer{Filer: backend, opt: self.opt, name: self.name, store: self.store}, nil
+	return &Indexer{Filer: backend, opt: self.opt, name: self.name, store: self.store, queue: newQueue(self.store, self.name, self.debounce, self.rescanMin)}, nil
 }
 
 // Readonly returns true when the backend says its objects can't be written

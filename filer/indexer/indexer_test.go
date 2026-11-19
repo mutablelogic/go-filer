@@ -282,6 +282,27 @@ func Test_RescanBurst(t *testing.T) {
 	}
 }
 
+func Test_Clone(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, _ := newBackend(t)
+	i, err := indexer.New("media", backend, newStore(t))
+	require.NoError(t, err)
+
+	// A clone is an indexer of the backend's clone, with its own queue, which
+	// runs, and whose writes are indexed
+	clone, err := i.Clone(context.Background(), nil)
+	require.NoError(t, err)
+	c, ok := clone.(*indexer.Indexer)
+	require.True(t, ok)
+	t.Cleanup(func() { c.Close() })
+	run(t, c)
+	_, err = c.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/g/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	eventually(t, c, "/a", "/a/b", "/c", "/g")
+}
+
 func Test_Poll(t *testing.T) {
 	backend, dir := newBackend(t)
 
