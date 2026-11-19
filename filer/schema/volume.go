@@ -155,7 +155,7 @@ func (v VolumeList) String() string {
 // TABLE
 
 func (v Volume) Header() []string {
-	return []string{"Name", "Status", "Description", "URL", "Options"}
+	return []string{"Name", "Status", "Index", "Description", "URL", "Options"}
 }
 
 func (v Volume) Width(col int) int {
@@ -169,35 +169,56 @@ func (v Volume) Cell(col int) tui.CellText {
 	case 1:
 		return v.Status()
 	case 2:
-		return v.Description()
+		return v.IndexStatus()
 	case 3:
-		return v.BareURL()
+		return v.Description()
 	case 4:
+		return v.BareURL()
+	case 5:
 		return v.Options()
 	default:
 		return ""
 	}
 }
 
-// Status returns how the volume is: offline, when it's enabled, but its
-// backend isn't working, disabled, mounting, when it's enabled, but isn't
-// mounted yet, scanning or indexed, when it's mounted, and indexed, or
-// mounted
+// Status returns how the volume is: offline, with why, when it's enabled,
+// but its backend isn't working, disabled, mounting, when it's enabled, but
+// isn't mounted yet, or mounted
 func (v Volume) Status() string {
 	switch {
 	case v.Error != "":
-		return "offline"
+		return "offline: " + v.Error
 	case !v.Enabled:
 		return "disabled"
 	case !v.Mounted:
 		return "mounting"
-	case v.Index != nil && v.Index.Status == IndexStatusScanning:
-		return "scanning"
-	case v.Index != nil && v.Index.Status == IndexStatusReady:
-		return "indexed"
 	default:
 		return "mounted"
 	}
+}
+
+// IndexStatus returns how the volume's index is: none, when it isn't
+// indexed, or isn't mounted, scanning, or ready, with how many folders it
+// has, or failed, when it hasn't been indexed, with why its last scan, or
+// its watch, failed, when it did
+func (v Volume) IndexStatus() string {
+	var result string
+	switch {
+	case v.Index == nil:
+		return "none"
+	case v.Index.Status == IndexStatusScanning:
+		result = fmt.Sprintf("scanning, %d folders", v.Index.Folders)
+	case v.Index.Status == IndexStatusReady:
+		result = fmt.Sprintf("ready, %d folders", v.Index.Folders)
+	case v.Index.Error != "":
+		result = "failed"
+	default:
+		result = "none"
+	}
+	if v.Index.Error != "" {
+		result += ": " + v.Index.Error
+	}
+	return result
 }
 
 // BareURL returns the volume's URL without its options, such as

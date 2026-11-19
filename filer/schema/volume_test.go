@@ -143,17 +143,33 @@ func Test_VolumeCells(t *testing.T) {
 		t.Errorf("description: %q", got)
 	}
 
-	// The status is of whether it's enabled, mounted, offline, and indexed
+	// The status is of whether it's enabled, mounted, and offline, and
+	// whether it's indexed is apart from it
+	indexed := func(state IndexState) Volume {
+		return Volume{VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "folders", IndexState: state}}
+	}
 	for want, volume := range map[string]Volume{
-		"mounted":  v,
-		"disabled": {VolumeMeta: VolumeMeta{Name: "media"}},
-		"mounting": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}},
-		"offline":  {VolumeMeta: VolumeMeta{Name: "media"}, Mounted: true, Error: "sign in again"},
-		"scanning": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "folders", IndexState: IndexState{Status: IndexStatusScanning}}},
-		"indexed":  {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "folders", IndexState: IndexState{Status: IndexStatusReady}}},
+		"mounted":                v,
+		"disabled":               {VolumeMeta: VolumeMeta{Name: "media"}},
+		"mounting":               {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}},
+		"offline: sign in again": {VolumeMeta: VolumeMeta{Name: "media"}, Mounted: true, Error: "sign in again"},
 	} {
 		if got := volume.Status(); got != want {
 			t.Errorf("status: got %q, want %q", got, want)
+		}
+	}
+	for want, volume := range map[string]Volume{
+		"none":                                v,
+		"scanning, 3 folders":                 indexed(IndexState{Status: IndexStatusScanning, Folders: 3}),
+		"ready, 12 folders":                   indexed(IndexState{Status: IndexStatusReady, Folders: 12}),
+		"failed: it isn't implemented":        indexed(IndexState{Error: "it isn't implemented"}),
+		"ready, 12 folders: the watch failed": indexed(IndexState{Status: IndexStatusReady, Folders: 12, Error: "the watch failed"}),
+	} {
+		if got := volume.IndexStatus(); got != want {
+			t.Errorf("index: got %q, want %q", got, want)
+		}
+		if got := volume.Status(); volume.Index != nil && got != "mounted" {
+			t.Errorf("status of an indexed volume: got %q", got)
 		}
 	}
 }
