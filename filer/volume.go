@@ -44,14 +44,19 @@ func (self *Registry) CreateVolume(ctx context.Context, volume schema.VolumeMeta
 // UpdateVolume stores a volume's URL, and whether it's enabled, which Run
 // mounts again, or unmounts, and returns it, before it's mounted. Its
 // backend is created from its URL first, which checks it, as CreateVolume
-// does. A volume whose backend is another, of its scheme, host or path,
-// doesn't keep its index. A volume which is offline is opened again, even
+// does. Its scheme can't be changed, which is ErrBadParameter. A volume
+// whose backend is another, of its host or path, doesn't keep its index. A volume which is offline is opened again, even
 // when it isn't changed, such as once its user has signed in again. Returns
 // ErrNotFound when the volume isn't stored, or is deleted meanwhile.
 func (self *Registry) UpdateVolume(ctx context.Context, volume schema.VolumeMeta) (*schema.Volume, error) {
 	current, err := self.store.GetVolume(ctx, volume.Name)
 	if err != nil {
 		return nil, err
+	}
+
+	// Its scheme is what the volume is, which isn't changed
+	if from, to := schemeOf(current.URL), schemeOf(volume.URL); from != to {
+		return nil, gofiler.ErrBadParameter.Withf("volume %q is of %s, so it can't be updated to %s", volume.Name, from, to)
 	}
 	meta, err := self.validate(ctx, volume)
 	if err != nil {
@@ -140,6 +145,14 @@ func sameBackend(a, b string) bool {
 		return false
 	}
 	return ua.Scheme == ub.Scheme && ua.Host == ub.Host && ua.Path == ub.Path
+}
+
+// schemeOf returns the scheme of a URL, or empty, when it can't be parsed
+func schemeOf(volumeURL string) string {
+	if u, err := url.Parse(volumeURL); err == nil {
+		return u.Scheme
+	}
+	return ""
 }
 
 // indexOf returns what's indexed of a volume, of its stored URL

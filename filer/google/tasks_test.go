@@ -399,6 +399,14 @@ func Test_TaskDescription(t *testing.T) {
 	clone, err := filer.Clone(context.Background(), url.Values{"hidden": {"true"}})
 	require.NoError(t, err)
 	assert.Equal(t, "Google Tasks for ada@example.com", clone.URL().Query().Get("description"))
+
+	// As does a clone of the same sign-in, of its credential, or the default
+	shopping := newFiler(t, endpoint, url.Values{"description": {"Shopping"}})
+	for _, credential := range [][]string{{google.DefaultCredential}, {""}, {}} {
+		clone, err := shopping.Clone(context.Background(), url.Values{"credential": credential})
+		require.NoError(t, err)
+		assert.Equal(t, "Shopping", clone.URL().Query().Get("description"), credential)
+	}
 	fake.Lock()
 	fake.email = "grace@example.com"
 	fake.Unlock()

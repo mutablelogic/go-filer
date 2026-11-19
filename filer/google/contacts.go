@@ -185,7 +185,11 @@ func (self *ContactFiler) URL() *url.URL {
 func (self *ContactFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
 	// A clone of another sign-in, without a description, is described of it
 	params := gofiler.PatchValues(self.params(), patch)
-	if patch.Has(paramCredential) && !patch.Has(schema.OptDescription) {
+	credential := params.Get(paramCredential)
+	if credential == "" {
+		credential = DefaultCredential
+	}
+	if credential != self.credential && !patch.Has(schema.OptDescription) {
 		params.Del(schema.OptDescription)
 	}
 	clone, err := NewContactFiler(ctx, self.name, params, self.opts)

@@ -45,7 +45,7 @@ Get the volume `name`, as `GET /volume` lists it. Returns 404 if the volume isn'
 
 ### PATCH /volume/{name}
 
-Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept, and so are its credentials' placeholders. A backend is created with the options, which checks them, so the volume isn't changed when they're invalid. The volume is stored, and the server mounts it again, shortly after this returns.
+Update the options of the volume `name`, with an object of the options to change, by their keys, whose values are JSON: `null` removes the option, so it's the default, a list replaces its values. For example, `{"readonly": true, "skip": null}` makes the volume read-only, and skips the default names. The options which aren't in the object are kept, and so are its credentials' placeholders, and its scheme, which can't be changed. A backend is created with the options, which checks them, so the volume isn't changed when they're invalid. The volume is stored, and the server mounts it again, shortly after this returns.
 
 With `enabled=false` in the query, the volume is disabled, so the server unmounts it, keeping it, and its index, and with `enabled=true` it's enabled, so it's mounted. Without it, whether it's enabled is kept.
 

@@ -9,6 +9,7 @@ import (
 	// Packages
 	kong "github.com/alecthomas/kong"
 	gofiler "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -426,12 +427,25 @@ func Test_VolumeDescription(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Friends", description(v.URL))
 
-	// Updating a volume sets it, but not with an option too
-	parse("volume-update", "media", "--description", "Family photos")
-	patch, err := cli.VolumeUpdate.patch()
+	// Updating a volume sets it, or the backend's, when it's empty, but not
+	// with an option too, and without the flag, it's kept
+	update := func(args ...string) (schema.VolumePatch, error) {
+		t.Helper()
+		cli.VolumeUpdate = VolumeUpdateCmd{}
+		parse(append([]string{"volume-update", "media"}, args...)...)
+		return cli.VolumeUpdate.patch()
+	}
+	patch, err := update("--description", "Family photos")
 	require.NoError(t, err)
 	assert.JSONEq(t, `["Family photos"]`, string(patch["description"]))
-	parse("volume-update", "media", "--description", "Family photos", "-o", "description=Other")
-	_, err = cli.VolumeUpdate.patch()
-	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	patch, err = update("--description", "")
+	require.NoError(t, err)
+	assert.JSONEq(t, `[""]`, string(patch["description"]), "an empty one is the backend's")
+	patch, err = update()
+	require.NoError(t, err)
+	assert.NotContains(t, patch, "description")
+	for _, value := range []string{"Family photos", ""} {
+		_, err = update("--description", value, "-o", "description=Other")
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, value)
+	}
 }

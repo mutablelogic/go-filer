@@ -58,7 +58,7 @@ type VolumeUpdateCmd struct {
 	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
 	Unset       []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
 	Enabled     *bool    `name:"enabled" negatable:"" help:"Enable the volume, so it's mounted, or disable it, with --no-enabled, so it's unmounted, which is kept as it is without either."`
-	Description string   `name:"description" help:"What the volume is, such as \"Family photos\", which is a shortcut of -o description=..."`
+	Description *string  `name:"description" help:"What the volume is, such as \"Family photos\", which is a shortcut of -o description=..., or the backend's, when it's empty."`
 }
 
 type VolumeMountCmd struct {
@@ -379,11 +379,11 @@ func (cmd *VolumeUpdateCmd) patch() (schema.VolumePatch, error) {
 			values[key] = append(values[key], value)
 		}
 	}
-	if cmd.Description != "" {
+	if cmd.Description != nil {
 		if _, exists := values[schema.OptDescription]; exists {
 			return nil, gofiler.ErrBadParameter.With("the description is set with --description, and an option")
 		}
-		values[schema.OptDescription] = []string{cmd.Description}
+		values[schema.OptDescription] = []string{*cmd.Description}
 	}
 	patch := make(schema.VolumePatch, len(values)+len(cmd.Unset))
 	for key, values := range values {
