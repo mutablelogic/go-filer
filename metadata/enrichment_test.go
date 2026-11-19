@@ -22,7 +22,7 @@ import (
 // each key
 type metadataStore map[string][]schema.Meta
 
-func (m metadataStore) SetMetadata(_ context.Context, key string, meta []schema.Meta) error {
+func (m metadataStore) SetMetadata(_ context.Context, key string, meta []schema.Meta, _ []schema.Geometry) error {
 	m[key] = meta
 	return nil
 }
