@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"strings"
 	"time"
 
 	// Packages
@@ -49,9 +48,11 @@ const (
 // a calendar is added, or removed, or the days which are listed move on,
 // and the first change is a rescan of it, once the calendars are watched.
 //
-// The tokens are stored, with the provider of credentials, of the volume
+// The tokens are stored, with the provider of credentials, of the sign-in
 // (see calendarSyncKey), so after a restart, the changes since they were
-// stored are found. A calendar without one is synced for one. A token which
+// stored are found. Volumes of the same sign-in share them, as they're of
+// its calendars, rather than of a window, so one which is synced of
+// another's earlier token rescans what changed since, again. A calendar without one is synced for one. A token which
 // Google rejects, as it's expired, is synced again, which a calendar is, at
 // most, each calendarResyncInterval. Returns ErrNotImplemented when the
 // refresh interval is zero, and the error of reading them, such as a
@@ -169,14 +170,14 @@ func (self *CalendarFiler) poll(ctx context.Context, state *calendarSync) (bool,
 	return changed, nil
 }
 
-// loadTokens returns the sync tokens which are stored, of the volume, or
+// loadTokens returns the sync tokens which are stored, of the sign-in, or
 // none, when there aren't any, or they can't be read
 func (self *CalendarFiler) loadTokens(ctx context.Context) map[string]string {
 	result := make(map[string]string)
 	if self.opts.Credentials == nil {
 		return result
 	}
-	data, err := self.opts.Credentials.Get(ctx, calendarSyncKey(self.name))
+	data, err := self.opts.Credentials.Get(ctx, calendarSyncKey(self.credential))
 	if err != nil {
 		return result
 	} else if err := json.Unmarshal(data, &result); err != nil {
@@ -185,7 +186,7 @@ func (self *CalendarFiler) loadTokens(ctx context.Context) map[string]string {
 	return result
 }
 
-// storeTokens stores the sync tokens, of the volume, with the provider of
+// storeTokens stores the sync tokens, of the sign-in, with the provider of
 // credentials, when it can store them, which they're synced again without,
 // when it can't
 func (self *CalendarFiler) storeTokens(ctx context.Context, tokens map[string]string) {
@@ -193,15 +194,17 @@ func (self *CalendarFiler) storeTokens(ctx context.Context, tokens map[string]st
 		return
 	}
 	if data, err := json.Marshal(tokens); err == nil {
-		_ = self.opts.Credentials.Set(ctx, calendarSyncKey(self.name), data)
+		_ = self.opts.Credentials.Set(ctx, calendarSyncKey(self.credential), data)
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
 
-// calendarSyncKey returns the key of the sync tokens of a volume's
-// calendars, with the provider of credentials, such as GCALENDAR_WORK_SYNC
-func calendarSyncKey(name string) string {
-	return "GCALENDAR_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_SYNC"
+// calendarSyncKey returns the key of the sync tokens of the calendars of a
+// sign-in, of its key, with the provider of credentials, such as
+// GOOGLE_TOKEN_CALENDAR_SYNC, of GOOGLE_TOKEN, which isn't a sign-in, as
+// it's only signed in to by its own key
+func calendarSyncKey(credential string) string {
+	return credential + "_CALENDAR_SYNC"
 }

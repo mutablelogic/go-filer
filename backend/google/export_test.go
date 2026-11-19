@@ -44,8 +44,3 @@ func SetCalendarEndpoint(t testing.TB, endpoint string) {
 func SetCalendarNow(filer *CalendarFiler, now func() time.Time) {
 	filer.now = now
 }
-
-// CalendarSyncKey returns the key of the sync tokens of a volume
-func CalendarSyncKey(name string) string {
-	return calendarSyncKey(name)
-}

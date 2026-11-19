@@ -343,7 +343,7 @@ func Test_CalendarWatch(t *testing.T) {
 	assert.Equal(t, schema.EventTypeRescan, event.EventType)
 	var tokens map[string]string
 	require.Eventually(t, func() bool {
-		data, err := credentials.Get(t.Context(), google.CalendarSyncKey("calendar"))
+		data, err := credentials.Get(t.Context(), "GOOGLE_TOKEN_CALENDAR_SYNC")
 		return err == nil && json.Unmarshal(data, &tokens) == nil && len(tokens) == 2
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, map[string]string{work: "v1", holiday: "v1"}, tokens)
