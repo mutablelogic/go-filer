@@ -54,3 +54,22 @@ CREATE TABLE IF NOT EXISTS metadata (
 
 -- schema.metadata_key
 CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, path, ifnull(namespace, ''), key);
+
+-- schema.object_state
+-- The work of indexing the objects of the volumes, by path and kind, which is
+-- the queue, which outlasts a restart. A path needn't be indexed, as it can
+-- be of an object which is new, or gone.
+CREATE TABLE IF NOT EXISTS object_state (
+  volume          TEXT NOT NULL REFERENCES volume (name) ON DELETE CASCADE ON UPDATE CASCADE,
+  path            TEXT NOT NULL,
+  kind            TEXT NOT NULL CHECK (kind GLOB '[a-z]*' AND kind NOT GLOB '*[^a-z_]*'),
+  etag            TEXT,                   -- of the object the work was done of, for enrichment
+  after           TIMESTAMP NOT NULL,     -- when it's due
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  leased_until    TIMESTAMP,              -- when its claim ends, which Done and Failed are of
+  error           TEXT,                   -- why it last failed
+  PRIMARY KEY (volume, path, kind)
+);
+
+-- schema.object_state_due
+CREATE INDEX IF NOT EXISTS object_state_due ON object_state (volume, kind, after);
