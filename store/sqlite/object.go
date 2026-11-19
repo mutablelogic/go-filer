@@ -84,6 +84,17 @@ func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, 
 	}))
 }
 
+// DeleteMetadata removes the metadata of the source, a task's kind, of every
+// object of the volume, and its task's work, and the revisions it was done of
+func (self *Store) DeleteMetadata(ctx context.Context, volume, source string) (err error) {
+	ctx, end := self.span(ctx, "DeleteMetadata", attribute.String("arg.volume", volume), attribute.String("arg.source", source))
+	defer func() { end(err) }()
+	if !types.IsIdentifier(source) || strings.ToLower(source) != source {
+		return gofiler.ErrBadParameter.Withf("the source of metadata is a task's kind, such as metadata, not %q", source)
+	}
+	return storeErr(self.conn.Delete(ctx, nil, schema.ObjectMetaSource{Volume: volume, Source: source}))
+}
+
 // DeleteObject removes the object of the volume of the key, and, of a folder's,
 // every object beneath it, with their metadata, which isn't an error when
 // there's none

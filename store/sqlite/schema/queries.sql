@@ -86,6 +86,12 @@ ORDER BY key;
 -- How many objects a listing has, of the where clause, of every page
 SELECT count(*) FROM object WHERE volume = @volume AND ${where};
 
+-- object.delete_meta
+-- The metadata of a source, a task's kind, of every object of a volume, and
+-- its task's work, and the revisions it was done of
+DELETE FROM metadata WHERE volume = @volume AND source = @source;
+DELETE FROM object_state WHERE volume = @volume AND kind IN (@source, @did);
+
 -- object.delete
 -- An object, and, of a folder's key, those beneath it, of the range of their
 -- keys, and their metadata, which cascades

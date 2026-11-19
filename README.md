@@ -170,6 +170,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
     * Task workers run separately from indexing, so a slow read never holds it up.
     * A task stores what it finds with `SetMetadata`, as its own metadata rows, which the backend's metadata never replaces. Reads merge the two, and the task's value wins for the same key.
     * A file is enriched again only when its listing's revision changes. A file whose task keeps failing is given up after five attempts, until it changes.
+    * Raising a volume to `metadata` queues its indexed files for enrichment straight away, without waiting for a scan. Lowering it below `metadata` deletes what it was enriched with, so a later upgrade enriches every file again.
   * Folders are listed from the index.
   * With `index=objects`, a new or changed file is stored from `GetObject`, not from the listing, which on S3 lacks the metadata. That's one HEAD request per new or changed object.
   * A scan has two phases: **scanning** lists the tree, and **indexing** fetches and stores new or changed files 100 at a time. It then goes **idle**. The Index column shows the phase. On a first scan, the file count rises as files are stored.

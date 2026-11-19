@@ -90,6 +90,12 @@ type MetadataStore interface {
 	// task which is superseded, as the object changed since, returns
 	// ErrPreconditionFailed, rather than replacing what a later one found.
 	SetMetadata(ctx context.Context, volume, key, source string, of *schema.ObjectAttr, meta []schema.Meta) error
+
+	// DeleteMetadata removes the metadata of the source, a task's kind, of
+	// every object of the volume, and the state of its task: its work, and
+	// the revisions it was done of, so it's done of every file again, when
+	// it's done again, such as when a volume isn't enriched any more
+	DeleteMetadata(ctx context.Context, volume, source string) error
 }
 
 // ListRequest is a request for the objects of a folder

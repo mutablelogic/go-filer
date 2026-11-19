@@ -36,6 +36,13 @@ type ObjectMetaPut struct {
 	Meta   []filer.Meta
 }
 
+// ObjectMetaSource selects the metadata of a source of a volume, and its
+// task's state, which is deleted
+type ObjectMetaSource struct {
+	Volume string
+	Source string
+}
+
 // ObjectListRequest selects the objects of a folder, or every object
 // beneath it, in the order of their keys
 type ObjectListRequest struct {
@@ -140,6 +147,16 @@ func listWhere(bind *sqlite.Bind, req store.ListRequest) string {
 			" UNION ALL SELECT rowid FROM object WHERE volume = @volume AND media_subtype = " + bind.Set("type", t) + ")"
 	}
 	return where
+}
+
+func (source ObjectMetaSource) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	if op != sqlite.Delete {
+		return "", sqlite.ErrNotImplemented.Withf("metadata of a source: %v", op)
+	}
+	bind.Set("volume", source.Volume)
+	bind.Set("source", source.Source)
+	bind.Set("did", Did(store.Kind(source.Source)))
+	return bind.Query("object.delete_meta"), nil
 }
 
 func (req RevisionListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
