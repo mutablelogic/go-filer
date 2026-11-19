@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 8
+const Version = 9
 
 var (
 	//go:embed objects.sql
@@ -92,6 +92,15 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 				CASE WHEN type IS NULL AND key GLOB '*/' THEN 'inode/directory'
 				ELSE lower(trim(CASE WHEN instr(type, ';') > 0 THEN substr(type, 1, instr(type, ';') - 1) ELSE type END))
 				END) VIRTUAL`); err != nil {
+				return err
+			}
+		}
+		// Version 9's objects have their subtypes, of a listing of a
+		// subtype, which an object of version 6 to 8 is added, as it's
+		// generated
+		if version >= 6 && version < 9 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_9").Exec(ctx, `ALTER TABLE object ADD COLUMN media_subtype TEXT GENERATED ALWAYS AS (
+				substr(media_type, instr(media_type, '/') + 1)) VIRTUAL`); err != nil {
 				return err
 			}
 		}

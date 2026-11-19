@@ -263,13 +263,17 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 	return &folderIterator{indexer: self, req: store.ListRequest{Parent: parent, Recursive: req.Recursive, After: after, Limit: listPage}}, nil
 }
 
-// ListObjects lists objects of the index, when it's up to date for them
-// (see listIndex), and otherwise of the backend, or, when the request is
-// only for folders, of their type, inode/directory, or inode, the folders of
-// the index, once it's ready
+// ListObjects lists objects of the index, when its files are indexed, and
+// it's up to date for them (see listIndex), and otherwise of the backend, or,
+// when only its folders are indexed, and the request is only for folders, of
+// their type, inode/directory, or inode, the folders of the index, once it's
+// ready
 func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
-	if iter := self.listIndex(ctx, req); iter != nil {
-		return iter, nil
+	if self.mode == ModeObjects {
+		if iter := self.listIndex(ctx, req); iter != nil {
+			return iter, nil
+		}
+		return self.Filer.ListObjects(ctx, req)
 	}
 	folder := &schema.Object{ObjectAttr: schema.ObjectAttr{IsDir: true}}
 	file := &schema.Object{ObjectMeta: schema.ObjectMeta{ContentType: "application/octet-stream"}}
@@ -303,10 +307,14 @@ func (self *Indexer) listIndex(ctx context.Context, req schema.ListObjectsReques
 		after = "/" + after
 	}
 
-	// A folder, of its key, or a path which is a folder's, or a file's
+	// A folder, of its key, or a path which is a folder's, or a file's, which
+	// isn't known while a file of the path has work queued, as it can be
+	// created beside the folder, which a bucket can have
 	folder := ""
 	if strings.HasSuffix(p, "/") {
 		folder = p
+	} else if pending, err := self.store.Pending(ctx, self.name, p); err != nil || pending {
+		return nil
 	} else {
 		_, fileErr := self.store.Get(ctx, self.name, p)
 		_, folderErr := self.store.Get(ctx, self.name, store.FolderKey(p))

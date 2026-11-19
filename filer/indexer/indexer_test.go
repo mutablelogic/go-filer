@@ -876,12 +876,22 @@ func Test_ListObjects(t *testing.T) {
 	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
 	require.NoError(t, err)
 	assert.Equal(t, before+1, l.lists.Load(), "work beneath it")
+	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}, Type: "directory"})
+	require.NoError(t, err)
+	assert.Equal(t, before+2, l.lists.Load(), "of its folders, too")
 	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/c/"}})
 	require.NoError(t, err)
-	assert.Equal(t, before+1, l.lists.Load(), "but not of another folder")
+	assert.Equal(t, before+2, l.lists.Load(), "but not of another folder")
 	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/missing/"}})
 	assert.ErrorIs(t, err, iofs.ErrNotExist)
-	assert.Equal(t, before+2, l.lists.Load(), "a path which isn't indexed")
+	assert.Equal(t, before+3, l.lists.Load(), "a path which isn't indexed")
+
+	// And a path, without a "/" after it, of a folder, which a file of the
+	// same path has work queued of, as it can be created beside it
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/c", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	_, err = listed(t, i, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "c"}})
+	require.NoError(t, err)
+	assert.Equal(t, before+4, l.lists.Load(), "a file of its path")
 
 	// As is a listing of a volume whose files aren't indexed
 	folders, err := indexer.New("media", l, newStore(t), indexer.WithRescanInterval(time.Hour))

@@ -121,12 +121,14 @@ func listWhere(bind *sqlite.Bind, req store.ListRequest) string {
 	}
 
 	// A media type is the object's, and a major type is the start of it,
-	// which is a range of the index, and a subtype is the end of it
+	// which is a range of its index, and a subtype is the end of it, which
+	// is its own, which are searched for, of their indexes, rather than
+	// filtered, of the objects of the folder, or beneath it
 	if t := store.MediaType(req.Type); strings.Contains(t, "/") {
-		where += " AND media_type = " + bind.Set("type", t)
+		where += " AND rowid IN (SELECT rowid FROM object WHERE volume = @volume AND media_type = " + bind.Set("type", t) + ")"
 	} else if t != "" {
-		where += " AND (media_type >= " + bind.Set("major", t+"/") + " AND media_type < " + bind.Set("next", t+"0") +
-			" OR substr(media_type, instr(media_type, '/') + 1) = " + bind.Set("type", t) + ")"
+		where += " AND rowid IN (SELECT rowid FROM object WHERE volume = @volume AND media_type >= " + bind.Set("major", t+"/") + " AND media_type < " + bind.Set("next", t+"0") +
+			" UNION ALL SELECT rowid FROM object WHERE volume = @volume AND media_subtype = " + bind.Set("type", t) + ")"
 	}
 	return where
 }
