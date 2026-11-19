@@ -73,11 +73,22 @@ func mount(t *testing.T, registry *filer.Registry, name string, u *url.URL) {
 }
 
 // readonly waits for the volume media to be mounted again, read-only, once
-// it's updated, which is once a file can't be written to it
+// it's updated, which is once a file can't be written to it. A write which
+// is interrupted, as the volume is closed, while it's mounted again, is
+// tried again.
 func readonly(t *testing.T, server *httptest.Server) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return put(t, server, "object/media/.readonly", strings.NewReader("x"), nil, nil) == http.StatusForbidden
+		req, err := http.NewRequest(http.MethodPut, server.URL+"/api/object/media/.readonly", strings.NewReader("x"))
+		if err != nil {
+			return false
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusForbidden
 	}, 10*time.Second, 5*time.Millisecond, "the volume isn't mounted read-only")
 }
 
