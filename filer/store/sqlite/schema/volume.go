@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"time"
+
 	// Packages
 	filer "github.com/mutablelogic/go-filer/filer/schema"
 	sqlite "github.com/mutablelogic/go-sqlite"
@@ -18,6 +20,10 @@ type VolumeListRequest struct{}
 // VolumeList is the volumes which are read, of a list, or a get, which reads
 // one
 type VolumeList []*filer.Volume
+
+// VolumePut is a volume which is put: created, or its URL, and whether
+// it's enabled, replaced
+type VolumePut filer.VolumeMeta
 
 // VolumeState is the state of a volume's index, of its name, which is got,
 // and updated
@@ -61,6 +67,20 @@ func (state VolumeState) Select(bind *sqlite.Bind, op sqlite.Op) (string, error)
 
 ////////////////////////////////////////////////////////////////////////////////
 // WRITERS
+
+// Insert binds a volume, and returns the query which puts it, which only
+// modifies it when it changes
+func (put VolumePut) Insert(bind *sqlite.Bind) (string, error) {
+	bind.Set("name", put.Name)
+	bind.Set("url", put.URL)
+	bind.Set("enabled", put.Enabled)
+	bind.Set("now", time.Now().UTC())
+	return bind.Query("volume.put"), nil
+}
+
+func (put VolumePut) Update(*sqlite.Bind) error {
+	return sqlite.ErrNotImplemented.With("a volume is put")
+}
 
 func (state VolumeState) Insert(*sqlite.Bind) (string, error) {
 	return "", sqlite.ErrNotImplemented.With("a volume's state is updated")

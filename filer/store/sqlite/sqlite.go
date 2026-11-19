@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -27,10 +26,8 @@ import (
 
 // Store is a store of volumes, and their indexes, in a SQLite database
 type Store struct {
-	pool    sqlite.PoolConn
-	conn    sqlite.Conn     // The pool's connection, with the schema's queries
-	queries *sqlite.Queries // The schema's queries, of their keys
-	opts    store.Opts
+	conn sqlite.PoolConn // The pool's connection, with the schema's queries
+	opts store.Opts
 }
 
 var _ store.Store = (*Store)(nil)
@@ -73,12 +70,12 @@ func New(ctx context.Context, path string, opts ...store.Opt) (_ *Store, err err
 	} else if err := schema.Create(ctx, pool); err != nil {
 		return nil, errors.Join(storeErr(err), pool.Close())
 	}
-	return &Store{pool: pool, conn: pool.WithQueries(queries), queries: queries, opts: o}, nil
+	return &Store{conn: pool.WithQueries(queries).(sqlite.PoolConn), opts: o}, nil
 }
 
 // Close closes the database
 func (self *Store) Close() error {
-	return self.pool.Close()
+	return self.conn.Close()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -100,9 +97,7 @@ func (self *Store) PutVolume(ctx context.Context, volume filer.VolumeMeta) (_ *f
 		if err := conn.Get(ctx, &existing, schema.VolumeName(volume.Name)); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
 			return err
 		}
-		if err := conn.With(
-			sqlite.TraceSpanNameArg, "volume.put", "name", volume.Name, "url", volume.URL, "enabled", volume.Enabled, "now", time.Now().UTC(),
-		).Exec(ctx, self.queries.Query("volume.put")); err != nil {
+		if err := conn.Insert(ctx, nil, schema.VolumePut(volume)); err != nil {
 			return err
 		}
 		return conn.Get(ctx, &result, schema.VolumeName(volume.Name))
