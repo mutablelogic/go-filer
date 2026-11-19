@@ -2,9 +2,12 @@ package metadata_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/iotest"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -71,4 +74,37 @@ func Test_New(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	_, err = metadata.New(metadata.WithTMDB("key"), metadata.WithAcoustID("key"), metadata.WithMaxSize(1<<20))
 	assert.NoError(t, err)
+}
+
+// failing is a backend whose files fail to be read, once they're opened
+type failing struct {
+	gofiler.Filer
+}
+
+func (f failing) ReadObject(ctx context.Context, req schema.GetObjectRequest) (gofiler.ReadObjectFunc, *schema.Object, error) {
+	_, object, err := f.Filer.ReadObject(ctx, req)
+	if err != nil {
+		return nil, nil, err
+	}
+	return func(ctx context.Context, fn func(io.Reader) error) error {
+		return fn(iotest.ErrReader(errors.New("it can't be read")))
+	}, object, nil
+}
+
+func Test_EnrichFails(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Holiday Plans.html"), []byte("<html><title>A</title></html>"), 0o644))
+	backend, err := fs.New("media", dir, nil, gofiler.Opts{})
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+	e, err := metadata.New()
+	require.NoError(t, err)
+	object, err := backend.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/Holiday Plans.html"}})
+	require.NoError(t, err)
+
+	// A file which fails to be read is an error, rather than enriched, of
+	// what was extracted of it, so it's enriched again
+	store := metadataStore{}
+	err = e.Enrich(context.Background(), failing{backend}, store, object)
+	assert.ErrorContains(t, err, "it can't be read")
 }

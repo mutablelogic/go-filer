@@ -72,18 +72,23 @@ func (self *Metadata) Enrich(ctx context.Context, backend gofiler.Filer, store i
 	if err != nil {
 		return err
 	}
+	// The metadata which is extracted is stored, even when a handler fails,
+	// such as a lookup on TMDB, and then the error is returned, so the task
+	// is done again, but a file whose type no handler reads isn't an error
 	var entries []gometadata.Metadata
+	var extractErr error
 	if err := read(ctx, func(r io.Reader) error {
-		_, result, err := gometadata.Extract(ctx, named{Reader: r, name: path.Base(file.Path)}, self.extractOpts(file)...)
-		entries = result
-		if err != nil && len(result) == 0 && !isNotImplemented(err) {
-			return err
-		}
+		_, entries, extractErr = gometadata.Extract(ctx, withName(r, path.Base(file.Path)), self.extractOpts(file)...)
 		return nil
 	}); err != nil {
 		return err
 	}
-	return store.SetMetadata(ctx, object.Path, meta(entries))
+	if err := store.SetMetadata(ctx, object.Path, meta(entries)); err != nil {
+		return err
+	} else if extractErr != nil && !isNotImplemented(extractErr) {
+		return extractErr
+	}
+	return nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -139,4 +144,25 @@ type named struct {
 	name string
 }
 
+// namedFile is a reader with a name, which can seek, and be read at an
+// offset, as a file can, so go-metadata reads it in place, rather than
+// copying it first
+type namedFile struct {
+	named
+	io.ReaderAt
+	io.Seeker
+}
+
 func (n named) Name() string { return n.name }
+
+// withName returns the reader with a name, which can seek, and be read at
+// an offset, when the reader can
+func withName(r io.Reader, name string) gometadata.NamedReader {
+	n := named{Reader: r, name: name}
+	ra, readsAt := r.(io.ReaderAt)
+	s, seeks := r.(io.Seeker)
+	if readsAt && seeks {
+		return namedFile{named: n, ReaderAt: ra, Seeker: s}
+	}
+	return n
+}
