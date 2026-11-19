@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	iofs "io/fs"
 	"os"
@@ -236,7 +237,7 @@ func Test_Scan(t *testing.T) {
 	assert.True(t, object.IsDir)
 	assert.Equal(t, "media", object.Name)
 	assert.Equal(t, "2", count(t, object), "its folder, and its file")
-	indexed, err := s.Get(context.Background(), "media", "/a")
+	indexed, err := s.Get(context.Background(), "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", indexed.Path, "it's got from the index")
 
@@ -500,6 +501,93 @@ func (f *fuller) GetObject(ctx context.Context, req schema.GetObjectRequest) (*s
 	return object, err
 }
 
+// revised is a backend which can't be watched, whose files' entity tags are
+// the same, as a bucket's are when only their metadata is written, whose
+// listing's modification time is its version, as a bucket's is when it was
+// written, and whose metadata, which its listing hasn't, is its version, with
+// a modification time which is the same, as a bucket's of its metadata is
+type revised struct {
+	gofiler.Filer
+	version atomic.Int32
+	gets    atomic.Int32 // How many files it's got
+}
+
+func (r *revised) WatchObjects(context.Context, chan<- schema.Event) error {
+	return gofiler.ErrNotImplemented.With("it can't be watched")
+}
+
+func (r *revised) stamp(object *schema.Object, full bool) {
+	if object.IsDir {
+		return
+	}
+	etag, version := "same", r.version.Load()
+	object.ETag = &etag
+	if full {
+		object.ModTime = time.Unix(1, 0)
+		object.Meta = []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(fmt.Sprintf(`"%d"`, version))}}
+	} else {
+		object.ModTime = time.Unix(int64(version), 0)
+	}
+}
+
+func (r *revised) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	object, err := r.Filer.GetObject(ctx, req)
+	if err == nil {
+		if !object.IsDir {
+			r.gets.Add(1)
+		}
+		r.stamp(object, true)
+	}
+	return object, err
+}
+
+func (r *revised) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
+	iter, err := r.Filer.ListObjects(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &revisedIterator{ListObjectsIterator: iter, r: r}, nil
+}
+
+type revisedIterator struct {
+	schema.ListObjectsIterator
+	r *revised
+}
+
+func (i *revisedIterator) Next(ctx context.Context) (*schema.Object, error) {
+	object, err := i.ListObjectsIterator.Next(ctx)
+	if err == nil {
+		i.r.stamp(object, false)
+	}
+	return object, err
+}
+
+func Test_ObjectsRevision(t *testing.T) {
+	backend, _ := newBackend(t)
+	r := &revised{Filer: backend}
+	r.version.Store(1)
+	s := newStore(t)
+
+	// A file whose entity tag is the same, but whose listing isn't, such as a
+	// bucket's whose metadata is written, is stored again, of the backend,
+	// when it's scanned again, and one whose listing is the same isn't
+	i, err := indexer.New("media", r, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(20*time.Millisecond), indexer.WithRescanMinInterval(0), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	run(t, i)
+	title := func(want string) func() bool {
+		return func() bool {
+			object, err := s.Get(context.Background(), "media", "/x.txt")
+			return err == nil && len(object.Meta) == 1 && string(object.Meta[0].Value) == `"`+want+`"`
+		}
+	}
+	require.Eventually(t, title("1"), 10*time.Second, 10*time.Millisecond, "it's stored of the backend")
+	gets := r.gets.Load()
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, gets, r.gets.Load(), "it isn't got again, while its listing is the same")
+	r.version.Store(2)
+	require.Eventually(t, title("2"), 10*time.Second, 10*time.Millisecond, "it's stored again, of its revision")
+}
+
 func Test_ObjectsReadError(t *testing.T) {
 	if !fsevents.Supported() {
 		t.Skip(fsevents.ErrNotSupported)
@@ -566,9 +654,10 @@ func Test_ObjectsKeepMeta(t *testing.T) {
 func Test_BucketFileAndFolder(t *testing.T) {
 	// A bucket's file, /a, beside which a folder, /a/, is created, isn't
 	// mistaken for the folder, so the root, which lists both, is indexed
-	// again
+	// again, and both are indexed, of their keys
 	b := newBucket("a", "x.txt")
-	i, err := indexer.New("media", b, newStore(t), indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
+	s := newStore(t)
+	i, err := indexer.New("media", b, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0))
 	require.NoError(t, err)
 	run(t, i)
 	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/b/c.txt"}, Body: strings.NewReader("c")})
@@ -577,6 +666,17 @@ func Test_BucketFileAndFolder(t *testing.T) {
 		root, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
 		return err == nil && count(t, root) == "3"
 	}, 10*time.Second, 10*time.Millisecond, "a, a/ and x.txt")
+	require.Eventually(t, func() bool {
+		file, fileErr := s.Get(context.Background(), "media", "/a")
+		folder, folderErr := s.Get(context.Background(), "media", "/a/")
+		return fileErr == nil && !file.IsDir && folderErr == nil && folder.IsDir
+	}, 10*time.Second, 10*time.Millisecond, "the file, and the folder, are indexed")
+	file, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a"}})
+	require.NoError(t, err)
+	assert.False(t, file.IsDir, "the file is got of its key")
+	folder, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a/"}})
+	require.NoError(t, err)
+	assert.True(t, folder.IsDir, "and the folder of its")
 }
 
 func Test_ObjectsParentRetry(t *testing.T) {
@@ -628,7 +728,7 @@ func Test_GetFile(t *testing.T) {
 	assert.Zero(t, n, "a folder is the index's")
 	n, _ = gets(t, i, c, schema.GetObjectRequest{ObjectKey: x.ObjectKey, IfModifiedSince: time.Unix(1, 0)})
 	assert.Equal(t, int32(1), n, "a conditional request is the backend's")
-	require.NoError(t, s.Push(context.Background(), "media", store.Work{Path: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/x.txt", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
 	n, _ = gets(t, i, c, x)
 	assert.Equal(t, int32(1), n, "a file with work queued is the backend's")
 
@@ -664,6 +764,28 @@ func Test_GetFileUnwatched(t *testing.T) {
 		_, object := gets(t, i, &c.counting, x)
 		return *object.Size == int64(len("longer"))
 	}, 10*time.Second, 10*time.Millisecond, "it's scanned again")
+}
+
+func Test_RescanClearsError(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+
+	// A rescan, of a folder, or of the root, clears why the index last
+	// failed, as it starts
+	for _, folder := range []string{"/a/", "/"} {
+		state, err := s.State(context.Background(), "media")
+		require.NoError(t, err)
+		state.Error = "it failed"
+		require.NoError(t, s.SetState(context.Background(), "media", state))
+		require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: folder, Kind: store.KindRescan}))
+		require.Eventually(t, func() bool {
+			state, err := s.State(context.Background(), "media")
+			return err == nil && state.Error == ""
+		}, 10*time.Second, 10*time.Millisecond, "a rescan of %s clears it", folder)
+	}
 }
 
 func Test_Poll(t *testing.T) {

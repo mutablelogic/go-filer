@@ -103,13 +103,22 @@ func (self *Indexer) poll(ctx context.Context) error {
 }
 
 // apply queues the work of a change to the backend: a rescan of its folder,
-// or the index of an object which is created, updated or deleted
+// or the index of an object which is created, updated or deleted, of its
+// key, which a change of a folder's path, with a "/" after it, is, and
+// otherwise a file's, which is created, or updated, or, which is deleted,
+// those the index has of its path, as a change of what's deleted can't say
+// what it was
 func (self *Indexer) apply(ctx context.Context, event schema.Event) error {
 	switch event.EventType {
 	case schema.EventTypeRescan:
-		return self.queue.rescan(ctx, folderPath(event.Path))
-	case schema.EventTypeCreated, schema.EventTypeUpdated, schema.EventTypeDeleted:
-		return self.queue.index(ctx, folderPath(event.Path))
+		return self.queue.rescan(ctx, store.FolderKey(folderPath(event.Path)))
+	case schema.EventTypeCreated, schema.EventTypeUpdated:
+		if event.Path == "" || event.Path == "/" {
+			return self.queue.index(ctx, "/")
+		}
+		return self.queue.index(ctx, event.Path)
+	case schema.EventTypeDeleted:
+		return self.queue.index(ctx, self.keysAt(ctx, event.Path)...)
 	default:
 		return nil
 	}
@@ -167,15 +176,15 @@ func (self *Indexer) work(ctx context.Context) {
 func (self *Indexer) do(ctx context.Context, w store.Work) error {
 	switch w.Kind {
 	case store.KindRescan:
-		self.queue.rescanned(w.Path)
-		return self.scan(ctx, w.Path)
+		self.queue.rescanned(w.Key)
+		return self.scan(ctx, w.Key)
 	case store.KindIndex:
 		// The event of the change isn't kept, as changes are coalesced, so a
 		// folder is listed, as when it's created, which can have folders,
 		// such as one which is moved there
 		self.mu.Lock()
 		defer self.mu.Unlock()
-		return self.refresh(ctx, w.Path, schema.EventTypeCreated)
+		return self.refresh(ctx, w.Key)
 	default:
 		return nil
 	}

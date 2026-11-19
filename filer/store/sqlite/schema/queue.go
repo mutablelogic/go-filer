@@ -1,8 +1,6 @@
 package schema
 
 import (
-	"path"
-	"strings"
 	"time"
 
 	// Packages
@@ -28,7 +26,7 @@ type QueueDue struct {
 	Limit  int
 }
 
-// QueueKey selects work of a volume, of its path and kind, which is leased,
+// QueueKey selects work of a volume, of its key and kind, which is leased,
 // done, or failed, of its lease
 type QueueKey struct {
 	Volume string
@@ -44,15 +42,15 @@ type QueueFailure struct {
 	After time.Time
 }
 
-// QueuePending selects whether a path of a volume has work which would
+// QueuePending selects whether a key of a volume has work which would
 // change its index
 type QueuePending struct {
 	Volume  string
-	Path    string
-	Beneath bool // Work beneath the path too, of its listing
+	Key     string
+	Beneath bool // Work beneath the folder's key too, of its listing
 }
 
-// Pending is whether a path has work which would change its index
+// Pending is whether a key has work which would change its index
 type Pending bool
 
 // WorkList is the work which is read
@@ -62,21 +60,21 @@ type WorkList []store.Work
 // WRITERS
 
 // Insert binds the work, with the folders above it, of a rescan, or of an
-// index, and its own path, too, as a rescan of its path does it
+// index, and its own key, too, as a rescan of a folder's key does it
 func (push QueuePush) Insert(bind *sqlite.Bind) (string, error) {
 	bind.Set("volume", push.Volume)
-	bind.Set("path", push.Path)
+	bind.Set("key", push.Key)
 	bind.Set("kind", string(push.Kind))
 	bind.Set("after", push.After.UTC())
-	ancestors := Ancestors(push.Path)
+	ancestors := store.Ancestors(push.Key)
 	if push.Kind == store.KindRescan {
-		prefix, end := Subtree(push.Path)
-		bind.Set("prefix", prefix)
-		bind.Set("end", end)
+		lower, upper := store.Subtree(push.Key)
+		bind.Set("lower", lower)
+		bind.Set("upper", upper)
 		bind.Set("ancestors", ancestors)
 		return bind.Query("queue.push_rescan"), nil
 	}
-	bind.Set("ancestors", append(ancestors, push.Path))
+	bind.Set("ancestors", append(ancestors, push.Key))
 	return bind.Query("queue.push_index"), nil
 }
 
@@ -128,7 +126,7 @@ func (due QueueDue) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 // Select binds the work, of its lease, which is leased, done or failed
 func (key QueueKey) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 	bind.Set("volume", key.Volume)
-	bind.Set("path", key.Path)
+	bind.Set("key", key.Key)
 	bind.Set("kind", string(key.Kind))
 	switch op {
 	case sqlite.Update:
@@ -150,9 +148,8 @@ func (pending QueuePending) Select(bind *sqlite.Bind, op sqlite.Op) (string, err
 		return "", sqlite.ErrNotImplemented.Withf("queue pending: %v", op)
 	}
 	bind.Set("volume", pending.Volume)
-	bind.Set("path", pending.Path)
-	bind.Set("ancestors", append(Ancestors(pending.Path), pending.Path))
-	lower, upper := beneath(pending.Path)
+	bind.Set("ancestors", append(store.Ancestors(pending.Key), pending.Key))
+	lower, upper := store.Subtree(pending.Key)
 	bind.Set("beneath", pending.Beneath)
 	bind.Set("lower", lower)
 	bind.Set("upper", upper)
@@ -169,34 +166,10 @@ func (pending *Pending) Scan(row sqlite.Row) error {
 func (list *WorkList) Scan(row sqlite.Row) error {
 	var work store.Work
 	var kind string
-	if err := row.Scan(&work.Path, &kind, &work.After, &work.Attempts, &work.Error, &work.Leased); err != nil {
+	if err := row.Scan(&work.Key, &kind, &work.After, &work.Attempts, &work.Error, &work.Leased); err != nil {
 		return err
 	}
 	work.Kind = store.Kind(kind)
 	*list = append(*list, work)
 	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// PUBLIC FUNCTIONS
-
-// Ancestors returns the folders above a path, such as "/a" and "/" of
-// "/a/b", or none of the root, or of a path which isn't absolute
-func Ancestors(p string) []string {
-	result := []string{}
-	for p != "/" && p != "" && p != "." && strings.HasPrefix(p, "/") {
-		p = path.Dir(p)
-		result = append(result, p)
-	}
-	return result
-}
-
-// beneath returns the range of the paths beneath a folder, from the lower,
-// to before the upper, which are those after its path and "/", up to "0",
-// the byte after "/", so "/ab" isn't beneath "/a"
-func beneath(folder string) (string, string) {
-	if folder == "/" {
-		return "/", "0"
-	}
-	return folder + "/", folder + "0"
 }

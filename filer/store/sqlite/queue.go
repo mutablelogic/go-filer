@@ -102,7 +102,7 @@ func (self *Store) Done(ctx context.Context, volume string, work ...store.Work) 
 // failed, and makes it due again after the retry. Work which isn't claimed,
 // as it's pushed again since, isn't counted.
 func (self *Store) Failed(ctx context.Context, volume string, work store.Work, cause error, retry time.Duration) (err error) {
-	ctx, end := self.span(ctx, "Failed", attribute.String("arg.volume", volume), attribute.String("arg.path", work.Path))
+	ctx, end := self.span(ctx, "Failed", attribute.String("arg.volume", volume), attribute.String("arg.key", work.Key))
 	defer func() { end(err) }()
 	message := ""
 	if cause != nil {
@@ -115,33 +115,33 @@ func (self *Store) Failed(ctx context.Context, volume string, work store.Work, c
 	return nil
 }
 
-// Pending returns true when the path has work queued, or claimed, which
+// Pending returns true when the key has work queued, or claimed, which
 // would change its index: an index of it, or a rescan of it, or of a folder
 // above it
-func (self *Store) Pending(ctx context.Context, volume, path string) (_ bool, err error) {
-	ctx, end := self.span(ctx, "Pending", attribute.String("arg.volume", volume), attribute.String("arg.path", path))
+func (self *Store) Pending(ctx context.Context, volume, key string) (_ bool, err error) {
+	ctx, end := self.span(ctx, "Pending", attribute.String("arg.volume", volume), attribute.String("arg.key", key))
 	defer func() { end(err) }()
-	if err := store.ValidateWork(store.Work{Path: path, Kind: store.KindIndex}); err != nil {
+	if err := store.ValidateKey(key); err != nil {
 		return false, err
 	}
 	var pending schema.Pending
-	if err := self.conn.Get(ctx, &pending, schema.QueuePending{Volume: volume, Path: path}); err != nil {
+	if err := self.conn.Get(ctx, &pending, schema.QueuePending{Volume: volume, Key: key}); err != nil {
 		return false, storeErr(err)
 	}
 	return bool(pending), nil
 }
 
-// PendingBeneath returns true when the folder has work queued, or claimed,
-// which would change its listing: an index of it, or a rescan of it, or of
-// a folder above it, or an index, or a rescan, of a path beneath it
+// PendingBeneath returns true when the folder's key has work queued, or
+// claimed, which would change its listing: an index of it, or a rescan of
+// it, or of a folder above it, or an index, or a rescan, of a key beneath it
 func (self *Store) PendingBeneath(ctx context.Context, volume, folder string) (_ bool, err error) {
 	ctx, end := self.span(ctx, "PendingBeneath", attribute.String("arg.volume", volume), attribute.String("arg.folder", folder))
 	defer func() { end(err) }()
-	if err := store.ValidateWork(store.Work{Path: folder, Kind: store.KindRescan}); err != nil {
+	if err := store.ValidateFolderKey(folder); err != nil {
 		return false, err
 	}
 	var pending schema.Pending
-	if err := self.conn.Get(ctx, &pending, schema.QueuePending{Volume: volume, Path: folder, Beneath: true}); err != nil {
+	if err := self.conn.Get(ctx, &pending, schema.QueuePending{Volume: volume, Key: folder, Beneath: true}); err != nil {
 		return false, storeErr(err)
 	}
 	return bool(pending), nil

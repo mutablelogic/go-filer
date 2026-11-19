@@ -2,7 +2,7 @@ package schema
 
 import (
 	"encoding/json"
-	"strings"
+	"time"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer/filer/schema"
@@ -13,11 +13,11 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// ObjectKey selects an object of a volume, of its path, which is got, or
-// deleted, with every object beneath it
+// ObjectKey selects an object of a volume, of its key, which is got, or
+// deleted, with every object beneath it, of a folder's
 type ObjectKey struct {
 	Volume string
-	Path   string
+	Key    string
 }
 
 // ObjectPut is an object of a volume, which is put, with its metadata
@@ -37,19 +37,40 @@ type ObjectListRequest struct {
 // one
 type ObjectList []*filer.Object
 
+// RevisionListRequest selects the revisions of the files of a folder's key,
+// or beneath it
+type RevisionListRequest struct {
+	Volume    string
+	Folder    string
+	Recursive bool
+}
+
+// RevisionPut is the revision of a file of a volume, which is put
+type RevisionPut struct {
+	Volume   string
+	Key      string
+	Revision string
+	Now      time.Time
+}
+
+// Revisions is the revisions which are read, by their keys
+type Revisions map[string]string
+
 ////////////////////////////////////////////////////////////////////////////////
 // SELECTORS
 
 func (key ObjectKey) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 	bind.Set("volume", key.Volume)
-	bind.Set("path", key.Path)
+	bind.Set("key", key.Key)
 	switch op {
 	case sqlite.Get:
 		return bind.Query("object.get"), nil
 	case sqlite.Delete:
-		prefix, end := Subtree(key.Path)
-		bind.Set("prefix", prefix)
-		bind.Set("end", end)
+		_, folder := store.PathOf(key.Key)
+		lower, upper := store.Subtree(key.Key)
+		bind.Set("folder", folder)
+		bind.Set("lower", lower)
+		bind.Set("upper", upper)
 		return bind.Query("object.delete"), nil
 	}
 	return "", sqlite.ErrNotImplemented.Withf("object: %v", op)
@@ -62,8 +83,8 @@ func (req ObjectListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, er
 	bind.Set("volume", req.Volume)
 	bind.Set("after", req.After)
 	if req.Recursive {
-		prefix, end := Subtree(req.Parent)
-		bind.Set("where", "path > "+bind.Set("prefix", prefix)+" AND path < "+bind.Set("end", end))
+		lower, upper := store.Subtree(req.Parent)
+		bind.Set("where", "key > "+bind.Set("lower", lower)+" AND key < "+bind.Set("upper", upper))
 	} else {
 		bind.Set("where", "parent = "+bind.Set("parent", req.Parent))
 	}
@@ -73,8 +94,35 @@ func (req ObjectListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, er
 	return bind.Query("object.list"), nil
 }
 
+func (req RevisionListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	if op != sqlite.List {
+		return "", sqlite.ErrNotImplemented.Withf("revision list: %v", op)
+	}
+	bind.Set("volume", req.Volume)
+	lower, upper := store.Subtree(req.Folder)
+	where := "key > " + bind.Set("lower", lower) + " AND key < " + bind.Set("upper", upper)
+	if !req.Recursive {
+		where += " AND instr(substr(key, length(" + bind.Set("folder", req.Folder) + ") + 1), '/') = 0"
+	}
+	bind.Set("where", where)
+	return bind.Query("revision.list"), nil
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // WRITERS
+
+// Insert binds the revision of a file, which replaces the one it has
+func (put RevisionPut) Insert(bind *sqlite.Bind) (string, error) {
+	bind.Set("volume", put.Volume)
+	bind.Set("key", put.Key)
+	bind.Set("revision", put.Revision)
+	bind.Set("now", put.Now.UTC())
+	return bind.Query("revision.put"), nil
+}
+
+func (put RevisionPut) Update(*sqlite.Bind) error {
+	return sqlite.ErrNotImplemented.With("a revision is put")
+}
 
 // Insert binds an object, and its metadata, as a JSON array, and returns
 // the query which puts it, replacing the object at its path, and its
@@ -88,10 +136,7 @@ func (put ObjectPut) Insert(bind *sqlite.Bind) (string, error) {
 		}
 	}
 	bind.Set("volume", put.Volume)
-	bind.Set("path", put.Path)
 	bind.Set("key", store.Key(put.Object))
-	bind.Set("parent", store.Parent(put.Path))
-	bind.Set("is_dir", put.IsDir)
 	bind.Set("type", put.ContentType)
 	bind.Set("size", put.Size)
 	bind.Set("etag", put.ETag)
@@ -107,12 +152,25 @@ func (put ObjectPut) Update(*sqlite.Bind) error {
 ////////////////////////////////////////////////////////////////////////////////
 // READERS
 
-func (list *ObjectList) Scan(row sqlite.Row) error {
-	var object filer.Object
-	var meta string
-	if err := row.Scan(&object.Path, &object.IsDir, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta); err != nil {
+func (revisions *Revisions) Scan(row sqlite.Row) error {
+	var key, revision string
+	if err := row.Scan(&key, &revision); err != nil {
 		return err
 	}
+	if *revisions == nil {
+		*revisions = Revisions{}
+	}
+	(*revisions)[key] = revision
+	return nil
+}
+
+func (list *ObjectList) Scan(row sqlite.Row) error {
+	var object filer.Object
+	var key, meta string
+	if err := row.Scan(&key, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta); err != nil {
+		return err
+	}
+	object.Path, object.IsDir = store.PathOf(key)
 	if err := json.Unmarshal([]byte(meta), &object.Meta); err != nil {
 		return err
 	} else if len(object.Meta) == 0 {
@@ -120,15 +178,4 @@ func (list *ObjectList) Scan(row sqlite.Row) error {
 	}
 	*list = append(*list, &object)
 	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// PUBLIC FUNCTIONS
-
-// Subtree returns the range of the paths beneath a folder, which are after
-// its path with a "/", and before its path with the byte after "/", which
-// is "0", so "/a" is "/a/" to "/a0", and the root is "/" to "0"
-func Subtree(folder string) (string, string) {
-	prefix := strings.TrimSuffix(folder, "/") + "/"
-	return prefix, prefix[:len(prefix)-1] + "0"
 }

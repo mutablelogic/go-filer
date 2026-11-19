@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -131,7 +132,7 @@ func Test_Migrate(t *testing.T) {
 	require.NoError(t, err)
 	state, err := s.State(ctx, "media")
 	require.NoError(t, err)
-	assert.Equal(t, uint64(3), state.Folders)
+	assert.Zero(t, state.Folders, "its index is scanned again, as its objects are of keys")
 	assert.Zero(t, state.Files)
 	assert.Empty(t, state.Mode, "so it's scanned again before its files are listed from the index")
 	state.Files, state.Mode = 7, "objects"
@@ -141,9 +142,112 @@ func Test_Migrate(t *testing.T) {
 	assert.Equal(t, uint64(7), state.Files)
 	assert.Equal(t, "objects", state.Mode)
 	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
-	_, err = s.Get(ctx, "media", "/a")
+	_, err = s.Get(ctx, "media", "/a/")
 	assert.NoError(t, err)
-	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/a", Kind: store.KindIndex}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/a/", Kind: store.KindIndex}))
+}
+
+func Test_MigrateKeys(t *testing.T) {
+	// A database of version 5, whose objects, metadata, and work, were of
+	// paths, has them removed, and its volumes' state, so they're scanned
+	// again, and keeps its volumes
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "index.db")
+	db, err := ncruces.Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(ctx, `
+		CREATE TABLE volume (
+		  name TEXT PRIMARY KEY, url TEXT NOT NULL, enabled BOOLEAN NOT NULL,
+		  created_at TIMESTAMP NOT NULL, modified_at TIMESTAMP, status TEXT,
+		  folders INTEGER, files INTEGER, scan_mode TEXT, index_started TIMESTAMP, index_timestamp TIMESTAMP, error TEXT
+		);
+		CREATE TABLE object (volume TEXT NOT NULL, path TEXT NOT NULL, key TEXT NOT NULL, parent TEXT NOT NULL, is_dir BOOLEAN NOT NULL,
+		  type TEXT, size INTEGER, etag TEXT, modified_at TIMESTAMP, PRIMARY KEY (volume, path));
+		CREATE TABLE metadata (volume TEXT NOT NULL, path TEXT NOT NULL, namespace TEXT, key TEXT NOT NULL, value TEXT NOT NULL, text TEXT);
+		CREATE TABLE object_state (volume TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, etag TEXT, after TIMESTAMP NOT NULL,
+		  attempts INTEGER NOT NULL DEFAULT 0, leased_until TIMESTAMP, error TEXT, PRIMARY KEY (volume, path, kind));
+		INSERT INTO volume (name, url, enabled, created_at, status, folders, files, scan_mode)
+		VALUES ('media', 'file://media/mnt/media?index=objects', 1, '2026-11-19T12:00:00Z', 'ready', 3, 7, 'objects');
+		INSERT INTO object (volume, path, key, parent, is_dir) VALUES ('media', '/a', '/a/', '/', 1);
+		INSERT INTO object_state (volume, path, kind, after) VALUES ('media', '/a', 'index', '2026-11-19T12:00:00Z');
+		PRAGMA user_version = 5;
+	`))
+	require.NoError(t, db.Close())
+
+	s, err := sqlite.New(ctx, path)
+	require.NoError(t, err)
+	defer s.Close()
+	_, err = s.GetVolume(ctx, "media")
+	require.NoError(t, err)
+	state, err := s.State(ctx, "media")
+	require.NoError(t, err)
+	assert.Equal(t, schema.IndexState{}, state, "it's scanned again")
+	objects, err := s.List(ctx, "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, err)
+	assert.Empty(t, objects)
+	work, err := s.Claim(ctx, "media", []store.Kind{store.KindIndex, store.KindRescan}, 10, time.Hour)
+	require.NoError(t, err)
+	assert.Empty(t, work)
+
+	// Its objects are of keys, a file, and a folder, of the same path
+	require.NoError(t, s.Put(ctx, "media",
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}},
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}},
+	))
+	objects, err = s.List(ctx, "media", store.ListRequest{Parent: "/"})
+	require.NoError(t, err)
+	assert.Len(t, objects, 2)
+}
+
+func Test_MigrateRevisions(t *testing.T) {
+	// A database of version 6, whose queue hasn't the revisions of files,
+	// gets them, and keeps its objects
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "index.db")
+	db, err := ncruces.Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(ctx, `
+		CREATE TABLE volume (
+		  name TEXT PRIMARY KEY, url TEXT NOT NULL, enabled BOOLEAN NOT NULL,
+		  created_at TIMESTAMP NOT NULL, modified_at TIMESTAMP, status TEXT,
+		  folders INTEGER, files INTEGER, scan_mode TEXT, index_started TIMESTAMP, index_timestamp TIMESTAMP, error TEXT
+		);
+		CREATE TABLE object (
+		  volume TEXT NOT NULL REFERENCES volume (name) ON DELETE CASCADE ON UPDATE CASCADE,
+		  key TEXT NOT NULL CHECK (key GLOB '/*' AND key NOT GLOB '*//*'),
+		  type TEXT, size INTEGER, etag TEXT, modified_at TIMESTAMP,
+		  parent TEXT GENERATED ALWAYS AS (rtrim(rtrim(key, '/'), replace(rtrim(key, '/'), '/', ''))) VIRTUAL,
+		  PRIMARY KEY (volume, key)
+		);
+		CREATE TABLE object_state (
+		  volume TEXT NOT NULL REFERENCES volume (name) ON DELETE CASCADE ON UPDATE CASCADE,
+		  key TEXT NOT NULL, kind TEXT NOT NULL, etag TEXT, after TIMESTAMP NOT NULL,
+		  attempts INTEGER NOT NULL DEFAULT 0, leased_until TIMESTAMP, error TEXT,
+		  PRIMARY KEY (volume, key, kind)
+		);
+		INSERT INTO volume (name, url, enabled, created_at, status, folders, files, scan_mode)
+		VALUES ('media', 'file://media/mnt/media?index=objects', 1, '2026-11-19T12:00:00Z', 'ready', 1, 1, 'objects');
+		INSERT INTO object (volume, key) VALUES ('media', '/'), ('media', '/a.txt');
+		PRAGMA user_version = 6;
+	`))
+	require.NoError(t, db.Close())
+
+	s, err := sqlite.New(ctx, path)
+	require.NoError(t, err)
+	defer s.Close()
+	_, err = s.Get(ctx, "media", "/a.txt")
+	require.NoError(t, err, "its objects are kept")
+	revisions, err := s.Revisions(ctx, "media", "/", true)
+	require.NoError(t, err)
+	assert.Empty(t, revisions)
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "1"}))
+	revisions, err = s.Revisions(ctx, "media", "/", true)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"/a.txt": "1"}, revisions)
+	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.txt"}}))
+	revisions, err = s.Revisions(ctx, "media", "/", true)
+	require.NoError(t, err)
+	assert.Empty(t, revisions, "its triggers are created")
 }
 
 func Test_PutRollback(t *testing.T) {

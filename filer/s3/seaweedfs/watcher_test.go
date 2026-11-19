@@ -142,7 +142,7 @@ func Test_Watcher(t *testing.T) {
 		{EventType: schema.EventTypeCreated, ObjectKey: schema.ObjectKey{Path: "/d.jpg"}},
 		{EventType: schema.EventTypeDeleted, ObjectKey: schema.ObjectKey{Path: "/e.jpg"}},
 		{EventType: schema.EventTypeCreated, ObjectKey: schema.ObjectKey{Path: "/2026/f.jpg"}},
-		{EventType: schema.EventTypeCreated, ObjectKey: schema.ObjectKey{Path: "/dir"}},
+		{EventType: schema.EventTypeCreated, ObjectKey: schema.ObjectKey{Path: "/dir/"}},
 	} {
 		assert.Equal(t, want, receive(t, ch))
 	}
@@ -331,11 +331,12 @@ func Test_WatcherNoise(t *testing.T) {
 	tmp := ".::TMPNAME:D:169681%15451993254543216532:libraw"
 
 	// An update of a directory, such as its time, isn't a change, but one
-	// which is created, deleted or renamed is
+	// which is created, deleted or renamed is, of its key, with a "/" after
+	// its path
 	assert.Empty(t, watcher.events(change(1, dir, directory("libexif"), directory("libexif"), "")))
-	assert.Equal(t, []schema.Event{event(schema.EventTypeCreated, "/doc/libexif")}, watcher.events(change(1, dir, nil, directory("libexif"), "")))
-	assert.Equal(t, []schema.Event{event(schema.EventTypeDeleted, "/doc/libexif")}, watcher.events(change(1, dir, directory("libexif"), nil, "")))
-	assert.Equal(t, []schema.Event{event(schema.EventTypeDeleted, "/doc/a"), event(schema.EventTypeCreated, "/doc/b")}, watcher.events(change(1, dir, directory("a"), directory("b"), dir)))
+	assert.Equal(t, []schema.Event{event(schema.EventTypeCreated, "/doc/libexif/")}, watcher.events(change(1, dir, nil, directory("libexif"), "")))
+	assert.Equal(t, []schema.Event{event(schema.EventTypeDeleted, "/doc/libexif/")}, watcher.events(change(1, dir, directory("libexif"), nil, "")))
+	assert.Equal(t, []schema.Event{event(schema.EventTypeDeleted, "/doc/a/"), event(schema.EventTypeCreated, "/doc/b/")}, watcher.events(change(1, dir, directory("a"), directory("b"), dir)))
 
 	// An entry which is being written, with a temporary name, or beneath one,
 	// isn't a change, until it's renamed, when it's created
@@ -348,7 +349,7 @@ func Test_WatcherNoise(t *testing.T) {
 	} {
 		assert.Empty(t, watcher.events(response))
 	}
-	assert.Equal(t, []schema.Event{event(schema.EventTypeCreated, "/doc/libraw")}, watcher.events(change(1, dir, directory(tmp), directory("libraw"), dir)))
+	assert.Equal(t, []schema.Event{event(schema.EventTypeCreated, "/doc/libraw/")}, watcher.events(change(1, dir, directory(tmp), directory("libraw"), dir)))
 
 	// A file which is updated is a change
 	assert.Equal(t, []schema.Event{event(schema.EventTypeUpdated, "/doc/a.txt")}, watcher.events(change(1, dir, entry("a.txt"), entry("a.txt"), "")))

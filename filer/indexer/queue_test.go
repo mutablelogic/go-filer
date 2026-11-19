@@ -37,11 +37,11 @@ func Test_Queue(t *testing.T) {
 	q := newQueue(s, "media", time.Second, time.Minute)
 	q.now = func() time.Time { return now }
 
-	// The index of a path is due after the debounce, and wakes the worker
+	// The index of a key is due after the debounce, and wakes the worker
 	if err := q.index(ctx, "/a"); err != nil {
 		t.Fatal(err)
 	}
-	if w := s.last(); w.Kind != store.KindIndex || w.Path != "/a" || !w.After.Equal(now.Add(time.Second)) {
+	if w := s.last(); w.Kind != store.KindIndex || w.Key != "/a" || !w.After.Equal(now.Add(time.Second)) {
 		t.Errorf("index: %+v", w)
 	}
 	select {
@@ -68,7 +68,7 @@ func Test_Queue(t *testing.T) {
 	if w, want := s.last(), now.Add(50*time.Second); !w.After.Equal(want) {
 		t.Errorf("deferred: got %v, want %v", w.After, want)
 	}
-	if err := q.rescan(ctx, "/a"); err != nil {
+	if err := q.rescan(ctx, "/a/"); err != nil {
 		t.Fatal(err)
 	}
 	if w := s.last(); !w.After.Equal(now.Add(time.Second)) {

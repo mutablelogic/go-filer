@@ -3,6 +3,7 @@ package fs
 import (
 	"context"
 	iofs "io/fs"
+	"path"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -57,7 +58,9 @@ func (self *FS) WatchObjects(ctx context.Context, ch chan<- schema.Event) error 
 // PRIVATE METHODS
 
 // event returns the change to an object for the change to a file, or false
-// when the file isn't listed. The changes to files are the changes to
+// when the file isn't listed, of the object's key, which is its path, with a
+// "/" after a folder's, which is created, or updated, as a folder which is
+// deleted can't be checked. The changes to files are the changes to
 // objects, with the same values (see Test_eventTypes). A change within a package is an update to the
 // package, which is a file. A file which is created or updated must be one
 // which is listed, so not a socket, or a link, or beneath one, which is a
@@ -70,21 +73,25 @@ func (self *FS) event(event fsevents.Event) (schema.Event, bool) {
 	if pkg, ok := self.packageOf(name); ok {
 		name, eventType = pkg, schema.EventTypeUpdated
 	}
+	key := "/" + name
 	switch {
 	case eventType < schema.EventTypeCreated || eventType > schema.EventTypeRescan:
 		return schema.Event{}, false
 	case name != "" && self.skipPath(name):
 		return schema.Event{}, false
 	case name != "" && (eventType == schema.EventTypeCreated || eventType == schema.EventTypeUpdated):
-		if _, err := self.stat("watch", name); err != nil {
+		info, err := self.stat("watch", name)
+		if err != nil {
 			if _, err := iofs.Lstat(self.fs, name); err != nil {
 				return schema.Event{}, false
 			}
 			eventType = schema.EventTypeDeleted
+		} else if info.IsDir() && !self.isPackage(path.Base(name)) {
+			key += "/"
 		}
 	}
 	return schema.Event{
 		EventType: eventType,
-		ObjectKey: schema.ObjectKey{Path: "/" + name},
+		ObjectKey: schema.ObjectKey{Path: key},
 	}, true
 }
