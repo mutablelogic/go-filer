@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer/schema"
 	assert "github.com/stretchr/testify/assert"
 )
 
@@ -37,9 +38,11 @@ func Test_searchFunctions(t *testing.T) {
 func Test_Match(t *testing.T) {
 	// Each term is a phrase, of FTS5's, any of which match, which is the
 	// start of a word, of a term which ends with *, and what's in it isn't
-	// FTS5's syntax
-	assert.Equal(t, `"arvo part" OR "beethov"*`, Match([]string{" arvo part ", "beethov*"}))
-	assert.Equal(t, `"a ""note"" OR -b"`, Match([]string{`a "note" OR -b`}))
-	assert.Equal(t, "", Match([]string{"", " ", "*"}))
-	assert.Equal(t, "", Match(nil))
+	// FTS5's syntax, without those which are excluded
+	assert.Equal(t, `"arvo part" OR "beethov"*`, Match(filer.Query{Terms: []string{" arvo part ", "beethov*"}}))
+	assert.Equal(t, `"a ""note"" OR -b"`, Match(filer.Query{Terms: []string{`a "note" OR -b`}}))
+	assert.Equal(t, `("beethoven") NOT ("symphony" OR "op"*)`, Match(filer.Query{Terms: []string{"beethoven"}, Exclude: []string{"symphony", "op*"}}))
+	assert.Equal(t, "", Match(filer.Query{Exclude: []string{"symphony"}}), "of exclusions alone, nothing")
+	assert.Equal(t, "", Match(filer.Query{Terms: []string{"", " ", "*"}}))
+	assert.Equal(t, "", Match(filer.Query{}))
 }

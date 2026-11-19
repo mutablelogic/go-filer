@@ -20,6 +20,11 @@ type Query struct {
 	// word, or words, which are next to each other, or the start of a word,
 	// of a term which ends with *
 	Terms []string `json:"terms,omitempty" help:"What's searched for, any of which match, such as \"arvo part\", or the start of a word, such as beethov*"`
+
+	// Exclude are terms, as Terms are, which an object which matches
+	// doesn't, which are of the text's words which start with -, such as
+	// -symphony, which a query without terms has no use of
+	Exclude []string `json:"exclude,omitempty" help:"What an object which matches doesn't, such as symphony, of -symphony"`
 }
 
 var _ encoding.TextMarshaler = Query{}
@@ -67,38 +72,62 @@ type SearchObject struct {
 func (q Query) MarshalText() ([]byte, error) {
 	var words []string
 	for _, term := range q.Terms {
-		if term = strings.TrimSpace(term); term == "" {
-			continue
+		if word := queryWord(term); word != "" {
+			words = append(words, word)
 		}
-		prefix := strings.HasSuffix(term, "*")
-		if prefix {
-			term = strings.TrimRight(term, "*")
+	}
+	for _, term := range q.Exclude {
+		if word := queryWord(term); word != "" {
+			words = append(words, "-"+word)
 		}
-		if strings.ContainsAny(term, " \t\n\r\"'\\") {
-			term = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(term) + `"`
-		}
-		if prefix {
-			term += "*"
-		}
-		words = append(words, term)
 	}
 	return []byte(strings.Join(words, " ")), nil
+}
+
+// queryWord returns the word of a term, of a query's text, which is quoted,
+// when it has a space, a quote, or a backslash, which are escaped, or when
+// it starts with -, which is of an excluded term, with * after the quote, of
+// the start of a word, or none, of a term which is empty
+func queryWord(term string) string {
+	if term = strings.TrimSpace(term); term == "" {
+		return ""
+	}
+	prefix := strings.HasSuffix(term, "*")
+	if prefix {
+		term = strings.TrimRight(term, "*")
+	}
+	if strings.ContainsAny(term, " \t\n\r\"'\\") || strings.HasPrefix(term, "-") {
+		term = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(term) + `"`
+	}
+	if prefix {
+		term += "*"
+	}
+	return term
 }
 
 // UnmarshalText reads the query of text, of its terms, any of which match:
 // each word, which is what's between spaces, such as arvo, or
 // work@example.com, which is one term, a quoted phrase, such as "spiegel im
 // spiegel", and the start of a word, of one which ends with *, such as
-// beethov*, or "arvo pa"*. Returns an error of a quote which doesn't end.
+// beethov*, or "arvo pa"*, and those which an object doesn't match, of a
+// word which starts with -, such as -symphony, or -"im spiegel", but not a
+// hyphen within a word, such as Schleswig-Holstein. Returns an error of a
+// quote which doesn't end.
 func (q *Query) UnmarshalText(text []byte) error {
 	scanner := tokenizer.NewScanner(strings.NewReader(string(text)), tokenizer.Pos{})
 	var result Query
 	var word strings.Builder
+	exclude := false
 	end := func() {
 		if term := strings.TrimSpace(word.String()); term != "" && term != "*" {
-			result.Terms = append(result.Terms, term)
+			if exclude {
+				result.Exclude = append(result.Exclude, term)
+			} else {
+				result.Terms = append(result.Terms, term)
+			}
 		}
 		word.Reset()
+		exclude = false
 	}
 	for {
 		token := scanner.Next()
@@ -112,10 +141,15 @@ func (q *Query) UnmarshalText(text []byte) error {
 			return nil
 		case token.Kind == tokenizer.Space:
 			end()
+		case token.Kind == tokenizer.Minus && word.Len() == 0 && !exclude:
+			// A word which starts with - is excluded
+			exclude = true
 		case token.Kind == tokenizer.String:
 			// A quoted phrase is a term of its own, which is the start of a
-			// word, when * is after it
-			end()
+			// word, when * is after it, which is excluded, of - before it
+			if word.Len() > 0 {
+				end()
+			}
 			word.WriteString(token.Val)
 			if next := scanner.Peak(); next != nil && next.Kind == tokenizer.Multiply {
 				scanner.Next()

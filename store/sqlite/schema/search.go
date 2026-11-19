@@ -102,7 +102,7 @@ func (r SearchRefresh) Update(*sqlite.Bind) error {
 // Select binds the match of the search, of the query's terms, and its page,
 // of a list, or of a get, its count
 func (req SearchRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
-	bind.Set("match", Match(req.Query.Terms))
+	bind.Set("match", Match(req.Query))
 	switch op {
 	case sqlite.List:
 		limit := int64(-1)
@@ -142,11 +142,23 @@ func (count SearchCount) Rank(score float64) float32 {
 	return float32(min(score/count.Best, 1))
 }
 
-// Match returns the FTS5 query of terms, any of which match: each is a
+// Match returns the FTS5 query of a query's terms, any of which match, of
+// those which aren't excluded, or empty, without terms
+func Match(query filer.Query) string {
+	terms := phrases(query.Terms)
+	if terms == "" {
+		return ""
+	} else if exclude := phrases(query.Exclude); exclude != "" {
+		return "(" + terms + ") NOT (" + exclude + ")"
+	}
+	return terms
+}
+
+// phrases returns the FTS5 query of terms, any of which match: each is a
 // phrase, of its words, which are next to each other, so what's in it, such
 // as a quote, or a hyphen, isn't FTS5's syntax, or the start of a word, of a
 // term which ends with *, or empty, without terms
-func Match(terms []string) string {
+func phrases(terms []string) string {
 	var phrases []string
 	for _, term := range terms {
 		term = strings.TrimSpace(term)

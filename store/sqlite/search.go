@@ -21,7 +21,7 @@ func (self *Store) Search(ctx context.Context, req filer.SearchRequest) (_ *file
 	ctx, end := self.span(ctx, "Search", attribute.String("arg.req", types.Stringify(req)))
 	defer func() { end(err) }()
 	result := &filer.SearchResponse{SearchRequest: req, Body: []*filer.SearchObject{}}
-	if schema.Match(req.Query.Terms) == "" {
+	if schema.Match(req.Query) == "" {
 		return result, nil
 	}
 	var count schema.SearchCount

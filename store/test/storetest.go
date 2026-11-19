@@ -1224,6 +1224,13 @@ func testSearch(t *testing.T, s store.Store) {
 	got, _ = found(schema.SearchRequest{Query: schema.Query{Terms: []string{`"note"`, "a OR"}}})
 	assert.Equal(t, []string{"media:/Notes/a.txt"}, got[:1], "a term's syntax isn't FTS5's")
 
+	// But not those which match a term which is excluded
+	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}, Exclude: []string{"note"}}})
+	assert.Equal(t, []string{"media:/Arvo Pärt/", "media:/Arvo Pärt/01.mp3"}, got)
+	assert.Equal(t, uint64(2), count)
+	got, _ = found(schema.SearchRequest{Query: schema.Query{Exclude: []string{"note"}}})
+	assert.Empty(t, got, "of exclusions alone, nothing")
+
 	// Of a page, of how many match, of every page
 	one := uint64(1)
 	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}, OffsetLimit: schema.OffsetLimit{Offset: 1, Limit: &one}})
