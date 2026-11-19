@@ -4,8 +4,8 @@ package main
 
 import (
 	// Packages
-	indexer "github.com/mutablelogic/go-filer/filer/indexer"
-	memory "github.com/mutablelogic/go-filer/filer/indexer/memory"
+	store "github.com/mutablelogic/go-filer/filer/store"
+	memory "github.com/mutablelogic/go-filer/filer/store/memory"
 	server "github.com/mutablelogic/go-server"
 )
 
@@ -16,6 +16,7 @@ type IndexerFlags struct{}
 
 // store returns the store of the indexes of volumes, and the function
 // which closes it, when the server stops
-func (IndexerFlags) store(server.Cmd) (indexer.Store, func(), error) {
-	return memory.New(), func() {}, nil
+func (IndexerFlags) store(_ server.Cmd, opts ...store.Opt) (store.Store, func(), error) {
+	s, err := memory.New(opts...)
+	return s, func() {}, err
 }

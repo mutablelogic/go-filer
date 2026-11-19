@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 
 	// Packages
-	indexer "github.com/mutablelogic/go-filer/filer/indexer"
-	sqlite "github.com/mutablelogic/go-filer/filer/indexer/sqlite"
+	store "github.com/mutablelogic/go-filer/filer/store"
+	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
 	server "github.com/mutablelogic/go-server"
 )
 
@@ -19,11 +19,14 @@ type IndexerFlags struct{}
 
 // store returns the store of the indexes of volumes, and the function
 // which closes it, when the server stops
-func (IndexerFlags) store(ctx server.Cmd) (indexer.Store, func(), error) {
+func (IndexerFlags) store(ctx server.Cmd, opts ...store.Opt) (store.Store, func(), error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return nil, nil, err
 	}
-	store, err := sqlite.New(filepath.Join(cache, ctx.Name()+"-index.db"))
-	return store, func() {}, err
+	s, err := sqlite.New(ctx.Context(), filepath.Join(cache, ctx.Name()+"-index.db"), opts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, func() { _ = s.Close() }, nil
 }

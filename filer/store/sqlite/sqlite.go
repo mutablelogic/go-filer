@@ -1,0 +1,247 @@
+// Package sqlite is a store of volumes, and their indexes, in a SQLite
+// database, which is created when it doesn't exist. It has volumes, and the
+// state of their indexes, but not their objects yet (#71), whose methods
+// return ErrNotImplemented.
+package sqlite
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	// Packages
+	otel "github.com/mutablelogic/go-client/pkg/otel"
+	gofiler "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer/filer/schema"
+	store "github.com/mutablelogic/go-filer/filer/store"
+	schema "github.com/mutablelogic/go-filer/filer/store/sqlite/schema"
+	changes "github.com/mutablelogic/go-server/broadcaster/schema"
+	types "github.com/mutablelogic/go-server/pkg/types"
+	sqlite "github.com/mutablelogic/go-sqlite"
+	ncruces "github.com/mutablelogic/go-sqlite/ncruces"
+	attribute "go.opentelemetry.io/otel/attribute"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// Store is a store of volumes, and their indexes, in a SQLite database
+type Store struct {
+	pool    sqlite.PoolConn
+	conn    sqlite.Conn     // The pool's connection, with the schema's queries
+	queries *sqlite.Queries // The schema's queries, of their keys
+	opts    store.Opts
+}
+
+var _ store.Store = (*Store)(nil)
+
+////////////////////////////////////////////////////////////////////////////////
+// LIFECYCLE
+
+// New returns a store of the path of its database file, such as
+// /var/lib/filer/index.db, or sqlite.Memory, which is created when it
+// doesn't exist, with its schema. Its queries are traced with the options'
+// tracer, and the changes to its volumes are published to their
+// broadcaster, once they're committed.
+func New(ctx context.Context, path string, opts ...store.Opt) (_ *Store, err error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, gofiler.ErrBadParameter.With("the SQLite store needs its path")
+	}
+	o, err := store.Apply(opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Trace opening it, and creating its schema
+	ctx, end := otel.StartSpan(o.Tracer, ctx, "filer.store.sqlite.New", attribute.String("arg.path", path))
+	defer func() { end(err) }()
+
+	// Open the database, with the options
+	var dbopts []sqlite.Opt
+	if o.Tracer != nil {
+		dbopts = append(dbopts, sqlite.WithTracer(o.Tracer))
+	}
+	pool, err := ncruces.Open(ctx, path, dbopts...)
+	if err != nil {
+		return nil, storeErr(err)
+	}
+
+	// Create its schema, and bind its queries
+	queries, err := schema.NewQueries()
+	if err != nil {
+		return nil, errors.Join(err, pool.Close())
+	} else if err := schema.Create(ctx, pool); err != nil {
+		return nil, errors.Join(storeErr(err), pool.Close())
+	}
+	return &Store{pool: pool, conn: pool.WithQueries(queries), queries: queries, opts: o}, nil
+}
+
+// Close closes the database
+func (self *Store) Close() error {
+	return self.pool.Close()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - VOLUMES
+
+// PutVolume stores a volume, or replaces its URL, and whether it's enabled,
+// keeping its index, and returns it
+func (self *Store) PutVolume(ctx context.Context, volume filer.VolumeMeta) (_ *filer.Volume, err error) {
+	ctx, end := self.span(ctx, "PutVolume", attribute.String("arg.volume", types.Stringify(volume)))
+	defer func() { end(err) }()
+	if err := store.ValidateVolume(volume); err != nil {
+		return nil, err
+	}
+
+	// It's created, when it isn't stored, or updated, when it's modified, or
+	// else it's unchanged, and isn't published
+	var existing, result schema.VolumeList
+	if err := self.conn.Tx(ctx, func(conn sqlite.Conn) error {
+		if err := conn.Get(ctx, &existing, schema.VolumeName(volume.Name)); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+			return err
+		}
+		if err := conn.With(
+			sqlite.TraceSpanNameArg, "volume.put", "name", volume.Name, "url", volume.URL, "enabled", volume.Enabled, "now", time.Now().UTC(),
+		).Exec(ctx, self.queries.Query("volume.put")); err != nil {
+			return err
+		}
+		return conn.Get(ctx, &result, schema.VolumeName(volume.Name))
+	}); err != nil {
+		return nil, storeErr(err)
+	}
+	switch {
+	case len(existing) == 0:
+		self.opts.Publish(changes.ChangeCreate, result[0])
+	case !existing[0].Modified.Equal(result[0].Modified):
+		self.opts.Publish(changes.ChangeUpdate, result[0])
+	}
+	return result[0], nil
+}
+
+// GetVolume returns a volume, or ErrNotFound
+func (self *Store) GetVolume(ctx context.Context, name string) (_ *filer.Volume, err error) {
+	ctx, end := self.span(ctx, "GetVolume", attribute.String("arg.name", name))
+	defer func() { end(err) }()
+	var result schema.VolumeList
+	if err := self.conn.Get(ctx, &result, schema.VolumeName(name)); err != nil {
+		return nil, volumeErr(err, name)
+	}
+	return result[0], nil
+}
+
+// ListVolumes returns the volumes, in the order of their names
+func (self *Store) ListVolumes(ctx context.Context) (_ []*filer.Volume, err error) {
+	ctx, end := self.span(ctx, "ListVolumes")
+	defer func() { end(err) }()
+	result := schema.VolumeList{}
+	if err := self.conn.List(ctx, &result, schema.VolumeListRequest{}); err != nil {
+		return nil, storeErr(err)
+	}
+	return result, nil
+}
+
+// DeleteVolume removes a volume, with its index, or returns ErrNotFound
+func (self *Store) DeleteVolume(ctx context.Context, name string) (err error) {
+	ctx, end := self.span(ctx, "DeleteVolume", attribute.String("arg.name", name))
+	defer func() { end(err) }()
+	var deleted schema.VolumeList
+	if err := self.conn.Delete(ctx, &deleted, schema.VolumeName(name)); err != nil {
+		return volumeErr(err, name)
+	}
+	self.opts.Publish(changes.ChangeDelete, deleted[0])
+	return nil
+}
+
+// State returns the state of the volume's index, which is StatusNone when
+// it's never been indexed, or the volume isn't stored
+func (self *Store) State(ctx context.Context, volume string) (_ filer.IndexState, err error) {
+	ctx, end := self.span(ctx, "State", attribute.String("arg.volume", volume))
+	defer func() { end(err) }()
+	result := schema.VolumeState{Name: volume}
+	if err := self.conn.Get(ctx, &result, result); errors.Is(err, sqlite.ErrNotFound) {
+		return filer.IndexState{}, nil
+	} else if err != nil {
+		return filer.IndexState{}, storeErr(err)
+	}
+	return result.IndexState, nil
+}
+
+// SetState stores the state of the volume's index, or returns ErrNotFound
+// when the volume isn't stored
+func (self *Store) SetState(ctx context.Context, volume string, state filer.IndexState) (err error) {
+	ctx, end := self.span(ctx, "SetState", attribute.String("arg.volume", volume), attribute.String("arg.state", types.Stringify(state)))
+	defer func() { end(err) }()
+	var result schema.VolumeState
+	if err := self.conn.Update(ctx, &result, schema.VolumeState{Name: volume}, schema.VolumeState{Name: volume, IndexState: state}); err != nil {
+		return volumeErr(err, volume)
+	}
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - OBJECTS
+
+// Get isn't implemented yet (#71): the store has volumes, without their
+// objects
+func (self *Store) Get(context.Context, string, string) (*filer.Object, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) Put(context.Context, string, ...*filer.Object) error {
+	return errNotImplemented
+}
+
+func (self *Store) Delete(context.Context, string, string) error {
+	return errNotImplemented
+}
+
+func (self *Store) List(context.Context, string, store.ListRequest) ([]*filer.Object, error) {
+	return nil, errNotImplemented
+}
+
+// errNotImplemented is the error of the object methods, until they are
+var errNotImplemented = gofiler.ErrNotImplemented.With("the SQLite store's objects aren't implemented yet")
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// span starts a span of a method of the store, such as filer.store.sqlite.PutVolume,
+// with its arguments, when there's a tracer, and returns the function which
+// ends it, with the method's error. The spans of its queries are within it.
+func (self *Store) span(ctx context.Context, method string, attrs ...attribute.KeyValue) (context.Context, func(error)) {
+	return otel.StartSpan(self.opts.Tracer, ctx, "filer.store.sqlite."+method, attrs...)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE FUNCTIONS
+
+// volumeErr returns ErrNotFound, of the volume, when there's no row, or the
+// store's error
+func volumeErr(err error, volume string) error {
+	if errors.Is(err, sqlite.ErrNotFound) {
+		return gofiler.ErrNotFound.Withf("volume %q", volume)
+	}
+	return storeErr(err)
+}
+
+// storeErr returns the error of the database as the filer's, of its kind,
+// such as ErrNotFound, or ErrBadParameter, of a constraint
+func storeErr(err error) error {
+	var filerErr gofiler.Err
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &filerErr), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err
+	case errors.Is(err, sqlite.ErrNotFound):
+		return gofiler.ErrNotFound.With(err.Error())
+	case errors.Is(err, sqlite.ErrConflict):
+		return gofiler.ErrConflict.With(err.Error())
+	case errors.Is(err, sqlite.ErrBadParameter):
+		return gofiler.ErrBadParameter.With(err.Error())
+	case errors.Is(err, sqlite.ErrNotAvailable):
+		return gofiler.ErrServiceUnavailable.With(err.Error())
+	}
+	return gofiler.ErrInternalServerError.With(err.Error())
+}

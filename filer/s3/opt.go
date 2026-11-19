@@ -182,8 +182,9 @@ func (self opt) values(credentials bool) url.Values {
 	if self.token != "" && credentials {
 		values.Set(optSessionToken, self.token)
 	}
+	// An anonymous bucket is read-only, whatever its readonly option
 	values.Set(optAnonymous, strconv.FormatBool(self.anonymous))
-	values.Set(optReadonly, strconv.FormatBool(self.readonly))
+	values.Set(optReadonly, strconv.FormatBool(self.readonly || self.anonymous))
 	return values
 }
 

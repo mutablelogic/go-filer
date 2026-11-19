@@ -466,7 +466,10 @@ func Test_Registry_S3(t *testing.T) {
 	assert.Equal(t, "s3://bucket/photos/?anonymous=false&"+endpoint+"&name=photos&profile=&readonly=true&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
 	volume, err := r.Volume("photos")
 	require.NoError(t, err)
-	assert.Equal(t, schema.Volume{Name: "photos", URL: b.URL().String(), Readonly: true}, *volume)
+	assert.Equal(t, schema.Volume{VolumeMeta: schema.VolumeMeta{Name: "photos", URL: b.URL().String(), Enabled: true}}, *volume)
+	readonly, err := volume.Readonly()
+	require.NoError(t, err)
+	assert.True(t, readonly)
 	require.NoError(t, r.Del(context.Background(), "photos"))
 
 	// A bucket's name is the volume's, unless the name option is set
@@ -549,7 +552,9 @@ func Test_Registry_Credentials(t *testing.T) {
 	assert.NotContains(t, volume.URL, "access-key-id")
 	volume, err = r.Update(context.Background(), "bucket", url.Values{"readonly": {"true"}})
 	require.NoError(t, err)
-	assert.True(t, volume.Readonly)
+	readonly, err := volume.Readonly()
+	require.NoError(t, err)
+	assert.True(t, readonly)
 	assert.NotContains(t, volume.URL, "secret-access-key")
 }
 
@@ -886,7 +891,7 @@ func Test_Registry_Volume(t *testing.T) {
 	// isn't, or is being removed, isn't found
 	volume, err := r.Volume("media")
 	require.NoError(t, err)
-	assert.Equal(t, schema.Volume{Name: "media", URL: b.URL().String()}, *volume)
+	assert.Equal(t, schema.Volume{Name: "media", URL: b.URL().String(), Enabled: true}, *volume)
 	_, err = r.Volume("missing")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	require.NoError(t, r.Del(context.Background(), "media"))

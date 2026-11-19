@@ -8,7 +8,7 @@ import (
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
-	indexer "github.com/mutablelogic/go-filer/filer/indexer"
+	store "github.com/mutablelogic/go-filer/filer/store"
 	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	metric "go.opentelemetry.io/otel/metric"
 	trace "go.opentelemetry.io/otel/trace"
@@ -24,7 +24,7 @@ type opt struct {
 	broadcaster *broadcaster.Broadcaster
 	meter       metric.Meter
 	backendOpts gofiler.Opts  // the options every backend is created with: its tracer, credentials, and client options
-	indexStore  indexer.Store // where the indexes of volumes with the index option are kept
+	indexStore  store.Store   // where the indexes of volumes with the index option are kept
 	worker      string        // the name of the worker, which is in the metrics
 	debounce    time.Duration // how long a change is held, until its object is quiet
 }
@@ -154,7 +154,7 @@ func defaultWorker() string {
 // WithIndexerStore sets the store of the indexes of volumes, which a volume
 // with the index option, such as index=folders, is indexed in, by the
 // volume's name. Without it, a volume can't be indexed.
-func WithIndexerStore(store indexer.Store) Opt {
+func WithIndexerStore(store store.Store) Opt {
 	return func(o *opt) error {
 		if store == nil {
 			return gofiler.ErrBadParameter.With("the indexer's store can't be nil")

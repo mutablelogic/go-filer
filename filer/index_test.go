@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,9 +15,10 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	fsevents "github.com/mutablelogic/go-filer/filer/fs/fsevents"
 	indexer "github.com/mutablelogic/go-filer/filer/indexer"
-	memory "github.com/mutablelogic/go-filer/filer/indexer/memory"
-	sqlite "github.com/mutablelogic/go-filer/filer/indexer/sqlite"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	memory "github.com/mutablelogic/go-filer/filer/store/memory"
+	sqlite "github.com/mutablelogic/go-filer/filer/store/sqlite"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -26,12 +28,13 @@ import (
 func newIndexedRegistry(t *testing.T) (*Registry, *memory.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	store := memory.New()
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(store))
+	s, err := memory.New()
+	require.NoError(t, err)
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(s))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
-	return r, store, dir
+	return r, s, dir
 }
 
 // indexedURL returns a file URL of a new directory, with a folder, and an
@@ -53,7 +56,7 @@ func ready(t *testing.T, r *Registry, volume string) *schema.Volume {
 	require.Eventually(t, func() bool {
 		var err error
 		v, err = r.Volume(volume)
-		return err == nil && v.Index != nil && v.Index.Status == string(indexer.StatusReady)
+		return err == nil && v.Index != nil && v.Index.Status == schema.IndexStatusReady
 	}, 10*time.Second, 5*time.Millisecond, "the index of %q isn't ready", volume)
 	return v
 }
@@ -108,7 +111,7 @@ func Test_Registry_IndexOption(t *testing.T) {
 }
 
 func Test_Registry_Indexed(t *testing.T) {
-	r, store, dir := newIndexedRegistry(t)
+	r, s, dir := newIndexedRegistry(t)
 
 	// A volume with index=folders is indexed, by the registry, and its URL,
 	// and index, say so
@@ -129,9 +132,9 @@ func Test_Registry_Indexed(t *testing.T) {
 	assert.Nil(t, v.Index)
 	_, indexed := get(r, "media").(*indexer.Indexer)
 	assert.False(t, indexed)
-	state, err := store.State(context.Background(), "media")
+	state, err := s.State(context.Background(), "media")
 	require.NoError(t, err)
-	assert.Equal(t, indexer.StatusNone, state.Status, "its index is removed")
+	assert.Equal(t, schema.IndexStatusNone, state.Status, "its index is removed")
 	_, err = r.Update(context.Background(), "media", url.Values{indexer.IndexParam: {"folders"}})
 	require.NoError(t, err)
 	ready(t, r, "media")
@@ -140,16 +143,18 @@ func Test_Registry_Indexed(t *testing.T) {
 	_, err = r.Update(context.Background(), "media", url.Values{"readonly": {"true"}})
 	require.NoError(t, err)
 	v = ready(t, r, "media")
-	assert.True(t, v.Readonly)
+	readonly, err := v.Readonly()
+	require.NoError(t, err)
+	assert.True(t, readonly)
 	_, err = r.Update(context.Background(), "media", url.Values{indexer.IndexParam: {"everything"}})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
 	// Deleting it removes its index
 	require.NoError(t, r.Del(context.Background(), "media"))
-	state, err = store.State(context.Background(), "media")
+	state, err = s.State(context.Background(), "media")
 	require.NoError(t, err)
-	assert.Equal(t, indexer.StatusNone, state.Status)
-	_, err = store.Get(context.Background(), "media", "/")
+	assert.Equal(t, schema.IndexStatusNone, state.Status)
+	_, err = s.Get(context.Background(), "media", "/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }
 
@@ -211,8 +216,8 @@ func Test_Registry_ListType(t *testing.T) {
 	_, err = r.Add(context.Background(), "media", indexedURL(t, dir, "media", "folders"))
 	require.NoError(t, err)
 	ready(t, r, "media")
-	store := r.indexStore
-	require.NoError(t, store.Put(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
+	s := r.indexStore
+	require.NoError(t, s.Put(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/only-in-the-index"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
 	for _, typ := range []string{"inode", "directory", "inode/directory", "inode/directory; charset=binary"} {
 		assert.Equal(t, []string{"/a", "/a/b", "/only-in-the-index"}, list("media", typ), typ)
 	}
@@ -220,7 +225,7 @@ func Test_Registry_ListType(t *testing.T) {
 }
 
 func Test_Registry_DelCancelledIndex(t *testing.T) {
-	r, store, dir := newIndexedRegistry(t)
+	r, s, dir := newIndexedRegistry(t)
 	_, err := r.Add(context.Background(), "media", indexedURL(t, dir, "media", "folders"))
 	require.NoError(t, err)
 	ready(t, r, "media")
@@ -240,28 +245,73 @@ func Test_Registry_DelCancelledIndex(t *testing.T) {
 		r.RUnlock()
 		return !registered
 	}, 10*time.Second, 5*time.Millisecond)
-	state, err := store.State(context.Background(), "media")
+	state, err := s.State(context.Background(), "media")
 	require.NoError(t, err)
-	assert.Equal(t, indexer.StatusNone, state.Status, "its index is removed before its name is released")
-	_, err = store.Get(context.Background(), "media", "/")
+	assert.Equal(t, schema.IndexStatusNone, state.Status, "its index is removed before its name is released")
+	_, err = s.Get(context.Background(), "media", "/")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }
 
 func Test_Registry_IndexStoreError(t *testing.T) {
-	// A store whose state can't be read, such as one which isn't
-	// implemented, is why the volume isn't indexed, in its index
-	store, err := sqlite.New("index.sqlite")
+	// A store which can't index, such as one whose objects aren't
+	// implemented, is why the volume isn't indexed, in its index, while the
+	// volume is stored
+	s, err := sqlite.New(context.Background(), gosqlite.Memory)
 	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
 	dir := t.TempDir()
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(store))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithIndexerStore(s))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
 	_, err = r.Add(context.Background(), "media", indexedURL(t, dir, "media", "folders"))
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		v, err := r.Volume("media")
+		return err == nil && v.Index != nil && strings.Contains(v.Index.Error, "implemented")
+	}, 10*time.Second, 5*time.Millisecond, "the index has the store's error")
 	v, err := r.Volume("media")
 	require.NoError(t, err)
-	require.NotNil(t, v.Index)
 	assert.Equal(t, "folders", v.Index.Mode)
-	assert.Contains(t, v.Index.Error, "isn't implemented")
+	volume, err := s.GetVolume(context.Background(), "media")
+	require.NoError(t, err)
+	assert.Contains(t, volume.URL, "index=folders")
+}
+
+func Test_Registry_StoredVolumes(t *testing.T) {
+	r, s, dir := newIndexedRegistry(t)
+	ctx := context.Background()
+
+	// A volume which is added is stored, enabled, with its URL, as the
+	// registry has it, with its index option, whether it's indexed or not
+	_, err := r.Add(ctx, "plain", indexedURL(t, dir, "plain", ""))
+	require.NoError(t, err)
+	_, err = r.Add(ctx, "media", indexedURL(t, dir, "media", "folders"))
+	require.NoError(t, err)
+	volumes, err := s.ListVolumes(ctx)
+	require.NoError(t, err)
+	require.Len(t, volumes, 2)
+	assert.Equal(t, "media", volumes[0].Name)
+	assert.Contains(t, volumes[0].URL, "index=folders")
+	assert.Contains(t, volumes[1].URL, "index=none")
+	for _, volume := range volumes {
+		assert.True(t, volume.Enabled)
+		registered, err := r.Volume(volume.Name)
+		require.NoError(t, err)
+		assert.Equal(t, registered.URL, volume.URL)
+	}
+
+	// An update stores its options
+	_, err = r.Update(ctx, "media", url.Values{"readonly": {"true"}, indexer.IndexParam: {"none"}})
+	require.NoError(t, err)
+	volume, err := s.GetVolume(ctx, "media")
+	require.NoError(t, err)
+	assert.Contains(t, volume.URL, "index=none")
+	assert.Contains(t, volume.URL, "readonly=true")
+	assert.False(t, volume.Modified.IsZero())
+
+	// Deleting it removes it from the store
+	require.NoError(t, r.Del(ctx, "media"))
+	_, err = s.GetVolume(ctx, "media")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }

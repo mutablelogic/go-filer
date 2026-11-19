@@ -6,6 +6,7 @@ import (
 
 	// Packages
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	store "github.com/mutablelogic/go-filer/filer/store"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -15,7 +16,7 @@ import (
 // it's ready, the folders of the backend's listing
 type folderIterator struct {
 	indexer *Indexer
-	req     ListRequest
+	req     store.ListRequest
 	page    []*schema.Object
 	done    bool
 
@@ -57,7 +58,7 @@ func (self *folderIterator) Next(ctx context.Context) (*schema.Object, error) {
 			self.done = true
 		}
 		if len(page) > 0 {
-			self.req.After = Key(page[len(page)-1])
+			self.req.After = store.Key(page[len(page)-1])
 		}
 		self.page = page
 	}

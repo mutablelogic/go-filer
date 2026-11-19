@@ -18,6 +18,7 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	store "github.com/mutablelogic/go-filer/filer/store"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -33,7 +34,7 @@ type Indexer struct {
 	gofiler.Filer
 	opt
 	name  string
-	store Store
+	store store.Store
 
 	// mu serialises changes to the index, of Run, and of writes and
 	// deletes, so a folder isn't reconciled with two listings at once
@@ -72,16 +73,16 @@ const (
 
 // New returns an indexer of the volume's backend, whose index is in the
 // store, which Run builds, and maintains
-func New(name string, backend gofiler.Filer, store Store, opts ...Opt) (*Indexer, error) {
+func New(name string, backend gofiler.Filer, s store.Store, opts ...Opt) (*Indexer, error) {
 	switch {
 	case !types.IsIdentifier(name):
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	case backend == nil:
 		return nil, gofiler.ErrBadParameter.With("an indexer needs a backend")
-	case store == nil:
+	case s == nil:
 		return nil, gofiler.ErrBadParameter.With("an indexer needs a store")
 	}
-	self := &Indexer{Filer: backend, name: name, store: store}
+	self := &Indexer{Filer: backend, name: name, store: s}
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
 	}
@@ -120,7 +121,7 @@ func (self *Indexer) Run(ctx context.Context) error {
 }
 
 // State returns the state of the index
-func (self *Indexer) State(ctx context.Context) (State, error) {
+func (self *Indexer) State(ctx context.Context) (schema.IndexState, error) {
 	return self.store.State(ctx, self.name)
 }
 
@@ -235,7 +236,7 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 	if req.StartAfter != "" {
 		after = req.StartAfter
 	}
-	return &folderIterator{indexer: self, req: ListRequest{Parent: parent, Recursive: req.Recursive, After: after, Limit: listPage}}, nil
+	return &folderIterator{indexer: self, req: store.ListRequest{Parent: parent, Recursive: req.Recursive, After: after, Limit: listPage}}, nil
 }
 
 // ListObjects lists objects of the backend, or, when the request is only
@@ -384,7 +385,7 @@ func (self *Indexer) failed(ctx context.Context, err error) {
 // ready returns true when the index is ready, so folders are read from it
 func (self *Indexer) ready(ctx context.Context) bool {
 	state, err := self.store.State(ctx, self.name)
-	return err == nil && state.Status == StatusReady
+	return err == nil && state.Status == schema.IndexStatusReady
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -414,8 +415,8 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 	if whole {
 		// A volume which is ready is listed from its index while it's
 		// scanned again
-		if state.Status != StatusReady {
-			state.Status = StatusScanning
+		if state.Status != schema.IndexStatusReady {
+			state.Status = schema.IndexStatusScanning
 		}
 		state.Folders, state.Started, state.Error = 0, time.Now(), ""
 		if err := self.store.SetState(ctx, self.name, state); err != nil {
@@ -440,7 +441,7 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		return err
 	}
 	if whole {
-		state.Status, state.Folders, state.Scanned = StatusReady, uint64(len(t.folders)+1), time.Now()
+		state.Status, state.Folders, state.Scanned = schema.IndexStatusReady, uint64(len(t.folders)+1), time.Now()
 		return self.store.SetState(ctx, self.name, state)
 	}
 	return nil
@@ -470,7 +471,7 @@ func (self *Indexer) list(ctx context.Context, root string, progress func(int)) 
 		} else if err != nil {
 			return t, err
 		}
-		t.counts[Parent(child.Path)]++
+		t.counts[store.Parent(child.Path)]++
 		if child.IsDir {
 			t.folders[child.Path] = child
 			if _, exists := t.counts[child.Path]; !exists {
@@ -609,7 +610,7 @@ func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.Eve
 			}
 		}
 	}
-	for parent := Parent(p); parent != ""; parent = Parent(parent) {
+	for parent := store.Parent(p); parent != ""; parent = store.Parent(parent) {
 		_, err := self.store.Get(ctx, self.name, parent)
 		indexed := err == nil
 		if err := self.index(ctx, parent); errors.Is(err, fs.ErrNotExist) {
@@ -628,16 +629,16 @@ func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.Eve
 
 // children returns every object of a folder of the index
 func (self *Indexer) children(ctx context.Context, folder string) ([]*schema.Object, error) {
-	return self.all(ctx, ListRequest{Parent: folder, Limit: listPage})
+	return self.all(ctx, store.ListRequest{Parent: folder, Limit: listPage})
 }
 
 // beneath returns every object beneath a folder of the index
 func (self *Indexer) beneath(ctx context.Context, folder string) ([]*schema.Object, error) {
-	return self.all(ctx, ListRequest{Parent: folder, Recursive: true, Limit: listPage})
+	return self.all(ctx, store.ListRequest{Parent: folder, Recursive: true, Limit: listPage})
 }
 
 // all returns every object of a listing of the index, a page at a time
-func (self *Indexer) all(ctx context.Context, req ListRequest) ([]*schema.Object, error) {
+func (self *Indexer) all(ctx context.Context, req store.ListRequest) ([]*schema.Object, error) {
 	var result []*schema.Object
 	for {
 		page, err := self.store.List(ctx, self.name, req)
@@ -648,7 +649,7 @@ func (self *Indexer) all(ctx context.Context, req ListRequest) ([]*schema.Object
 		if len(page) < req.Limit {
 			return result, nil
 		}
-		req.After = Key(page[len(page)-1])
+		req.After = store.Key(page[len(page)-1])
 	}
 }
 

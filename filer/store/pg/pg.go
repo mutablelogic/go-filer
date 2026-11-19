@@ -7,8 +7,8 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	indexer "github.com/mutablelogic/go-filer/filer/indexer"
 	schema "github.com/mutablelogic/go-filer/filer/schema"
+	store "github.com/mutablelogic/go-filer/filer/store"
 	pg "github.com/mutablelogic/go-pg"
 )
 
@@ -18,9 +18,10 @@ import (
 // Store is an index in a Postgres database, of a pool of its connections
 type Store struct {
 	conn pg.PoolConn
+	opts store.Opts
 }
 
-var _ indexer.Store = (*Store)(nil)
+var _ store.Store = (*Store)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -28,15 +29,35 @@ var _ indexer.Store = (*Store)(nil)
 // New returns an index store of a pool of connections to its database,
 // such as go-pg's pkg/cmd PostgresFlags' Connect returns, which its owner
 // closes
-func New(conn pg.PoolConn) (*Store, error) {
+func New(conn pg.PoolConn, opts ...store.Opt) (*Store, error) {
 	if conn == nil {
 		return nil, gofiler.ErrBadParameter.With("the Postgres index store needs a connection to its database")
 	}
-	return &Store{conn: conn}, nil
+	o, err := store.Apply(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{conn: conn, opts: o}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+func (self *Store) PutVolume(context.Context, schema.VolumeMeta) (*schema.Volume, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) GetVolume(context.Context, string) (*schema.Volume, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) ListVolumes(context.Context) ([]*schema.Volume, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) DeleteVolume(context.Context, string) error {
+	return errNotImplemented
+}
 
 func (self *Store) Get(context.Context, string, string) (*schema.Object, error) {
 	return nil, errNotImplemented
@@ -50,15 +71,15 @@ func (self *Store) Delete(context.Context, string, string) error {
 	return errNotImplemented
 }
 
-func (self *Store) List(context.Context, string, indexer.ListRequest) ([]*schema.Object, error) {
+func (self *Store) List(context.Context, string, store.ListRequest) ([]*schema.Object, error) {
 	return nil, errNotImplemented
 }
 
-func (self *Store) State(context.Context, string) (indexer.State, error) {
-	return indexer.State{}, errNotImplemented
+func (self *Store) State(context.Context, string) (schema.IndexState, error) {
+	return schema.IndexState{}, errNotImplemented
 }
 
-func (self *Store) SetState(context.Context, string, indexer.State) error {
+func (self *Store) SetState(context.Context, string, schema.IndexState) error {
 	return errNotImplemented
 }
 

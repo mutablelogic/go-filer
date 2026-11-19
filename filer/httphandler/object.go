@@ -331,7 +331,11 @@ func (w *trackingWriter) Unwrap() http.ResponseWriter {
 // be uploaded or deleted, or it isn't mounted
 func readonly(registry *filer.Registry, name string) bool {
 	volume, err := registry.Volume(name)
-	return err != nil || volume.Readonly
+	if err != nil {
+		return true
+	}
+	readonly, err := volume.Readonly()
+	return err != nil || readonly
 }
 
 // objectPut writes the request's body to the file at the path, which is
