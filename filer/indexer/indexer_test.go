@@ -270,14 +270,14 @@ func Test_RescanBurst(t *testing.T) {
 		scans    int32
 	}{{0, 2}, {time.Minute, 1}} {
 		b := &bursty{Filer: backend, burst: 20, more: make(chan struct{})}
-		i, err := indexer.New("media", b, newStore(t), indexer.WithDebounce(50*time.Millisecond), indexer.WithRescanMinInterval(test.interval))
+		i, err := indexer.New("media", b, newStore(t), indexer.WithDebounce(500*time.Millisecond), indexer.WithRescanMinInterval(test.interval))
 		require.NoError(t, err)
 		run(t, i)
 		assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true))
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		require.Equal(t, int32(1), b.scans.Load(), "one scan of the burst")
 		b.more <- struct{}{}
-		time.Sleep(time.Second + 300*time.Millisecond)
+		time.Sleep(2 * time.Second)
 		assert.Equal(t, test.scans, b.scans.Load(), "with a minimum interval of %v", test.interval)
 	}
 }

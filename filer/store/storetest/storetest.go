@@ -474,11 +474,14 @@ func testQueue(t *testing.T, s store.Store) {
 	assert.Empty(t, paths, "it's done")
 
 	// Work which is pushed again, while it's claimed, isn't done, and is
-	// claimed again
+	// claimed again, when the push is due
 	require.NoError(t, s.Push(ctx, "media", index("/a")))
 	work, _ = claimed(t, s, all, 10)
-	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/a", Kind: store.KindIndex, After: time.Now().Add(time.Hour)}))
 	require.NoError(t, s.Done(ctx, "media", work...))
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths, "it's due when the push is")
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
 	work, paths = claimed(t, s, all, 10)
 	assert.Equal(t, []string{"index /a"}, paths, "it's pushed again")
 

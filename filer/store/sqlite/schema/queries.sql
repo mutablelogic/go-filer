@@ -74,7 +74,8 @@ WHERE volume = @volume AND (path = @path OR (path > @prefix AND path < @end));
 -- The index of a path, unless a rescan of it, or a folder above it, is
 -- queued, and isn't claimed, as a rescan which is claimed can have passed
 -- it, which is due at the earlier of the two, so work which is pushed again
--- and again isn't put off, and is claimed again, when it's claimed
+-- and again isn't put off, or, when it's claimed, is claimed again, when
+-- the push is due
 INSERT INTO object_state (volume, path, kind, after)
 SELECT @volume, @path, @kind, @after
 WHERE NOT EXISTS (
@@ -83,7 +84,11 @@ WHERE NOT EXISTS (
     AND (leased_until IS NULL OR julianday(leased_until) <= julianday('now'))
 )
 ON CONFLICT (volume, path, kind) DO UPDATE SET
-  after = CASE WHEN julianday(excluded.after) < julianday(after) THEN excluded.after ELSE after END,
+  after = CASE
+    WHEN leased_until IS NOT NULL AND julianday(leased_until) > julianday('now') THEN excluded.after
+    WHEN julianday(excluded.after) < julianday(after) THEN excluded.after
+    ELSE after
+  END,
   leased_until = NULL;
 
 -- queue.push_rescan
@@ -104,7 +109,11 @@ WHERE NOT EXISTS (
     AND (leased_until IS NULL OR julianday(leased_until) <= julianday('now'))
 )
 ON CONFLICT (volume, path, kind) DO UPDATE SET
-  after = CASE WHEN julianday(excluded.after) < julianday(after) THEN excluded.after ELSE after END,
+  after = CASE
+    WHEN leased_until IS NOT NULL AND julianday(leased_until) > julianday('now') THEN excluded.after
+    WHEN julianday(excluded.after) < julianday(after) THEN excluded.after
+    ELSE after
+  END,
   leased_until = NULL;
 
 -- queue.due
