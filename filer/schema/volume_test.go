@@ -163,7 +163,7 @@ func Test_VolumeCells(t *testing.T) {
 	}
 	for want, volume := range map[string]Volume{
 		"none":                               v,
-		"scanning, 3 folders":                indexed(IndexState{Status: IndexStatusScanning, Folders: 3}),
+		"idle, 3 folders":                    indexed(IndexState{Status: IndexStatusScanning, Folders: 3}),
 		"scanning, 3 folders, 2 files":       objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseScanning, Folders: 3, Files: 2}),
 		"indexing, 3 folders, 2 files":       objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseIndexing, Folders: 3, Files: 2}),
 		"idle, 12 folders":                   indexed(IndexState{Status: IndexStatusReady, Folders: 12}),

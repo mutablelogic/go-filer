@@ -10,8 +10,10 @@ import (
 // ScanStore keeps what a scan of a folder of a volume has seen, of the
 // backend's listing, so a volume's objects aren't held in memory while it's
 // scanned, which the scan sweeps the index of, and compares the index's files
-// with. A volume is scanned one folder at a time, so what's seen beneath a
-// folder is of its scan.
+// with. A volume is scanned one folder at a time, by one worker, so what's
+// seen beneath a folder is of its scan: the indexer of a volume is its only
+// worker, as a volume is indexed by one process. A store which is shared by
+// processes, such as Postgres, needs a lock of a volume's scans (#72).
 type ScanStore interface {
 	// Seen records the keys which a scan has seen, with the revisions of
 	// their listings (see Revision), which a folder's is empty, or returns

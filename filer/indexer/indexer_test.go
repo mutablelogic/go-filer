@@ -1136,6 +1136,28 @@ func Test_CatchUpChanges(t *testing.T) {
 	assert.Equal(t, int32(2), l.gets.Load(), "only /x.txt, and /e/f/g.txt, are got")
 }
 
+func Test_RefreshFolderRetry(t *testing.T) {
+	backend, dir := newBackend(t)
+	s := newStore(t)
+
+	// A folder which is new, whose folder above it fails to be indexed, is
+	// retried, with the folders above it, rather than being rescanned on its
+	// own, as queueing its rescan replaces the work which would be retried
+	f := &flaky{Filer: backend, fail: map[string]int{"/new/": 1}}
+	i, err := indexer.New("media", f, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0), indexer.WithRetry(10*time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "new", "deep"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "new", "deep", "f.txt"), []byte("f"), 0o644))
+	require.NoError(t, s.Push(context.Background(), "media", store.Work{Key: "/new/deep/", Kind: store.KindIndex}))
+	require.Eventually(t, func() bool {
+		_, fileErr := s.Get(context.Background(), "media", "/new/deep/f.txt")
+		_, folderErr := s.Get(context.Background(), "media", "/new/")
+		root, rootErr := s.Get(context.Background(), "media", "/")
+		return fileErr == nil && folderErr == nil && rootErr == nil && count(t, root) == "4"
+	}, 10*time.Second, 10*time.Millisecond, "the folders above it are indexed, and it's rescanned")
+}
+
 func Test_Poll(t *testing.T) {
 	backend, dir := newBackend(t)
 

@@ -829,6 +829,7 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		return indexErr
 	}
 	var full *schema.Object
+	rescan := false
 	if p, folder := store.PathOf(key); folder {
 		object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: key}})
 		switch {
@@ -839,9 +840,7 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 		case err != nil:
 			return err
 		default:
-			if err := self.queue.rescan(ctx, key); err != nil {
-				return err
-			}
+			rescan = true
 		}
 	} else if self.mode == ModeObjects {
 		// A file which is new is stored once its folder is indexed, so a
@@ -879,6 +878,13 @@ func (self *Indexer) refresh(ctx context.Context, key string) error {
 	}
 	if full != nil {
 		return self.put(ctx, []*schema.Object{full})
+	}
+
+	// A folder which is there is rescanned, which is queued once the
+	// folders above it are indexed, as queueing it replaces its index,
+	// which is the work this is, which isn't retried, when they fail
+	if rescan {
+		return self.queue.rescan(ctx, key)
 	}
 	return nil
 }

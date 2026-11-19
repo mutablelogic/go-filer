@@ -225,9 +225,7 @@ func (v Volume) IndexStatus() string {
 		// first, or of its last scan, when it's ready, which is idle, when
 		// it isn't scanned
 		phase := string(v.Index.Phase)
-		if phase == "" && v.Index.Status == IndexStatusScanning {
-			phase = string(IndexPhaseScanning)
-		} else if phase == "" {
+		if phase == "" {
 			phase = "idle"
 		}
 		result = fmt.Sprintf("%s, %d folders", phase, v.Index.Folders)
