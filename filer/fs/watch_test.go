@@ -157,15 +157,20 @@ func Test_WatchObjects(t *testing.T) {
 		}
 	})
 
-	t.Run("BrokenLink", func(t *testing.T) {
-		// A link which is broken isn't listed, so creating it isn't sent
+	t.Run("Link", func(t *testing.T) {
+		// A link isn't an object, so creating one is a deletion of its path,
+		// as it can replace an object, such as a link renamed over a file
 		dir, events := watchVolume(t)
-		if err := os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "broken")); err != nil {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "c.txt"), []byte("c"), 0o600))
+		receive(t, events, "/c.txt")
+		if err := os.Symlink("missing", filepath.Join(dir, ".staged")); err != nil {
 			t.Skipf("can't create a link: %v", err)
 		}
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "c.txt"), nil, 0o600))
-		for _, event := range receive(t, events, "/c.txt") {
-			assert.Equal(t, "/c.txt", event.Path)
+		require.NoError(t, os.Rename(filepath.Join(dir, ".staged"), filepath.Join(dir, "c.txt")))
+		for {
+			if received := receive(t, events, "/c.txt"); received[len(received)-1].EventType == schema.EventTypeDeleted {
+				break
+			}
 		}
 	})
 
