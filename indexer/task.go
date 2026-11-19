@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"sync"
 	"time"
 
@@ -31,11 +32,16 @@ type MetadataStore interface {
 	SetMetadata(ctx context.Context, key string, meta []schema.Meta) error
 }
 
-// taskStore is the metadata store of a task, of a volume, of its kind
+// taskStore is the metadata store of a task, of a volume, of its kind, of
+// the file it's done of, and the version of it which it read, so a task
+// which is superseded, as the file changed since, doesn't replace what a
+// later one found
 type taskStore struct {
 	store  store.MetadataStore
 	volume string
 	kind   store.Kind
+	key    string
+	of     schema.ObjectAttr
 }
 
 var _ MetadataStore = taskStore{}
@@ -44,8 +50,9 @@ var _ MetadataStore = taskStore{}
 // GLOBALS
 
 const (
-	// taskBatch is how much of a task's work is claimed at a time
-	taskBatch = 10
+	// taskLease is how long a task's work is leased for, which is of one
+	// file, which can be slow to read, such as a large video of a bucket
+	taskLease = 10 * time.Minute
 
 	// taskAttempts is how many times a task fails of a file before it's
 	// given up, until the file changes
@@ -58,9 +65,13 @@ const (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// SetMetadata replaces the metadata the task found of the file of the key
+// SetMetadata replaces the metadata the task found of the file of the key,
+// which is the file it's done of, when it's the version it read
 func (self taskStore) SetMetadata(ctx context.Context, key string, meta []schema.Meta) error {
-	return self.store.SetMetadata(ctx, self.volume, key, string(self.kind), meta)
+	if key != self.key {
+		return gofiler.ErrBadParameter.Withf("a task of %q sets the metadata of %q", self.key, key)
+	}
+	return self.store.SetMetadata(ctx, self.volume, key, string(self.kind), &self.of, meta)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -90,12 +101,13 @@ func (self *Indexer) enrich(ctx context.Context) {
 	wg.Wait()
 }
 
-// tasker does the work of a task, until the context is cancelled
+// tasker does the work of a task, until the context is cancelled, of one
+// file at a time, which is done, or failed, once it's done, so its lease is
+// of one file
 func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 	task := self.task(kind)
-	ts := taskStore{store: self.store, volume: self.name, kind: kind}
 	for {
-		claimed, err := self.store.Claim(ctx, self.name, []store.Kind{kind}, taskBatch, workLease)
+		claimed, err := self.store.Claim(ctx, self.name, []store.Kind{kind}, 1, taskLease)
 		if ctx.Err() != nil {
 			return
 		} else if err != nil || len(claimed) == 0 {
@@ -104,28 +116,27 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 			}
 			continue
 		}
-		done := make([]store.Work, 0, len(claimed))
-		for i, w := range claimed {
-			err := self.doTask(ctx, task, ts, w)
-			if ctx.Err() != nil {
-				self.release(claimed[i:])
-				break
-			} else if err != nil && w.Attempts+1 < taskAttempts {
-				_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
-			} else {
-				// It's done, or given up, until the file changes
-				done = append(done, w)
+		w := claimed[0]
+		err = self.doTask(ctx, task, kind, w)
+		switch {
+		case ctx.Err() != nil:
+			self.release(claimed)
+			return
+		case err != nil && w.Attempts+1 < taskAttempts:
+			_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
+		default:
+			// It's done, or given up, until the file changes
+			if err := self.store.Done(context.WithoutCancel(ctx), self.name, w); err != nil {
+				self.failed(ctx, err)
 			}
-		}
-		if err := self.store.Done(context.WithoutCancel(ctx), self.name, done...); err != nil {
-			self.failed(ctx, err)
 		}
 	}
 }
 
 // doTask does the task of the file of the work, which is done when the file
-// isn't indexed any more
-func (self *Indexer) doTask(ctx context.Context, task Task, ts taskStore, w store.Work) error {
+// isn't indexed, or isn't there, any more, or changed since it was read, as
+// its change queued the task again
+func (self *Indexer) doTask(ctx context.Context, task Task, kind store.Kind, w store.Work) error {
 	object, err := self.store.GetObject(ctx, self.name, w.Key)
 	if errors.Is(err, gofiler.ErrNotFound) {
 		return nil
@@ -135,7 +146,8 @@ func (self *Indexer) doTask(ctx context.Context, task Task, ts taskStore, w stor
 		return nil
 	}
 	object.Name = self.name
-	if err := task(ctx, self.Filer, ts, object); errors.Is(err, gofiler.ErrNotFound) {
+	ts := taskStore{store: self.store, volume: self.name, kind: kind, key: w.Key, of: object.ObjectAttr}
+	if err := task(ctx, self.Filer, ts, object); errors.Is(err, gofiler.ErrNotFound) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, gofiler.ErrPreconditionFailed) {
 		return nil
 	} else {
 		return err

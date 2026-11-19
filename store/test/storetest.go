@@ -1008,30 +1008,40 @@ func testSetMetadata(t *testing.T, s store.Store) {
 	// A task's metadata is merged with the backend's, which it replaces of
 	// the same namespace and key, after the backend's
 	require.NoError(t, s.PutObject(ctx, "media", folder("/"), withMeta(file("/a.txt"), "dc", "title", `"A"`, "dc", "creator", `"X"`)))
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", meta("dc", "title", `"B"`, "exif", "width", `100`)))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("dc", "title", `"B"`, "exif", "width", `100`)))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"creator","value":"X"},{"namespace":"dc","key":"title","value":"B"},{"namespace":"exif","key":"width","value":100}]`, got("/a.txt"))
 
 	// Putting the object replaces the backend's, but not the task's, and the
 	// task's replaces its own, and when it has none, the backend's are read
 	require.NoError(t, s.PutObject(ctx, "media", withMeta(file("/a.txt"), "dc", "title", `"C"`)))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"B"},{"namespace":"exif","key":"width","value":100}]`, got("/a.txt"))
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", meta("exif", "width", `200`)))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("exif", "width", `200`)))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"C"},{"namespace":"exif","key":"width","value":200}]`, got("/a.txt"))
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, nil))
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"C"}]`, got("/a.txt"))
 
 	// A listing is merged too
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", meta("dc", "title", `"D"`)))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, meta("dc", "title", `"D"`)))
 	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/"})
 	require.NoError(t, err)
 	require.Len(t, objects, 1)
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"D"}]`, string(mustJSON(t, objects[0].Meta)))
 
+	// A task which read a version of the object which isn't its version any
+	// more is superseded, and doesn't replace what's found of it
+	current, err := s.GetObject(ctx, "media", "/a.txt")
+	require.NoError(t, err)
+	stale := current.ObjectAttr
+	stale.ModTime = stale.ModTime.Add(-time.Hour)
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &stale, meta("dc", "title", `"Stale"`)), gofiler.ErrPreconditionFailed)
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", &current.ObjectAttr, meta("dc", "title", `"Current"`)))
+	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"Current"}]`, got("/a.txt"))
+
 	// An object which isn't indexed isn't found, and a source which isn't a
 	// task's kind is bad, and the task's metadata is deleted with its object
-	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/missing.txt", "metadata", nil), gofiler.ErrNotFound)
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/missing.txt", "metadata", nil, nil), gofiler.ErrNotFound)
 	for _, bad := range []string{"", "Metadata", "a b", "1x"} {
-		assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", bad, nil), gofiler.ErrBadParameter, bad)
+		assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.txt", bad, nil, nil), gofiler.ErrBadParameter, bad)
 	}
 	require.NoError(t, s.DeleteObject(ctx, "media", "/a.txt"))
 	require.NoError(t, s.PutObject(ctx, "media", file("/a.txt")))
@@ -1072,6 +1082,20 @@ func testQueueStale(t *testing.T, s store.Store) {
 	require.NoError(t, s.Done(ctx, "media", work...))
 	work, paths = claimed(t, s, tasks, 10)
 	assert.Equal(t, []string{"metadata /a.txt"}, paths, "it's pushed again")
+	require.NoError(t, s.Done(ctx, "media", work...))
+
+	// A file which changed while its task was done of it, whose revision
+	// isn't the one it was claimed of, is stale, once it's done
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r3"}))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	work, paths = claimed(t, s, tasks, 10)
+	require.Equal(t, []string{"metadata /a.txt"}, paths)
+	assert.Equal(t, "r3", work[0].Revision, "of the revision it's claimed of")
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "r3b"}))
+	require.NoError(t, s.Done(ctx, "media", work...))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	work, paths = claimed(t, s, tasks, 10)
+	assert.Equal(t, []string{"metadata /a.txt"}, paths, "it changed while it was done")
 	require.NoError(t, s.Done(ctx, "media", work...))
 
 	// Of a folder, and not beside it

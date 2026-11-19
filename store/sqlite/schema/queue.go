@@ -166,7 +166,7 @@ func (pending *Pending) Scan(row sqlite.Row) error {
 func (list *WorkList) Scan(row sqlite.Row) error {
 	var work store.Work
 	var kind string
-	if err := row.Scan(&work.Key, &kind, &work.After, &work.Attempts, &work.Error, &work.Leased); err != nil {
+	if err := row.Scan(&work.Key, &kind, &work.After, &work.Attempts, &work.Error, &work.Leased, &work.Revision); err != nil {
 		return err
 	}
 	work.Kind = store.Kind(kind)
@@ -176,10 +176,11 @@ func (list *WorkList) Scan(row sqlite.Row) error {
 
 // QueueDid is the revision of a file which a task's work was done of
 type QueueDid struct {
-	Volume string
-	Key    string
-	Kind   store.Kind
-	Now    time.Time
+	Volume   string
+	Key      string
+	Kind     store.Kind
+	Revision string
+	Now      time.Time
 }
 
 // QueueStale is the work of a task of the files beneath a folder, which are
@@ -202,6 +203,7 @@ func (did QueueDid) Insert(bind *sqlite.Bind) (string, error) {
 	bind.Set("volume", did.Volume)
 	bind.Set("key", did.Key)
 	bind.Set("did", Did(did.Kind))
+	bind.Set("revision", did.Revision)
 	bind.Set("now", did.Now.UTC())
 	return bind.Query("queue.did"), nil
 }

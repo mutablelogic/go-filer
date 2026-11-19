@@ -61,8 +61,9 @@ func (self *Store) PutObject(ctx context.Context, volume string, objects ...*fil
 
 // SetMetadata replaces the metadata of the object of the volume of the key, of
 // the source, a task's kind, in one transaction, or returns ErrNotFound when
-// the object isn't indexed
-func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, meta []filer.Meta) (err error) {
+// the object isn't indexed, or ErrPreconditionFailed when it isn't of the
+// attributes, which the task read, any more
+func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, of *filer.ObjectAttr, meta []filer.Meta) (err error) {
 	ctx, end := self.span(ctx, "SetMetadata", attribute.String("arg.volume", volume), attribute.String("arg.key", key), attribute.String("arg.source", source), attribute.Int("arg.meta", len(meta)))
 	defer func() { end(err) }()
 	if err := store.ValidateKey(key); err != nil {
@@ -76,6 +77,8 @@ func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, 
 			return gofiler.ErrNotFound.Withf("%q isn't indexed in volume %q", key, volume)
 		} else if err != nil {
 			return err
+		} else if of != nil && !sameAttr(result[0].ObjectAttr, *of) {
+			return gofiler.ErrPreconditionFailed.Withf("%q changed since it was read", key)
 		}
 		return conn.Insert(ctx, nil, schema.ObjectMetaPut{Volume: volume, Key: key, Source: source, Meta: meta})
 	}))
@@ -163,4 +166,12 @@ func (self *Store) SetRevisions(ctx context.Context, volume string, revisions ma
 		}
 		return nil
 	}))
+}
+
+// sameAttr returns true when two versions of an object have the same
+// attributes: entity tags, sizes, and when they were modified
+func sameAttr(a, b filer.ObjectAttr) bool {
+	sameETag := (a.ETag == nil) == (b.ETag == nil) && (a.ETag == nil || *a.ETag == *b.ETag)
+	sameSize := (a.Size == nil) == (b.Size == nil) && (a.Size == nil || *a.Size == *b.Size)
+	return sameETag && sameSize && a.ModTime.Equal(b.ModTime)
 }

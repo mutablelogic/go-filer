@@ -147,31 +147,36 @@ ON CONFLICT (volume, key, kind) DO UPDATE SET
 
 -- queue.due
 -- The work of the kinds which is due, and isn't leased, earliest first
-SELECT key, kind, after, attempts, coalesce(error, ''), leased_until FROM object_state
+SELECT key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '') FROM object_state
 WHERE volume = @volume AND kind IN (SELECT value FROM json_each(@kinds))
   AND julianday(after) <= julianday(@now)
   AND (leased_until IS NULL OR julianday(leased_until) <= julianday(@now))
 ORDER BY julianday(after), key;
 
 -- queue.lease
-UPDATE object_state SET leased_until = @leased
+-- Work which is claimed, until its lease ends, and, of a task's, the revision
+-- of the file's listing, which it's done of
+UPDATE object_state SET leased_until = @leased,
+  revision = CASE WHEN kind IN ('index', 'rescan') THEN revision ELSE (
+    SELECT listed.revision FROM object_state AS listed
+    WHERE listed.volume = object_state.volume AND listed.key = object_state.key AND listed.kind = 'listed'
+  ) END
 WHERE volume = @volume AND key = @key AND kind = @kind
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until;
+RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.done
 -- Work which is done, of its claim, which is kept when it's pushed again
 -- since, as its lease is cleared
 DELETE FROM object_state
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until;
+RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.did
--- The revision of the file which a task's work was done of, its listing's,
--- of a row of the task's kind, with _done after it, while it's indexed
+-- The revision of the file which a task's work was done of, its listing's
+-- when it was claimed, of a row of the task's kind, with _done after it,
+-- while it's indexed, so a file which changed while it was done is stale
 INSERT INTO object_state (volume, key, kind, after, revision)
-SELECT @volume, @key, @did, @now, (
-  SELECT revision FROM object_state WHERE volume = @volume AND key = @key AND kind = 'listed'
-)
+SELECT @volume, @key, @did, @now, nullif(@revision, '')
 WHERE EXISTS (SELECT 1 FROM object WHERE volume = @volume AND key = @key)
 ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision;
 
@@ -189,7 +194,7 @@ ON CONFLICT (volume, key, kind) DO NOTHING;
 -- queue.failed
 UPDATE object_state SET attempts = attempts + 1, error = @error, after = @after, leased_until = NULL
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until;
+RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.pending
 -- Whether a key has work which would change its index: an index or a

@@ -85,8 +85,11 @@ type ObjectStore interface {
 type MetadataStore interface {
 	// SetMetadata replaces the metadata of the object of the volume of the key,
 	// of the source, which is a task's kind, such as metadata, or returns
-	// ErrNotFound when the object isn't indexed
-	SetMetadata(ctx context.Context, volume, key, source string, meta []schema.Meta) error
+	// ErrNotFound when the object isn't indexed. When of isn't nil, it's of
+	// the version of the object which the task read, its attributes, so a
+	// task which is superseded, as the object changed since, returns
+	// ErrPreconditionFailed, rather than replacing what a later one found.
+	SetMetadata(ctx context.Context, volume, key, source string, of *schema.ObjectAttr, meta []schema.Meta) error
 }
 
 // ListRequest is a request for the objects of a folder

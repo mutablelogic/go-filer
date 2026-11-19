@@ -35,7 +35,8 @@ type QueueStore interface {
 	// Done removes the work, which is claimed, unless it's pushed again
 	// since, when it's kept, so it's claimed again. Work of a task, such as
 	// KindMetadata, records the revision of the file it was done of, its
-	// listing's (see Revision), so it isn't done again until it changes
+	// listing's when it was claimed (see Revision), so it isn't done again
+	// until it changes, and a file which changed while it was done is stale
 	// (see PushStale).
 	Done(ctx context.Context, volume string, work ...Work) error
 
@@ -72,10 +73,11 @@ type Kind string
 type Work struct {
 	Key      string    `json:"key"`
 	Kind     Kind      `json:"kind"`
-	After    time.Time `json:"after,omitzero"`    // When it's due, which is now when it's pushed without one
-	Attempts uint      `json:"attempts,omitzero"` // How many times it failed
-	Error    string    `json:"error,omitempty"`   // Why it last failed
-	Leased   time.Time `json:"leased,omitzero"`   // Until when it's leased, of a claim, which Done and Failed are of
+	After    time.Time `json:"after,omitzero"`     // When it's due, which is now when it's pushed without one
+	Attempts uint      `json:"attempts,omitzero"`  // How many times it failed
+	Error    string    `json:"error,omitempty"`    // Why it last failed
+	Leased   time.Time `json:"leased,omitzero"`    // Until when it's leased, of a claim, which Done and Failed are of
+	Revision string    `json:"revision,omitempty"` // Of a task's work which is claimed, the revision of the file's listing, which it's done of
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -1170,6 +1170,7 @@ type sizer struct {
 	mu    sync.Mutex
 	calls map[string]int
 	fail  map[string]bool
+	gone  map[string]bool // The files which are gone, once they're read
 }
 
 func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataStore, object *schema.Object) error {
@@ -1178,10 +1179,12 @@ func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataSto
 		z.calls = make(map[string]int)
 	}
 	z.calls[object.Path]++
-	fail := z.fail[object.Path]
+	fail, gone := z.fail[object.Path], z.gone[object.Path]
 	z.mu.Unlock()
 	if fail {
 		return errors.New("it can't be read")
+	} else if gone {
+		return &iofs.PathError{Op: "read", Path: object.Path, Err: iofs.ErrNotExist}
 	}
 	return s.SetMetadata(ctx, object.Path, []schema.Meta{{Namespace: "test", Key: "size", Value: json.RawMessage(fmt.Sprint(*object.Size))}})
 }
@@ -1241,6 +1244,20 @@ func Test_MetadataTask(t *testing.T) {
 	run(t, o)
 	time.Sleep(100 * time.Millisecond)
 	assert.Zero(t, objects.count("/x.txt"), "of index=objects")
+}
+
+func Test_MetadataTaskGone(t *testing.T) {
+	backend, _ := newBackend(t)
+	z := &sizer{gone: map[string]bool{"/x.txt": true}}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+
+	// A file which is gone, as the backend says, once it's read, is done,
+	// rather than tried again
+	require.Eventually(t, func() bool { return z.count("/a/y.txt") == 1 && z.count("/x.txt") == 1 }, 10*time.Second, 5*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 1, z.count("/x.txt"), "it isn't tried again")
 }
 
 func Test_Poll(t *testing.T) {

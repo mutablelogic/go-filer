@@ -100,7 +100,7 @@ func (self *Store) Done(ctx context.Context, volume string, work ...store.Work) 
 			// A task's work, which was done, rather than pushed again, records
 			// the revision of the file it was done of
 			if len(done) > 0 && w.Kind != store.KindIndex && w.Kind != store.KindRescan {
-				if err := conn.Insert(ctx, nil, schema.QueueDid{Volume: volume, Key: w.Key, Kind: w.Kind, Now: now}); err != nil {
+				if err := conn.Insert(ctx, nil, schema.QueueDid{Volume: volume, Key: w.Key, Kind: w.Kind, Revision: done[0].Revision, Now: now}); err != nil {
 					return err
 				}
 			}
