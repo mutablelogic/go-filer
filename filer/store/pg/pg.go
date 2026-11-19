@@ -4,6 +4,7 @@ package pg
 
 import (
 	"context"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -60,6 +61,22 @@ func (self *Store) ListVolumes(context.Context) ([]*schema.Volume, error) {
 }
 
 func (self *Store) DeleteVolume(context.Context, string) error {
+	return errNotImplemented
+}
+
+func (self *Store) Push(context.Context, string, ...store.Work) error {
+	return errNotImplemented
+}
+
+func (self *Store) Claim(context.Context, string, []store.Kind, int, time.Duration) ([]store.Work, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) Done(context.Context, string, ...store.Work) error {
+	return errNotImplemented
+}
+
+func (self *Store) Failed(context.Context, string, store.Work, error, time.Duration) error {
 	return errNotImplemented
 }
 

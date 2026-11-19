@@ -5,6 +5,7 @@ package storetest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -31,6 +32,10 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("Delete", func(t *testing.T) { testDelete(t, withVolumes(t, newStore(t))) })
 	t.Run("Volumes", func(t *testing.T) { testVolumes(t, withVolumes(t, newStore(t))) })
 	t.Run("DeleteVolume", func(t *testing.T) { testDeleteVolume(t, withVolumes(t, newStore(t))) })
+	t.Run("Queue", func(t *testing.T) { testQueue(t, withVolumes(t, newStore(t))) })
+	t.Run("QueueCoalesce", func(t *testing.T) { testQueueCoalesce(t, withVolumes(t, newStore(t))) })
+	t.Run("QueueOrder", func(t *testing.T) { testQueueOrder(t, withVolumes(t, newStore(t))) })
+	t.Run("QueueLease", func(t *testing.T) { testQueueLease(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -430,4 +435,160 @@ func mustJSON(t *testing.T, v any) []byte {
 	data, err := json.Marshal(v)
 	require.NoError(t, err)
 	return data
+}
+
+// all is every kind of work of indexing
+var all = []store.Kind{store.KindIndex, store.KindRescan}
+
+// claimed returns the paths of the work which is claimed, of the kinds
+func claimed(t *testing.T, s store.Store, kinds []store.Kind, max int) ([]store.Work, []string) {
+	t.Helper()
+	work, err := s.Claim(context.Background(), "media", kinds, max, time.Hour)
+	require.NoError(t, err)
+	result := []string{}
+	for _, w := range work {
+		result = append(result, string(w.Kind)+" "+w.Path)
+	}
+	return work, result
+}
+
+func index(path string) store.Work  { return store.Work{Path: path, Kind: store.KindIndex} }
+func rescan(path string) store.Work { return store.Work{Path: path, Kind: store.KindRescan} }
+
+func testQueue(t *testing.T, s store.Store) {
+	ctx := context.Background()
+
+	// Work of a volume which isn't stored isn't queued
+	assert.ErrorIs(t, s.Push(ctx, "missing", index("/a")), gofiler.ErrNotFound)
+
+	// Work is claimed, once, until it's done, and is the volume's own
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	require.NoError(t, s.Push(ctx, "photos", index("/b")))
+	work, paths := claimed(t, s, all, 10)
+	assert.Equal(t, []string{"index /a"}, paths)
+	assert.False(t, work[0].Leased.IsZero())
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths, "it's leased")
+	require.NoError(t, s.Done(ctx, "media", work...))
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths, "it's done")
+
+	// Work which is pushed again, while it's claimed, isn't done, and is
+	// claimed again
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	work, _ = claimed(t, s, all, 10)
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	require.NoError(t, s.Done(ctx, "media", work...))
+	work, paths = claimed(t, s, all, 10)
+	assert.Equal(t, []string{"index /a"}, paths, "it's pushed again")
+
+	// Work which fails is due again after its retry, with why, and the
+	// attempts
+	require.NoError(t, s.Failed(ctx, "media", work[0], errors.New("it failed"), 0))
+	work, paths = claimed(t, s, all, 10)
+	require.Equal(t, []string{"index /a"}, paths)
+	assert.Equal(t, uint(1), work[0].Attempts)
+	assert.Equal(t, "it failed", work[0].Error)
+	require.NoError(t, s.Failed(ctx, "media", work[0], errors.New("again"), time.Hour))
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths, "it's due later")
+
+	// Of the kinds which are claimed, and none of none
+	require.NoError(t, s.Push(ctx, "media", rescan("/r")))
+	_, paths = claimed(t, s, []store.Kind{store.KindIndex}, 10)
+	assert.Empty(t, paths)
+	_, paths = claimed(t, s, nil, 10)
+	assert.Empty(t, paths)
+	_, paths = claimed(t, s, []store.Kind{store.KindRescan}, 10)
+	assert.Equal(t, []string{"rescan /r"}, paths)
+
+	// Deleting the volume deletes its work
+	require.NoError(t, s.Push(ctx, "media", index("/z")))
+	require.NoError(t, s.DeleteVolume(ctx, "media"))
+	_, err := s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/tmp/media"})
+	require.NoError(t, err)
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths)
+}
+
+func testQueueCoalesce(t *testing.T, s store.Store) {
+	ctx := context.Background()
+
+	// Work of the same path, and kind, is queued once
+	require.NoError(t, s.Push(ctx, "media", index("/a/b"), index("/a/b"), index("/a/c"), index("/d")))
+
+	// A rescan of a folder replaces the work beneath it, and the index of
+	// its own path, but not that of other folders, including those whose
+	// paths only start with its path
+	require.NoError(t, s.Push(ctx, "media", index("/a"), index("/ab"), rescan("/a/x")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/a")))
+
+	// Work beneath a rescan which is queued, or of its own path, isn't
+	// queued
+	require.NoError(t, s.Push(ctx, "media", index("/a/e"), rescan("/a/f"), index("/a")))
+	_, paths := claimed(t, s, []store.Kind{store.KindIndex}, 10)
+	assert.ElementsMatch(t, []string{"index /ab", "index /d"}, paths)
+	_, paths = claimed(t, s, []store.Kind{store.KindRescan}, 10)
+	assert.Equal(t, []string{"rescan /a"}, paths)
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths)
+
+	// A rescan of the root replaces all the work
+	require.NoError(t, s.Push(ctx, "media", index("/x"), rescan("/y")))
+	require.NoError(t, s.Push(ctx, "media", rescan("/")))
+	_, paths = claimed(t, s, all, 10)
+	assert.Equal(t, []string{"rescan /"}, paths)
+}
+
+func testQueueOrder(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	now := time.Now()
+
+	// Work is claimed earliest first, a rescan on its own, and other work
+	// up to the first rescan, and up to the most which are claimed
+	require.NoError(t, s.Push(ctx, "media",
+		store.Work{Path: "/b", Kind: store.KindIndex, After: now.Add(-3 * time.Second)},
+		store.Work{Path: "/a", Kind: store.KindIndex, After: now.Add(-2 * time.Second)},
+		store.Work{Path: "/r", Kind: store.KindRescan, After: now.Add(-1500 * time.Millisecond)},
+		store.Work{Path: "/c", Kind: store.KindIndex, After: now.Add(-time.Second)},
+		store.Work{Path: "/d", Kind: store.KindIndex, After: now.Add(-500 * time.Millisecond)},
+	))
+	_, paths := claimed(t, s, all, 1)
+	assert.Equal(t, []string{"index /b"}, paths)
+	_, paths = claimed(t, s, all, 10)
+	assert.Equal(t, []string{"index /a"}, paths, "up to the rescan")
+	_, paths = claimed(t, s, all, 10)
+	assert.Equal(t, []string{"rescan /r"}, paths, "on its own")
+	_, paths = claimed(t, s, all, 10)
+	assert.Equal(t, []string{"index /c", "index /d"}, paths)
+
+	// Work which isn't due isn't claimed, and is due after the later of two
+	// pushes, which is the debounce
+	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now.Add(time.Hour)}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Path: "/later", Kind: store.KindIndex, After: now}))
+	_, paths = claimed(t, s, all, 10)
+	assert.Empty(t, paths)
+}
+
+func testQueueLease(t *testing.T, s store.Store) {
+	ctx := context.Background()
+
+	// Work whose lease has ended is claimed again, as when its claimer has
+	// stopped, and the claim which ended isn't done, or failed, of it
+	require.NoError(t, s.Push(ctx, "media", index("/a")))
+	first, err := s.Claim(ctx, "media", all, 10, time.Millisecond)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	time.Sleep(10 * time.Millisecond)
+	second, err := s.Claim(ctx, "media", all, 10, time.Hour)
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	require.NoError(t, s.Done(ctx, "media", first...))
+	require.NoError(t, s.Failed(ctx, "media", first[0], errors.New("too late"), 0))
+	_, paths := claimed(t, s, all, 10)
+	assert.Empty(t, paths, "it's still the second claim's")
+	require.NoError(t, s.Done(ctx, "media", second...))
+	require.NoError(t, s.Push(ctx, "media", index("/b")))
+	_, paths = claimed(t, s, all, 10)
+	assert.Equal(t, []string{"index /b"}, paths, "the second claim is done")
 }

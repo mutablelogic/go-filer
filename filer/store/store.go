@@ -44,6 +44,7 @@ type VolumeStore interface {
 // later, so an object is a folder, or a file.
 type Store interface {
 	VolumeStore
+	QueueStore
 
 	// Get returns the object of the volume at the path, or ErrNotFound
 	// when it isn't indexed
