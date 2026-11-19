@@ -91,8 +91,12 @@ jobs:
     strategy:
       # Report results for every platform, even if one fails
       fail-fast: false
+      # Only Linux, for now, as macOS and Windows runners are slow, and
+      # their builds, with cgo and without, are known to work. Add
+      # macos-latest and windows-latest back to test them again, whose
+      # steps are kept.
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
     steps:
       - name: Configure git line endings
         shell: bash
