@@ -57,9 +57,12 @@ CREATE TABLE IF NOT EXISTS metadata (
 CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, object, ifnull(namespace, ''), key);
 
 -- schema.object_state
--- The work of indexing the objects of the volumes, by key and kind, which is
--- the queue, which outlasts a restart. A key needn't be indexed, as it can
--- be of an object which is new, or gone. A rescan is of a folder's key.
+-- The state of the objects of the volumes, by key and kind: the work of
+-- indexing them, which is the queue, which outlasts a restart, whose key
+-- needn't be indexed, as it can be of an object which is new, or gone, and
+-- a rescan of which is of a folder's key, and the revision of an indexed
+-- file, of kind listed, which is what the backend's listing said of it when
+-- it was stored, which isn't work.
 CREATE TABLE IF NOT EXISTS object_state (
   volume          TEXT NOT NULL REFERENCES volume (name) ON DELETE CASCADE ON UPDATE CASCADE,
   key             TEXT NOT NULL CHECK (key GLOB '/*' AND key NOT GLOB '*//*' AND (kind <> 'rescan' OR key GLOB '*/')),
@@ -69,8 +72,21 @@ CREATE TABLE IF NOT EXISTS object_state (
   attempts        INTEGER NOT NULL DEFAULT 0,
   leased_until    TIMESTAMP,              -- when its claim ends, which Done and Failed are of
   error           TEXT,                   -- why it last failed
+  revision        TEXT,                   -- of a listed file, what the backend's listing said of it
   PRIMARY KEY (volume, key, kind)
 );
+
+-- schema.object_updated
+-- A file which is put again has no revision, until it's set again
+CREATE TRIGGER IF NOT EXISTS object_updated AFTER UPDATE ON object BEGIN
+  DELETE FROM object_state WHERE volume = old.volume AND key = old.key AND kind = 'listed';
+END;
+
+-- schema.object_deleted
+-- A file which is deleted has no revision
+CREATE TRIGGER IF NOT EXISTS object_deleted AFTER DELETE ON object BEGIN
+  DELETE FROM object_state WHERE volume = old.volume AND key = old.key AND kind = 'listed';
+END;
 
 -- schema.object_state_due
 CREATE INDEX IF NOT EXISTS object_state_due ON object_state (volume, kind, after);

@@ -38,6 +38,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueueLease", func(t *testing.T) { testQueueLease(t, withVolumes(t, newStore(t))) })
 	t.Run("QueuePending", func(t *testing.T) { testQueuePending(t, withVolumes(t, newStore(t))) })
 	t.Run("QueuePendingBeneath", func(t *testing.T) { testQueuePendingBeneath(t, withVolumes(t, newStore(t))) })
+	t.Run("Revisions", func(t *testing.T) { testRevisions(t, withVolumes(t, newStore(t))) })
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -755,4 +756,54 @@ func testQueuePending(t *testing.T, s store.Store) {
 	assert.False(t, pending("/"), "of the folder above the folder")
 	_, err := s.Pending(ctx, "media", "a/b")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+}
+
+func testRevisions(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	require.NoError(t, s.Put(ctx, "media", folder("/"), file("/a.txt"), folder("/b"), file("/b/c.txt"), folder("/b/d"), file("/b/d/e.txt"), file("/bc.txt")))
+	revisions := func(folder string, recursive bool) map[string]string {
+		t.Helper()
+		result, err := s.Revisions(ctx, "media", folder, recursive)
+		require.NoError(t, err)
+		return result
+	}
+
+	// The revisions of files are stored, by their keys, and are of a
+	// folder's files, or every file beneath it
+	assert.Empty(t, revisions("/", true))
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "1", "/b/c.txt": "2", "/b/d/e.txt": "3", "/bc.txt": "4"}))
+	assert.Equal(t, map[string]string{"/a.txt": "1", "/bc.txt": "4"}, revisions("/", false))
+	assert.Equal(t, map[string]string{"/b/c.txt": "2"}, revisions("/b/", false))
+	assert.Equal(t, map[string]string{"/b/c.txt": "2", "/b/d/e.txt": "3"}, revisions("/b/", true))
+	assert.Len(t, revisions("/", true), 4)
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{"/a.txt": "5"}))
+	assert.Equal(t, "5", revisions("/", false)["/a.txt"], "it's replaced")
+
+	// They aren't work, so aren't claimed, or pending, and a rescan doesn't
+	// remove them
+	_, paths := claimed(t, s, all, 10)
+	assert.Empty(t, paths)
+	pending, err := s.Pending(ctx, "media", "/b/c.txt")
+	require.NoError(t, err)
+	assert.False(t, pending)
+	require.NoError(t, s.Push(ctx, "media", rescan("/b/")))
+	work, _ := claimed(t, s, all, 10)
+	require.NoError(t, s.Done(ctx, "media", work...))
+	assert.Equal(t, "2", revisions("/b/", false)["/b/c.txt"])
+
+	// A file which is put again has none, and nor has one which is deleted,
+	// or beneath a folder which is
+	require.NoError(t, s.Put(ctx, "media", file("/a.txt")))
+	assert.NotContains(t, revisions("/", false), "/a.txt")
+	require.NoError(t, s.Delete(ctx, "media", "/bc.txt"))
+	assert.NotContains(t, revisions("/", false), "/bc.txt")
+	require.NoError(t, s.Delete(ctx, "media", "/b/"))
+	assert.Empty(t, revisions("/", true))
+
+	// A folder's key which isn't one is bad, as is a key, and a volume which
+	// isn't stored isn't found
+	_, err = s.Revisions(ctx, "media", "/b", false)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.SetRevisions(ctx, "media", map[string]string{"a": "1"}), gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.SetRevisions(ctx, "missing", map[string]string{"/a": "1"}), gofiler.ErrNotFound)
 }

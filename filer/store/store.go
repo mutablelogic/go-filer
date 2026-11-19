@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"path"
+	"strconv"
 	"strings"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -47,6 +49,18 @@ type Store interface {
 	// SetState stores the state of the volume's index, or returns
 	// ErrNotFound when the volume isn't stored
 	SetState(ctx context.Context, volume string, state schema.IndexState) error
+
+	// Revisions returns, by their keys, the revisions of the files of a
+	// folder, or of every file beneath it, when it's recursive, which are
+	// what the backend's listing said of them (see Revision) when they were
+	// stored, so a listing which says the same of a file needn't get it
+	// again. A file which is put again, or deleted, has none, until it's
+	// set again.
+	Revisions(ctx context.Context, volume, folder string, recursive bool) (map[string]string, error)
+
+	// SetRevisions stores the revisions of the files, by their keys, or
+	// returns ErrNotFound when the volume isn't stored
+	SetRevisions(ctx context.Context, volume string, revisions map[string]string) error
 }
 
 // ListRequest is a request for the objects of a folder
@@ -116,6 +130,21 @@ func Ancestors(key string) []string {
 // is "0", so "/a/" is to "/a0", which "/ab" isn't in, and "/" is to "0"
 func Subtree(folder string) (string, string) {
 	return folder, strings.TrimSuffix(folder, "/") + "0"
+}
+
+// Revision returns the revision of an object, of a listing: its entity tag,
+// size and modification time, which a listing changes when any of them do,
+// as a bucket's does when only an object's metadata is written, whose
+// entity tag is the same, and whose time is when it was written
+func Revision(object *schema.Object) string {
+	etag, size := "", ""
+	if object.ETag != nil {
+		etag = *object.ETag
+	}
+	if object.Size != nil {
+		size = strconv.FormatInt(*object.Size, 10)
+	}
+	return etag + " " + size + " " + object.ModTime.UTC().Format(time.RFC3339Nano)
 }
 
 // ValidateKey returns ErrBadParameter when a key isn't absolute, and clean,

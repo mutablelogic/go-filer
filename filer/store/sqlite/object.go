@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"time"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -77,4 +78,45 @@ func (self *Store) List(ctx context.Context, volume string, req store.ListReques
 		return nil, storeErr(err)
 	}
 	return result, nil
+}
+
+// Revisions returns, by their keys, the revisions of the files of a folder's
+// key, or of every file beneath it, when it's recursive
+func (self *Store) Revisions(ctx context.Context, volume, folder string, recursive bool) (_ map[string]string, err error) {
+	ctx, end := self.span(ctx, "Revisions", attribute.String("arg.volume", volume), attribute.String("arg.folder", folder), attribute.Bool("arg.recursive", recursive))
+	defer func() { end(err) }()
+	if err := store.ValidateWork(store.Work{Key: folder, Kind: store.KindRescan}); err != nil {
+		return nil, err
+	}
+	result := schema.Revisions{}
+	if err := self.conn.List(ctx, &result, schema.RevisionListRequest{Volume: volume, Folder: folder, Recursive: recursive}); err != nil {
+		return nil, storeErr(err)
+	}
+	return result, nil
+}
+
+// SetRevisions stores the revisions of the files, by their keys, in one
+// transaction, or returns ErrNotFound when the volume isn't stored
+func (self *Store) SetRevisions(ctx context.Context, volume string, revisions map[string]string) (err error) {
+	ctx, end := self.span(ctx, "SetRevisions", attribute.String("arg.volume", volume), attribute.Int("arg.revisions", len(revisions)))
+	defer func() { end(err) }()
+	if len(revisions) == 0 {
+		return nil
+	}
+	now := time.Now()
+	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
+		var exists schema.VolumeList
+		if err := conn.Get(ctx, &exists, schema.VolumeName(volume)); err != nil {
+			return volumeErr(err, volume)
+		}
+		for key, revision := range revisions {
+			if err := store.ValidateKey(key); err != nil {
+				return err
+			}
+			if err := conn.Insert(ctx, nil, schema.RevisionPut{Volume: volume, Key: key, Revision: revision, Now: now}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
 }

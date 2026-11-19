@@ -150,3 +150,13 @@ SELECT EXISTS (
     (@beneath AND key > @lower AND key < @upper)
   )
 );
+
+-- revision.list
+-- The revisions of the files of a folder, or beneath it, of the where clause
+SELECT key, revision FROM object_state
+WHERE volume = @volume AND kind = 'listed' AND ${where};
+
+-- revision.put
+INSERT INTO object_state (volume, key, kind, after, revision)
+VALUES (@volume, @key, 'listed', @now, @revision)
+ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision;

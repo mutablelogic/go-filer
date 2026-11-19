@@ -2,6 +2,7 @@ package schema
 
 import (
 	"encoding/json"
+	"time"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer/filer/schema"
@@ -35,6 +36,25 @@ type ObjectListRequest struct {
 // ObjectList is the objects which are read, of a list, or a get, which reads
 // one
 type ObjectList []*filer.Object
+
+// RevisionListRequest selects the revisions of the files of a folder's key,
+// or beneath it
+type RevisionListRequest struct {
+	Volume    string
+	Folder    string
+	Recursive bool
+}
+
+// RevisionPut is the revision of a file of a volume, which is put
+type RevisionPut struct {
+	Volume   string
+	Key      string
+	Revision string
+	Now      time.Time
+}
+
+// Revisions is the revisions which are read, by their keys
+type Revisions map[string]string
 
 ////////////////////////////////////////////////////////////////////////////////
 // SELECTORS
@@ -74,8 +94,35 @@ func (req ObjectListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, er
 	return bind.Query("object.list"), nil
 }
 
+func (req RevisionListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	if op != sqlite.List {
+		return "", sqlite.ErrNotImplemented.Withf("revision list: %v", op)
+	}
+	bind.Set("volume", req.Volume)
+	lower, upper := store.Subtree(req.Folder)
+	where := "key > " + bind.Set("lower", lower) + " AND key < " + bind.Set("upper", upper)
+	if !req.Recursive {
+		where += " AND instr(substr(key, length(" + bind.Set("folder", req.Folder) + ") + 1), '/') = 0"
+	}
+	bind.Set("where", where)
+	return bind.Query("revision.list"), nil
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // WRITERS
+
+// Insert binds the revision of a file, which replaces the one it has
+func (put RevisionPut) Insert(bind *sqlite.Bind) (string, error) {
+	bind.Set("volume", put.Volume)
+	bind.Set("key", put.Key)
+	bind.Set("revision", put.Revision)
+	bind.Set("now", put.Now.UTC())
+	return bind.Query("revision.put"), nil
+}
+
+func (put RevisionPut) Update(*sqlite.Bind) error {
+	return sqlite.ErrNotImplemented.With("a revision is put")
+}
 
 // Insert binds an object, and its metadata, as a JSON array, and returns
 // the query which puts it, replacing the object at its path, and its
@@ -104,6 +151,18 @@ func (put ObjectPut) Update(*sqlite.Bind) error {
 
 ////////////////////////////////////////////////////////////////////////////////
 // READERS
+
+func (revisions *Revisions) Scan(row sqlite.Row) error {
+	var key, revision string
+	if err := row.Scan(&key, &revision); err != nil {
+		return err
+	}
+	if *revisions == nil {
+		*revisions = Revisions{}
+	}
+	(*revisions)[key] = revision
+	return nil
+}
 
 func (list *ObjectList) Scan(row sqlite.Row) error {
 	var object filer.Object

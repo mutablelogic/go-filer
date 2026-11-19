@@ -448,6 +448,10 @@ func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
 	if err != nil {
 		return err
 	}
+	revisions, err := self.store.Revisions(ctx, self.name, root, true)
+	if err != nil {
+		return err
+	}
 	files := make(map[string]*schema.Object)
 	for _, object := range indexed {
 		key := store.Key(object)
@@ -465,36 +469,40 @@ func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
 	for key, folder := range t.folders {
 		objects = append(objects, withCount(folder, t.counts[key]))
 	}
-	changed, err := self.changed(ctx, t, files)
+	changed, listed, err := self.changed(ctx, t, files, revisions)
 	if err != nil {
 		return err
+	} else if err := self.put(ctx, append(objects, changed...)); err != nil {
+		return err
 	}
-	return self.put(ctx, append(objects, changed...))
+	return self.store.SetRevisions(ctx, self.name, listed)
 }
 
-// changed returns the files of the tree which are new, or aren't the same
-// as those which are indexed, by their entity tags, or sizes and modified
-// times, of the backend, rather than of its listing, which can have less,
+// changed returns the files of the tree which are new, or which are indexed,
+// but whose listing doesn't say what it did when they were stored, of their
+// revisions, as the backend, rather than its listing, which can have less,
 // such as a bucket's, which hasn't its metadata, so the index's files are
-// as GetObject returns them. A file which isn't there any more is removed.
-func (self *Indexer) changed(ctx context.Context, t tree, indexed map[string]*schema.Object) ([]*schema.Object, error) {
-	result := make([]*schema.Object, 0, len(t.files))
-	for key, listed := range t.files {
-		if previous, exists := indexed[key]; exists && sameObject(previous, listed) {
+// as GetObject returns them, and the revisions of their listings, which are
+// stored once they are. A file which isn't there any more is removed.
+func (self *Indexer) changed(ctx context.Context, t tree, indexed map[string]*schema.Object, revisions map[string]string) ([]*schema.Object, map[string]string, error) {
+	result, listed := make([]*schema.Object, 0, len(t.files)), make(map[string]string)
+	for key, object := range t.files {
+		revision := store.Revision(object)
+		if _, exists := indexed[key]; exists && revisions[key] == revision {
 			continue
 		}
 		file, err := self.file(ctx, key)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		} else if file != nil {
-			result = append(result, file)
+			result, listed[key] = append(result, file), revision
 		} else if _, exists := indexed[key]; exists {
 			if err := self.store.Delete(ctx, self.name, key); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return result, nil
+	return result, listed, nil
 }
 
 // has returns true when the tree has the object of the key, which is
@@ -568,6 +576,10 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 	if err != nil {
 		return err
 	}
+	revisions, err := self.store.Revisions(ctx, self.name, folder, false)
+	if err != nil {
+		return err
+	}
 	counts := make(map[string][]schema.Meta)
 	files := make(map[string]*schema.Object)
 	for _, child := range indexed {
@@ -588,11 +600,13 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		child.Meta = mergeCount(child.Meta, counts[key])
 		objects = append(objects, child)
 	}
-	changed, err := self.changed(ctx, t, files)
+	changed, listed, err := self.changed(ctx, t, files, revisions)
 	if err != nil {
 		return err
+	} else if err := self.put(ctx, append(objects, changed...)); err != nil {
+		return err
 	}
-	return self.put(ctx, append(objects, changed...))
+	return self.store.SetRevisions(ctx, self.name, listed)
 }
 
 // refresh changes the index, of the object of a key, which is created,
@@ -704,17 +718,6 @@ func (self *Indexer) all(ctx context.Context, req store.ListRequest) ([]*schema.
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
-
-// sameObject returns true when two versions of a file are the same, of their
-// entity tags, when they both have one, and otherwise of their sizes, and
-// when they were modified
-func sameObject(a, b *schema.Object) bool {
-	if a.ETag != nil && b.ETag != nil {
-		return *a.ETag == *b.ETag
-	}
-	sameSize := (a.Size == nil) == (b.Size == nil) && (a.Size == nil || *a.Size == *b.Size)
-	return sameSize && a.ModTime.Equal(b.ModTime)
-}
 
 // folderPath returns the path of a folder, without a "/" after it, unless
 // it's the root

@@ -88,6 +88,14 @@ func (self *Store) PendingBeneath(context.Context, string, string) (bool, error)
 	return false, errNotImplemented
 }
 
+func (self *Store) Revisions(context.Context, string, string, bool) (map[string]string, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) SetRevisions(context.Context, string, map[string]string) error {
+	return errNotImplemented
+}
+
 func (self *Store) Get(context.Context, string, string) (*schema.Object, error) {
 	return nil, errNotImplemented
 }
