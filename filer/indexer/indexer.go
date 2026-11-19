@@ -219,7 +219,7 @@ func (self *Indexer) ListFolders(ctx context.Context, req schema.ListObjectsRequ
 		}
 		return &folderIterator{backend: iter}, nil
 	}
-	if _, err := self.store.Get(ctx, self.name, parent); errors.Is(err, gofiler.ErrNotFound) {
+	if object, err := self.store.Get(ctx, self.name, parent); errors.Is(err, gofiler.ErrNotFound) || (err == nil && !object.IsDir) {
 		return nil, &fs.PathError{Op: "list", Path: req.Path, Err: fs.ErrNotExist}
 	} else if err != nil {
 		return nil, err
@@ -394,11 +394,14 @@ func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
 	if err != nil {
 		return err
 	}
+	files := make(map[string]*schema.Object)
 	for _, object := range indexed {
 		if !t.has(object) {
 			if err := self.store.Delete(ctx, self.name, object.Path); err != nil {
 				return err
 			}
+		} else if !object.IsDir {
+			files[object.Path] = object
 		}
 	}
 	objects := make([]*schema.Object, 0, len(t.folders)+len(t.files)+1)
@@ -407,12 +410,24 @@ func (self *Indexer) replace(ctx context.Context, root string, t tree) error {
 	for p, folder := range t.folders {
 		objects = append(objects, withCount(folder, t.counts[p]))
 	}
+	return self.put(ctx, append(objects, t.changed(files)...))
+}
+
+// changed returns the files of the tree which are indexed, and aren't the
+// same as those which are, by their entity tags, or sizes and modified
+// times, so a file which is stored of the backend, which can have more than
+// its listing, such as a bucket's metadata, isn't replaced by its listing
+func (t tree) changed(indexed map[string]*schema.Object) []*schema.Object {
+	result := make([]*schema.Object, 0, len(t.files))
 	for p, file := range t.files {
-		if _, exists := t.folders[p]; !exists {
-			objects = append(objects, file)
+		if _, exists := t.folders[p]; exists {
+			continue
+		} else if previous, exists := indexed[p]; exists && sameObject(previous, file) {
+			continue
 		}
+		result = append(result, file)
 	}
-	return self.put(ctx, objects)
+	return result
 }
 
 // indexedFiles returns how many files of the tree are indexed, which are
@@ -499,6 +514,7 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		return err
 	}
 	counts := make(map[string][]schema.Meta)
+	files := make(map[string]*schema.Object)
 	for _, child := range indexed {
 		if !t.has(child) {
 			if err := self.store.Delete(ctx, self.name, child.Path); err != nil {
@@ -506,6 +522,8 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 			}
 		} else if child.IsDir {
 			counts[child.Path] = child.Meta
+		} else {
+			files[child.Path] = child
 		}
 	}
 	object.Path = folder
@@ -514,12 +532,7 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		child.Meta = mergeCount(child.Meta, counts[p])
 		objects = append(objects, child)
 	}
-	for p, file := range t.files {
-		if _, exists := t.folders[p]; !exists {
-			objects = append(objects, file)
-		}
-	}
-	return self.put(ctx, objects)
+	return self.put(ctx, append(objects, t.changed(files)...))
 }
 
 // refresh changes the index, of an object which is created, updated or
@@ -531,34 +544,36 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 // indexed, removing those which aren't there any more. It's called with the
 // indexer locked.
 func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.EventType) error {
+	var full *schema.Object
 	if p != "/" {
 		object, err := self.Filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: dirPath(p)}})
 		indexed, indexErr := self.store.Get(ctx, self.name, p)
+		if indexErr != nil && !errors.Is(indexErr, gofiler.ErrNotFound) {
+			return indexErr
+		}
+		wasFile := indexErr == nil && !indexed.IsDir
+		wasFolder := indexErr == nil && indexed.IsDir
 		switch {
 		case errors.Is(err, fs.ErrNotExist) || (err == nil && !object.IsDir):
-			// It isn't a folder, or isn't there any more: a file which is
-			// indexed is stored, and when it was indexed, as a file, its
-			// folder's count is the same, so it isn't indexed again
+			// It isn't a folder, or isn't there any more. A file which was
+			// indexed, and still is, is stored, of the backend, and its
+			// folder's count is the same, so it isn't indexed again. A file
+			// which is new is stored by its folder's index, and then of the
+			// backend, so a folder which fails to be indexed is retried.
 			if self.mode == ModeObjects {
 				file, err := self.file(ctx, p)
 				if err != nil {
 					return err
+				} else if file != nil && wasFile {
+					return self.put(ctx, []*schema.Object{file})
 				} else if file != nil {
-					if errors.Is(indexErr, gofiler.ErrNotFound) || indexed.IsDir {
-						if err := self.store.Delete(ctx, self.name, p); err != nil {
-							return err
-						}
-					}
-					if err := self.put(ctx, []*schema.Object{file}); err != nil {
-						return err
-					} else if indexErr == nil && !indexed.IsDir {
-						return nil
-					}
-					break
+					full = file
 				}
 			}
-			if err := self.store.Delete(ctx, self.name, p); err != nil {
-				return err
+			if full == nil || wasFolder {
+				if err := self.store.Delete(ctx, self.name, p); err != nil {
+					return err
+				}
 			}
 		case err != nil:
 			return err
@@ -573,9 +588,15 @@ func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.Eve
 			}
 		}
 	}
+
+	// The folders above it are indexed again, up to the first which was
+	// indexed, as a folder, rather than a file of the same path
 	for parent := store.Parent(p); parent != ""; parent = store.Parent(parent) {
-		_, err := self.store.Get(ctx, self.name, parent)
-		indexed := err == nil
+		object, err := self.store.Get(ctx, self.name, parent)
+		if err != nil && !errors.Is(err, gofiler.ErrNotFound) {
+			return err
+		}
+		indexed := err == nil && object.IsDir
 		if err := self.index(ctx, parent); errors.Is(err, fs.ErrNotExist) {
 			// It isn't there any more, such as an empty folder which the
 			// backend removes, so its parent is indexed again
@@ -586,6 +607,12 @@ func (self *Indexer) refresh(ctx context.Context, p string, eventType schema.Eve
 		if indexed {
 			break
 		}
+	}
+
+	// A new file is stored of the backend, which can have more than its
+	// listing, such as a bucket's metadata
+	if full != nil {
+		return self.put(ctx, []*schema.Object{full})
 	}
 	return nil
 }
@@ -633,6 +660,17 @@ func (self *Indexer) all(ctx context.Context, req store.ListRequest) ([]*schema.
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
+
+// sameObject returns true when two versions of a file are the same, of their
+// entity tags, when they both have one, and otherwise of their sizes, and
+// when they were modified
+func sameObject(a, b *schema.Object) bool {
+	if a.ETag != nil && b.ETag != nil {
+		return *a.ETag == *b.ETag
+	}
+	sameSize := (a.Size == nil) == (b.Size == nil) && (a.Size == nil || *a.Size == *b.Size)
+	return sameSize && a.ModTime.Equal(b.ModTime)
+}
 
 // folderPath returns the path of a folder, without a "/" after it, unless
 // it's the root
