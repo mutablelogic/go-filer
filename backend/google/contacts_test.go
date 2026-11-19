@@ -184,7 +184,6 @@ func Test_ContactObjects(t *testing.T) {
 	assert.Equal(t, "c2-1", *object.ETag)
 	assert.True(t, object.ModTime.Equal(updated))
 	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.DCNamespace, Key: "title", Value: []byte(`"Ada Lovelace"`)})
-	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.DCNamespace, Key: "identifier", Value: []byte(`"c2"`)}, "its vCard's UID")
 	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.ContactNamespace, Key: "url", Value: []byte(`"https://contacts.google.com/person/c2"`)})
 	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c2.vcf"}, IfNoneMatch: []string{"c2-1"}})
 	assert.ErrorIs(t, err, gofiler.ErrNotModified)

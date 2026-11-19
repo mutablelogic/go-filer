@@ -614,7 +614,7 @@ func (self *CalendarFiler) eventPath(calendar *httpclient.Calendar, event *httpc
 }
 
 // eventObject returns an event, which is a file, of its iCalendar, with its
-// metadata, and its content
+// content, and the metadata which the iCalendar can't have
 func (self *CalendarFiler) eventObject(calendar *httpclient.Calendar, event *httpclient.Event) (*schema.Object, []byte) {
 	cal := eventCalendar(calendar, event)
 	content, _ := cal.MarshalText()
@@ -631,15 +631,11 @@ func (self *CalendarFiler) eventObject(calendar *httpclient.Calendar, event *htt
 			object.Meta = append(object.Meta, schema.Meta{Namespace: ns, Key: key, Value: json.RawMessage(quote(value))})
 		}
 	}
+	// What the iCalendar can't have, as what it has, such as when it
+	// starts, is go-metadata's, of it: its calendar's id, and its title,
+	// as dc:title, so it has one when it isn't enriched
 	addMeta(DCNamespace, "title", strings.Join(strings.Fields(event.Summary), " "))
-	addMeta(DCNamespace, "identifier", firstOf(event.ICalUID, event.Id))
-	addMeta(CalendarNamespace, "url", event.HTMLLink)
 	addMeta(CalendarNamespace, "calendar", calendar.Id)
-	addMeta(CalendarNamespace, "name", calendarTitle(calendar))
-	addMeta(CalendarNamespace, "start", firstOf(event.Start.Date, event.Start.DateTime))
-	addMeta(CalendarNamespace, "end", firstOf(event.End.Date, event.End.DateTime))
-	addMeta(CalendarNamespace, "status", event.Status)
-	addMeta(CalendarNamespace, "series", event.RecurringEventId)
 	return object, content
 }
 

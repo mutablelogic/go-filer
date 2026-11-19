@@ -424,15 +424,12 @@ func (self *ContactFiler) contactObject(person *httpclient.Person) (*schema.Obje
 	if person.ETag != "" {
 		object.ETag = types.Ptr(person.ETag)
 	}
-	object.Meta = append(object.Meta,
-		schema.Meta{Namespace: DCNamespace, Key: "identifier", Value: json.RawMessage(quote(id))},
-		schema.Meta{Namespace: ContactNamespace, Key: "url", Value: json.RawMessage(quote(contactURL + url.PathEscape(id)))},
-	)
+	// What the vCard can't have: its link in Google Contacts, as its URLs
+	// are the person's, and its name, as dc:title, so it has one when it
+	// isn't enriched
+	object.Meta = append(object.Meta, schema.Meta{Namespace: ContactNamespace, Key: "url", Value: json.RawMessage(quote(contactURL + url.PathEscape(id)))})
 	if name := card.DisplayName(); name != "" {
-		object.Meta = append(object.Meta,
-			schema.Meta{Namespace: ContactNamespace, Key: "name", Value: json.RawMessage(quote(name))},
-			schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(name))},
-		)
+		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(name))})
 	}
 	return object, content
 }
