@@ -124,7 +124,7 @@ var _ gofiler.Filer = (*Registry)(nil)
 // GLOBALS
 
 // schemes are the schemes of the URLs which backends are created from
-var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme, google.ContactsScheme}
+var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme, google.ContactsScheme, google.CalendarScheme}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -417,6 +417,17 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Contacts has no path: %q", u.Path)
 		}
 		if b, err := google.NewContactFiler(ctx, u.Host, query, self.backendOpts); err != nil {
+			return nil, err
+		} else {
+			return b, nil
+		}
+	case google.CalendarScheme:
+		// The events of a Google account's calendars, of its sign-in, as for
+		// tasks, whose sync tokens are stored with its credentials
+		if u.Path != "" && u.Path != "/" {
+			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Calendar has no path: %q", u.Path)
+		}
+		if b, err := google.NewCalendarFiler(ctx, u.Host, query, self.backendOpts); err != nil {
 			return nil, err
 		} else {
 			return b, nil

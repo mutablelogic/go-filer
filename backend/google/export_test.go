@@ -1,6 +1,9 @@
 package google
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // SetEndpoint sets the endpoint of the API, which is a test's, until it ends
 func SetEndpoint(t testing.TB, endpoint string) {
@@ -25,4 +28,27 @@ func SetPeopleEndpoint(t testing.TB, endpoint string) {
 	peopleEndpoint = endpoint
 	t.Cleanup(func() { peopleEndpoint = previous })
 	SetUserinfoEndpoint(t, endpoint+"/userinfo")
+}
+
+// SetCalendarEndpoint sets the endpoint of the Calendar API, which is a
+// test's, until it ends
+func SetCalendarEndpoint(t testing.TB, endpoint string) {
+	previous := calendarEndpoint
+	calendarEndpoint = endpoint
+	t.Cleanup(func() { calendarEndpoint = previous })
+	SetUserinfoEndpoint(t, endpoint+"/userinfo")
+}
+
+// SetCalendarNow sets the time of a calendar filer, which the months it
+// lists are of
+func SetCalendarNow(filer *CalendarFiler, now func() time.Time) {
+	filer.now = now
+}
+
+// CalendarPath returns where a calendar filer knows an event is, of its
+// calendar, and id, for a watch
+func CalendarPath(filer *CalendarFiler, calendar, id string) string {
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	return filer.paths[eventKey(calendar, id)]
 }

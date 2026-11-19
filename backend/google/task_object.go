@@ -7,7 +7,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	// Packages
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
@@ -43,8 +42,10 @@ const (
 	// taskExt is the extension of a task's file
 	taskExt = ".ics"
 
-	// dateFormat is the format of a task's due date, which has no time
-	dateFormat = "2006-01-02"
+	// taskVersion is of a task's entity tag, which is changed when its file,
+	// or metadata, are, so a task which hasn't changed, and is indexed, is
+	// indexed again, of them, as its revision is of its entity tag
+	taskVersion = "/v2"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -120,7 +121,9 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.
 }
 
 // taskObject returns a task, which is a file, of its iCalendar, with its
-// metadata, and its content
+// content, and the metadata which the iCalendar can't have, as what it has,
+// such as its due date, is go-metadata's, of it, and its title, as dc:title,
+// so it has one when it isn't enriched
 func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.Object, []byte) {
 	// The calendar, which only fails to be written when the writer does,
 	// which a buffer doesn't
@@ -132,20 +135,11 @@ func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.O
 		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: task.Updated},
 	}
 	if task.ETag != "" {
-		object.ETag = types.Ptr(task.ETag)
+		object.ETag = types.Ptr(task.ETag + taskVersion)
 	}
-	object.Meta = appendMeta(object.Meta, "title", task.Title)
 	if task.Title != "" {
 		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(task.Title))})
 	}
-	object.Meta = appendMeta(object.Meta, "status", task.Status)
-	if task.Due != nil {
-		object.Meta = appendMeta(object.Meta, "due", task.Due.UTC().Format(dateFormat))
-	}
-	if task.Completed != nil {
-		object.Meta = appendMeta(object.Meta, "completed", task.Completed.UTC().Format(time.RFC3339))
-	}
-	object.Meta = appendMeta(object.Meta, "parent", task.Parent)
 
 	// What the iCalendar can't have: whether it's cleared from the list,
 	// and its links, such as to the email it was created from

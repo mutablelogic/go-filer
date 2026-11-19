@@ -99,8 +99,8 @@ func (self *tokens) signInAgain(err error) error {
 // of a sign-in, which is an identifier, with SignInPrefix, other than
 // ClientCredential, as only those can be signed in to
 func credentialKey(key string) error {
-	if !types.IsIdentifier(key) || !strings.HasPrefix(key, SignInPrefix) || key == ClientCredential {
-		return gofiler.ErrBadParameter.Withf("%s: %q isn't the key of a sign-in, which is %s*, other than %s", paramCredential, key, SignInPrefix, ClientCredential)
+	if !types.IsIdentifier(key) || !strings.HasPrefix(key, SignInPrefix) || key == ClientCredential || strings.HasSuffix(key, calendarSyncSuffix) {
+		return gofiler.ErrBadParameter.Withf("%s: %q isn't the key of a sign-in, which is %s*, other than %s, or *%s, of calendars' sync tokens", paramCredential, key, SignInPrefix, ClientCredential, calendarSyncSuffix)
 	}
 	return nil
 }
