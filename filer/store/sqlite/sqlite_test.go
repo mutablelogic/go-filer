@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -126,4 +127,29 @@ func Test_Migrate(t *testing.T) {
 	require.NoError(t, s.Put(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
 	_, err = s.Get(ctx, "media", "/a")
 	assert.NoError(t, err)
+}
+
+func Test_PutRollback(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	_, err := s.PutVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/mnt/media?index=folders", Enabled: true})
+	require.NoError(t, err)
+	object := func(path, key, value string) *schema.Object {
+		return &schema.Object{ObjectKey: schema.ObjectKey{Path: path}, ObjectMeta: schema.ObjectMeta{Meta: []schema.Meta{{Namespace: "dc", Key: key, Value: json.RawMessage(value)}}}}
+	}
+	require.NoError(t, s.Put(ctx, "media", object("/a", "title", `"before"`)))
+
+	// A batch which updates an object, and its metadata, and then fails, on a
+	// later object's metadata, whose key isn't an identifier, is rolled back,
+	// as a whole
+	err = s.Put(ctx, "media", object("/a", "title", `"after"`), object("/b", "title", `"b"`), object("/c", "not a key", `"c"`))
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	a, err := s.Get(ctx, "media", "/a")
+	require.NoError(t, err)
+	require.Len(t, a.Meta, 1)
+	assert.JSONEq(t, `"before"`, string(a.Meta[0].Value), "its update is rolled back")
+	for _, path := range []string{"/b", "/c"} {
+		_, err := s.Get(ctx, "media", path)
+		assert.ErrorIs(t, err, gofiler.ErrNotFound, path)
+	}
 }
