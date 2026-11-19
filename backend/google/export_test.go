@@ -64,3 +64,9 @@ func ClearCalendarCache(filer *CalendarFiler) {
 func ClearTaskCache(filer *TaskFiler) {
 	filer.clearCache()
 }
+
+// ClearContactCache clears what a contact filer got from Google, as its
+// watch does, when what it's of changes
+func ClearContactCache(filer *ContactFiler) {
+	filer.people.clear()
+}

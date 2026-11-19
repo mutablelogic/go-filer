@@ -39,6 +39,11 @@ type ContactFiler struct {
 	opts   gofiler.Opts // Its credentials, and client options, which a clone is created with
 	tokens *tokens
 	client *httpclient.PeopleClient
+
+	// The contacts, with their fields, got from Google, for the refresh
+	// interval, which a watch clears when it finds what changed, which a
+	// contact is read from, rather than got again
+	people *cache[[]httpclient.Person]
 }
 
 // contactOpt are the options of a contact filer, of its parameters
@@ -105,6 +110,7 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, opts g
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
 	self := &ContactFiler{contactOpt: opt, name: name, opts: opts}
+	self.people = newCache[[]httpclient.Person](time.Now, func() time.Duration { return self.refreshInterval })
 
 	// The user's sign-in, which can read contacts
 	required := []string{httpclient.ContactsReadonlyScope, httpclient.ContactsScope}
@@ -264,7 +270,7 @@ func (self *ContactFiler) ListObjects(ctx context.Context, req schema.ListObject
 	}
 	var objects []*schema.Object
 	if isRoot {
-		people, err := self.client.Connections(ctx, httpclient.PersonFields)
+		people, err := self.connections(ctx)
 		if err != nil {
 			return nil, self.apiError("list", "/", err)
 		}
@@ -337,6 +343,11 @@ func (self *ContactFiler) WatchObjects(ctx context.Context, ch chan<- schema.Eve
 			}
 		}
 		slices.SortFunc(events, func(a, b schema.Event) int { return strings.Compare(a.Path, b.Path) })
+		if len(events) > 0 {
+			// What was got from Google is out of date, so it's got again,
+			// before what changed is sent, and read
+			self.people.clear()
+		}
 		for _, event := range events {
 			select {
 			case ch <- event:
@@ -374,7 +385,7 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 	if err != nil {
 		return nil, nil, err
 	} else if isRoot {
-		people, err := self.client.Connections(ctx, "metadata")
+		people, err := self.connections(ctx)
 		if err != nil {
 			return nil, nil, self.apiError(op, p, err)
 		}
@@ -388,7 +399,7 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 		root.Meta = append(root.Meta, schema.FolderMeta(count)...)
 		return root, nil, nil
 	}
-	person, err := self.client.Person(ctx, "people/"+id, httpclient.PersonFields)
+	person, err := self.person(ctx, id)
 	if err != nil {
 		return nil, nil, self.apiError(op, p, err)
 	} else if contactId(person) != id || !isContact(person) {
@@ -401,6 +412,28 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 		return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	}
 	return object, content, nil
+}
+
+// connections returns the contacts, with their fields, or those which were
+// got, for the refresh interval
+func (self *ContactFiler) connections(ctx context.Context) ([]httpclient.Person, error) {
+	return self.people.get("", func() ([]httpclient.Person, error) {
+		return self.client.Connections(ctx, httpclient.PersonFields)
+	})
+}
+
+// person returns a contact, of its id, of the contacts which were got,
+// when they were, or else of Google
+func (self *ContactFiler) person(ctx context.Context, id string) (*httpclient.Person, error) {
+	if people, ok := self.people.peek(""); ok {
+		for i := range people {
+			if contactId(&people[i]) == id {
+				person := people[i]
+				return &person, nil
+			}
+		}
+	}
+	return self.client.Person(ctx, "people/"+id, httpclient.PersonFields)
 }
 
 // snapshot returns the entity tags of the contacts, by their paths
