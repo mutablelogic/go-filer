@@ -122,6 +122,20 @@ func (self *Indexer) State(ctx context.Context) (schema.IndexState, error) {
 	return self.store.State(ctx, self.name)
 }
 
+// Metadata returns the state of the indexing of the metadata of its files,
+// by its task, or nil when it doesn't index them, of index=metadata, with a
+// task (see WithMetadataTask)
+func (self *Indexer) Metadata(ctx context.Context) (*schema.TaskState, error) {
+	if !self.tasked() {
+		return nil, nil
+	}
+	state, err := self.store.Tasks(ctx, self.name, store.KindMetadata)
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
 // Mode returns what's indexed, such as ModeFolders
 func (self *Indexer) Mode() Mode {
 	return self.mode

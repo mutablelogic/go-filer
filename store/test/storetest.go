@@ -43,6 +43,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("Scan", func(t *testing.T) { testScan(t, withVolumes(t, newStore(t))) })
 	t.Run("SetMetadata", func(t *testing.T) { testSetMetadata(t, withVolumes(t, newStore(t))) })
 	t.Run("QueueStale", func(t *testing.T) { testQueueStale(t, withVolumes(t, newStore(t))) })
+	t.Run("Tasks", func(t *testing.T) { testTasks(t, withVolumes(t, newStore(t))) })
 	t.Run("DeleteMetadata", func(t *testing.T) { testDeleteMetadata(t, withVolumes(t, newStore(t))) })
 }
 
@@ -1119,6 +1120,58 @@ func testQueueStale(t *testing.T, s store.Store) {
 	assert.ErrorIs(t, s.PushStale(ctx, "media", "/", store.KindIndex), gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.PushStale(ctx, "media", "/b", store.KindMetadata), gofiler.ErrBadParameter)
 	assert.ErrorIs(t, s.PushStale(ctx, "missing", "/", store.KindMetadata), gofiler.ErrNotFound)
+}
+
+func testTasks(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	tasks := []store.Kind{store.KindMetadata}
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), file("/a.txt"), file("/b.txt"), file("/c.txt")))
+	require.NoError(t, s.PutObject(ctx, "photos", folder("/"), file("/a.txt")))
+
+	// None, of a volume whose task hasn't been done
+	state, err := s.Tasks(ctx, "media", store.KindMetadata)
+	require.NoError(t, err)
+	assert.Equal(t, schema.TaskState{}, state)
+
+	// Of its files which are queued, of the volume
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	require.NoError(t, s.PushStale(ctx, "photos", "/", store.KindMetadata))
+	state, err = s.Tasks(ctx, "media", store.KindMetadata)
+	require.NoError(t, err)
+	assert.Equal(t, schema.TaskState{Queued: 3}, state)
+
+	// A file which failed is queued, with why, and one which is given up, of
+	// its error, is done, and failed, as is one which is done
+	work, paths := claimed(t, s, tasks, 10)
+	require.Len(t, work, 3, paths)
+	require.NoError(t, s.Failed(ctx, "media", work[0], errors.New("tried again"), time.Hour))
+	state, err = s.Tasks(ctx, "media", store.KindMetadata)
+	require.NoError(t, err)
+	assert.Equal(t, "tried again", state.Error)
+	work[1].Error = "given up"
+	require.NoError(t, s.Done(ctx, "media", work[1], work[2]))
+	state, err = s.Tasks(ctx, "media", store.KindMetadata)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), state.Queued)
+	assert.Equal(t, uint64(2), state.Indexed)
+	assert.Equal(t, uint64(1), state.Failed)
+	assert.Equal(t, "given up", state.Error, "its error is the last, rather than a retry's, which is due later")
+
+	// One which is given up, and done again, once it changed, isn't failed
+	require.NoError(t, s.SetRevisions(ctx, "media", map[string]string{work[1].Key: "r2"}))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	again, _ := claimed(t, s, tasks, 10)
+	require.Len(t, again, 1)
+	require.Equal(t, work[1].Key, again[0].Key)
+	require.NoError(t, s.Done(ctx, "media", again...))
+	state, err = s.Tasks(ctx, "media", store.KindMetadata)
+	require.NoError(t, err)
+	assert.Equal(t, schema.TaskState{Queued: 1, Indexed: 2, Error: "tried again"}, state)
+
+	// Of another volume, apart
+	state, err = s.Tasks(ctx, "photos", store.KindMetadata)
+	require.NoError(t, err)
+	assert.Equal(t, schema.TaskState{Queued: 1}, state)
 }
 
 func testDeleteMetadata(t *testing.T, s store.Store) {

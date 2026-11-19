@@ -7,6 +7,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	filer "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
 	sqlite "github.com/mutablelogic/go-sqlite"
@@ -100,13 +101,24 @@ func (self *Store) Done(ctx context.Context, volume string, work ...store.Work) 
 			// A task's work, which was done, rather than pushed again, records
 			// the revision of the file it was done of
 			if len(done) > 0 && w.Kind != store.KindIndex && w.Kind != store.KindRescan {
-				if err := conn.Insert(ctx, nil, schema.QueueDid{Volume: volume, Key: w.Key, Kind: w.Kind, Revision: done[0].Revision, Now: now}); err != nil {
+				if err := conn.Insert(ctx, nil, schema.QueueDid{Volume: volume, Key: w.Key, Kind: w.Kind, Revision: done[0].Revision, Error: w.Error, Now: now}); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}))
+}
+
+// Tasks returns the state of the work of a task of the volume's files
+func (self *Store) Tasks(ctx context.Context, volume string, kind store.Kind) (_ filer.TaskState, err error) {
+	ctx, end := self.span(ctx, "Tasks", attribute.String("arg.volume", volume), attribute.String("arg.kind", string(kind)))
+	defer func() { end(err) }()
+	result := schema.QueueTasks{Volume: volume, Kind: kind}
+	if err := self.conn.Get(ctx, &result, result); err != nil {
+		return filer.TaskState{}, storeErr(err)
+	}
+	return result.TaskState, nil
 }
 
 // PushStale queues the work of a task of the files beneath the folder's key
@@ -135,12 +147,12 @@ func (self *Store) PushStale(ctx context.Context, volume, folder string, kind st
 func (self *Store) Failed(ctx context.Context, volume string, work store.Work, cause error, retry time.Duration) (err error) {
 	ctx, end := self.span(ctx, "Failed", attribute.String("arg.volume", volume), attribute.String("arg.key", work.Key))
 	defer func() { end(err) }()
-	message := ""
+	message, now := "", time.Now()
 	if cause != nil {
 		message = cause.Error()
 	}
 	var result schema.WorkList
-	if err := self.conn.Update(ctx, &result, schema.QueueKey{Volume: volume, Work: work}, schema.QueueFailure{Error: message, After: time.Now().Add(retry)}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+	if err := self.conn.Update(ctx, &result, schema.QueueKey{Volume: volume, Work: work}, schema.QueueFailure{Error: message, Failed: now, After: now.Add(retry)}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
 		return storeErr(err)
 	}
 	return nil

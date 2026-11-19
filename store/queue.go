@@ -6,6 +6,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -37,7 +38,8 @@ type QueueStore interface {
 	// KindMetadata, records the revision of the file it was done of, its
 	// listing's when it was claimed (see Revision), so it isn't done again
 	// until it changes, and a file which changed while it was done is stale
-	// (see PushStale).
+	// (see PushStale). A task's work which has an error is given up, which
+	// is kept, of the revision, until it changes (see Tasks).
 	Done(ctx context.Context, volume string, work ...Work) error
 
 	// PushStale queues the work of a task, such as KindMetadata, of the
@@ -47,6 +49,12 @@ type QueueStore interface {
 	// have no revision, such as one which is stored of a change, which is
 	// due now, and isn't queued again when it's queued
 	PushStale(ctx context.Context, volume, folder string, kind Kind) error
+
+	// Tasks returns the state of the work of a task, such as KindMetadata, of
+	// the volume's files: how many are queued, how many it's done of, and
+	// of those, how many it gave up, which Done is given the error of, and
+	// why it last failed
+	Tasks(ctx context.Context, volume string, kind Kind) (schema.TaskState, error)
 
 	// Failed counts an attempt of the work, which is claimed, with why it
 	// failed, and makes it due again after the retry

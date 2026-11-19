@@ -4,6 +4,7 @@ import (
 	"time"
 
 	// Packages
+	filer "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-sqlite"
 )
@@ -38,8 +39,9 @@ type QueueLease time.Time
 
 // QueueFailure is why work failed, and when it's due again
 type QueueFailure struct {
-	Error string
-	After time.Time
+	Error  string
+	Failed time.Time // When it failed
+	After  time.Time // When it's due again
 }
 
 // QueuePending selects whether a key of a volume has work which would
@@ -99,6 +101,7 @@ func (failure QueueFailure) Insert(*sqlite.Bind) (string, error) {
 // Update binds why the work failed, and when it's due again
 func (failure QueueFailure) Update(bind *sqlite.Bind) error {
 	bind.Set("error", failure.Error)
+	bind.Set("failed", failure.Failed.UTC())
 	bind.Set("after", failure.After.UTC())
 	return nil
 }
@@ -180,7 +183,15 @@ type QueueDid struct {
 	Key      string
 	Kind     store.Kind
 	Revision string
+	Error    string // Why it was given up, or empty when it was done
 	Now      time.Time
+}
+
+// QueueTasks is the work of a task of a volume's files, which is read
+type QueueTasks struct {
+	Volume string
+	Kind   store.Kind
+	filer.TaskState
 }
 
 // QueueStale is the work of a task of the files beneath a folder, which are
@@ -204,8 +215,26 @@ func (did QueueDid) Insert(bind *sqlite.Bind) (string, error) {
 	bind.Set("key", did.Key)
 	bind.Set("did", Did(did.Kind))
 	bind.Set("revision", did.Revision)
+	bind.Set("error", did.Error)
 	bind.Set("now", did.Now.UTC())
 	return bind.Query("queue.did"), nil
+}
+
+// Select binds the volume, and the kinds of the task's work, and what it did
+func (tasks QueueTasks) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	bind.Set("volume", tasks.Volume)
+	bind.Set("kind", string(tasks.Kind))
+	bind.Set("did", Did(tasks.Kind))
+	switch op {
+	case sqlite.Get:
+		return bind.Query("queue.tasks"), nil
+	}
+	return "", sqlite.ErrNotImplemented.Withf("tasks: %v", op)
+}
+
+// Scan reads the work of the task
+func (tasks *QueueTasks) Scan(row sqlite.Row) error {
+	return row.Scan(&tasks.Queued, &tasks.Indexed, &tasks.Failed, &tasks.Error)
 }
 
 func (did QueueDid) Update(*sqlite.Bind) error {

@@ -180,11 +180,26 @@ RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesc
 -- queue.did
 -- The revision of the file which a task's work was done of, its listing's
 -- when it was claimed, of a row of the task's kind, with _done after it,
--- while it's indexed, so a file which changed while it was done is stale
-INSERT INTO object_state (volume, key, kind, after, revision)
-SELECT @volume, @key, @did, @now, nullif(@revision, '')
+-- while it's indexed, so a file which changed while it was done is stale,
+-- and why it was given up, when it was
+INSERT INTO object_state (volume, key, kind, after, revision, error, failed)
+SELECT @volume, @key, @did, @now, nullif(@revision, ''), nullif(@error, ''), CASE WHEN @error <> '' THEN @now END
 WHERE EXISTS (SELECT 1 FROM object WHERE volume = @volume AND key = @key)
-ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision;
+ON CONFLICT (volume, key, kind) DO UPDATE SET revision = excluded.revision, after = excluded.after, error = excluded.error, failed = excluded.failed;
+
+-- queue.tasks
+-- The work of a task of a volume's files: how many are queued, how many it
+-- was done of, and given up of, and why it last failed, of a retry, or of
+-- one given up, by when it failed, as a retry's after is when it's due
+SELECT
+  (SELECT count(*) FROM object_state WHERE volume = @volume AND kind = @kind),
+  (SELECT count(*) FROM object_state WHERE volume = @volume AND kind = @did),
+  (SELECT count(*) FROM object_state WHERE volume = @volume AND kind = @did AND error IS NOT NULL),
+  coalesce((
+    SELECT error FROM object_state
+    WHERE volume = @volume AND kind IN (@kind, @did) AND error IS NOT NULL
+    ORDER BY failed DESC LIMIT 1
+  ), '');
 
 -- queue.push_stale
 -- The work of a task of the files beneath a folder which are indexed, whose
@@ -202,7 +217,7 @@ WHERE object.volume = @volume AND object.key > @lower AND object.key < @upper AN
 ON CONFLICT (volume, key, kind) DO NOTHING;
 
 -- queue.failed
-UPDATE object_state SET attempts = attempts + 1, error = @error, after = @after, leased_until = NULL
+UPDATE object_state SET attempts = attempts + 1, error = @error, failed = @failed, after = @after, leased_until = NULL
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
 RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
 
