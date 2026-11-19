@@ -11,6 +11,7 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -92,7 +93,7 @@ type MetadataStore interface {
 	// attributes, so a task which is superseded, as the object changed
 	// since, returns ErrPreconditionFailed, rather than replacing what a
 	// later one found.
-	SetMetadata(ctx context.Context, volume, key, source string, of *schema.ObjectAttr, meta []schema.Meta, geo []schema.Geometry) error
+	SetMetadata(ctx context.Context, volume, key, source string, of *schema.ObjectAttr, meta []schema.Meta, shapes []geo.Geometry) error
 
 	// DeleteMetadata removes the metadata of the source, a task's kind, of
 	// every object of the volume, and its shapes, and the state of its task: its work, and

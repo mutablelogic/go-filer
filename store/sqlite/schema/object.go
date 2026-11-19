@@ -8,6 +8,7 @@ import (
 	// Packages
 	filer "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 	sqlite "github.com/mutablelogic/go-sqlite"
 )
 
@@ -34,13 +35,13 @@ type ObjectMetaPut struct {
 	Key    string
 	Source string
 	Meta   []filer.Meta
-	Geo    []filer.Geometry
+	Geo    []geo.Geometry
 }
 
 // geoPut is a shape which is put, with its box
 type geoPut struct {
-	Shape filer.Geometry `json:"shape"`
-	filer.Bounds
+	Shape geo.Geometry `json:"shape"`
+	geo.Bounds
 }
 
 // ObjectMetaSource selects the metadata of a source of a volume, and its

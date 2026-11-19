@@ -11,6 +11,7 @@ import (
 	filer "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	sqlite "github.com/mutablelogic/go-sqlite"
 	attribute "go.opentelemetry.io/otel/attribute"
@@ -63,15 +64,15 @@ func (self *Store) PutObject(ctx context.Context, volume string, objects ...*fil
 // the source, a task's kind, in one transaction, or returns ErrNotFound when
 // the object isn't indexed, or ErrPreconditionFailed when it isn't of the
 // attributes, which the task read, any more
-func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, of *filer.ObjectAttr, meta []filer.Meta, geo []filer.Geometry) (err error) {
-	ctx, end := self.span(ctx, "SetMetadata", attribute.String("arg.volume", volume), attribute.String("arg.key", key), attribute.String("arg.source", source), attribute.Int("arg.meta", len(meta)), attribute.Int("arg.geo", len(geo)))
+func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, of *filer.ObjectAttr, meta []filer.Meta, shapes []geo.Geometry) (err error) {
+	ctx, end := self.span(ctx, "SetMetadata", attribute.String("arg.volume", volume), attribute.String("arg.key", key), attribute.String("arg.source", source), attribute.Int("arg.meta", len(meta)), attribute.Int("arg.geo", len(shapes)))
 	defer func() { end(err) }()
 	if err := store.ValidateKey(key); err != nil {
 		return err
 	} else if !types.IsIdentifier(source) || strings.ToLower(source) != source {
 		return gofiler.ErrBadParameter.Withf("the source of metadata is a task's kind, such as metadata, not %q", source)
 	}
-	for _, shape := range geo {
+	for _, shape := range shapes {
 		if err := shape.Validate(); err != nil {
 			return gofiler.ErrBadParameter.Withf("%q: %v", key, err)
 		}
@@ -85,7 +86,7 @@ func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, 
 		} else if of != nil && !sameAttr(result[0].ObjectAttr, *of) {
 			return gofiler.ErrPreconditionFailed.Withf("%q changed since it was read", key)
 		}
-		return conn.Insert(ctx, nil, schema.ObjectMetaPut{Volume: volume, Key: key, Source: source, Meta: meta, Geo: geo})
+		return conn.Insert(ctx, nil, schema.ObjectMetaPut{Volume: volume, Key: key, Source: source, Meta: meta, Geo: shapes})
 	}))
 }
 

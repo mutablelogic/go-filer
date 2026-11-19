@@ -13,6 +13,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	changes "github.com/mutablelogic/go-server/broadcaster/schema"
 	assert "github.com/stretchr/testify/assert"
@@ -1127,19 +1128,19 @@ func testGeo(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	require.NoError(t, s.PutObject(ctx, "media", folder("/"), file("/a.jpg"), file("/b.jpg")))
 	require.NoError(t, s.PutObject(ctx, "photos", folder("/"), file("/a.jpg")))
-	london := schema.NewPoint(51.5, -0.12).WithAlt(30)
-	square := schema.NewPolygon([]schema.Position{{Long: 0, Lat: 0}, {Long: 2, Lat: 0}, {Long: 2, Lat: 1}, {Long: 0, Lat: 1}, {Long: 0, Lat: 0}})
+	london := geo.NewPoint(51.5, -0.12).WithAlt(30)
+	square := geo.NewPolygon([]geo.Position{{Long: 0, Lat: 0}, {Long: 2, Lat: 0}, {Long: 2, Lat: 1}, {Long: 0, Lat: 1}, {Long: 0, Lat: 0}})
 
 	// The shapes a task found of a file are read with it, in their order,
 	// and one which is the same as another is stored once
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []schema.Geometry{london, square, london}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []geo.Geometry{london, square, london}))
 	object, err := s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
-	assert.Equal(t, []schema.Geometry{london, square}, object.Geo)
+	assert.Equal(t, []geo.Geometry{london, square}, object.Geo)
 	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/"})
 	require.NoError(t, err)
 	require.Len(t, objects, 2)
-	assert.Equal(t, []schema.Geometry{london, square}, objects[0].Geo)
+	assert.Equal(t, []geo.Geometry{london, square}, objects[0].Geo)
 	assert.Nil(t, objects[1].Geo, "a file without shapes has none")
 
 	// They're of the volume, and are kept when the file is put again, as
@@ -1151,28 +1152,28 @@ func testGeo(t *testing.T, s store.Store) {
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
 	assert.Len(t, object.Geo, 2)
-	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []schema.Geometry{square}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []geo.Geometry{square}))
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
-	assert.Equal(t, []schema.Geometry{square}, object.Geo)
+	assert.Equal(t, []geo.Geometry{square}, object.Geo)
 
 	// A shape which isn't valid is bad, and replaces nothing
-	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []schema.Geometry{london, schema.NewPoint(91, 0)}), gofiler.ErrBadParameter)
+	assert.ErrorIs(t, s.SetMetadata(ctx, "media", "/a.jpg", "metadata", nil, nil, []geo.Geometry{london, geo.NewPoint(91, 0)}), gofiler.ErrBadParameter)
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
-	assert.Equal(t, []schema.Geometry{square}, object.Geo)
+	assert.Equal(t, []geo.Geometry{square}, object.Geo)
 
 	// They're removed of a task which isn't done any more, and of a file
 	// which is deleted
-	require.NoError(t, s.SetMetadata(ctx, "media", "/b.jpg", "metadata", nil, nil, []schema.Geometry{london}))
-	require.NoError(t, s.SetMetadata(ctx, "photos", "/a.jpg", "metadata", nil, nil, []schema.Geometry{london}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.jpg", "metadata", nil, nil, []geo.Geometry{london}))
+	require.NoError(t, s.SetMetadata(ctx, "photos", "/a.jpg", "metadata", nil, nil, []geo.Geometry{london}))
 	require.NoError(t, s.DeleteMetadata(ctx, "media", "metadata"))
 	object, err = s.GetObject(ctx, "media", "/a.jpg")
 	require.NoError(t, err)
 	assert.Nil(t, object.Geo)
 	object, err = s.GetObject(ctx, "photos", "/a.jpg")
 	require.NoError(t, err)
-	assert.Equal(t, []schema.Geometry{london}, object.Geo, "of another volume, apart")
+	assert.Equal(t, []geo.Geometry{london}, object.Geo, "of another volume, apart")
 	require.NoError(t, s.DeleteObject(ctx, "photos", "/a.jpg"))
 	require.NoError(t, s.PutObject(ctx, "photos", file("/a.jpg")))
 	object, err = s.GetObject(ctx, "photos", "/a.jpg")

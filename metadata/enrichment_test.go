@@ -14,6 +14,7 @@ import (
 	fs "github.com/mutablelogic/go-filer/backend/fs"
 	metadata "github.com/mutablelogic/go-filer/metadata"
 	schema "github.com/mutablelogic/go-filer/schema"
+	geo "github.com/mutablelogic/go-metadata/pkg/geo"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -22,7 +23,7 @@ import (
 // each key
 type metadataStore map[string][]schema.Meta
 
-func (m metadataStore) SetMetadata(_ context.Context, key string, meta []schema.Meta, _ []schema.Geometry) error {
+func (m metadataStore) SetMetadata(_ context.Context, key string, meta []schema.Meta, _ []geo.Geometry) error {
 	m[key] = meta
 	return nil
 }
