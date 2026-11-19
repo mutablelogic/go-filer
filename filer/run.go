@@ -40,12 +40,6 @@ var (
 	// watchRetryMax
 	watchRetry    = time.Second
 	watchRetryMax = time.Minute
-
-	// syncInterval is how often Run syncs every volume with the store, as
-	// changes of other processes, such as another server of the same SQLite
-	// database, aren't published to its broadcaster, and reading the store
-	// can fail
-	syncInterval = time.Minute
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -128,13 +122,28 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 	// Mount the store's volumes, which are enabled, and sync them, and those
 	// which are asked to be, until it's stopped
 	self.startSyncs(ctx, logger)
-	self.syncAll(ctx, logger)
+	relist := make(chan struct{}, 1)
+	var listRetry time.Duration
+	list := func() {
+		// The volumes of the store are listed again, after a while, which
+		// doubles, when they can't be, until they are
+		if err := self.syncAll(ctx, logger); err == nil {
+			listRetry = 0
+			return
+		}
+		listRetry = min(max(watchRetry, listRetry*2), watchRetryMax)
+		time.AfterFunc(listRetry, func() {
+			select {
+			case relist <- struct{}{}:
+			default:
+			}
+		})
+	}
+	list()
 
 	// Watch the volumes, and send their changes, until it's stopped
 	ticker := time.NewTicker(rescanInterval)
 	defer ticker.Stop()
-	resync := time.NewTicker(syncInterval)
-	defer resync.Stop()
 	self.startWatches(watches, events, ended)
 	for {
 		select {
@@ -144,12 +153,12 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 			// A change of a volume, or of every volume, when it's a rescan, as
 			// changes were missed
 			if change.Row == "" {
-				self.syncAll(ctx, logger)
+				list()
 			} else {
 				self.sync(change.Row, false)
 			}
-		case <-resync.C:
-			self.syncAll(ctx, logger)
+		case <-relist:
+			list()
 		case <-self.changed:
 			self.startWatches(watches, events, ended)
 		case event := <-events:

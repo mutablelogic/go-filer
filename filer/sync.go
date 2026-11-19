@@ -57,12 +57,13 @@ func (self *Registry) sync(name string, force bool) {
 }
 
 // syncAll syncs the volumes of the store, and those which are mounted, as
-// they can be deleted from it, or the store can't be read
-func (self *Registry) syncAll(ctx context.Context, logger *slog.Logger) {
+// they can be deleted from it, or returns the error when the store can't be
+// read
+func (self *Registry) syncAll(ctx context.Context, logger *slog.Logger) error {
 	names := map[string]bool{}
 	if volumes, err := self.store.ListVolumes(ctx); err != nil {
 		logger.ErrorContext(ctx, "the volumes can't be read from the store", "error", err.Error())
-		return
+		return err
 	} else {
 		for _, volume := range volumes {
 			names[volume.Name] = true
@@ -74,6 +75,7 @@ func (self *Registry) syncAll(ctx context.Context, logger *slog.Logger) {
 	for name := range names {
 		self.sync(name, false)
 	}
+	return nil
 }
 
 // startSyncs lets the volumes be synced, by workers, which are cancelled

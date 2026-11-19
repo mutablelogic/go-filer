@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -402,17 +403,38 @@ func Test_Registry_DisabledIndex(t *testing.T) {
 	}, mountTimeout, 5*time.Millisecond, "its index is removed")
 }
 
-func Test_Registry_Resync(t *testing.T) {
-	interval := syncInterval
-	syncInterval = 20 * time.Millisecond
-	t.Cleanup(func() { syncInterval = interval })
+// flakyStore is a store whose volumes can't be listed, the first times
+type flakyStore struct {
+	store.Store
+	fails atomic.Int32
+}
 
-	// A volume which is deleted from the store, by another process, whose
-	// changes aren't published to the registry's broadcaster, is unmounted,
-	// once the registry syncs every volume
-	r, s, dir := newIndexedRegistry(t)
-	_, err := add(t, r, "media", indexedURL(t, dir, "media", ""))
+func (s *flakyStore) ListVolumes(ctx context.Context) ([]*schema.Volume, error) {
+	if s.fails.Add(-1) >= 0 {
+		return nil, gofiler.ErrServiceUnavailable.With("the store is down")
+	}
+	return s.Store.ListVolumes(ctx)
+}
+
+func Test_Registry_ListRetry(t *testing.T) {
+	retry := watchRetry
+	watchRetry = 10 * time.Millisecond
+	t.Cleanup(func() { watchRetry = retry })
+
+	// A registry whose store can't be listed, when it runs, lists it again,
+	// after a while, until it can be, when it mounts its volumes
+	dir := t.TempDir()
+	s := &flakyStore{Store: newStore(t)}
+	r, err := New(context.Background(), WithDebounce(0), WithStore(s))
 	require.NoError(t, err)
-	require.NoError(t, s.DeleteVolume(context.Background(), "media"))
-	require.Eventually(t, func() bool { return get(r, "media") == nil }, mountTimeout, 5*time.Millisecond, "it's unmounted")
+	t.Cleanup(func() { r.close() })
+	u, err := validate(r, fileURL(t, dir, "media"))
+	require.NoError(t, err)
+	_, err = s.Store.CreateVolume(context.Background(), schema.VolumeMeta{Name: "media", URL: u.String(), Enabled: true})
+	require.NoError(t, err)
+	s.fails.Store(3)
+	runRegistry(t, r)
+	_, err = mounted(t, r, "media", nil)
+	require.NoError(t, err)
+	assert.Less(t, s.fails.Load(), int32(0), "it's listed again")
 }
