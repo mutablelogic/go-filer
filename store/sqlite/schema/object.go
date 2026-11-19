@@ -34,8 +34,21 @@ type ObjectMetaPut struct {
 	Volume string
 	Key    string
 	Source string
-	Meta   []filer.Meta
-	Geo    []geo.Geometry
+	filer.TaskMeta
+}
+
+// eventPut is an occurrence which is put, of its start, and end, as a date,
+// or a time, which a row has one of
+type eventPut struct {
+	UID          string `json:"uid"`
+	RecurrenceID string `json:"recurrence_id,omitempty"`
+	Kind         string `json:"kind"`
+	Title        string `json:"title,omitempty"`
+	StartDate    string `json:"start_date,omitempty"`
+	StartAt      string `json:"start_at,omitempty"`
+	EndDate      string `json:"end_date,omitempty"`
+	EndAt        string `json:"end_at,omitempty"`
+	TZ           string `json:"tz,omitempty"`
 }
 
 // geoPut is a shape which is put, with its box
@@ -240,11 +253,31 @@ func (put ObjectMetaPut) Insert(bind *sqlite.Bind) (string, error) {
 	if err != nil {
 		return "", sqlite.ErrBadParameter.Withf("shapes of %q: %v", put.Key, err)
 	}
+	occurrences := make([]eventPut, 0, len(put.Events))
+	for _, o := range put.Events {
+		row := eventPut{UID: o.UID, RecurrenceID: o.RecurrenceID, Kind: o.Kind, Title: o.Title, TZ: o.TZ}
+		if o.Start.Date {
+			row.StartDate = o.Start.String()
+		} else {
+			row.StartAt = o.Start.String()
+		}
+		if o.End != nil && o.End.Date {
+			row.EndDate = o.End.String()
+		} else if o.End != nil {
+			row.EndAt = o.End.String()
+		}
+		occurrences = append(occurrences, row)
+	}
+	events, err := json.Marshal(occurrences)
+	if err != nil {
+		return "", sqlite.ErrBadParameter.Withf("events of %q: %v", put.Key, err)
+	}
 	bind.Set("volume", put.Volume)
 	bind.Set("key", put.Key)
 	bind.Set("source", put.Source)
 	bind.Set("meta", string(meta))
 	bind.Set("geo", string(geo))
+	bind.Set("events", string(events))
 	return bind.Query("object.set_meta"), nil
 }
 
@@ -273,8 +306,8 @@ func (revisions *Revisions) Scan(row sqlite.Row) error {
 
 func (list *ObjectList) Scan(row sqlite.Row) error {
 	var object filer.Object
-	var key, meta, geo string
-	if err := row.Scan(&key, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta, &geo); err != nil {
+	var key, meta, geo, events string
+	if err := row.Scan(&key, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta, &geo, &events); err != nil {
 		return err
 	}
 	object.Path, object.IsDir = store.PathOf(key)
@@ -287,6 +320,11 @@ func (list *ObjectList) Scan(row sqlite.Row) error {
 		return err
 	} else if len(object.Geo) == 0 {
 		object.Geo = nil
+	}
+	if err := json.Unmarshal([]byte(events), &object.Events); err != nil {
+		return err
+	} else if len(object.Events) == 0 {
+		object.Events = nil
 	}
 	*list = append(*list, &object)
 	return nil
