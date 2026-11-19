@@ -303,6 +303,96 @@ func Test_Clone(t *testing.T) {
 	eventually(t, c, "/a", "/a/b", "/c", "/g")
 }
 
+// indexed returns the paths of the objects of the store's index, of the
+// volume media, which are files, in their order
+func indexed(t *testing.T, s store.Store) []string {
+	t.Helper()
+	objects, err := s.List(context.Background(), "media", store.ListRequest{Parent: "/", Recursive: true})
+	require.NoError(t, err)
+	result := []string{}
+	for _, object := range objects {
+		if !object.IsDir {
+			result = append(result, object.Path)
+		}
+	}
+	return result
+}
+
+// files waits for the files of the store's index to be those
+func files(t *testing.T, s store.Store, want ...string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return strings.Join(indexed(t, s), ",") == strings.Join(want, ",")
+	}, 10*time.Second, 10*time.Millisecond, "want %v, got %v", want, indexed(t, s))
+}
+
+func Test_Objects(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	s := newStore(t)
+
+	// Its files are indexed, with their attributes, as well as its folders,
+	// which its URL says
+	i, err := indexer.New("media", backend, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0))
+	require.NoError(t, err)
+	assert.Equal(t, indexer.ModeObjects, i.Mode())
+	assert.Equal(t, "objects", i.URL().Query().Get(indexer.IndexParam))
+	run(t, i)
+	assert.Equal(t, []string{"/a/y.txt", "/x.txt"}, indexed(t, s))
+	assert.Equal(t, []string{"/a", "/a/b", "/c"}, folders(t, i, "/", true), "its folders are listed, not its files")
+	file, err := s.Get(context.Background(), "media", "/x.txt")
+	require.NoError(t, err)
+	require.NotNil(t, file.Size)
+	assert.Equal(t, int64(len("x.txt")), *file.Size)
+	assert.False(t, file.ModTime.IsZero())
+
+	// A file which is written through it, or the backend, is indexed, and
+	// one which changes is indexed again
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}, Body: strings.NewReader("z")})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "w.txt"), []byte("w"), 0o644))
+	files(t, s, "/a/y.txt", "/c/z.txt", "/w.txt", "/x.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.txt"), []byte("longer"), 0o644))
+	require.Eventually(t, func() bool {
+		file, err := s.Get(context.Background(), "media", "/x.txt")
+		return err == nil && file.Size != nil && *file.Size == int64(len("longer"))
+	}, 10*time.Second, 10*time.Millisecond, "its size is indexed again")
+	require.Eventually(t, func() bool {
+		object, err := i.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c/"}})
+		return err == nil && count(t, object) == "1"
+	}, 10*time.Second, 10*time.Millisecond, "its folder's count")
+
+	// A file which is deleted, through it, or the backend, isn't, nor are
+	// the files of a folder which is removed
+	_, err = i.DeleteObjects(context.Background(), schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/c/z.txt"}})
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(dir, "w.txt")))
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "a")))
+	files(t, s, "/x.txt")
+}
+
+func Test_ObjectsToFolders(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+
+	// A volume whose files were indexed, which is indexed of its folders,
+	// doesn't keep its files, once it's scanned
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- i.Run(ctx) }()
+	files(t, s, "/a/y.txt", "/x.txt")
+	cancel()
+	require.NoError(t, <-done)
+	folders, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, folders)
+	files(t, s)
+}
+
 func Test_Poll(t *testing.T) {
 	backend, dir := newBackend(t)
 

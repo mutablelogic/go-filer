@@ -236,7 +236,7 @@ func VolumeName(u *url.URL) string {
 func (self *Registry) metaOf(name string, b gofiler.Filer) schema.VolumeMeta {
 	mode, backend := indexer.ModeNone, b
 	if i, ok := b.(*indexer.Indexer); ok {
-		mode, backend = indexer.ModeFolders, i.Backend()
+		mode, backend = i.Mode(), i.Backend()
 	}
 	u := backend.URL()
 	if c, ok := backend.(interface{ URLWithCredentials() *url.URL }); ok {
@@ -340,7 +340,7 @@ func (self *Registry) indexed(volume string, b gofiler.Filer, mode indexer.Mode)
 	if mode == indexer.ModeNone {
 		return b, nil
 	}
-	i, err := indexer.New(volume, b, self.store)
+	i, err := indexer.New(volume, b, self.store, indexer.WithMode(mode))
 	if err != nil {
 		return nil, errors.Join(err, closeFiler(b))
 	}

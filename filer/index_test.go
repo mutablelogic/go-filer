@@ -455,3 +455,38 @@ func Test_Registry_UpdateScheme(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, stored.URL, again.URL)
 }
+
+func Test_Registry_IndexObjects(t *testing.T) {
+	r, s, dir := newIndexedRegistry(t)
+	ctx := context.Background()
+	u := indexedURL(t, dir, "media", "objects")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.FromSlash(u.Path), "a", "photo.png"), []byte("png"), 0o644))
+
+	// A volume with index=objects has its files indexed, which its URL, and
+	// index, say
+	_, err := add(t, r, "media", u)
+	require.NoError(t, err)
+	v := ready(t, r, "media")
+	assert.Equal(t, "objects", v.Index.Mode)
+	stored, err := url.Parse(v.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "objects", stored.Query().Get(indexer.IndexParam))
+	require.Eventually(t, func() bool {
+		_, err := s.Get(ctx, "media", "/a/photo.png")
+		return err == nil
+	}, mountTimeout, 5*time.Millisecond, "its file is indexed")
+
+	// Indexed of its folders only, it doesn't keep its files, once it's
+	// scanned
+	v, err = update(t, r, "media", url.Values{indexer.IndexParam: {"folders"}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		v, err := r.GetVolume(ctx, "media")
+		if err != nil || v.Index == nil || v.Index.Mode != "folders" {
+			return false
+		}
+		_, err = s.Get(ctx, "media", "/a/photo.png")
+		return errors.Is(err, gofiler.ErrNotFound)
+	}, mountTimeout, 5*time.Millisecond, "its file isn't indexed")
+	assert.Equal(t, []string{"/a", "/a/b"}, indexedFolders(t, r, "media"))
+}

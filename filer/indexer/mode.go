@@ -21,6 +21,7 @@ const (
 
 	ModeNone    Mode = "none"    // It isn't indexed
 	ModeFolders Mode = "folders" // Its folders are indexed
+	ModeObjects Mode = "objects" // Its folders, and files, are indexed, with the backend's metadata
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -32,9 +33,22 @@ func ParseMode(value string) (Mode, error) {
 	switch Mode(value) {
 	case "", ModeNone:
 		return ModeNone, nil
-	case ModeFolders:
-		return ModeFolders, nil
+	case ModeFolders, ModeObjects:
+		return Mode(value), nil
 	default:
-		return ModeNone, gofiler.ErrBadParameter.Withf("%s: %q, which is %s or %s", IndexParam, value, ModeNone, ModeFolders)
+		return ModeNone, gofiler.ErrBadParameter.Withf("%s: %q, which is %s, %s or %s", IndexParam, value, ModeNone, ModeFolders, ModeObjects)
+	}
+}
+
+// Level returns how much the mode indexes, of each mode including what the
+// one below it does: none is 0, folders 1, and objects 2
+func (m Mode) Level() int {
+	switch m {
+	case ModeFolders:
+		return 1
+	case ModeObjects:
+		return 2
+	default:
+		return 0
 	}
 }

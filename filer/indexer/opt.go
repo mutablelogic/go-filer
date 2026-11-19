@@ -18,6 +18,7 @@ type opt struct {
 	rescanInterval time.Duration // How often a backend which can't be watched is scanned again
 	debounce       time.Duration // How long work waits, for more of its path, which coalesces with it
 	rescanMin      time.Duration // How often a folder is rescanned, at most
+	mode           Mode          // What's indexed, which is ModeFolders, by default
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,6 +55,18 @@ func WithRescanInterval(interval time.Duration) Opt {
 			return gofiler.ErrBadParameter.Withf("rescan interval: %v", interval)
 		}
 		o.rescanInterval = interval
+		return nil
+	}
+}
+
+// WithMode sets what's indexed, which is ModeFolders, by default, or
+// ModeObjects, of the files too
+func WithMode(mode Mode) Opt {
+	return func(o *opt) error {
+		if mode != ModeFolders && mode != ModeObjects {
+			return gofiler.ErrBadParameter.Withf("an indexer's mode is %s or %s, not %q", ModeFolders, ModeObjects, mode)
+		}
+		o.mode = mode
 		return nil
 	}
 }
@@ -100,7 +113,7 @@ func WithRetry(retry time.Duration) Opt {
 // PRIVATE METHODS
 
 func (o *opt) apply(opts []Opt) error {
-	o.retry, o.rescanInterval, o.debounce, o.rescanMin = defaultRetry, DefaultRescanInterval, DefaultDebounce, DefaultRescanMinInterval
+	o.retry, o.rescanInterval, o.debounce, o.rescanMin, o.mode = defaultRetry, DefaultRescanInterval, DefaultDebounce, DefaultRescanMinInterval, ModeFolders
 	for _, fn := range opts {
 		if err := fn(o); err != nil {
 			return err
