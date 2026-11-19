@@ -77,6 +77,10 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 	if _, _, err := self.poll(ctx, state); err != nil {
 		return err
 	}
+
+	// What was got before it's watched may be out of date, of what the poll
+	// found, which isn't sent, so it's got again, of the rescan
+	self.clearCache()
 	send := func(event schema.Event) error {
 		select {
 		case ch <- event:
@@ -100,6 +104,7 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 		if err != nil {
 			return err
 		}
+
 		// The days which are listed move on, so events enter, and leave,
 		// them, without changing
 		if next, _ := self.days(); !next.Equal(from) {
@@ -107,6 +112,11 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 		}
 		if rescan {
 			events = []schema.Event{schema.Rescan(self.name)}
+		}
+		if len(events) > 0 {
+			// What was got from Google is out of date, so it's got again,
+			// before what changed is sent, and read
+			self.clearCache()
 		}
 		for _, event := range events {
 			if err := send(event); err != nil {
@@ -123,6 +133,8 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 // changed, or true when the root is rescanned instead (see WatchObjects).
 // The tokens are stored when they change.
 func (self *CalendarFiler) poll(ctx context.Context, state *calendarSync) (bool, []schema.Event, error) {
+	// The calendars are got from Google, rather than the cache, as what
+	// changed of them is found of them
 	calendars, err := self.client.Calendars(ctx)
 	if err != nil {
 		return false, nil, self.apiError("watch", "/", err)

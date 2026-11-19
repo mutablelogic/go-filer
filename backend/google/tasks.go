@@ -47,6 +47,13 @@ type TaskFiler struct {
 	mu      sync.Mutex
 	watches map[*taskWatch]struct{}
 	seq     uint64 // The sequence of the last change the filer made
+
+	// What's got from Google, for the refresh interval, which is cleared
+	// when the filer changes it, or a watch finds it changed: the lists, and
+	// the tasks of each list, of its id, which a task is read from, rather
+	// than got again
+	lists *cache[[]httpclient.TaskList]
+	tasks *cache[[]httpclient.Task]
 }
 
 // taskOpt are the options of a task filer, of its parameters
@@ -122,6 +129,9 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, opts gofi
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
 	self := &TaskFiler{taskOpt: opt, name: name, opts: opts}
+	ttl := func() time.Duration { return self.refreshInterval }
+	self.lists = newCache[[]httpclient.TaskList](time.Now, ttl)
+	self.tasks = newCache[[]httpclient.Task](time.Now, ttl)
 
 	// The user's sign-in, which has the access the volume needs
 	required, scopes := []string{httpclient.TasksScope}, []string{httpclient.TasksScope, httpclient.EmailScope}

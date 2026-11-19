@@ -432,6 +432,11 @@ func newFiler(t *testing.T, endpoint string, params url.Values) *google.TaskFile
 		// Unlimited, unless a test sets it, so the tests aren't paced
 		params.Set("quota", "0")
 	}
+	if !params.Has("refresh_interval") {
+		// Not watched, so nothing's kept of Google's, as a test which changes
+		// the fake, without watching, reads what it changed, unless it sets it
+		params.Set("refresh_interval", "0")
+	}
 	filer, err := newTaskFiler(t.Context(), "tasks", params, newCredentials(t, endpoint, nil))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, filer.Close()) })
@@ -1477,4 +1482,44 @@ func newTaskFiler(ctx context.Context, name string, params url.Values, credentia
 // registry creates one, with them as its options
 func newContactFilerOf(ctx context.Context, name string, params url.Values, credentials credential.CredentialProvider) (*google.ContactFiler, error) {
 	return google.NewContactFiler(ctx, name, params, gofiler.Opts{Credentials: credentials})
+}
+
+func Test_TaskCache(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Milk"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	requests := func() int {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.requests
+	}
+
+	// Once the tasks are listed, a task, and its list, are read of them,
+	// rather than got again, for the refresh interval
+	assert.Equal(t, []string{"/L1", "/L1/A.ics"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
+	before := requests()
+	for _, p := range []string{"/L1/A.ics", "/L1"} {
+		_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
+		require.NoError(t, err, p)
+	}
+	assert.Equal(t, before, requests(), "nothing is got again")
+
+	// What changes isn't read, until it's cleared, as the watch does when it
+	// finds what changed, and the filer when it changes it
+	fake.Lock()
+	fake.tasks["L1"][0].Title, fake.tasks["L1"][0].ETag = "Bread", "A-2"
+	fake.Unlock()
+	object, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.DCNamespace, Key: "title", Value: []byte(`"Milk"`)})
+	google.ClearTaskCache(filer)
+	object, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	assert.Contains(t, object.Meta, schema.Meta{Namespace: google.DCNamespace, Key: "title", Value: []byte(`"Bread"`)})
+	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	require.NoError(t, err)
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist, "the filer cleared it, when it deleted it")
 }
