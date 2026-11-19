@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -974,6 +975,74 @@ func Test_ScanPages(t *testing.T) {
 	}, 10*time.Second, time.Millisecond, "it's scanned")
 	assert.Equal(t, int32(files-stored), second.gets.Load(), "only the files which weren't stored are got")
 	assert.Len(t, indexed(t, s), files)
+}
+
+// flaky is a backend which can't be watched, whose files of the paths are
+// gone, once they're listed, or fail to be got, at the attempt
+type flaky struct {
+	gofiler.Filer
+	mu    sync.Mutex
+	gone  map[string]bool
+	fail  map[string]int // The attempt, from one, which fails, of a path
+	tries map[string]int
+}
+
+func (f *flaky) WatchObjects(context.Context, chan<- schema.Event) error {
+	return gofiler.ErrNotImplemented.With("it can't be watched")
+}
+
+func (f *flaky) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	f.mu.Lock()
+	if f.tries == nil {
+		f.tries = make(map[string]int)
+	}
+	f.tries[req.Path]++
+	gone, fail := f.gone[req.Path], f.fail[req.Path] == f.tries[req.Path]
+	f.mu.Unlock()
+	switch {
+	case gone:
+		return nil, &iofs.PathError{Op: "get", Path: req.Path, Err: iofs.ErrNotExist}
+	case fail:
+		return nil, gofiler.ErrServiceUnavailable.With("it failed")
+	}
+	return f.Filer.GetObject(ctx, req)
+}
+
+func Test_ScanCountsStored(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+
+	// A file which is gone, once it's listed, isn't stored, so it isn't
+	// counted
+	f := &flaky{Filer: backend, gone: map[string]bool{"/x.txt": true}}
+	i, err := indexer.New("media", f, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	state, err := s.State(context.Background(), "media")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), state.Files, "only /a/y.txt")
+	assert.Equal(t, []string{"/a/y.txt"}, indexed(t, s))
+}
+
+func Test_RefreshRetry(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+
+	// A file of new folders, which fails to be got, as its folder is
+	// indexed, is retried, with the folders above it, which aren't
+	// indexed, until its folder's files are got
+	f := &flaky{Filer: backend, fail: map[string]int{"/new/deep/f.txt": 2}}
+	i, err := indexer.New("media", f, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0), indexer.WithRetry(10*time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	_, err = i.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/new/deep/f.txt"}, Body: strings.NewReader("f")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, fileErr := s.Get(context.Background(), "media", "/new/deep/f.txt")
+		_, folderErr := s.Get(context.Background(), "media", "/new/")
+		root, rootErr := s.Get(context.Background(), "media", "/")
+		return fileErr == nil && folderErr == nil && rootErr == nil && count(t, root) == "4"
+	}, 10*time.Second, 10*time.Millisecond, "the folders above it are indexed, and the root's count")
 }
 
 func Test_Poll(t *testing.T) {
