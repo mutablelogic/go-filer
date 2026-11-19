@@ -35,6 +35,8 @@ type fakeCalendar struct {
 	version   map[string]int
 	gone      map[string]bool // Calendars whose tokens are rejected
 	syncs     map[string]int  // How many times each calendar is synced without a token
+	lists     int             // How many times events are listed
+	endless   bool            // Every listing has another page
 }
 
 type fakeEvent struct {
@@ -50,7 +52,7 @@ const (
 func newFakeCalendar(t *testing.T) (*fakeCalendar, string) {
 	t.Helper()
 	fake := &fakeCalendar{
-		calendars: []httpclient.Calendar{{Id: work, Summary: "Work", TimeZone: "Europe/Berlin", Primary: true}, {Id: holiday, Summary: "Holidays in the UK"}},
+		calendars: []httpclient.Calendar{{Id: work, ETag: `"w1"`, Summary: "Work", TimeZone: "Europe/Berlin", Primary: true}, {Id: holiday, ETag: `"h1"`, Summary: "Holidays in the UK"}},
 		events:    make(map[string][]fakeEvent),
 		version:   make(map[string]int),
 		gone:      make(map[string]bool),
@@ -119,11 +121,16 @@ func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	switch {
 	case len(parts) == 3 && parts[0] == "users" && parts[1] == "me" && parts[2] == "calendarList":
-		writeJSON(w, map[string]any{"items": f.calendars})
+		page := map[string]any{"items": f.calendars}
+		if f.endless {
+			page["nextPageToken"] = "more"
+		}
+		writeJSON(w, page)
 	case len(parts) == 3 && parts[0] == "calendars" && parts[2] == "events" && query.Get("singleEvents") == "true":
 		// The events between the times
 		from, _ := time.Parse(time.RFC3339, query.Get("timeMin"))
 		to, _ := time.Parse(time.RFC3339, query.Get("timeMax"))
+		f.lists++
 		var items []httpclient.Event
 		for _, e := range f.events[parts[1]] {
 			if start := fakeStart(e.Event); !start.Before(from) && start.Before(to) {
@@ -280,7 +287,7 @@ func Test_CalendarObjects(t *testing.T) {
 	// metadata
 	object, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: all[5]}})
 	require.NoError(t, err)
-	assert.Equal(t, `"e1-1"`, *object.ETag)
+	assert.Equal(t, `"e1-1"/"w1"`, *object.ETag, "of its calendar's too")
 	assert.Contains(t, metaValues(object, "dc"), `"Event e1"`)
 	assert.Contains(t, metaValues(object, google.CalendarNamespace), `"work@example.com"`)
 	assert.Contains(t, read(t, filer, all[5]), "DTSTART;TZID=Europe/Berlin:20261120T090000")
@@ -451,4 +458,73 @@ func Test_CalendarWindow(t *testing.T) {
 	// Weeks, and durations, are of whole days
 	filer = newCalendarFiler(t, calendarCredentials(t, endpoint), url.Values{"window": {"1w36h"}})
 	assert.Equal(t, "8d", filer.URL().Query().Get("window"))
+}
+
+func Test_CalendarChanges(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFakeCalendar(t)
+	filer := newCalendarFiler(t, calendarCredentials(t, endpoint), nil)
+	const p = "/2026/2026-11/20-work@example.com-e1.ics"
+
+	// The root's years are of the window alone, so its events aren't
+	// listed, unless it's recursive
+	assert.Equal(t, []string{"/2026"}, listed(t, filer, schema.ListObjectsRequest{Path: "/"}))
+	fake.Lock()
+	assert.Zero(t, fake.lists)
+	fake.Unlock()
+
+	// An event's entity tag, and content, are of its calendar's, so one which
+	// is renamed changes them
+	before, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
+	require.NoError(t, err)
+	fake.Lock()
+	fake.calendars[0].Summary, fake.calendars[0].ETag = "Home", `"w2"`
+	fake.Unlock()
+	after, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
+	require.NoError(t, err)
+	assert.NotEqual(t, *before.ETag, *after.ETag)
+	assert.Contains(t, read(t, filer, p), "X-WR-CALNAME:Home")
+
+	// A listing which has more pages than are read is an error, rather than
+	// what's been read, which would be the deletion of what isn't
+	fake.Lock()
+	fake.endless = true
+	fake.Unlock()
+	_, err = filer.ListObjects(ctx, schema.ListObjectsRequest{Path: "/", Recursive: true})
+	assert.Error(t, err)
+}
+
+func Test_CalendarWatchRename(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	filer := newCalendarFiler(t, calendarCredentials(t, endpoint), url.Values{"refresh_interval": {"10ms"}})
+	ch, done := make(chan schema.Event, 16), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		assert.ErrorIs(t, <-done, context.Canceled)
+	}()
+	next := func() *schema.Event {
+		select {
+		case event := <-ch:
+			return &event
+		case <-time.After(2 * time.Second):
+			return nil
+		}
+	}
+
+	// A calendar which is renamed, without its events changing, is a rescan,
+	// as their content is of its name
+	require.NotNil(t, next(), "the first rescan")
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected %v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+	fake.Lock()
+	fake.calendars[0].Summary, fake.calendars[0].ETag = "Home", `"w2"`
+	fake.Unlock()
+	event := next()
+	require.NotNil(t, event)
+	assert.Equal(t, schema.EventTypeRescan, event.EventType)
 }

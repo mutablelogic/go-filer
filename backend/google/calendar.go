@@ -333,11 +333,14 @@ func (self *CalendarFiler) ListObjects(ctx context.Context, req schema.ListObjec
 		return &objectList{objects: objects}, nil
 	}
 
-	// The events of the directory, of every month of it which is listed
-	from, to := self.span(p)
-	events, err := self.events(ctx, "list", req.Path, from, to)
-	if err != nil {
-		return nil, err
+	// The events of the directory, of every month of it which is listed,
+	// but not of the root's years, which are of the window alone
+	var events []calendarEvent
+	if p.year != 0 || req.Recursive {
+		from, to := self.span(p)
+		if events, err = self.events(ctx, "list", req.Path, from, to); err != nil {
+			return nil, err
+		}
 	}
 	objects := self.tree(p, events, req.Recursive)
 	result := make([]*schema.Object, 0, len(objects))
@@ -623,8 +626,13 @@ func (self *CalendarFiler) eventObject(calendar *httpclient.Calendar, event *htt
 		ObjectMeta: schema.ObjectMeta{ContentType: cal.ContentType()},
 		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ModTime: event.Updated},
 	}
-	if event.ETag != "" {
-		object.ETag = types.Ptr(event.ETag)
+	// Its entity tag is its calendar's too, as its content is of its
+	// calendar's name, and zone, so a calendar which is renamed changes it
+	if etag := event.ETag; etag != "" {
+		if calendar.ETag != "" {
+			etag += "/" + calendar.ETag
+		}
+		object.ETag = types.Ptr(etag)
 	}
 	addMeta := func(ns, key, value string) {
 		if value != "" {

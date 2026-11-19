@@ -3,6 +3,7 @@ package httpclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -107,6 +108,11 @@ const (
 	calendarPageSize = 250
 )
 
+// errTooManyPages is the error of a listing which has more than maxPages
+// pages, which is incomplete, so it isn't returned, as what isn't listed
+// would be deleted from an index
+var errTooManyPages = fmt.Errorf("more than %d pages", maxPages)
+
 // ErrSyncTokenGone is the error of a sync token which Google no longer
 // accepts, as it's expired, or the calendar's changes since it can't be
 // listed, so its events are synced again, for another
@@ -160,11 +166,11 @@ func (c *CalendarClient) Calendars(ctx context.Context) ([]Calendar, error) {
 			}
 		}
 		if page.NextPageToken == "" {
-			break
+			return result, nil
 		}
 		query.Set("pageToken", page.NextPageToken)
 	}
-	return result, nil
+	return nil, errTooManyPages
 }
 
 // Events returns the events of a calendar which are between the times, a
@@ -192,11 +198,11 @@ func (c *CalendarClient) Events(ctx context.Context, calendar string, from, to t
 			}
 		}
 		if page.NextPageToken == "" {
-			break
+			return result, nil
 		}
 		query.Set("pageToken", page.NextPageToken)
 	}
-	return result, nil
+	return nil, errTooManyPages
 }
 
 // Event returns an event of a calendar, or an occurrence of one, by their
@@ -242,5 +248,5 @@ func (c *CalendarClient) Sync(ctx context.Context, calendar, token string) (int,
 		}
 		query.Set("pageToken", page.NextPageToken)
 	}
-	return changed, "", nil
+	return 0, "", errTooManyPages
 }

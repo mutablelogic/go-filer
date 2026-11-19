@@ -21,9 +21,10 @@ import (
 // calendar's token was last rejected, so one whose tokens are rejected again
 // and again, such as a holiday calendar's, isn't synced every poll
 type calendarSync struct {
-	tokens   map[string]string
-	stored   map[string]string
-	rejected map[string]time.Time
+	tokens    map[string]string
+	stored    map[string]string
+	rejected  map[string]time.Time
+	calendars map[string]string // The entity tags of the calendars, by their ids, which change when one's renamed
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -62,7 +63,7 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 	if self.refreshInterval == 0 {
 		return gofiler.ErrNotImplemented.Withf("volume %q isn't watched, as its %s is zero", self.name, paramRefreshInterval)
 	}
-	state := &calendarSync{tokens: self.loadTokens(ctx), rejected: make(map[string]time.Time)}
+	state := &calendarSync{tokens: self.loadTokens(ctx), rejected: make(map[string]time.Time), calendars: make(map[string]string)}
 	state.stored = maps.Clone(state.tokens)
 	from, _ := self.days()
 	if _, err := self.poll(ctx, state); err != nil {
@@ -105,8 +106,9 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 // PRIVATE METHODS
 
 // poll syncs each calendar, of its token, and returns true when any of
-// them changed: an event of it changed, it's new, or it's removed, or its
-// token was rejected, so its changes may have been missed. The tokens are
+// them changed: an event of it changed, it's new, removed, or changed
+// itself, such as renamed, or its token was rejected, so its changes may
+// have been missed. The tokens are
 // stored when they change.
 func (self *CalendarFiler) poll(ctx context.Context, state *calendarSync) (bool, error) {
 	calendars, err := self.client.Calendars(ctx)
@@ -115,6 +117,15 @@ func (self *CalendarFiler) poll(ctx context.Context, state *calendarSync) (bool,
 	}
 	changed := false
 	seen := make(map[string]bool, len(calendars))
+	etags := make(map[string]string, len(calendars))
+	for _, calendar := range calendars {
+		etags[calendar.Id] = calendar.ETag
+	}
+	if !maps.Equal(etags, state.calendars) {
+		// A calendar which is added, removed, or changed, such as renamed,
+		// which its events' content is of
+		changed, state.calendars = true, etags
+	}
 	for _, calendar := range calendars {
 		seen[calendar.Id] = true
 		token, exists := state.tokens[calendar.Id]
