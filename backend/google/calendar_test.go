@@ -30,13 +30,15 @@ import (
 // calendar, "v<n>"
 type fakeCalendar struct {
 	sync.Mutex
-	calendars []httpclient.Calendar
-	events    map[string][]fakeEvent // By the calendar's id
-	version   map[string]int
-	gone      map[string]bool // Calendars whose tokens are rejected
-	syncs     map[string]int  // How many times each calendar is synced without a token
-	lists     int             // How many times events are listed
-	endless   bool            // Every listing has another page
+	calendars     []httpclient.Calendar
+	events        map[string][]fakeEvent // By the calendar's id
+	version       map[string]int
+	gone          map[string]bool // Calendars whose tokens are rejected
+	syncs         map[string]int  // How many times each calendar is synced without a token
+	lists         int             // How many times events are listed
+	gets          int             // How many times an event is got
+	calendarLists int             // How many times the calendars are listed
+	endless       bool            // Every listing has another page
 }
 
 type fakeEvent struct {
@@ -128,6 +130,7 @@ func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	switch {
 	case len(parts) == 3 && parts[0] == "users" && parts[1] == "me" && parts[2] == "calendarList":
+		f.calendarLists++
 		page := map[string]any{"items": f.calendars}
 		if f.endless {
 			page["nextPageToken"] = "more"
@@ -167,6 +170,7 @@ func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"items": items, "nextSyncToken": fmt.Sprintf("v%d", f.version[calendar])})
 	case len(parts) == 4 && parts[0] == "calendars" && parts[2] == "events":
+		f.gets++
 		for _, e := range f.events[parts[1]] {
 			if e.Id == parts[3] {
 				writeJSON(w, e.Event)
@@ -489,6 +493,7 @@ func Test_CalendarChanges(t *testing.T) {
 	fake.Lock()
 	fake.calendars[0].Summary, fake.calendars[0].ETag = "Home", `"w2"`
 	fake.Unlock()
+	google.ClearCalendarCache(filer) // As a watch does
 	after, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
 	require.NoError(t, err)
 	assert.NotEqual(t, *before.ETag, *after.ETag)
@@ -499,6 +504,7 @@ func Test_CalendarChanges(t *testing.T) {
 	fake.Lock()
 	fake.endless = true
 	fake.Unlock()
+	google.ClearCalendarCache(filer)
 	_, err = filer.ListObjects(ctx, schema.ListObjectsRequest{Path: "/", Recursive: true})
 	assert.Error(t, err)
 }
@@ -624,4 +630,77 @@ func Test_CalendarListedPaths(t *testing.T) {
 	fake.put(work, httpclient.Event{Id: "added", Status: "confirmed", Start: httpclient.EventTime{Date: "2026-12-11"}, End: httpclient.EventTime{Date: "2026-12-12"}})
 	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-12"})
 	assert.Equal(t, "/2026/2026-12/11-work@example.com-added.ics", google.CalendarPath(filer, work, "added"))
+}
+
+func Test_CalendarCache(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFakeCalendar(t)
+	filer := newCalendarFiler(t, calendarCredentials(t, endpoint), nil)
+	const p = "/2026/2026-11/20-work@example.com-e1.ics"
+	counts := func() (int, int, int) {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.calendarLists, fake.lists, fake.gets
+	}
+
+	// Once a month is listed, its events, and they're read, of the listing,
+	// rather than got again, as is listing it again, for the refresh interval
+	checked, _, _ := counts() // Of the check of the sign-in
+	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-11"})
+	calendarLists, lists, gets := counts()
+	assert.Equal(t, checked+1, calendarLists)
+	assert.Equal(t, 2, lists, "of each calendar")
+	assert.Zero(t, gets)
+	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-11"})
+	_, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
+	require.NoError(t, err)
+	assert.Contains(t, read(t, filer, p), "SUMMARY:Event e1")
+	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-11/20-work@example.com-missing.ics"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist, "it isn't in the listing")
+	c, l, g := counts()
+	assert.Equal(t, []int{calendarLists, lists, gets}, []int{c, l, g}, "nothing is got again")
+
+	// Once it's cleared, as a watch does when what's got changes, it's got
+	// again, as is an event of a month which wasn't listed
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Changed" })
+	google.ClearCalendarCache(filer)
+	assert.Contains(t, read(t, filer, p), "SUMMARY:Changed")
+	_, _, g = counts()
+	assert.Equal(t, gets+1, g)
+	assert.Contains(t, read(t, filer, "/2026/2026-12/25-work@example.com-e2.ics"), "DTSTART;VALUE=DATE:20261225")
+
+	// A volume which isn't watched, of a refresh interval of zero, keeps
+	// nothing, as nothing would clear it
+	unwatched := newCalendarFiler(t, calendarCredentials(t, endpoint), url.Values{"refresh_interval": {"0"}})
+	listed(t, unwatched, schema.ListObjectsRequest{Path: "/2026/2026-11"})
+	_, _, g = counts()
+	_, err = unwatched.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
+	require.NoError(t, err)
+	_, _, after := counts()
+	assert.Equal(t, g+1, after, "it's got again")
+}
+
+func Test_CalendarWatchClearsCache(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	filer := newCalendarFiler(t, calendarCredentials(t, endpoint), url.Values{"refresh_interval": {"1h"}})
+	const p = "/2026/2026-11/20-work@example.com-e1.ics"
+
+	// What's listed before it's watched, which changes, is got again of the
+	// first rescan, as the watch doesn't send what it found changed
+	listed(t, filer, schema.ListObjectsRequest{Path: "/2026/2026-11"})
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Changed before" })
+	ch, done := make(chan schema.Event, 4), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	select {
+	case event := <-ch:
+		require.Equal(t, schema.EventTypeRescan, event.EventType)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no rescan")
+	}
+	assert.Contains(t, read(t, filer, p), "SUMMARY:Changed before")
 }
