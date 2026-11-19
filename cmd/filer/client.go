@@ -4,7 +4,7 @@ package main
 
 import (
 	// Packages
-	filercmd "github.com/mutablelogic/go-filer/filer/cmd"
+	filercmd "github.com/mutablelogic/go-filer/registry/cmd"
 )
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -9,21 +9,25 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 
 | Package | Description |
 | --------- | ------------- |
-| `github.com/mutablelogic/go-filer` | The `Filer` interface, the `WriterFS` interface of a writable filesystem, and the errors |
-| `github.com/mutablelogic/go-filer/filer` | The registry of the volumes' backends, which are created from URLs, such as `file://media/mnt/media`, and watched |
-| `github.com/mutablelogic/go-filer/filer/schema` | The objects, requests and events |
-| `github.com/mutablelogic/go-filer/filer/fs` | The filesystem backend, for any `fs.FS`, and writable for a directory |
-| `github.com/mutablelogic/go-filer/filer/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
-| `github.com/mutablelogic/go-filer/filer/google` | Backends of Google's services: Google Tasks and Google Contacts |
-| `github.com/mutablelogic/go-filer/filer/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
-| `github.com/mutablelogic/go-filer/filer/indexer` | A filer which wraps a backend, and keeps an index of its folders in a `Store`, which follows its changes |
-| `github.com/mutablelogic/go-filer/filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
-| `github.com/mutablelogic/go-filer/filer/store/sqlite` | A store in a SQLite database, in a file, or in memory |
-| `github.com/mutablelogic/go-filer/filer/store/storetest` | The conformance tests every store runs |
+| `github.com/mutablelogic/go-filer` | The contract of backends: the `Filer` interface, the errors, and `Opts`, which every backend is created with |
+| `github.com/mutablelogic/go-filer/schema` | The objects, requests and events |
+| `github.com/mutablelogic/go-filer/backend/fs` | The filesystem backend, for any `fs.FS`, and writable for a directory, with the `WriterFS` interface of a writable filesystem |
+| `github.com/mutablelogic/go-filer/backend/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
+| `github.com/mutablelogic/go-filer/backend/s3` | The S3 backend, watched through a SeaweedFS filer when it's one |
+| `github.com/mutablelogic/go-filer/backend/google` | Backends of Google's services: Google Tasks and Google Contacts |
+| `github.com/mutablelogic/go-filer/backend/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
+| `github.com/mutablelogic/go-filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
+| `github.com/mutablelogic/go-filer/store/sqlite` | A store in a SQLite database, in a file, or in memory |
+| `github.com/mutablelogic/go-filer/store/test` | The conformance tests every store runs |
+| `github.com/mutablelogic/go-filer/indexer` | A filer which wraps a backend, and keeps an index of it in a `Store`, which follows its changes |
+| `github.com/mutablelogic/go-filer/registry` | The registry of the volumes' backends, which are created from URLs, such as `file://media/mnt/media`, and watched |
+| `github.com/mutablelogic/go-filer/registry/httphandler` | The registry's HTTP API |
+| `github.com/mutablelogic/go-filer/registry/httpclient` | A client of the registry's HTTP API |
+| `github.com/mutablelogic/go-filer/registry/cmd` | The `filer` command's subcommands |
 
 ## Usage
 
-`fs.New` returns a writable filer for a directory, and `fs.NewFS` returns a filer for any `fs.FS`, which is read-only unless it implements `filer.WriterFS`. Either can be made read-only with the `readonly` option, when creating and deleting objects is `filer.ErrForbidden`. The filer takes ownership of the filesystem, and closes it when it's closed. `filer.Filer` has no `Close`: a filer which holds resources, as these do, implements `io.Closer`, which its owner calls, rather than the code it's given to.
+`fs.New` returns a writable filer for a directory, and `fs.NewFS` returns a filer for any `fs.FS`, which is read-only unless it implements `fs.WriterFS`. Either can be made read-only with the `readonly` option, when creating and deleting objects is `filer.ErrForbidden`. The filer takes ownership of the filesystem, and closes it when it's closed. `filer.Filer` has no `Close`: a filer which holds resources, as these do, implements `io.Closer`, which its owner calls, rather than the code it's given to.
 
 ```go
 import (
@@ -33,8 +37,8 @@ import (
     "os"
 
     gofiler "github.com/mutablelogic/go-filer"
-    filerfs "github.com/mutablelogic/go-filer/filer/fs"
-    schema "github.com/mutablelogic/go-filer/filer/schema"
+    filerfs "github.com/mutablelogic/go-filer/backend/fs"
+    schema "github.com/mutablelogic/go-filer/schema"
 )
 
 func main() {
@@ -102,7 +106,7 @@ filer credential-set GOOGLE_CLIENT --json < client_secret.json
 filer volume-create-gtasks tasks
 ```
 
-In the registry, its URL is `gtasks://<name>`, such as `gtasks://tasks?readonly=false`, and its sign-in is of the registry's credentials (`filer.WithCredentials`):
+In the registry, its URL is `gtasks://<name>`, such as `gtasks://tasks?readonly=false`, and its sign-in is of the registry's credentials (`registry.WithCredentials`):
 
 ```go
 filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}, gofiler.Opts{Credentials: credentials, ClientOpts: clientopts})
@@ -148,7 +152,7 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 
 ## Registry
 
-`filer.New(ctx, filer.WithStore(store), ...)` returns the registry of volumes. The store is required: it's the volumes, and their indexes.
+`registry.New(ctx, registry.WithStore(store), ...)` returns the registry of volumes. The store is required: it's the volumes, and their indexes.
 
 * **The store is the source of truth.** `CreateVolume`, `UpdateVolume` and `DeleteVolume` validate a volume, by creating its backend and closing it, and write the store. They return before it's mounted.
 * **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
@@ -236,7 +240,7 @@ Directories are watched with the `fsevents` package, using the efficient mechani
 
 On other platforms, and on macOS without cgo, and for a filer of a filesystem which isn't a directory, `WatchObjects` returns `filer.ErrNotImplemented`.
 
-The registry of volumes is watched by its `Run`, which watches each volume when it's added, or updated, until it's removed, and publishes their changes to go-server's broadcaster, as changes of the `filer` schema, whose table is the volume, and whose row is the object's path. A row ending in `/` is a rescan, so a change of a directory has its path as the row and the data `{"folder":true}`. This continues until its context is cancelled, when it closes the registry: it removes and closes the volumes, cancelling the calls to `With` which are using them, and the registry can't be used again. It's closed only by `Run`, so it should be run while the registry is used, as the server does. The broadcaster is set with `filer.WithBroadcaster`, and its owner runs and serves it, such as a server, which can share it with its other modules. The server command creates one, served as `/changes`, unless it's given one. Without a broadcaster, the changes aren't published. `Registry.WatchObjects` watches the broadcaster, and converts the changes back to events. Without it, the volumes aren't watched. It holds a change to an object until the object is quiet for 250ms (`filer.WithDebounce`), or at most two seconds, and merges its changes, so an object which changes many times, such as a file which is written in parts, is one change, one which is created and deleted isn't one, and one which is deleted and created again is updated. A watcher isn't held up by the others, so when it's slow to receive the changes, the broadcaster drops a volume's changes, and sends it a rescan of the volume, once it can receive it, which is an `update` without a `row`. With a meter (`filer.WithMeter`), `Run` counts the changes in `filer.events`, a counter whose attributes are the worker, `filer.worker`, which is the hostname, or `filer.WithWorker`'s name, the volume, `filer.volume`, and the change, `filer.event.type`, such as `created`, which the meter's provider pushes to the metrics server.
+The registry of volumes is watched by its `Run`, which watches each volume when it's added, or updated, until it's removed, and publishes their changes to go-server's broadcaster, as changes of the `filer` schema, whose table is the volume, and whose row is the object's path. A row ending in `/` is a rescan, so a change of a directory has its path as the row and the data `{"folder":true}`. This continues until its context is cancelled, when it closes the registry: it removes and closes the volumes, cancelling the calls to `With` which are using them, and the registry can't be used again. It's closed only by `Run`, so it should be run while the registry is used, as the server does. The broadcaster is set with `registry.WithBroadcaster`, and its owner runs and serves it, such as a server, which can share it with its other modules. The server command creates one, served as `/changes`, unless it's given one. Without a broadcaster, the changes aren't published. `Registry.WatchObjects` watches the broadcaster, and converts the changes back to events. Without it, the volumes aren't watched. It holds a change to an object until the object is quiet for 250ms (`registry.WithDebounce`), or at most two seconds, and merges its changes, so an object which changes many times, such as a file which is written in parts, is one change, one which is created and deleted isn't one, and one which is deleted and created again is updated. A watcher isn't held up by the others, so when it's slow to receive the changes, the broadcaster drops a volume's changes, and sends it a rescan of the volume, once it can receive it, which is an `update` without a `row`. With a meter (`registry.WithMeter`), `Run` counts the changes in `filer.events`, a counter whose attributes are the worker, `filer.worker`, which is the hostname, or `registry.WithWorker`'s name, the volume, `filer.volume`, and the change, `filer.event.type`, such as `created`, which the meter's provider pushes to the metrics server.
 
 ## Modification Time
 

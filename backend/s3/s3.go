@@ -1,0 +1,239 @@
+// Package s3 is a filer of the objects in an S3 bucket, or one which is
+// compatible, beneath a prefix
+package s3
+
+import (
+	"context"
+	"net"
+	"net/url"
+	"regexp"
+	"strings"
+
+	// Packages
+	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	gofiler "github.com/mutablelogic/go-filer"
+	seaweedfs "github.com/mutablelogic/go-filer/backend/s3/seaweedfs"
+	schema "github.com/mutablelogic/go-filer/schema"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// S3 is a filer of the objects in a bucket, beneath a prefix
+type S3 struct {
+	opt
+	gofiler.Opts
+	bucket  string             // the bucket
+	prefix  string             // the prefix of the objects' keys, which is empty, or ends with "/"
+	client  *s3.Client         // the client of the bucket, in its region
+	watcher *seaweedfs.Watcher // watches the bucket's objects, when it's a SeaweedFS filer's
+}
+
+var _ gofiler.Filer = (*S3)(nil)
+
+////////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+
+var (
+	// bucketName is the pattern of a bucket's name: 3 to 63 lowercase
+	// letters, numbers, dots and hyphens, which starts and ends with a letter
+	// or number
+	bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+
+	// bucketPrefixes and bucketSuffixes are those which S3 reserves, so a
+	// bucket's name can't have them
+	bucketPrefixes = []string{"xn--", "sthree-", "amzn-s3-demo-"}
+	bucketSuffixes = []string{"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3"}
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// LIFECYCLE
+
+// New returns a filer of the objects in the bucket of the URL, which is
+// s3://<bucket>/<prefix>, beneath the prefix, with the options of its query
+// (see opt.go). The volume's name is the bucket's, or the name option. The
+// bucket is checked, with the credentials, which are the options', whose
+// placeholders the provider of credentials expands, or the profile's, or the
+// default ones, such as from the environment, or none, when it's anonymous,
+// which is ErrForbidden when they're missing, or can't access it, and
+// ErrNotFound when it doesn't exist. When the bucket is in another region,
+// and the region isn't set, it's the bucket's. The requests are traced
+// with the tracer, when it's set.
+func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
+	self, err := parse(u)
+	if err != nil {
+		return nil, err
+	} else {
+		self.Opts = opts
+	}
+
+	// Credentials which aren't placeholders are stored, so there must be a
+	// provider of credentials, which stores them once the bucket is checked
+	if self.Credentials == nil && ((self.keyID != "" && !isPlaceholder(self.keyID)) || (self.secret != "" && !isPlaceholder(self.secret)) || (self.token != "" && !isPlaceholder(self.token))) {
+		return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be stored, without a provider of credentials", self.bucket)
+	}
+	if err := self.connect(ctx); err != nil {
+		return nil, err
+	} else if err := self.storeCredentials(ctx); err != nil {
+		return nil, err
+	}
+
+	// What the volume is, when it isn't set, is of the bucket, its prefix,
+	// and where it is
+	if self.description == "" {
+		self.description = self.describe()
+	}
+
+	// The watcher of the bucket's objects, when the endpoint is a SeaweedFS
+	// filer's, which is checked
+	if self.seaweedfs != "" {
+		watcher, err := seaweedfs.New(ctx, self.seaweedfs, self.bucket, self.prefix)
+		if err != nil {
+			return nil, err
+		}
+		self.watcher = watcher
+	}
+	return self, nil
+}
+
+// describe returns what the volume is, of its bucket and prefix, and the
+// host of its endpoint, or its region, such as "S3 bucket photos/2026 in
+// eu-west-1"
+func (self *S3) describe() string {
+	result := "S3 bucket " + self.bucket
+	if prefix := strings.TrimSuffix(self.prefix, "/"); prefix != "" {
+		result += "/" + prefix
+	}
+	if u, err := url.Parse(self.endpoint); err == nil && self.endpoint != "" && u.Host != "" {
+		result += " at " + u.Host
+	} else if self.region != "" {
+		result += " in " + self.region
+	}
+	return result
+}
+
+// parse returns the filer of the URL, without a client
+func parse(u *url.URL) (*S3, error) {
+	self := new(S3)
+	if u == nil || u.Scheme != schema.SchemeS3 {
+		return nil, gofiler.ErrBadParameter.Withf("Not an %s url: %v", schema.SchemeS3, u)
+	} else if !isBucketName(u.Host) {
+		return nil, gofiler.ErrBadParameter.Withf("Invalid bucket: %q", u.Host)
+	} else {
+		self.bucket = u.Host
+	}
+
+	// The prefix, which ends with "/", so it's a directory, without elements
+	// which are empty, or "." or "..", which would be another directory's
+	if prefix := strings.Trim(u.Path, "/"); prefix != "" && !isRelPath(prefix) {
+		return nil, gofiler.ErrBadParameter.Withf("Invalid prefix: %q", prefix)
+	} else if prefix != "" {
+		self.prefix = prefix + "/"
+	}
+
+	// Set the options
+	if values, err := url.ParseQuery(u.RawQuery); err != nil {
+		return nil, gofiler.ErrBadParameter.Withf("Invalid options: %v", err)
+	} else if opt, err := parseOpts(self.bucket, values); err != nil {
+		return nil, err
+	} else {
+		self.opt = opt
+	}
+
+	// Return success
+	return self, nil
+}
+
+// Close the filer
+func (self *S3) Close() error {
+	if self.watcher != nil {
+		return self.watcher.Close()
+	}
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - PROPERTIES
+
+// URL returns the URL of the bucket, with the options which are set as its
+// query, but not its credentials, so it can be returned to clients
+func (self *S3) URL() *url.URL {
+	return self.url(false)
+}
+
+// URLWithCredentials returns the URL of the bucket, with each of its options,
+// and its credentials, which are placeholders, so it can be created again
+// from it, such as from the store of volumes
+func (self *S3) URLWithCredentials() *url.URL {
+	return self.url(true)
+}
+
+// Clone returns a new filer of the bucket, with the options, including the
+// placeholders of the credentials, changed by the patch, which is checked as
+// New does, and stores credentials of the patch which aren't placeholders
+func (self *S3) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
+	u := self.url(true)
+	u.RawQuery = gofiler.PatchValues(u.Query(), patch).Encode()
+	if clone, err := New(ctx, u, self.Opts); err != nil {
+		return nil, err
+	} else {
+		return clone, nil
+	}
+}
+
+// Readonly returns true when objects can't be created or deleted, which is
+// when requests are anonymous, without credentials, too
+func (self *S3) Readonly() bool {
+	return self.readonly || self.anonymous
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS - OBJECTS
+
+// WatchObjects sends the changes to the bucket's objects, beneath the
+// prefix, to the channel, until the context is cancelled, when the endpoint
+// is a SeaweedFS filer's, whose gRPC service is the seaweedfs-filer-grpc
+// option, and otherwise it's ErrNotImplemented, as a bucket of S3 needs its
+// event notifications, and a queue. The first change is a rescan of the
+// root, once the objects are watched.
+func (self *S3) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
+	if self.watcher == nil {
+		return gofiler.ErrNotImplemented.With("a bucket can't be watched, without the seaweedfs-filer-grpc option")
+	}
+	return self.watcher.Watch(ctx, ch, func() {
+		select {
+		case ch <- schema.Rescan(""):
+		case <-ctx.Done():
+		}
+	})
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// isBucketName returns true when the name is one which S3 allows for a
+// bucket: of the pattern, without adjacent dots, which isn't an IP address,
+// and without the prefixes and suffixes which are reserved
+func isBucketName(name string) bool {
+	if !bucketName.MatchString(name) || strings.Contains(name, "..") {
+		return false
+	} else if ip := net.ParseIP(name); ip != nil {
+		return false
+	}
+	for _, prefix := range bucketPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	for _, suffix := range bucketSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return false
+		}
+	}
+	return true
+}
+
+// url returns the URL of the bucket, with or without its credentials
+func (self *S3) url(credentials bool) *url.URL {
+	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(credentials).Encode()}
+}

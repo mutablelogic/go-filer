@@ -5,8 +5,8 @@ package main
 import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	store "github.com/mutablelogic/go-filer/filer/store"
-	pg "github.com/mutablelogic/go-filer/filer/store/pg"
+	store "github.com/mutablelogic/go-filer/store"
+	pg "github.com/mutablelogic/go-filer/store/pg"
 	pgcmd "github.com/mutablelogic/go-pg/pkg/cmd"
 	server "github.com/mutablelogic/go-server"
 )
