@@ -149,7 +149,8 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 
 `indexer.New(name, backend, store)` returns a filer of a backend whose folders are indexed, in a `Store`, so its folder tree is listed from the index rather than the backend, which can be slow, such as a bucket or a network mount.
 
-* **`Run(ctx)`** indexes it, until the context is cancelled. It watches the backend, and scans it once it's watching, a folder at a time, so a change during the scan isn't missed.
+* **`Run(ctx, logger)`** indexes it, until the context is cancelled. It watches the backend, and scans it once it's watching, a folder at a time, so a change during the scan isn't missed. Failures are logged to the `*slog.Logger`, or to `slog.Default()` when it's `nil`; the registry passes its own.
+* **Task failures:** a task retrying a file is logged at debug, and giving up at warn, with the volume, task, key and error. A task which returns `ErrBadParameter`, such as of a file which can't be read, is given up at once.
 * **Following changes:** a rescan event scans that folder again. A folder which is created, or deleted, is indexed, or removed, with what's beneath it.
 * **In the background:** changes are queued in the store's `object_state`, and a worker indexes them, so watchers, writes and deletes aren't held up, and work which is queued when it stops is done when it runs again. Changes of a path within the debounce, 250ms by default (`WithDebounce`), are one.
 * **Rescans** are coalesced, a rescan of a folder replacing those beneath it, and a folder is rescanned at most once a minute, by default (`WithRescanMinInterval`). A rescan which is sooner is deferred, not dropped.
