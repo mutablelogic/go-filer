@@ -2,6 +2,7 @@ package schema
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -105,12 +106,15 @@ func (req SearchRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error)
 	bind.Set("match", Match(req.Query))
 	switch op {
 	case sqlite.List:
+		// Of SQLite's, which are signed, so one which is greater is the
+		// most, which is an empty page, of an offset, rather than negative,
+		// which SQLite would take as none
 		limit := int64(-1)
 		if req.Limit != nil {
-			limit = int64(*req.Limit)
+			limit = int64(min(*req.Limit, math.MaxInt64))
 		}
 		bind.Set("limit", limit)
-		bind.Set("offset", int64(req.Offset))
+		bind.Set("offset", int64(min(req.Offset, math.MaxInt64)))
 		return bind.Query("search.query"), nil
 	case sqlite.Get:
 		return bind.Query("search.count"), nil

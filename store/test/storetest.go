@@ -1237,6 +1237,14 @@ func testSearch(t *testing.T, s store.Store) {
 	assert.Equal(t, []string{"media:/Notes/a.txt"}, got)
 	assert.Equal(t, uint64(3), count)
 
+	// Of an offset, or a limit, greater than SQLite's, which is an empty page
+	huge := uint64(1) << 63
+	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}, OffsetLimit: schema.OffsetLimit{Offset: huge, Limit: &one}})
+	assert.Empty(t, got)
+	assert.Equal(t, uint64(3), count)
+	got, _ = found(schema.SearchRequest{Query: schema.Query{Terms: []string{"part"}}, OffsetLimit: schema.OffsetLimit{Limit: &huge}})
+	assert.Len(t, got, 3)
+
 	// Without terms, nothing matches
 	got, count = found(schema.SearchRequest{Query: schema.Query{Terms: []string{" ", "*"}}})
 	assert.Empty(t, got)
