@@ -340,7 +340,7 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		// scanned, so they aren't of a scan in progress, and otherwise its
 		// progress is the folders it's scanned
 		if state.Status != schema.IndexStatusReady {
-			state.Status, state.Folders, state.Files = schema.IndexStatusScanning, 0, 0
+			state.Status, state.Folders, state.Files, state.Mode = schema.IndexStatusScanning, 0, 0, ""
 			progress = func(folders int) {
 				state.Folders = uint64(folders)
 				_ = self.store.SetState(ctx, self.name, state)
@@ -365,7 +365,7 @@ func (self *Indexer) scan(ctx context.Context, root string) error {
 		return err
 	}
 	if whole {
-		state.Status, state.Folders, state.Files, state.Scanned = schema.IndexStatusReady, uint64(len(t.folders)+1), uint64(t.indexedFiles()), time.Now()
+		state.Status, state.Folders, state.Files, state.Mode, state.Scanned = schema.IndexStatusReady, uint64(len(t.folders)+1), uint64(t.indexedFiles()), string(self.mode), time.Now()
 		return self.store.SetState(ctx, self.name, state)
 	}
 	return nil

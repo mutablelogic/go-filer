@@ -432,6 +432,7 @@ func Test_ObjectsToFolders(t *testing.T) {
 	before, err := s.State(context.Background(), "media")
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), before.Folders)
+	assert.Equal(t, string(indexer.ModeObjects), before.Mode, "its scan indexed its files")
 
 	// While it's scanned again, its counts are of its last scan, rather than
 	// of the scan in progress
@@ -455,12 +456,12 @@ func Test_ObjectsToFolders(t *testing.T) {
 	<-watched
 	assert.Equal(t, before.Folders, lowest, "its count isn't the progress of the scan")
 
-	// Its count of files is stored once the scan is done, after its files
-	// are removed
+	// Its count of files, and what it indexed, are stored once the scan is
+	// done, after its files are removed
 	assert.Eventually(t, func() bool {
 		after, err := s.State(context.Background(), "media")
-		return err == nil && after.Files == 0
-	}, 10*time.Second, 5*time.Millisecond, "it has no files")
+		return err == nil && after.Files == 0 && after.Mode == string(indexer.ModeFolders)
+	}, 10*time.Second, 5*time.Millisecond, "it has no files, of a scan of its folders")
 }
 
 // faultyStore is a store whose reads of a path fail, and whose listings

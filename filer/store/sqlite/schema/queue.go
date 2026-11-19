@@ -47,8 +47,9 @@ type QueueFailure struct {
 // QueuePending selects whether a path of a volume has work which would
 // change its index
 type QueuePending struct {
-	Volume string
-	Path   string
+	Volume  string
+	Path    string
+	Beneath bool // Work beneath the path too, of its listing
 }
 
 // Pending is whether a path has work which would change its index
@@ -151,6 +152,10 @@ func (pending QueuePending) Select(bind *sqlite.Bind, op sqlite.Op) (string, err
 	bind.Set("volume", pending.Volume)
 	bind.Set("path", pending.Path)
 	bind.Set("ancestors", append(Ancestors(pending.Path), pending.Path))
+	lower, upper := beneath(pending.Path)
+	bind.Set("beneath", pending.Beneath)
+	bind.Set("lower", lower)
+	bind.Set("upper", upper)
 	return bind.Query("queue.pending"), nil
 }
 
@@ -184,4 +189,14 @@ func Ancestors(p string) []string {
 		result = append(result, p)
 	}
 	return result
+}
+
+// beneath returns the range of the paths beneath a folder, from the lower,
+// to before the upper, which are those after its path and "/", up to "0",
+// the byte after "/", so "/ab" isn't beneath "/a"
+func beneath(folder string) (string, string) {
+	if folder == "/" {
+		return "/", "0"
+	}
+	return folder + "/", folder + "0"
 }

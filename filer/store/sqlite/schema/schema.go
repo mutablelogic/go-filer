@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 4
+const Version = 5
 
 var (
 	//go:embed objects.sql
@@ -50,6 +50,15 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 		// which a volume of version 1 to 3 is added, as NULL
 		if version >= 1 && version < 4 {
 			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_4").Exec(ctx, `ALTER TABLE volume ADD COLUMN files INTEGER`); err != nil {
+				return err
+			}
+		}
+
+		// Version 5's volumes have what their last scan indexed, which a
+		// volume of version 1 to 4 is added, as NULL, so it's scanned again
+		// before its files are listed from the index
+		if version >= 1 && version < 5 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_5").Exec(ctx, `ALTER TABLE volume ADD COLUMN scan_mode TEXT`); err != nil {
 				return err
 			}
 		}
