@@ -146,8 +146,8 @@ RETURNING path, kind, after, attempts, coalesce(error, ''), leased_until;
 -- it, queued, or claimed, or, of a listing, of a path beneath it
 SELECT EXISTS (
   SELECT 1 FROM object_state
-  WHERE volume = @volume AND kind IN ('index', 'rescan') AND (
-    path IN (SELECT value FROM json_each(@ancestors)) OR
-    (@beneath AND path >= @lower AND path < @upper)
-  )
-);
+  WHERE volume = @volume AND path IN (SELECT value FROM json_each(@ancestors)) AND kind IN ('index', 'rescan')
+) OR (@beneath AND EXISTS (
+  SELECT 1 FROM object_state
+  WHERE volume = @volume AND path >= @lower AND path < @upper AND kind IN ('index', 'rescan')
+));
