@@ -1,6 +1,6 @@
 //go:build cgo
 
-package enrichment_test
+package metadata_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	fs "github.com/mutablelogic/go-filer/backend/fs"
-	enrichment "github.com/mutablelogic/go-filer/enrichment"
+	metadata "github.com/mutablelogic/go-filer/metadata"
 	schema "github.com/mutablelogic/go-filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -26,7 +26,7 @@ func Test_EnrichMedia(t *testing.T) {
 	backend, err := fs.New("media", dir, nil, gofiler.Opts{})
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	e, err := enrichment.New()
+	e, err := metadata.New()
 	require.NoError(t, err)
 	object, err := backend.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/canon.jpg"}})
 	require.NoError(t, err)

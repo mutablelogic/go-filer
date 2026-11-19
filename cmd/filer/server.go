@@ -8,7 +8,7 @@ import (
 	// Packages
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	google "github.com/mutablelogic/go-filer/backend/google"
-	enrichmentcmd "github.com/mutablelogic/go-filer/enrichment/cmd"
+	metadatacmd "github.com/mutablelogic/go-filer/metadata/cmd"
 	registry "github.com/mutablelogic/go-filer/registry"
 	filercmd "github.com/mutablelogic/go-filer/registry/cmd"
 	store "github.com/mutablelogic/go-filer/store"
@@ -33,10 +33,10 @@ type ServerCommands struct {
 }
 
 type RunServer struct {
-	Filer       filercmd.Flags      `embed:""`
-	Credentials CredentialFlags     `embed:""`
-	Indexer     IndexerFlags        `embed:""`
-	Enrichment  enrichmentcmd.Flags `embed:""`
+	Filer       filercmd.Flags    `embed:""`
+	Credentials CredentialFlags   `embed:""`
+	Indexer     IndexerFlags      `embed:""`
+	Enrichment  metadatacmd.Flags `embed:""`
 	servercmd.RunServer
 }
 

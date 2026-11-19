@@ -1,10 +1,10 @@
-package enrichment
+package metadata
 
 import (
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
-	metadata "github.com/mutablelogic/go-metadata"
+	gometadata "github.com/mutablelogic/go-metadata"
 	acoustid "github.com/mutablelogic/go-metadata/pkg/acoustid"
 	tmdb "github.com/mutablelogic/go-metadata/pkg/tmdb"
 	trace "go.opentelemetry.io/otel/trace"
@@ -13,13 +13,13 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// Opt is an option of the enrichment
+// Opt is an option of the enrichment of files with their metadata
 type Opt func(*opt) error
 
 type opt struct {
 	tracer     trace.Tracer
-	clientOpts []client.ClientOpt // The options of the clients of TMDB, and AcoustID
-	opts       []metadata.Option  // The options of go-metadata, of each file
+	clientOpts []client.ClientOpt  // The options of the clients of TMDB, and AcoustID
+	opts       []gometadata.Option // The options of go-metadata, of each file
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -30,7 +30,7 @@ func WithTracer(tracer trace.Tracer) Opt {
 	return func(o *opt) error {
 		o.tracer = tracer
 		if tracer != nil {
-			o.opts = append(o.opts, metadata.WithTracer(tracer))
+			o.opts = append(o.opts, gometadata.WithTracer(tracer))
 		}
 		return nil
 	}
@@ -56,7 +56,7 @@ func WithTMDB(key string) Opt {
 		if err != nil {
 			return err
 		}
-		o.opts = append(o.opts, metadata.WithTMDB(c))
+		o.opts = append(o.opts, gometadata.WithTMDB(c))
 		return nil
 	}
 }
@@ -73,7 +73,7 @@ func WithAcoustID(key string) Opt {
 		if err != nil {
 			return err
 		}
-		o.opts = append(o.opts, metadata.WithAcoustID(c))
+		o.opts = append(o.opts, gometadata.WithAcoustID(c))
 		return nil
 	}
 }
@@ -82,7 +82,7 @@ func WithAcoustID(key string) Opt {
 // no limit, which is the default
 func WithMaxSize(size int64) Opt {
 	return func(o *opt) error {
-		o.opts = append(o.opts, metadata.WithMaxSize(size))
+		o.opts = append(o.opts, gometadata.WithMaxSize(size))
 		return nil
 	}
 }

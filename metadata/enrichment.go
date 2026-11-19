@@ -1,11 +1,11 @@
-// Package enrichment is the task which enriches the files of a volume which
+// Package metadata is the task which enriches the files of a volume which
 // is indexed with index=metadata, with their metadata, of go-metadata: tags
 // of audio and video, EXIF of photos, the titles of documents, movies and
 // TV episodes on TMDB, recordings on AcoustID, and so on. Which files are
 // read depends on the build: without cgo, those of go-metadata's handlers
 // which are pure Go, and with it, audio, video, and photos' EXIF, HEIF and
 // RAW, too, which need FFmpeg 8, libexif, libheif and LibRaw.
-package enrichment
+package metadata
 
 import (
 	"context"
@@ -20,19 +20,19 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
-	metadata "github.com/mutablelogic/go-metadata"
+	gometadata "github.com/mutablelogic/go-metadata"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// Enrichment enriches files with their metadata, of go-metadata
-type Enrichment struct {
+// Metadata enriches files with their metadata, of go-metadata
+type Metadata struct {
 	opt
 }
 
-var _ indexer.Task = (*Enrichment)(nil).Enrich
+var _ indexer.Task = (*Metadata)(nil).Enrich
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -42,15 +42,15 @@ var identifier = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 // skipped are the namespaces of go-metadata which aren't metadata of a
 // file: its content, as Markdown, which a content task reads
-var skipped = map[string]bool{metadata.MarkdownNamespace: true}
+var skipped = map[string]bool{gometadata.MarkdownNamespace: true}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 // New returns the task which enriches files with their metadata, with the
 // options, of which the server's command line is
-func New(opts ...Opt) (*Enrichment, error) {
-	self := new(Enrichment)
+func New(opts ...Opt) (*Metadata, error) {
+	self := new(Metadata)
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
 	}
@@ -64,17 +64,17 @@ func New(opts ...Opt) (*Enrichment, error) {
 // go-metadata, in the store, which replaces what was found of it before. A
 // file whose type no handler reads has the metadata of its name, such as
 // its title. It's an indexer.Task, of indexer.WithMetadataTask.
-func (self *Enrichment) Enrich(ctx context.Context, backend gofiler.Filer, store indexer.MetadataStore, object *schema.Object) (err error) {
-	ctx, end := otel.StartSpan(self.tracer, ctx, "enrichment.Enrich", attribute.String("volume", object.Name), attribute.String("path", object.Path))
+func (self *Metadata) Enrich(ctx context.Context, backend gofiler.Filer, store indexer.MetadataStore, object *schema.Object) (err error) {
+	ctx, end := otel.StartSpan(self.tracer, ctx, "metadata.Enrich", attribute.String("volume", object.Name), attribute.String("path", object.Path))
 	defer func() { end(err) }()
 
 	read, file, err := backend.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: object.Name, Path: object.Path}})
 	if err != nil {
 		return err
 	}
-	var entries []metadata.Metadata
+	var entries []gometadata.Metadata
 	if err := read(ctx, func(r io.Reader) error {
-		_, result, err := metadata.Extract(ctx, named{Reader: r, name: path.Base(file.Path)}, self.extractOpts(file)...)
+		_, result, err := gometadata.Extract(ctx, named{Reader: r, name: path.Base(file.Path)}, self.extractOpts(file)...)
 		entries = result
 		if err != nil && len(result) == 0 && !isNotImplemented(err) {
 			return err
@@ -91,10 +91,10 @@ func (self *Enrichment) Enrich(ctx context.Context, backend gofiler.Filer, store
 
 // extractOpts returns the options of go-metadata of a file: of the task,
 // and the file's type, when it's known
-func (self *Enrichment) extractOpts(file *schema.Object) []metadata.Option {
-	opts := append([]metadata.Option(nil), self.opts...)
+func (self *Metadata) extractOpts(file *schema.Object) []gometadata.Option {
+	opts := append([]gometadata.Option(nil), self.opts...)
 	if file.ContentType != "" && file.ContentType != "application/octet-stream" {
-		opts = append(opts, metadata.WithContentType(file.ContentType))
+		opts = append(opts, gometadata.WithContentType(file.ContentType))
 	}
 	return opts
 }
@@ -106,7 +106,7 @@ func (self *Enrichment) extractOpts(file *schema.Object) []metadata.Option {
 // those which are values, of JSON, but not images, or bytes, such as
 // artwork, which an artwork task reads, nor content, of namespaces and keys
 // which are identifiers
-func meta(entries []metadata.Metadata) []schema.Meta {
+func meta(entries []gometadata.Metadata) []schema.Meta {
 	result := make([]schema.Meta, 0, len(entries))
 	for _, entry := range entries {
 		if skipped[entry.NS()] || !identifier.MatchString(entry.NS()) || !identifier.MatchString(entry.Key()) {
@@ -129,7 +129,7 @@ func meta(entries []metadata.Metadata) []schema.Meta {
 // type, which isn't an error of the task, as the file has the metadata of
 // its name
 func isNotImplemented(err error) bool {
-	return errors.Is(err, metadata.ErrNotImplemented)
+	return errors.Is(err, gometadata.ErrNotImplemented)
 }
 
 // named is a reader with a name, whose extension go-metadata detects a

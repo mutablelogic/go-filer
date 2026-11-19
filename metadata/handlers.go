@@ -1,4 +1,4 @@
-package enrichment
+package metadata
 
 import (
 	// The handlers of go-metadata, of each of its kinds of file, which keep

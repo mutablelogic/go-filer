@@ -1,13 +1,13 @@
 //go:build !client
 
-// Package cmd is the flags of the enrichment of a server, which it embeds,
+// Package cmd is the flags of the metadata enrichment of a server, which it embeds,
 // and composes into the registry of its volumes
 package cmd
 
 import (
 	// Packages
 	client "github.com/mutablelogic/go-client"
-	enrichment "github.com/mutablelogic/go-filer/enrichment"
+	metadata "github.com/mutablelogic/go-filer/metadata"
 	registry "github.com/mutablelogic/go-filer/registry"
 	server "github.com/mutablelogic/go-server"
 )
@@ -31,20 +31,20 @@ type Flags struct {
 // flags, the server's tracer, and a user agent of its name and version, of
 // the requests to TMDB and AcoustID
 func (flags Flags) WithMetadataEnrichment(ctx server.Cmd) (registry.Opt, error) {
-	opts := []enrichment.Opt{
-		enrichment.WithTracer(ctx.Tracer()),
-		enrichment.WithClientOpts(client.OptUserAgent(ctx.Name() + "/" + ctx.Version())),
+	opts := []metadata.Opt{
+		metadata.WithTracer(ctx.Tracer()),
+		metadata.WithClientOpts(client.OptUserAgent(ctx.Name() + "/" + ctx.Version())),
 	}
 	if flags.TMDBKey != "" {
-		opts = append(opts, enrichment.WithTMDB(flags.TMDBKey))
+		opts = append(opts, metadata.WithTMDB(flags.TMDBKey))
 	}
 	if flags.AcoustIDKey != "" {
-		opts = append(opts, enrichment.WithAcoustID(flags.AcoustIDKey))
+		opts = append(opts, metadata.WithAcoustID(flags.AcoustIDKey))
 	}
 	if flags.MaxSize > 0 {
-		opts = append(opts, enrichment.WithMaxSize(flags.MaxSize))
+		opts = append(opts, metadata.WithMaxSize(flags.MaxSize))
 	}
-	e, err := enrichment.New(opts...)
+	e, err := metadata.New(opts...)
 	if err != nil {
 		return nil, err
 	}
