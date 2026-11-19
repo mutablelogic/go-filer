@@ -37,7 +37,7 @@ const (
 	TaskNamespace = "task"
 
 	// DCNamespace is the namespace of the Dublin Core metadata, whose
-	// "title" is a list's
+	// "title" is a list's, or a task's
 	DCNamespace = "dc"
 
 	// taskExt is the extension of a task's file
@@ -135,6 +135,9 @@ func (self *TaskFiler) taskObject(list string, task *httpclient.Task) (*schema.O
 		object.ETag = types.Ptr(task.ETag)
 	}
 	object.Meta = appendMeta(object.Meta, "title", task.Title)
+	if task.Title != "" {
+		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(task.Title))})
+	}
 	object.Meta = appendMeta(object.Meta, "status", task.Status)
 	if task.Due != nil {
 		object.Meta = appendMeta(object.Meta, "due", task.Due.UTC().Format(dateFormat))
