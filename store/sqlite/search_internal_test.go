@@ -25,7 +25,7 @@ func (self *Store) search(t *testing.T, volume, term string) []string {
 	var keys []string
 	for _, object := range resp.Body {
 		if object.Name == volume {
-			keys = append(keys, store.Key(object))
+			keys = append(keys, store.Key(&object.Object))
 		}
 	}
 	return keys

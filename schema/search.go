@@ -30,6 +30,14 @@ type SearchRequest struct {
 // with their volumes' names, and how many match, of every page
 type SearchResponse struct {
 	SearchRequest
-	Count uint64    `json:"count" help:"How many objects match, of every page"`
-	Body  []*Object `json:"body"`
+	Count uint64          `json:"count" help:"How many objects match, of every page"`
+	Body  []*SearchObject `json:"body"`
+}
+
+// SearchObject is an object which matches a search, and how well, of 0 to
+// 1, which is 1 of the best of the search's, of every page, so ranks are
+// of the search, rather than of a page
+type SearchObject struct {
+	Object
+	Rank float32 `json:"rank" help:"How well it matches, of 0 to 1, which is 1 of the best match"`
 }

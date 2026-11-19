@@ -371,12 +371,17 @@ WHERE object.volume = @volume AND object.key >= @from AND object.key < @to;
 -- first, of the weights of their columns: their names, the main fields of
 -- their metadata, their own folders, the folders above them, those above
 -- those, and their other metadata, of a page
-SELECT object.volume, object.key FROM object_search
+SELECT object.volume, object.key, bm25(object_search, 10.0, 8.0, 5.0, 4.0, 3.0, 4.0) AS score FROM object_search
 JOIN object ON object.rowid = object_search.rowid
 WHERE object_search MATCH @match
-ORDER BY bm25(object_search, 10.0, 8.0, 5.0, 4.0, 3.0, 4.0), object.volume, object.key
+ORDER BY score, object.volume, object.key
 LIMIT @limit OFFSET @offset;
 
 -- search.count
--- How many objects match an FTS5 query
-SELECT count(*) FROM object_search WHERE object_search MATCH @match;
+-- How many objects match an FTS5 query, and the score of the best, which
+-- is the least, as bm25's are, the better, the more negative, of the same
+-- weights as search.query's
+SELECT (SELECT count(*) FROM object_search WHERE object_search MATCH @match), coalesce((
+  SELECT bm25(object_search, 10.0, 8.0, 5.0, 4.0, 3.0, 4.0) AS score FROM object_search
+  WHERE object_search MATCH @match ORDER BY score LIMIT 1
+), 0);

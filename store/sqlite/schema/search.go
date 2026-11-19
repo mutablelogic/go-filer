@@ -29,17 +29,23 @@ type SearchRequest struct {
 	filer.SearchRequest
 }
 
-// SearchHit is an object which matches a search, of its volume, and key
+// SearchHit is an object which matches a search, of its volume, and key,
+// and its score, of bm25, which is the better, the more negative
 type SearchHit struct {
 	Volume string
 	Key    string
+	Score  float64
 }
 
 // SearchHits are the objects which match a search, best first
 type SearchHits []SearchHit
 
-// SearchCount is how many objects match a search
-type SearchCount uint64
+// SearchCount is how many objects match a search, and the score of the
+// best
+type SearchCount struct {
+	Count uint64
+	Best  float64
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -115,16 +121,25 @@ func (req SearchRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error)
 // Scan reads an object which matches
 func (hits *SearchHits) Scan(row sqlite.Row) error {
 	var hit SearchHit
-	if err := row.Scan(&hit.Volume, &hit.Key); err != nil {
+	if err := row.Scan(&hit.Volume, &hit.Key, &hit.Score); err != nil {
 		return err
 	}
 	*hits = append(*hits, hit)
 	return nil
 }
 
-// Scan reads how many objects match
+// Scan reads how many objects match, and the score of the best
 func (count *SearchCount) Scan(row sqlite.Row) error {
-	return row.Scan((*uint64)(count))
+	return row.Scan(&count.Count, &count.Best)
+}
+
+// Rank returns how well a score matches, of 0 to 1, of the best of its
+// search's, which is 1
+func (count SearchCount) Rank(score float64) float32 {
+	if count.Best >= 0 || score >= 0 {
+		return 1
+	}
+	return float32(min(score/count.Best, 1))
 }
 
 // Match returns the FTS5 query of terms, any of which match: each is a

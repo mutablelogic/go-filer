@@ -1199,8 +1199,15 @@ func testSearch(t *testing.T, s store.Store) {
 		require.NoError(t, err)
 		assert.Equal(t, req, resp.SearchRequest, "of its request")
 		var result []string
-		for _, object := range resp.Body {
-			result = append(result, object.Name+":"+store.Key(object))
+		for i, object := range resp.Body {
+			result = append(result, object.Name+":"+store.Key(&object.Object))
+			assert.True(t, object.Rank > 0 && object.Rank <= 1, "of 0 to 1: %v", object.Rank)
+			if i > 0 {
+				assert.LessOrEqual(t, object.Rank, resp.Body[i-1].Rank, "best first")
+			}
+		}
+		if len(resp.Body) > 0 && req.Offset == 0 {
+			assert.Equal(t, float32(1), resp.Body[0].Rank, "of the best")
 		}
 		return result, resp.Count
 	}
