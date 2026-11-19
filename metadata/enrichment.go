@@ -8,12 +8,14 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"path"
 	"regexp"
+	"slices"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -110,9 +112,13 @@ func (self *Metadata) extractOpts(file *schema.Object) []gometadata.Option {
 // meta returns the metadata of go-metadata's entries, which the store keeps:
 // those which are values, of JSON, but not images, or bytes, such as
 // artwork, which an artwork task reads, nor content, of namespaces and keys
-// which are identifiers
+// which are identifiers. A key which has more than one value, such as the
+// artists of a recording, is one entry, of an array of its values, in the
+// order they're found, without those which are repeated, as the store keeps
+// one value of each namespace and key.
 func meta(entries []gometadata.Metadata) []schema.Meta {
 	result := make([]schema.Meta, 0, len(entries))
+	values := make(map[string][]json.RawMessage, len(entries))
 	for _, entry := range entries {
 		if skipped[entry.NS()] || !identifier.MatchString(entry.NS()) || !identifier.MatchString(entry.Key()) {
 			continue
@@ -125,7 +131,20 @@ func meta(entries []gometadata.Metadata) []schema.Meta {
 		if err != nil {
 			continue
 		}
-		result = append(result, schema.Meta{Namespace: entry.NS(), Key: entry.Key(), Value: value})
+		key := entry.NS() + ":" + entry.Key()
+		if _, exists := values[key]; !exists {
+			result = append(result, schema.Meta{Namespace: entry.NS(), Key: entry.Key(), Value: value})
+		} else if slices.ContainsFunc(values[key], func(v json.RawMessage) bool { return bytes.Equal(v, value) }) {
+			continue
+		}
+		values[key] = append(values[key], value)
+	}
+	for i, m := range result {
+		if v := values[m.Namespace+":"+m.Key]; len(v) > 1 {
+			if array, err := json.Marshal(v); err == nil {
+				result[i].Value = array
+			}
+		}
 	}
 	return result
 }
