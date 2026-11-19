@@ -53,6 +53,8 @@ func (self *Store) PutObject(ctx context.Context, volume string, objects ...*fil
 			}
 			if err := conn.Insert(ctx, nil, schema.ObjectPut{Volume: volume, Object: object}); err != nil {
 				return err
+			} else if err := conn.Insert(ctx, nil, schema.KeyRefresh(volume, store.Key(object))); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -90,7 +92,10 @@ func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, 
 		} else if of != nil && !sameAttr(result[0].ObjectAttr, *of) {
 			return gofiler.ErrPreconditionFailed.Withf("%q changed since it was read", key)
 		}
-		return conn.Insert(ctx, nil, schema.ObjectMetaPut{Volume: volume, Key: key, Source: source, TaskMeta: found})
+		if err := conn.Insert(ctx, nil, schema.ObjectMetaPut{Volume: volume, Key: key, Source: source, TaskMeta: found}); err != nil {
+			return err
+		}
+		return conn.Insert(ctx, nil, schema.KeyRefresh(volume, key))
 	}))
 }
 
@@ -102,7 +107,12 @@ func (self *Store) DeleteMetadata(ctx context.Context, volume, source string) (e
 	if !types.IsIdentifier(source) || strings.ToLower(source) != source {
 		return gofiler.ErrBadParameter.Withf("the source of metadata is a task's kind, such as metadata, not %q", source)
 	}
-	return storeErr(self.conn.Delete(ctx, nil, schema.ObjectMetaSource{Volume: volume, Source: source}))
+	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
+		if err := conn.Delete(ctx, nil, schema.ObjectMetaSource{Volume: volume, Source: source}); err != nil {
+			return err
+		}
+		return conn.Insert(ctx, nil, schema.VolumeRefresh(volume))
+	}))
 }
 
 // DeleteObject removes the object of the volume of the key, and, of a folder's,

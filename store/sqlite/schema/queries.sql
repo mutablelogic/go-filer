@@ -334,3 +334,45 @@ LEFT JOIN object_state AS listed ON listed.volume = seen.volume AND listed.key =
 WHERE seen.volume = @volume AND seen.kind = 'seen' AND seen.key > @lower AND seen.key < @upper
   AND seen.key NOT GLOB '*/'
   AND (object.key IS NULL OR listed.revision IS NOT seen.revision);
+
+-- search.refresh
+-- The search of the objects of a volume, of the range of their keys, from
+-- one, to one after, which replaces theirs, of their names, the names of
+-- their folders, and their metadata, the backend's merged with their
+-- tasks', of which schema.object_search_built is of every object
+DELETE FROM object_search WHERE rowid IN (SELECT rowid FROM object WHERE volume = @volume AND key >= @from AND key < @to);
+INSERT INTO object_search (rowid, name, title, folder, parent, path, meta)
+SELECT object.rowid, search_name(object.key),
+  coalesce((
+    SELECT group_concat(search_text(metadata.value), ' ') FROM metadata
+    WHERE metadata.volume = object.volume AND metadata.object = object.key
+      AND metadata.namespace = 'dc' AND metadata.key IN ('title', 'creator', 'identifier', 'description', 'subject')
+      AND NOT (metadata.source = '' AND EXISTS (
+        SELECT 1 FROM metadata AS task
+        WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
+          AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key))
+  ), ''),
+  search_folder(object.key, 1), search_folder(object.key, 2), search_path(object.key),
+  coalesce((
+    SELECT group_concat(search_text(metadata.value), ' ') FROM metadata
+    WHERE metadata.volume = object.volume AND metadata.object = object.key
+      AND NOT (ifnull(metadata.namespace, '') = 'dc' AND metadata.key IN ('title', 'creator', 'identifier', 'description', 'subject'))
+      AND NOT (ifnull(metadata.namespace, '') = 'metadata' AND metadata.key = 'hint') AND ifnull(metadata.namespace, '') <> 'folder'
+      AND NOT (metadata.source = '' AND EXISTS (
+        SELECT 1 FROM metadata AS task
+        WHERE task.volume = metadata.volume AND task.object = metadata.object AND task.source <> ''
+          AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key))
+  ), '')
+FROM object
+WHERE object.volume = @volume AND object.key >= @from AND object.key < @to;
+
+-- search.match
+-- The keys of the objects of a volume which match an FTS5 query, best first,
+-- of the weights of their columns: their names, the main fields of their
+-- metadata, their own folders, the folders above them, those above those,
+-- and their other metadata
+SELECT object.key FROM object_search
+JOIN object ON object.rowid = object_search.rowid
+WHERE object_search MATCH @match AND object.volume = @volume
+ORDER BY bm25(object_search, 10.0, 8.0, 5.0, 4.0, 3.0, 4.0), object.key
+LIMIT @limit;

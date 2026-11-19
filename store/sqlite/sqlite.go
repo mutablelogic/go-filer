@@ -15,6 +15,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
 	sqlite "github.com/mutablelogic/go-sqlite"
 	ncruces "github.com/mutablelogic/go-sqlite/ncruces"
+	_ "github.com/mutablelogic/go-sqlite/ncruces/fts5"
 	attribute "go.opentelemetry.io/otel/attribute"
 )
 
@@ -51,7 +52,7 @@ func New(ctx context.Context, path string, opts ...store.Opt) (_ *Store, err err
 	defer func() { end(err) }()
 
 	// Open the database, with the options
-	var dbopts []sqlite.Opt
+	dbopts := schema.Functions()
 	if o.Tracer != nil {
 		dbopts = append(dbopts, sqlite.WithTracer(o.Tracer))
 	}
