@@ -139,11 +139,23 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 
 * **Contacts** are vCard files, `text/vcard`, at the root, named by their ids, such as `/c123.vcf`, with `dc:title` and `contact:name`, of their names.
 * **Content:** written with go-metadata's `pkg/vcard`: names, nicknames, emails, phones, URLs, addresses, organisations, titles, birthday, notes, a photo, as a link, but not Google's default one, of initials, and when it was updated, as `REV`. A primary value is preferred.
-* **No birthdays as objects**, nor calendars, only contacts.
+* **No birthdays as objects**, only contacts: birthdays are events of the Google Calendar volume.
 * **Options:** `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has, whose description is `Google Contacts for <email>` by default. It's read-only, so far: `readonly=false` isn't implemented.
 * **Watching** polls the contacts' entity tags, at the refresh interval.
 
 In the registry, its URL is `gcontacts://<name>`, and the `filer` command creates one with `volume-create-gcontacts`, signing in with Google, in the browser, when it needs to.
+
+### Google Calendar
+
+A volume of the events of a Google account's calendars, read-only, of the days before today and after it.
+
+* **Layout:** a folder of each year, and of each month, with every calendar's events in it: `/2026/2026-11/20-<calendar>-<id>.ics`. The day is the one an event starts on, in its own zone, and `<calendar>` is its calendar's id, with characters such as `#` as `_`.
+* **Repeating events** are an event of each time they occur, as Google lists them, so there are no rules to expand, and only those of the window are there.
+* **Content:** written with go-metadata's `pkg/ical`, as a VEVENT: title, description, location, link, start and end (a date, or a time in its zone), status, organiser, attendees, its type (such as Birthday) as a category, and whether it's busy. Metadata: `dc:title`, and `calendar:calendar`, `name`, `start`, `end`, `status` and `series`.
+* **Options:** `window`, the time before today and after it, such as `30d`, `52w` or `720h`, of whole days, which is `365d` by default, and `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has. It's read-only, so far.
+* **Watching** syncs each calendar with its sync token, at the refresh interval, and rescans the root when any of them changed, as a token says that an event changed, but not where. The tokens are stored with the server's credentials, as `GCALENDAR_<NAME>_SYNC`, so after a restart only what changed since is synced. A token which Google rejects is synced again, at most once an hour. The root is rescanned too when a calendar is added or removed, and each day, as the window moves on.
+
+In the registry, its URL is `gcalendar://<name>`, and the `filer` command creates one with `volume-create-gcalendar`, signing in with Google, in the browser, when it needs to.
 
 ## Indexer
 
