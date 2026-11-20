@@ -227,6 +227,11 @@ func (self *TaskFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
+// Actions returns nil, as tasks have no actions, so far
+func (self *TaskFiler) Actions() []gofiler.Action {
+	return nil
+}
+
 // Description returns what the volume is, such as "Google Tasks for ada@example.com"
 func (self *TaskFiler) Description() string {
 	return self.description

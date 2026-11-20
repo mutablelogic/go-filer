@@ -41,6 +41,12 @@ func (self *Registry) URL() *url.URL {
 	return &url.URL{Scheme: "filer"}
 }
 
+// Actions returns nil, as a registry's actions are of its volumes, each of
+// its own backend's
+func (self *Registry) Actions() []gofiler.Action {
+	return nil
+}
+
 // Description returns what the registry is, its volumes, as each volume's
 // backend has its own description
 func (self *Registry) Description() string {

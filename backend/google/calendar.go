@@ -267,6 +267,11 @@ func (self *CalendarFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
+// Actions returns nil, as calendars have no actions, so far
+func (self *CalendarFiler) Actions() []gofiler.Action {
+	return nil
+}
+
 // Description returns what the volume is, such as "Google Calendar for ada@example.com"
 func (self *CalendarFiler) Description() string {
 	return self.description

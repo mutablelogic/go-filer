@@ -153,6 +153,11 @@ func (self *FS) Readonly() bool {
 	return self.readonly
 }
 
+// Actions returns nil, as a filesystem's objects are all it has
+func (self *FS) Actions() []filer.Action {
+	return nil
+}
+
 // Description returns what the folder is, such as "Folder /mnt/media"
 func (self *FS) Description() string {
 	return self.description

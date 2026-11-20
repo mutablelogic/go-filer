@@ -39,6 +39,8 @@ func (b *bucket) Clone(context.Context, url.Values) (gofiler.Filer, error) { ret
 
 func (b *bucket) Description() string { return "A bucket" }
 
+func (b *bucket) Actions() []gofiler.Action { return nil }
+
 func (b *bucket) WatchObjects(context.Context, chan<- schema.Event) error {
 	return gofiler.ErrNotImplemented.With("a bucket isn't watched")
 }

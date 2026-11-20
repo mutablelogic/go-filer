@@ -196,6 +196,11 @@ func (self *ContactFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
+// Actions returns nil, as contacts have no actions, so far
+func (self *ContactFiler) Actions() []gofiler.Action {
+	return nil
+}
+
 // Description returns what the volume is, such as "Google Contacts for ada@example.com"
 func (self *ContactFiler) Description() string {
 	return self.description
