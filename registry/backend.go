@@ -95,6 +95,22 @@ func WithSchemes(schemes ...string) Opt {
 	}
 }
 
+// WithSchemes uses only the backends of the schemes, of those which are
+// built in, and those of WithBackend, such as a server's --backend flag. A
+// stored volume of another scheme is offline, as its backend isn't
+// registered. A scheme which isn't a backend's is an error, which lists
+// those which are. It can be repeated, and its schemes are added.
+func WithSchemes(schemes ...string) Opt {
+	return func(o *opt) error {
+		for _, name := range schemes {
+			if name = strings.TrimSpace(name); name != "" && !slices.Contains(o.schemes, name) {
+				o.schemes = append(o.schemes, name)
+			}
+		}
+		return nil
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
 
