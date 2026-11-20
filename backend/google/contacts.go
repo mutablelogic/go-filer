@@ -48,6 +48,7 @@ type ContactFiler struct {
 
 // contactOpt are the options of a contact filer, of its parameters
 type contactOpt struct {
+	readonly        bool          // Contacts can't be created, updated or deleted
 	quota           uint          // The most requests each minute, or zero
 	refreshInterval time.Duration // How often changes are polled for, or zero not to
 	endpoint        string        // The endpoint of the API, which is Google's, but a test's
@@ -98,7 +99,8 @@ var peopleEndpoint = httpclient.PeopleEndpoint
 // name, with the parameters, the user's sign-in, of the provider of
 // credentials, and go-client's options of its requests, such as a tracer.
 // The sign-in, and the contacts, are checked, as for NewTaskFiler, and its
-// parameters are readonly, which must be true, so far, quota,
+// parameters are readonly, which is true by default, and, when it's false,
+// needs a sign-in which can write contacts, of the contact action, quota,
 // refresh_interval and credential, as a task filer's.
 func NewContactFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*ContactFiler, error) {
 	if !types.IsIdentifier(name) {
@@ -112,9 +114,13 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, opts g
 	self := &ContactFiler{contactOpt: opt, name: name, opts: opts}
 	self.people = newCache[[]httpclient.Person](time.Now, func() time.Duration { return self.refreshInterval })
 
-	// The user's sign-in, which can read contacts
-	required := []string{httpclient.ContactsReadonlyScope, httpclient.ContactsScope}
-	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, []string{httpclient.ContactsReadonlyScope, httpclient.EmailScope}); err != nil {
+	// The user's sign-in, which has the access the volume needs: to read
+	// contacts, or to write them, too
+	required, scopes := []string{httpclient.ContactsScope}, []string{httpclient.ContactsScope, httpclient.EmailScope}
+	if opt.readonly {
+		required, scopes = []string{httpclient.ContactsReadonlyScope, httpclient.ContactsScope}, []string{httpclient.ContactsReadonlyScope, httpclient.EmailScope}
+	}
+	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, scopes); err != nil {
 		return nil, err
 	}
 
@@ -149,7 +155,7 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, opts g
 // parseContactOpts returns the options of the parameters, which are
 // rejected when they can't be parsed, or are for writing
 func parseContactOpts(params url.Values) (contactOpt, error) {
-	opt := contactOpt{quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: peopleEndpoint}
+	opt := contactOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: peopleEndpoint}
 	for key := range params {
 		switch key {
 		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, schema.OptDescription:
@@ -161,8 +167,8 @@ func parseContactOpts(params url.Values) (contactOpt, error) {
 	if value := params.Get(paramReadonly); value != "" {
 		if readonly, err := strconv.ParseBool(value); err != nil {
 			return opt, gofiler.ErrBadParameter.Withf("%s: %q", paramReadonly, value)
-		} else if !readonly {
-			return opt, gofiler.ErrNotImplemented.With("writing contacts isn't implemented yet, so a volume of contacts is read-only")
+		} else {
+			opt.readonly = readonly
 		}
 	}
 	if value := params.Get(paramQuota); value != "" {
@@ -196,10 +202,6 @@ func (self *ContactFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-// Actions returns nil, as contacts have no actions, so far
-func (self *ContactFiler) Actions() []gofiler.Action {
-	return nil
-}
 
 // Description returns what the volume is, such as "Google Contacts for ada@example.com"
 func (self *ContactFiler) Description() string {
@@ -380,7 +382,7 @@ func (self *ContactFiler) WatchObjects(ctx context.Context, ch chan<- schema.Eve
 // set up
 func (self *ContactFiler) params() url.Values {
 	return url.Values{
-		paramReadonly:         {"true"},
+		paramReadonly:         {strconv.FormatBool(self.readonly)},
 		paramQuota:            {strconv.FormatUint(uint64(self.quota), 10)},
 		paramRefreshInterval:  {self.refreshInterval.String()},
 		paramCredential:       {self.credential},

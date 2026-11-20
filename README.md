@@ -138,12 +138,12 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 
 ## Google Contacts
 
-`google.NewContactFiler` returns a filer of a person's Google Contacts, of the People API, with the same Google sign-in as Google Tasks, which asks for the `contacts.readonly` scope, keeping the scopes it has, so one sign-in can have both:
+`google.NewContactFiler` returns a filer of a person's Google Contacts, of the People API, with the same Google sign-in as Google Tasks, which asks for the `contacts.readonly` scope, or `contacts` when it's writable, keeping the scopes it has, so one sign-in can have both:
 
 * **Contacts** are vCard files, `text/vcard`, at the root, named by their ids, such as `/c123.vcf`, without a size until they're read, as their photos aren't got for a listing, with `dc:title`, of their names, and `contact:url`, their links in Google Contacts, which a vCard can't have, as its URLs are the person's. The rest is the vCard's, which is go-metadata's.
 * **Content:** written with go-metadata's `pkg/vcard`: names, nicknames, emails, phones, URLs, addresses, organisations, titles, birthday, notes, a photo, embedded, at 512 pixels, when the contact is read, or as a link, when it can't be got, but not Google's default one, of initials, and when it was updated, as `REV`. A primary value is preferred.
 * **No birthdays as objects**, only contacts: birthdays are events of the Google Calendar volume.
-* **Options:** `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has, whose description is `Google Contacts for <email>` by default. It's read-only, so far: `readonly=false` isn't implemented.
+* **Options:** `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has, whose description is `Google Contacts for <email>` by default. It's read-only by default. With `readonly=false` (`volume-create-gcontacts --writable`), it asks for the `contacts` scope and has the `contact` action.
 * **Watching** polls the contacts' entity tags, at the refresh interval.
 
 In the registry, its URL is `gcontacts://<name>`, and the `filer` command creates one with `volume-create-gcontacts`, signing in with Google, in the browser, when it needs to.
@@ -196,6 +196,8 @@ An action is something a volume's backend can do beyond reading and writing its 
 * **HTTP:** `GET /action` lists every volume's, `GET /action/{name}` one volume's, and `POST /action/{name}/{action}` calls one with its input as the body.
 * **CLI:** `filer actions [VOLUME]` lists them, of every volume without one, and `filer action VOLUME NAME '<json>'` calls one, or `-` reads the input from stdin.
 * **Google Tasks** has `task_list` on a writable volume: `{"op":"create","title":"Work"}`, `{"op":"update","path":"/<id>","title":"Office"}` or `{"op":"delete","path":"/<id>"}`.
+* **Google Tasks** also has `task`: `{"op":"create","title":"Call"}` creates a task in the default list, or in a list with `"path":"/<list>"`. `update` changes the fields given (`title`, `notes`, `due`, `completed`, `parent`) of `/<list>/<id>.ics`, and `delete` deletes it.
+* **Google Contacts** has `contact` on a writable volume: `{"op":"create","given_name":"Grace","emails":["grace@example.com"]}`, `update` of `/<id>.vcf` with the fields to change (`given_name`, `family_name`, `emails`, `phones`, `organization`, `job_title`, `birthday`, `notes`, `addresses`), or `delete`. A list replaces the contact's.
 
 ## Indexer
 

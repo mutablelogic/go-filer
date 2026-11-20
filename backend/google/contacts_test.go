@@ -2,6 +2,7 @@ package google_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net/http"
@@ -31,7 +32,8 @@ type fakePeople struct {
 	people   []httpclient.Person
 	profiles map[string]httpclient.Person // Which are got, by their ids, but aren't contacts, so aren't listed
 	pages    int
-	gets     int // How many times a person is got
+	gets     int      // How many times a person is got
+	updated  []string // The fields of the last update, of updatePersonFields
 }
 
 func newFakePeople(t *testing.T) (*fakePeople, string) {
@@ -65,6 +67,9 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if f.write(w, r, parts) {
+		return
+	}
 	switch {
 	case len(parts) == 3 && parts[0] == "people" && parts[1] == "me" && parts[2] == "connections":
 		f.pages++
@@ -91,6 +96,75 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound)
 	}
+}
+
+// write creates, updates or deletes a contact, as the People API does, and
+// returns false when the request isn't a write
+func (f *fakePeople) write(w http.ResponseWriter, r *http.Request, parts []string) bool {
+	find := func(id string) int {
+		for i := range f.people {
+			if f.people[i].ResourceName == "people/"+id {
+				return i
+			}
+		}
+		return -1
+	}
+	switch {
+	case r.Method == http.MethodPost && len(parts) == 1 && parts[0] == "people:createContact":
+		var person httpclient.Person
+		if err := json.NewDecoder(r.Body).Decode(&person); err != nil {
+			writeError(w, http.StatusBadRequest)
+			return true
+		}
+		id := "n" + strconv.Itoa(len(f.people)+1)
+		person.ResourceName, person.ETag = "people/"+id, id+"-1"
+		person.Metadata = httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "CONTACT"}}}
+		f.people = append(f.people, person)
+		writeJSON(w, person)
+	case r.Method == http.MethodPatch && len(parts) == 2 && parts[0] == "people" && strings.HasSuffix(parts[1], ":updateContact"):
+		i := find(strings.TrimSuffix(parts[1], ":updateContact"))
+		var person httpclient.Person
+		if i < 0 {
+			writeError(w, http.StatusNotFound)
+			return true
+		} else if err := json.NewDecoder(r.Body).Decode(&person); err != nil || person.ETag != f.people[i].ETag {
+			writeError(w, http.StatusBadRequest)
+			return true
+		}
+		f.updated = strings.Split(r.URL.Query().Get("updatePersonFields"), ",")
+		current := &f.people[i]
+		for _, field := range f.updated {
+			switch field {
+			case "names":
+				current.Names = person.Names
+			case "emailAddresses":
+				current.EmailAddresses = person.EmailAddresses
+			case "phoneNumbers":
+				current.PhoneNumbers = person.PhoneNumbers
+			case "organizations":
+				current.Organizations = person.Organizations
+			case "birthdays":
+				current.Birthdays = person.Birthdays
+			case "biographies":
+				current.Biographies = person.Biographies
+			case "addresses":
+				current.Addresses = person.Addresses
+			}
+		}
+		current.ETag = strings.TrimPrefix(current.ResourceName, "people/") + "-" + strconv.Itoa(len(f.updated)+2)
+		writeJSON(w, *current)
+	case r.Method == http.MethodDelete && len(parts) == 2 && parts[0] == "people" && strings.HasSuffix(parts[1], ":deleteContact"):
+		i := find(strings.TrimSuffix(parts[1], ":deleteContact"))
+		if i < 0 {
+			writeError(w, http.StatusNotFound)
+			return true
+		}
+		f.people = append(f.people[:i], f.people[i+1:]...)
+		writeJSON(w, map[string]any{})
+	default:
+		return false
+	}
+	return true
 }
 
 // add adds a contact, of its id, and changes it with fn
@@ -136,11 +210,16 @@ func Test_NewContactFiler(t *testing.T) {
 	require.NotNil(t, signIn)
 	assert.Equal(t, []string{httpclient.ContactsReadonlyScope, httpclient.EmailScope, httpclient.TasksScope}, signIn.Scopes)
 
-	// Writing isn't implemented, so far, and parameters which aren't known,
-	// or can't be parsed, are bad
-	_, err = newContactFilerOf(ctx, "contacts", url.Values{"readonly": {"false"}}, contactCredentials(t, endpoint))
-	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
-	for _, params := range []url.Values{{"hidden": {"true"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}}, {"credential": {"S3_SECRET"}}} {
+	// A writable volume of a sign-in which can only read contacts signs in
+	// again, asking for the scope of writing them
+	_, err = newContactFilerOf(ctx, "contacts", url.Values{"readonly": {"false"}, "quota": {"0"}}, contactCredentials(t, endpoint))
+	require.Equal(t, http.StatusUnauthorized, status(err))
+	signIn = authclient.SignInOf(err)
+	require.NotNil(t, signIn)
+	assert.Contains(t, signIn.Scopes, httpclient.ContactsScope)
+
+	// Parameters which aren't known, or can't be parsed, are bad
+	for _, params := range []url.Values{{"hidden": {"true"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}}, {"credential": {"S3_SECRET"}}, {"readonly": {"maybe"}}} {
 		_, err := newContactFilerOf(ctx, "contacts", params, contactCredentials(t, endpoint))
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
@@ -379,4 +458,101 @@ func Test_ContactCache(t *testing.T) {
 	require.NoError(t, err)
 	_, g = counts()
 	assert.Equal(t, gets+1, g)
+}
+
+// A writable volume's contact action creates a contact, updates the fields
+// of one which are given, and deletes one, and needs a sign-in which can
+// write contacts, and a read-only volume has no actions
+func Test_ContactAction(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFakePeople(t)
+	fake.add("ada", func(p *httpclient.Person) {
+		p.Names = []httpclient.PersonName{{GivenName: "Ada", FamilyName: "Lovelace", DisplayName: "Ada Lovelace"}}
+		p.EmailAddresses = []httpclient.PersonValue{{Value: "ada@example.com"}}
+		p.Organizations = []httpclient.PersonOrg{{Name: "Analytical Engines", Title: "Programmer"}}
+	})
+	assert.Nil(t, newContactFiler(t, endpoint, nil).Actions(), "a read-only volume has none")
+	_, err := newContactFilerOf(ctx, "contacts", url.Values{"readonly": {"false"}, "quota": {"0"}}, contactCredentials(t, endpoint))
+	assert.Error(t, err, "a sign-in which can only read contacts can't write them")
+
+	writer := newCredentials(t, endpoint, func(g *authclient.Grant) { g.Scopes = []string{httpclient.ContactsScope} })
+	filer, err := newContactFilerOf(ctx, "contacts", url.Values{"readonly": {"false"}, "quota": {"0"}}, writer)
+	require.NoError(t, err)
+	assert.Equal(t, "false", filer.URL().Query().Get("readonly"))
+	actions := filer.Actions()
+	require.Len(t, actions, 1)
+	assert.Equal(t, "contact", actions[0].Name())
+	run := func(input string) (*schema.Object, error) {
+		return actions[0].Run(ctx, json.RawMessage(input))
+	}
+	person := func(id string) httpclient.Person {
+		fake.Lock()
+		defer fake.Unlock()
+		for _, p := range fake.people {
+			if p.ResourceName == "people/"+id {
+				return p
+			}
+		}
+		t.Fatalf("no contact %q", id)
+		return httpclient.Person{}
+	}
+
+	// A contact is created, of its fields
+	created, err := run(`{"op":"create","given_name":"Grace","family_name":"Hopper","emails":["grace@example.com"," "],"birthday":"1906-12-09","addresses":["1 Navy Way, Arlington"]}`)
+	require.NoError(t, err)
+	assert.Equal(t, "/n2.vcf", created.Path)
+	grace := person("n2")
+	require.Len(t, grace.Names, 1)
+	assert.Equal(t, "Grace", grace.Names[0].GivenName)
+	assert.Equal(t, []httpclient.PersonValue{{Value: "grace@example.com"}}, grace.EmailAddresses)
+	require.Len(t, grace.Birthdays, 1)
+	assert.Equal(t, 1906, grace.Birthdays[0].Date.Year)
+	assert.Equal(t, "1 Navy Way, Arlington", grace.Addresses[0].FormattedValue)
+
+	// It's updated, of the fields which are given, alone, and its name, and
+	// organization, are merged with what it had
+	_, err = run(`{"op":"update","path":"/ada.vcf","given_name":"Augusta"}`)
+	require.NoError(t, err)
+	fake.Lock()
+	assert.Equal(t, []string{"names"}, fake.updated)
+	fake.Unlock()
+	ada := person("ada")
+	assert.Equal(t, "Augusta", ada.Names[0].GivenName)
+	assert.Equal(t, "Lovelace", ada.Names[0].FamilyName, "its family name is kept")
+	assert.Equal(t, []httpclient.PersonValue{{Value: "ada@example.com"}}, ada.EmailAddresses, "its emails are kept")
+	_, err = run(`{"op":"update","path":"/ada.vcf","emails":[],"job_title":"Analyst","birthday":"--12-10"}`)
+	require.NoError(t, err)
+	ada = person("ada")
+	assert.Empty(t, ada.EmailAddresses, "an empty list clears them")
+	assert.Equal(t, []httpclient.PersonOrg{{Name: "Analytical Engines", Title: "Analyst"}}, ada.Organizations)
+	require.Len(t, ada.Birthdays, 1)
+	assert.Zero(t, ada.Birthdays[0].Date.Year)
+	assert.Equal(t, 12, ada.Birthdays[0].Date.Month)
+
+	// And deleted
+	deleted, err := run(`{"op":"delete","path":"/n2.vcf"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "/n2.vcf", deleted.Path)
+	fake.Lock()
+	assert.Len(t, fake.people, 1)
+	fake.Unlock()
+
+	// Input which isn't valid for its op
+	for _, input := range []string{
+		`{"op":"move","path":"/ada.vcf"}`,
+		`{"op":"create"}`,
+		`{"op":"create","path":"/ada.vcf","given_name":"x"}`,
+		`{"op":"update","given_name":"x"}`,
+		`{"op":"update","path":"/ada.vcf"}`,
+		`{"op":"update","path":"/","given_name":"x"}`,
+		`{"op":"update","path":"/ada.vcf","birthday":"tomorrow"}`,
+		`{"op":"delete","path":"/ada.vcf","notes":"x"}`,
+		`{"op":"create","given_name":"x","colour":"red"}`,
+		`{"op":"delete","path":"/ada.vcf"} garbage`,
+	} {
+		_, err := run(input)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, input)
+	}
+	_, err = run(`{"op":"update","path":"/zz.vcf","given_name":"x"}`)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
