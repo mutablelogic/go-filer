@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	client "github.com/mutablelogic/go-client"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -121,10 +123,12 @@ type PersonPhoto struct {
 	Default  bool          `json:"default,omitempty"`
 }
 
-// connections is a page of a person's contacts
+// connections is a page of a person's contacts, the last of which, of a
+// sync, has the token of the changes after them
 type connections struct {
 	Connections   []Person `json:"connections,omitempty"`
 	NextPageToken string   `json:"nextPageToken,omitempty"`
+	NextSyncToken string   `json:"nextSyncToken,omitempty"`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -197,6 +201,41 @@ func (c *PeopleClient) Connections(ctx context.Context, fields string) ([]Person
 		query.Set("pageToken", page.NextPageToken)
 	}
 	return result, nil
+}
+
+// SyncConnections returns the contacts, of the fields, such as
+// PersonFields, a page at a time, and the token of the changes after them,
+// or, of a token, those which changed since, of which those which are
+// deleted have metadata.deleted. Returns ErrSyncTokenGone when Google no
+// longer accepts the token, such as one which is more than seven days old,
+// when every contact is got again.
+// Reference: https://developers.google.com/people/api/rest/v1/people.connections/list
+func (c *PeopleClient) SyncConnections(ctx context.Context, fields, token string) ([]Person, string, error) {
+	var result []Person
+	query := url.Values{"pageSize": {strconv.Itoa(peoplePageSize)}, "personFields": {fields}, "requestSyncToken": {"true"}}
+	if token != "" {
+		query.Set("syncToken", token)
+	}
+	for range maxPages {
+		var page connections
+		if err := c.DoAuthWithContext(ctx, client.NewRequest(), &page,
+			client.OptPath("people", "me", "connections"),
+			client.OptQuery(query),
+		); errors.Is(err, httpresponse.Err(http.StatusGone)) {
+			return nil, "", ErrSyncTokenGone
+		} else if err != nil {
+			return nil, "", err
+		}
+		result = append(result, page.Connections...)
+		if page.NextPageToken != "" {
+			query.Set("pageToken", page.NextPageToken)
+			continue
+		} else if page.NextSyncToken == "" {
+			return nil, "", errors.New("no sync token was returned")
+		}
+		return result, page.NextSyncToken, nil
+	}
+	return nil, "", errTooManyPages
 }
 
 // Person returns a contact, by its resource name, such as people/c123, of

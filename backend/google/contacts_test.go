@@ -35,6 +35,14 @@ type fakePeople struct {
 	pages    int
 	gets     int      // How many times a person is got
 	updated  []string // The fields of the last update, of updatePersonFields
+
+	// The contacts, by their ids, of their entity tags, of each sync token,
+	// so a sync returns what changed since, how many times every contact is
+	// synced, and whether a token isn't accepted, as it's expired
+	snapshots map[string]map[string]string
+	fullSyncs int
+	expired   bool
+	photos    int // How many times a photo is got
 }
 
 func newFakePeople(t *testing.T) (*fakePeople, string) {
@@ -54,6 +62,7 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.Lock()
 	defer f.Unlock()
 	if strings.HasPrefix(r.URL.Path, "/photos/") {
+		f.photos++
 		if r.URL.Path != "/photos/ada=s512" || r.Header.Get("Authorization") != "" {
 			writeError(w, http.StatusNotFound)
 			return
@@ -72,13 +81,43 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case len(parts) == 3 && parts[0] == "people" && parts[1] == "me" && parts[2] == "connections" && r.URL.Query().Get("syncToken") != "":
+		// What changed since the token: those which are new, or whose entity
+		// tags changed, and those which are deleted, or gone
+		snapshot, exists := f.snapshots[r.URL.Query().Get("syncToken")]
+		if f.expired || !exists {
+			writeError(w, http.StatusGone)
+			return
+		}
+		var changed []httpclient.Person
+		seen := make(map[string]bool)
+		for _, person := range f.people {
+			id := strings.TrimPrefix(person.ResourceName, "people/")
+			seen[id] = true
+			if etag, had := snapshot[id]; !had || etag != person.ETag || person.Metadata.Deleted {
+				if !(person.Metadata.Deleted && !had) {
+					changed = append(changed, person)
+				}
+			}
+		}
+		for id := range snapshot {
+			if !seen[id] {
+				changed = append(changed, httpclient.Person{ResourceName: "people/" + id, Metadata: httpclient.PersonMetadata{Deleted: true}})
+			}
+		}
+		writeJSON(w, map[string]any{"connections": changed, "nextSyncToken": f.snapshot()})
 	case len(parts) == 3 && parts[0] == "people" && parts[1] == "me" && parts[2] == "connections":
 		f.pages++
 		start, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+		if start == 0 && r.URL.Query().Get("requestSyncToken") == "true" {
+			f.fullSyncs++
+		}
 		end := min(start+2, len(f.people))
 		page := map[string]any{"connections": f.people[start:end]}
 		if end < len(f.people) {
 			page["nextPageToken"] = strconv.Itoa(end)
+		} else if r.URL.Query().Get("requestSyncToken") == "true" {
+			page["nextSyncToken"] = f.snapshot()
 		}
 		writeJSON(w, page)
 	case len(parts) == 2 && parts[0] == "people":
@@ -182,6 +221,23 @@ func contactSources(person httpclient.Person) []httpclient.PersonSource {
 		}
 	}
 	return result
+}
+
+// snapshot returns a sync token, of the contacts' entity tags now, which
+// the fake must be locked for
+func (f *fakePeople) snapshot() string {
+	if f.snapshots == nil {
+		f.snapshots = make(map[string]map[string]string)
+	}
+	snapshot := make(map[string]string, len(f.people))
+	for _, person := range f.people {
+		if !person.Metadata.Deleted {
+			snapshot[strings.TrimPrefix(person.ResourceName, "people/")] = person.ETag
+		}
+	}
+	token := "s" + strconv.Itoa(len(f.snapshots))
+	f.snapshots[token] = snapshot
+	return token
 }
 
 // add adds a contact, of its id, and changes it with fn
@@ -593,4 +649,135 @@ func readCards(t *testing.T, filer *google.ContactFiler, path string) []*vcard.C
 		return err
 	}))
 	return cards
+}
+
+// Test_ContactWatchRestart tests a watch which starts again, of the
+// volume's cache, syncs what changed while it wasn't watched, rather than
+// getting every contact again, and reads the contacts it knows
+func Test_ContactWatchRestart(t *testing.T) {
+	fake, endpoint := newFakePeople(t)
+	fake.add("c1", func(p *httpclient.Person) {
+		p.Names = []httpclient.PersonName{{DisplayName: "Ada", GivenName: "Ada"}}
+	})
+	fake.add("c2", nil)
+	cache := testCache()
+	filer := func() *google.ContactFiler {
+		t.Helper()
+		f, err := google.NewContactFiler(t.Context(), "contacts", url.Values{"quota": {"0"}, "refresh_interval": {"10ms"}}, cache, gofiler.Opts{Credentials: contactCredentials(t, endpoint)})
+		require.NoError(t, err)
+		return f
+	}
+	fullSyncs := func() int {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.fullSyncs
+	}
+	watch := func(f *google.ContactFiler) (chan schema.Event, func()) {
+		t.Helper()
+		ch, done := make(chan schema.Event, 64), make(chan error, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() { done <- f.WatchObjects(ctx, ch) }()
+		select {
+		case event := <-ch:
+			require.Equal(t, schema.EventTypeRescan, event.EventType)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no rescan")
+		}
+		return ch, func() {
+			cancel()
+			assert.ErrorIs(t, <-done, context.Canceled)
+		}
+	}
+
+	// The first watch gets every contact, and saves them, when it stops
+	_, stop := watch(filer())
+	assert.Equal(t, 1, fullSyncs())
+	stop()
+
+	// What changes while it isn't watched is synced, when it's watched
+	// again, of the contacts it saved, which aren't got again
+	fake.Lock()
+	fake.people[0].ETag, fake.people[0].Names = "c1-2", []httpclient.PersonName{{DisplayName: "Augusta", GivenName: "Augusta"}}
+	fake.people = fake.people[:1]
+	fake.Unlock()
+	fake.add("c3", nil)
+	f := filer()
+	_, stop = watch(f)
+	assert.Equal(t, 1, fullSyncs(), "every contact isn't got again")
+	assert.Equal(t, []string{"/c1.vcf", "/c3.vcf"}, listed(t, f, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
+	object, err := f.GetObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c1.vcf"}})
+	require.NoError(t, err)
+	assert.Equal(t, "c1-2", *object.ETag)
+	stop()
+
+	// A token which isn't accepted, such as one which has expired, gets
+	// every contact again
+	fake.Lock()
+	fake.expired = true
+	fake.Unlock()
+	_, stop = watch(filer())
+	assert.Equal(t, 2, fullSyncs())
+	fake.Lock()
+	fake.expired = false
+	fake.Unlock()
+	stop()
+}
+
+// Test_ContactActionWatch tests a contact the action writes is sent to the
+// watch, as it's written, and isn't sent again, when it's synced
+func Test_ContactActionWatch(t *testing.T) {
+	fake, endpoint := newFakePeople(t)
+	fake.add("ada", func(p *httpclient.Person) {
+		p.Names = []httpclient.PersonName{{GivenName: "Ada"}}
+	})
+	writer := newCredentials(t, endpoint, func(g *authclient.Grant) { g.Scopes = []string{httpclient.ContactsScope} })
+	filer, err := google.NewContactFiler(t.Context(), "contacts", url.Values{"readonly": {"false"}, "quota": {"0"}, "refresh_interval": {"10ms"}}, testCache(), gofiler.Opts{Credentials: writer})
+	require.NoError(t, err)
+	ch, done := make(chan schema.Event, 64), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		assert.ErrorIs(t, <-done, context.Canceled)
+	}()
+	events := func() []string {
+		t.Helper()
+		var result []string
+		for {
+			select {
+			case event := <-ch:
+				result = append(result, event.EventType.String()+" "+event.Path)
+			case <-time.After(150 * time.Millisecond):
+				return result
+			}
+		}
+	}
+	assert.Equal(t, []string{"rescan /"}, events())
+	run := func(input string) {
+		t.Helper()
+		_, err := filer.Actions()[0].Run(t.Context(), json.RawMessage(input))
+		require.NoError(t, err)
+	}
+	run(`{"op":"update","path":"/ada.vcf","given_name":"Augusta"}`)
+	assert.Equal(t, []string{"updated /ada.vcf"}, events(), "once, as it's written")
+	run(`{"op":"delete","path":"/ada.vcf"}`)
+	assert.Equal(t, []string{"deleted /ada.vcf"}, events())
+}
+
+// Test_ContactPhotoCache tests a contact's photo is kept in the volume's
+// cache, so it isn't got each time the contact is read
+func Test_ContactPhotoCache(t *testing.T) {
+	fake, endpoint := newFakePeople(t)
+	fake.add("c1", func(p *httpclient.Person) {
+		p.Photos = []httpclient.PersonPhoto{{URL: endpoint + "/photos/ada=s100"}}
+	})
+	filer := newContactFiler(t, endpoint, nil)
+	for range 3 {
+		content := read(t, filer, "/c1.vcf")
+		assert.Contains(t, content, "PHOTO")
+		google.ClearContactCache(filer)
+	}
+	fake.Lock()
+	assert.Equal(t, 1, fake.photos, "it's got once")
+	fake.Unlock()
 }

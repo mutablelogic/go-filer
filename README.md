@@ -144,7 +144,10 @@ filer, err := google.NewTaskFiler(ctx, "tasks", url.Values{"readonly": {"true"}}
 * **Content:** written with go-metadata's `pkg/vcard`: names, nicknames, emails, phones, URLs, addresses, organisations, titles, birthday, notes, a photo, embedded, at 512 pixels, when the contact is read, or as a link, when it can't be got, but not Google's default one, of initials, and when it was updated, as `REV`. A primary value is preferred.
 * **No birthdays as objects**, only contacts: birthdays are events of the Google Calendar volume.
 * **Options:** `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has, whose description is `Google Contacts for <email>` by default. It's read-only by default. With `readonly=false` (`volume-create-gcontacts --writable`), it asks for the `contacts` scope and has the `contact` action.
-* **Watching** polls the contacts' entity tags, at the refresh interval.
+* **Watching** syncs the contacts at the refresh interval, with the People API's sync token, so only what changed is fetched, and sends a contact that's created, changed (its ETag) or deleted.
+  * While it's watched, reads use the contacts the watch knows. The `contact` action's changes are applied and sent as they're made, and not sent again when they're synced.
+  * The contacts and their token are saved in the volume's cache, after the first sync, at most every five minutes while they change, and when it stops. So a restart syncs what changed since, rather than fetching every contact, unless Google doesn't accept the token (it expires after seven days).
+* **Photos** are kept in the volume's cache for a day, so they aren't downloaded each time a contact is read.
 
 In the registry, its URL is `gcontacts://<name>`, and the `filer` command creates one with `volume-create-gcontacts`, signing in with Google, in the browser, when it needs to.
 

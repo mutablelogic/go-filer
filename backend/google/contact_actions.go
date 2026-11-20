@@ -71,8 +71,9 @@ func (contactAction) Input() *jsonschema.Schema {
 }
 
 // Run creates a contact, or updates, or deletes, the contact of the path,
-// and returns it, as it is, or was, before it's deleted. The contacts are
-// got again, so the change is listed, and the watch sends it when it polls.
+// and returns it, as it is, or was, before it's deleted. The change is
+// applied to the contacts the watch knows, and sent, as it's made, or,
+// when it isn't watched, the contacts are got again, so it's listed.
 func (self contactAction) Run(ctx context.Context, data json.RawMessage) (*schema.Object, error) {
 	if self.readonly {
 		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
@@ -85,7 +86,6 @@ func (self contactAction) Run(ctx context.Context, data json.RawMessage) (*schem
 	if err != nil {
 		return nil, err
 	}
-	defer self.people.clear()
 
 	// A contact which is created is of its fields alone
 	if input.Op == opCreate {
@@ -99,6 +99,7 @@ func (self contactAction) Run(ctx context.Context, data json.RawMessage) (*schem
 		if err != nil {
 			return nil, self.apiError("contact", "/", err)
 		}
+		self.wroteContact(*created)
 		return self.object(ctx, created, "/")
 	}
 
@@ -117,6 +118,9 @@ func (self contactAction) Run(ctx context.Context, data json.RawMessage) (*schem
 		} else if err := self.client.DeleteContact(ctx, current.ResourceName); err != nil {
 			return nil, self.apiError("contact", input.Path, err)
 		}
+		deleted := *current
+		deleted.Metadata.Deleted = true
+		self.wroteContact(deleted)
 		return object, nil
 	}
 	person, updated, err := input.person(current)
@@ -130,6 +134,7 @@ func (self contactAction) Run(ctx context.Context, data json.RawMessage) (*schem
 	if err != nil {
 		return nil, self.apiError("contact", input.Path, err)
 	}
+	self.wroteContact(*changed)
 	return self.object(ctx, changed, input.Path)
 }
 
