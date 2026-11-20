@@ -168,8 +168,8 @@ A volume of the files a Google account owns in My Drive, read-only.
 * **Names:** a `/` in a name is `_`. Drive lets two files in a folder have the same name, so each then gets the start of its id, such as `report (1a2b3c).pdf`. Names are compared ignoring case.
 * **Google Docs, Sheets and Slides** are exported as `.docx`, `.xlsx` and `.pptx`, with no size until they're read. Google exports at most 10 MB, and a larger one is `ErrForbidden` when it's read.
 * **Not listed:** files others own, such as those shared with you, files in the bin, hidden files (a name starting with `.`), and Google's other types, such as forms and shortcuts. A file in more than one folder is in its first.
-* **Content** is streamed as it's downloaded, or exported.
-* **Entity tags:** a file's MD5 checksum, or a Doc's version.
+* **Content** of a file is streamed from the revision it was listed with, so it always matches its size and entity tag. A Doc is exported into memory, and its version is checked before and after. If it changed since it was listed, the read is `ErrPreconditionFailed`, and the list of files is got again.
+* **Entity tags:** a file's MD5 checksum, or a Doc's id and version, as each file counts its own versions.
 * **Metadata:** `drive:id`, `drive:url` (its link in Drive), `drive:owner`, and `drive:type` of a Doc, Sheet or Slides, such as `document`.
 * **Options:** `quota`, `credential` and `description`, as Google Tasks has, and `refresh_interval`, how long the list of files is kept once it's got, which is a minute. It asks for the `drive.readonly` scope.
 * **Not watched, so far:** the index scans it again from time to time.

@@ -1,6 +1,7 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -86,6 +87,10 @@ var driveExports = map[string]driveExport{
 	httpclient.DriveAppsPrefix + "spreadsheet":  {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"},
 	httpclient.DriveAppsPrefix + "presentation": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"},
 }
+
+// driveExportMax is the most of a Google Doc, Sheet or Slides which is
+// exported, which Google's limit is, so it's read into memory
+const driveExportMax = 10 << 20
 
 // driveEndpoint is the endpoint of the Drive API, which is Google's, unless
 // a test sets another. It isn't a parameter, as a volume's URL could send
@@ -254,9 +259,14 @@ func (self *DriveFiler) GetObject(ctx context.Context, req schema.GetObjectReque
 	return object, nil
 }
 
-// ReadObject returns the function which reads a file, as it's downloaded,
-// or exported, of a Google Doc, Sheet or Slides, and the file. A directory
-// can't be read, which is fs.ErrInvalid.
+// ReadObject returns the function which reads a file, and the file. A file
+// is read as it's downloaded, of its revision when it was listed, so its
+// content is the file's, though it's changed since. A Google Doc, Sheet or
+// Slides is exported, which can't be of a version, so it's read into memory,
+// and its version is checked before, and after, which is
+// ErrPreconditionFailed, when it's changed since it was listed. An error of
+// the function is returned as it is. A directory can't be read, which is
+// fs.ErrInvalid.
 func (self *DriveFiler) ReadObject(ctx context.Context, req schema.GetObjectRequest) (gofiler.ReadObjectFunc, *schema.Object, error) {
 	object, file, err := self.stat(ctx, "read", req.Path)
 	if err != nil {
@@ -270,16 +280,16 @@ func (self *DriveFiler) ReadObject(ctx context.Context, req schema.GetObjectRequ
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		read := func(r io.Reader) error {
-			return fn(&streamReader{ctx: ctx, r: r})
-		}
-		var err error
 		if export, exists := driveExports[file.MimeType]; exists {
-			err = self.client.Export(ctx, file.Id, export.contentType, read)
-		} else {
-			err = self.client.Download(ctx, file.Id, read)
+			return self.export(ctx, object.Path, file, export, fn)
 		}
-		if err != nil {
+		var fnErr error
+		if err := self.client.Download(ctx, file.Id, file.HeadRevision, func(r io.Reader) error {
+			fnErr = fn(&streamReader{ctx: ctx, r: r})
+			return fnErr
+		}); fnErr != nil {
+			return fnErr
+		} else if err != nil {
 			return self.apiError("read", object.Path, err)
 		}
 		return nil
@@ -402,6 +412,40 @@ func (self *DriveFiler) lookup(tree *driveTree, op, p string) (*schema.Object, *
 	return self.object(tree, key), file, nil
 }
 
+// export reads a Google Doc, Sheet or Slides, as it's exported, of the
+// version it was listed with, which is checked before, and after, it's
+// exported, as an export can't be of a version, into memory, of at most
+// driveExportMax, so its content is the object's, or ErrPreconditionFailed,
+// when it's changed, and the files are got again
+func (self *DriveFiler) export(ctx context.Context, p string, file *httpclient.DriveFile, export driveExport, fn func(io.Reader) error) error {
+	check := func() error {
+		version, err := self.client.Version(ctx, file.Id)
+		if err != nil {
+			return self.apiError("read", p, err)
+		} else if version != file.Version {
+			self.tree.clear()
+			return gofiler.ErrPreconditionFailed.Withf("%q changed since it was listed", p)
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return err
+	}
+	var data []byte
+	if err := self.client.Export(ctx, file.Id, export.contentType, func(r io.Reader) error {
+		var err error
+		data, err = io.ReadAll(io.LimitReader(r, driveExportMax+1))
+		return err
+	}); err != nil {
+		return self.apiError("read", p, err)
+	} else if len(data) > driveExportMax {
+		return gofiler.ErrForbidden.Withf("%q is exported as more than Google exports", p)
+	} else if err := check(); err != nil {
+		return err
+	}
+	return fn(&contentReader{ctx: ctx, r: bytes.NewReader(data)})
+}
+
 // object returns the root, a folder, which is a directory, of how many
 // objects are in it, or a file: one which is Google's own, such as a Doc,
 // has no size, nor checksum, until it's exported, so its entity tag is its
@@ -427,8 +471,8 @@ func (self *DriveFiler) object(tree *driveTree, p string) *schema.Object {
 	}
 	if export, exists := driveExports[file.MimeType]; exists {
 		object.ContentType = export.contentType
-		if file.Version != "" {
-			object.ETag = types.Ptr(file.Version)
+		if etag := versionTag(file); etag != "" {
+			object.ETag = types.Ptr(etag)
 		}
 		return object
 	}
@@ -437,10 +481,20 @@ func (self *DriveFiler) object(tree *driveTree, p string) *schema.Object {
 	}
 	if file.MD5Checksum != "" {
 		object.ETag = types.Ptr(file.MD5Checksum)
-	} else if file.Version != "" {
-		object.ETag = types.Ptr(file.Version)
+	} else if etag := versionTag(file); etag != "" {
+		object.ETag = types.Ptr(etag)
 	}
 	return object
+}
+
+// versionTag returns the entity tag of a file of its version, which is of
+// its id too, as each file's versions are its own, so another file at its
+// path, of the same version, isn't the same, or empty, without a version
+func versionTag(file *httpclient.DriveFile) string {
+	if file.Version == "" {
+		return ""
+	}
+	return file.Id + "/" + file.Version
 }
 
 ////////////////////////////////////////////////////////////////////////////////

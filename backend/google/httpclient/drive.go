@@ -32,7 +32,8 @@ type DriveFile struct {
 	Size         string       `json:"size,omitempty"` // Of a file which isn't Google's own, such as a Doc, in bytes, as a string
 	MD5Checksum  string       `json:"md5Checksum,omitempty"`
 	ModifiedTime time.Time    `json:"modifiedTime,omitzero"`
-	Version      string       `json:"version,omitempty"` // Which increases whenever it's changed
+	Version      string       `json:"version,omitempty"`        // Which increases whenever it's changed
+	HeadRevision string       `json:"headRevisionId,omitempty"` // Of its content, of a file which isn't Google's own
 	WebViewLink  string       `json:"webViewLink,omitempty"`
 	Owners       []DriveOwner `json:"owners,omitempty"`
 }
@@ -70,7 +71,7 @@ const (
 	DriveAppsPrefix = "application/vnd.google-apps."
 
 	// driveFields are the fields of each file which are listed
-	driveFields = "nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,modifiedTime,version,webViewLink,owners(emailAddress))"
+	driveFields = "nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,modifiedTime,version,headRevisionId,webViewLink,owners(emailAddress))"
 
 	// drivePageSize is the most files of each page, which is the API's most
 	drivePageSize = 1000
@@ -137,12 +138,30 @@ func (c *DriveClient) Files(ctx context.Context) ([]DriveFile, error) {
 	return nil, errTooManyPages
 }
 
-// Download reads the content of a file, of its id, which isn't Google's
-// own, such as a Doc, with the function, as it's received, without a
-// timeout, other than the context's, as a file can be large
-func (c *DriveClient) Download(ctx context.Context, id string, fn func(io.Reader) error) error {
-	return c.DoAuthWithContext(ctx, client.NewRequest(), bodyReader(fn),
+// Version returns the version of a file, of its id, which increases
+// whenever it's changed
+func (c *DriveClient) Version(ctx context.Context, id string) (string, error) {
+	var file DriveFile
+	if err := c.DoAuthWithContext(ctx, client.NewRequest(), &file,
 		client.OptPath("files", id),
+		client.OptQuery(url.Values{"fields": {"version"}}),
+	); err != nil {
+		return "", err
+	}
+	return file.Version, nil
+}
+
+// Download reads the content of a file, of its id, which isn't Google's
+// own, such as a Doc, of a revision, or the current one, when it's empty,
+// with the function, as it's received, without a timeout, other than the
+// context's, as a file can be large
+func (c *DriveClient) Download(ctx context.Context, id, revision string, fn func(io.Reader) error) error {
+	path := []any{"files", id}
+	if revision != "" {
+		path = append(path, "revisions", revision)
+	}
+	return c.DoAuthWithContext(ctx, client.NewRequest(), bodyReader(fn),
+		client.OptPath(path...),
 		client.OptQuery(url.Values{"alt": {"media"}}),
 		client.OptNoTimeout(),
 	)

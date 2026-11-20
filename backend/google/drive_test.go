@@ -2,6 +2,7 @@ package google_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -28,9 +29,10 @@ import (
 type fakeDrive struct {
 	sync.Mutex
 	files    []httpclient.DriveFile
-	content  map[string]string // Of a file, or an export, of its id
+	content  map[string]string // Of a file's revision, <id>@<revision>, or an export, <id>:<type>
 	lists    int               // How many times the files are listed
 	exported []string          // The types files are exported as
+	onExport func()            // Called as a file is exported, such as to change it
 }
 
 const (
@@ -45,7 +47,7 @@ func newFakeDrive(t *testing.T) (*fakeDrive, string) {
 		return httpclient.DriveFile{Id: id, Name: name, MimeType: mimeType, Parents: []string{parent}, ModifiedTime: modified, Version: "7", WebViewLink: "https://drive.google.com/file/d/" + id, Owners: []httpclient.DriveOwner{{EmailAddress: "ada@example.com"}}}
 	}
 	sized := func(f httpclient.DriveFile, size int) httpclient.DriveFile {
-		f.Size, f.MD5Checksum = strconv.Itoa(size), "md5-"+f.Id
+		f.Size, f.MD5Checksum, f.HeadRevision = strconv.Itoa(size), "md5-"+f.Id, "rev1"
 		return f
 	}
 	fake := &fakeDrive{
@@ -66,7 +68,7 @@ func newFakeDrive(t *testing.T) (*fakeDrive, string) {
 			file("x2", "Link", httpclient.DriveAppsPrefix+"shortcut", driveRoot),
 			sized(file("o1", "orphan.txt", "text/plain", "elsewhere"), 1),
 		},
-		content: map[string]string{"a1": "hello", "a2": "jpeg", "d1:" + docType: "docx"},
+		content: map[string]string{"a1@rev1": "hello", "a2@rev1": "jpeg", "d1:" + docType: "docx"},
 	}
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
@@ -102,15 +104,26 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			page["nextPageToken"] = strconv.Itoa(end)
 		}
 		writeJSON(w, page)
-	case len(parts) == 2 && parts[0] == "files" && query.Get("alt") == "media":
-		if content, exists := f.content[parts[1]]; exists {
+	case len(parts) == 4 && parts[0] == "files" && parts[2] == "revisions" && query.Get("alt") == "media":
+		if content, exists := f.content[parts[1]+"@"+parts[3]]; exists {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			_, _ = io.WriteString(w, content)
 			return
 		}
 		writeError(w, http.StatusNotFound)
+	case len(parts) == 2 && parts[0] == "files" && query.Get("fields") == "version":
+		for _, file := range f.files {
+			if file.Id == parts[1] {
+				writeJSON(w, httpclient.DriveFile{Version: file.Version})
+				return
+			}
+		}
+		writeError(w, http.StatusNotFound)
 	case len(parts) == 3 && parts[0] == "files" && parts[2] == "export":
 		f.exported = append(f.exported, query.Get("mimeType"))
+		if f.onExport != nil {
+			f.onExport()
+		}
 		if content, exists := f.content[parts[1]+":"+query.Get("mimeType")]; exists {
 			w.Header().Set("Content-Type", query.Get("mimeType"))
 			_, _ = io.WriteString(w, content)
@@ -228,7 +241,7 @@ func Test_DriveObjects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, docType, plan.ContentType)
 	assert.Nil(t, plan.Size)
-	assert.Equal(t, "7", *plan.ETag)
+	assert.Equal(t, "d1/7", *plan.ETag, "its id, and version, as versions are each file's")
 	assert.Contains(t, metaValues(plan, google.DriveNamespace), `"document"`)
 
 	// What isn't there, or is hidden, or is a file with a "/", doesn't exist
@@ -292,4 +305,61 @@ func Test_DriveReadCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	assert.ErrorIs(t, readFn(ctx, func(r io.Reader) error { _, err := io.ReadAll(r); return err }), context.Canceled)
+}
+
+// change changes a file, of its id, which the fake must be locked for
+func (f *fakeDrive) change(id string, fn func(*httpclient.DriveFile)) {
+	for i := range f.files {
+		if f.files[i].Id == id {
+			fn(&f.files[i])
+		}
+	}
+}
+
+func Test_DriveReadRevision(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFakeDrive(t)
+	filer := newDriveFiler(t, endpoint, url.Values{"refresh_interval": {"1h"}})
+	listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true})
+
+	// A file which changes after it's listed is read of the revision it was
+	// listed with, so its content is its object's
+	fake.Lock()
+	fake.change("a1", func(f *httpclient.DriveFile) { f.HeadRevision, f.MD5Checksum, f.Size = "rev2", "md5-new", "9" })
+	fake.content["a1@rev2"] = "new hello"
+	fake.Unlock()
+	assert.Equal(t, "hello", read(t, filer, "/notes.txt"))
+
+	// A Doc which changes after it's listed, or as it's exported, isn't
+	// read, as an export is of its current version, and the files are got
+	// again, so it's read of its new version
+	fake.Lock()
+	fake.change("d1", func(f *httpclient.DriveFile) { f.Version = "8" })
+	fake.Unlock()
+	readFn, object, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/Work/Plan.docx"}})
+	require.NoError(t, err)
+	assert.Equal(t, "d1/7", *object.ETag)
+	err = readFn(ctx, func(r io.Reader) error { return nil })
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+	fake.Lock()
+	fake.onExport = func() { fake.change("d1", func(f *httpclient.DriveFile) { f.Version = "9" }) }
+	fake.Unlock()
+	readFn, object, err = filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/Work/Plan.docx"}})
+	require.NoError(t, err)
+	assert.Equal(t, "d1/8", *object.ETag)
+	err = readFn(ctx, func(r io.Reader) error { return nil })
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed, "it changed as it was exported")
+	fake.Lock()
+	fake.onExport = nil
+	fake.Unlock()
+	assert.Equal(t, "docx", read(t, filer, "/Work/Plan.docx"))
+
+	// An error of the function is returned as it is
+	sentinel := errors.New("the destination is full")
+	for _, p := range []string{"/Work/photo.jpg", "/Work/Plan.docx"} {
+		readFn, _, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: p}})
+		require.NoError(t, err)
+		err = readFn(ctx, func(r io.Reader) error { return sentinel })
+		assert.Equal(t, sentinel, err, p)
+	}
 }
