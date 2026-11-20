@@ -479,6 +479,7 @@ func Test_ContactAction(t *testing.T) {
 	filer, err := newContactFilerOf(ctx, "contacts", url.Values{"readonly": {"false"}, "quota": {"0"}}, writer)
 	require.NoError(t, err)
 	assert.Equal(t, "false", filer.URL().Query().Get("readonly"))
+	assert.False(t, filer.Readonly())
 	actions := filer.Actions()
 	require.Len(t, actions, 1)
 	assert.Equal(t, "contact", actions[0].Name())

@@ -234,9 +234,9 @@ func (self *ContactFiler) Clone(ctx context.Context, patch url.Values) (gofiler.
 	return clone, nil
 }
 
-// Readonly returns true, as contacts aren't written, so far
+// Readonly returns true unless the volume is writable, with readonly=false
 func (self *ContactFiler) Readonly() bool {
-	return true
+	return self.readonly
 }
 
 ////////////////////////////////////////////////////////////////////////////////
