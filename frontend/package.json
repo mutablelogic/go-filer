@@ -20,6 +20,14 @@
             "types": "./dist/filer/index.d.ts",
             "import": "./dist/filer/index.js"
         },
+        "./folder": {
+            "types": "./dist/folder/controller.d.ts",
+            "import": "./dist/folder/controller.js"
+        },
+        "./folder/view": {
+            "types": "./dist/folder/view.d.ts",
+            "import": "./dist/folder/view.js"
+        },
         "./tree": {
             "types": "./dist/tree/controller.d.ts",
             "import": "./dist/tree/controller.js"
