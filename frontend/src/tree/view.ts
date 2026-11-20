@@ -1,7 +1,7 @@
-// The gf-file-tree element is a tree of the volumes, and their folders,
+// The gf-file-tree element is a tree of a volume's folders, from its root,
 // which are loaded as they're expanded, and kept up to date with the
 // changes. A folder which is chosen is selected, and the element fires
-// gf-file-tree-selected, with its volume and path, which is "/" of a
+// gf-file-tree-selected, with its volume and path, which is "/" of the
 // volume's root.
 
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
@@ -10,8 +10,7 @@ import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.j
 import type { ChangesController } from '@mutablelogic/go-server/broadcaster';
 import FolderIcon from '@carbon/icons/es/folder/16.js';
 import VolumeIcon from '@carbon/icons/es/data--base/16.js';
-import { objectTitle, subfolderCount, type FilerObject, type Volume } from '../filer/schema.ts';
-import { RegistryChangeSchema, ObjectChangeSchema, StoreChangeSchema, VolumeChangeTable } from '../filer/schema.ts';
+import { ObjectChangeSchema, objectTitle, subfolderCount, type FilerObject } from '../filer/schema.ts';
 import type { TreeController } from './controller.ts';
 import '@carbon/web-components/es/components/tree-view/index.js';
 
@@ -45,6 +44,7 @@ export class FileTreeElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
         changes: { attribute: false },
+        volume: { type: String },
         selected: { attribute: false },
         version: { state: true },
     };
@@ -53,6 +53,9 @@ export class FileTreeElement extends LitElement {
     // given to it, so they're loaded again when they change
     declare controller?: TreeController;
     declare changes?: ChangesController;
+
+    // volume is the name of the volume whose folders are shown
+    declare volume?: string;
 
     // selected is the folder which is selected
     declare selected?: TreeSelection;
@@ -83,28 +86,25 @@ export class FileTreeElement extends LitElement {
     }
 
     protected override willUpdate(changed: PropertyValues<this>) {
-        if (this.isConnected && (changed.has('controller') || changed.has('changes'))) {
+        if (this.isConnected && (changed.has('controller') || changed.has('changes') || changed.has('volume'))) {
             this.watch();
         }
     }
 
-    // watch follows the controller, and gives it the changes of the volumes
-    // and their objects. The volumes are loaded at once, rather than once
-    // the changes are watched, so they're shown when they can't be.
+    // watch follows the controller, and gives it the changes of the
+    // volume's objects. Its root is expanded at once, rather than once the
+    // changes are watched, so it's shown when they can't be.
     private watch() {
         this.unwatch();
         const controller = this.controller;
-        if (!controller) {
+        const volume = this.volume;
+        if (!controller || !volume) {
             return;
         }
         this.unsubscribe.push(controller.subscribe(() => this.version++));
-        void controller.loadVolumes();
+        void controller.expand(volume, '/');
         if (this.changes) {
-            this.unsubscribe.push(this.changes.subscribe([
-                { schema: StoreChangeSchema, table: VolumeChangeTable },
-                { schema: RegistryChangeSchema, table: VolumeChangeTable },
-                { schema: ObjectChangeSchema },
-            ], (change) => controller.change(change)));
+            this.unsubscribe.push(this.changes.subscribe({ schema: ObjectChangeSchema, table: volume }, (change) => controller.change(change)));
         }
     }
 
@@ -114,35 +114,20 @@ export class FileTreeElement extends LitElement {
         }
     }
 
+    // Nodes are chosen, not text, which Carbon only shows for nodes with
+    // links
     protected override render() {
-        const volumes = this.controller?.volumes;
-        if (!volumes) {
-            return html`<p class="gf-tree-empty">Loading…</p>`;
-        } else if (volumes.length === 0) {
-            return html`<p class="gf-tree-empty">No volumes</p>`;
+        const volume = this.volume;
+        if (!volume || !this.controller) {
+            return nothing;
         }
-        // Nodes are chosen, not text, which Carbon only shows for nodes with
-        // links
         return html`
-            <cds-tree-view label="Folders" hide-label size="sm"
+            <cds-tree-view label=${`Folders of ${volume}`} hide-label size="sm"
                 @cds-tree-node-toggled=${(event: CustomEvent<{ expanded: boolean }>) => this.toggled(event)}
                 @cds-tree-node-selected=${(event: Event) => this.chosen(event)}>
-                ${repeat(volumes, (volume) => volume.name, (volume) => this.volumeView(volume))}
+                ${this.nodeView(volume, '/', volume, Icons.volume)}
             </cds-tree-view>
         `;
-    }
-
-    // volumeView is a volume's node, which can't be expanded, or chosen,
-    // unless it's mounted
-    private volumeView(volume: Volume): TemplateResult {
-        if (!volume.mounted) {
-            return html`
-                <cds-tree-node label=${volume.name} title=${volume.error || 'Not mounted'} disabled data-volume=${volume.name} data-path="/">
-                    ${Icons.volume}
-                </cds-tree-node>
-            `;
-        }
-        return this.nodeView(volume.name, '/', volume.name, Icons.volume);
     }
 
     // nodeView is a folder's node, and, when it's expanded, its subfolders'.

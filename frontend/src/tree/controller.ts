@@ -1,15 +1,12 @@
 // The tree controller keeps the folders of the volumes which are shown in
-// a tree: the volumes, and the subfolders of each folder which is
-// expanded, which are loaded when it's first expanded, and loaded again
-// when they change, of the changes which are given to it.
+// trees: the subfolders of each folder which is expanded, which are loaded
+// when it's first expanded, and loaded again when they change, of the
+// changes which are given to it.
 
 import type { Client } from '@mutablelogic/go-server/api';
 import type { Change } from '@mutablelogic/go-server/broadcaster';
-import { listObjects, listVolumes } from '../filer/httpclient.ts';
-import {
-    DirectoryType, ObjectChangeSchema, RegistryChangeSchema, StoreChangeSchema, VolumeChangeTable, parentPath,
-    type FilerObject, type Volume,
-} from '../filer/schema.ts';
+import { listObjects } from '../filer/httpclient.ts';
+import { DirectoryType, ObjectChangeSchema, parentPath, type FilerObject } from '../filer/schema.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
@@ -45,10 +42,6 @@ export class TreeController {
     private readonly pageLimit: number;
     private readonly maxFolders: number;
 
-    // volumes are the volumes, once they're loaded
-    private volumeList?: Volume[];
-    private volumesLoad = 0;
-
     // The subfolders which are loaded, which folders are expanded, and the
     // latest load of each folder's, by their keys, so an older response
     // isn't kept
@@ -68,11 +61,6 @@ export class TreeController {
 
     ///////////////////////////////////////////////////////////////////////////
     // PROPERTIES
-
-    // volumes are the volumes, in order of their names, once they're loaded
-    get volumes(): readonly Volume[] | undefined {
-        return this.volumeList;
-    }
 
     // folders returns a folder's subfolders, when they're loading, or loaded
     folders(volume: string, path: string): Folders | undefined {
@@ -135,24 +123,11 @@ export class TreeController {
         this.notify();
     }
 
-    // loadVolumes loads the volumes, and forgets the folders of those which
-    // aren't any more, or aren't mounted
-    async loadVolumes(): Promise<void> {
-        const load = ++this.volumesLoad;
-        try {
-            const list = await listVolumes(this.client);
-            if (load !== this.volumesLoad) {
-                return;
-            }
-            this.volumeList = list.body;
-            const mounted = new Set(list.body.filter((volume) => volume.mounted).map((volume) => volume.name));
-            this.forget((volume) => !mounted.has(volume));
-            this.notify();
-        } catch (error) {
-            if (load === this.volumesLoad) {
-                this.errorFn?.("The volumes couldn't be loaded", error);
-            }
-        }
+    // forgetVolume forgets the folders of a volume, such as one which isn't
+    // mounted any more
+    forgetVolume(volume: string) {
+        this.forget((v) => v === volume);
+        this.notify();
     }
 
     // load loads a folder's subfolders, a page at a time, up to the most
@@ -199,20 +174,14 @@ export class TreeController {
         })();
     }
 
-    // change loads what changed again: the volumes, when they, or what the
-    // registry knows of them, change, and the subfolders of the folders
-    // which a change of a folder is in, or a rescan is of, or beneath. Those
-    // of a folder which isn't expanded are forgotten, so they're loaded when
-    // it's expanded. Without a change, as changes may have been missed, such
-    // as when they're first watched, everything is loaded again.
+    // change loads what changed again: the subfolders of the folders which
+    // a change of a folder is in, or a rescan is of, or beneath. Those of a
+    // folder which isn't expanded are forgotten, so they're loaded when it's
+    // expanded. Without a change, as changes may have been missed, such as
+    // when they're first watched, everything is loaded again.
     change(change?: Change) {
         if (!change) {
-            void this.loadVolumes();
             this.reload(() => true);
-            return;
-        }
-        if ((change.schema === StoreChangeSchema || change.schema === RegistryChangeSchema) && change.table === VolumeChangeTable) {
-            void this.loadVolumes();
             return;
         }
         if (change.schema !== ObjectChangeSchema || !change.table) {

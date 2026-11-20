@@ -49,16 +49,47 @@
             border-top: 1px solid var(--cds-border-subtle);
         }
 
-        /* The Files page: the tree of folders, beside the folder which is
-           chosen, or beneath it, on small screens */
-        .gf-files {
+        /* The Volumes page: the volumes, and their state */
+        .gf-volumes {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .gf-volumes li {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem 1rem;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--cds-border-subtle);
+            font-size: 0.875rem;
+        }
+
+        .gf-volumes a {
+            color: var(--cds-link-primary);
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .gf-volumes span {
+            flex: 1 1 0;
+            min-width: 0;
+            color: var(--cds-text-secondary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* A volume's page: the tree of its folders, beside the folder which
+           is chosen, or beneath it, on small screens */
+        .gf-volume {
             display: flex;
             flex-wrap: wrap;
             gap: 1.5rem;
             align-items: flex-start;
         }
 
-        .gf-files-tree {
+        .gf-volume-tree {
             flex: 0 1 20rem;
             min-width: 14rem;
             max-width: 100%;
@@ -67,15 +98,20 @@
             user-select: none;
         }
 
-        .gf-files-view {
+        .gf-volume-view {
             flex: 1 1 28rem;
             min-width: 0;
         }
 
-        .gf-tree-empty,
-        .gf-files-empty {
+        .gf-empty {
             margin: 0;
             color: var(--cds-text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .gf-volume-error {
+            margin: 0 0 1rem;
+            color: var(--cds-text-error);
             font-size: 0.875rem;
         }
 

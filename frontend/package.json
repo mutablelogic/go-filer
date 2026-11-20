@@ -28,9 +28,13 @@
             "types": "./dist/tree/view.d.ts",
             "import": "./dist/tree/view.js"
         },
-        "./files/view": {
-            "types": "./dist/files/view.d.ts",
-            "import": "./dist/files/view.js"
+        "./volumes": {
+            "types": "./dist/volumes/controller.d.ts",
+            "import": "./dist/volumes/controller.js"
+        },
+        "./volumes/view": {
+            "types": "./dist/volumes/view.d.ts",
+            "import": "./dist/volumes/view.js"
         }
     },
     "scripts": {

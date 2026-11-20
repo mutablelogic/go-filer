@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Client } from '@mutablelogic/go-server/api';
 import { TreeController } from '../src/tree/controller.ts';
+import { VolumesController } from '../src/volumes/controller.ts';
 import { listObjects } from '../src/filer/httpclient.ts';
 import { baseName, objectTitle, parentPath, subfolderCount, type FilerObject } from '../src/filer/schema.ts';
 
@@ -64,11 +65,9 @@ test('schema', async (t) => {
 });
 
 test('TreeController', async (t) => {
-    await t.test('volumes, and folders, a page at a time', async () => {
-        const { client } = fakeServer({ media: { '/': ['/a', '/b', '/c'], '/a': [] }, down: {} }, ['media']);
+    await t.test('folders, a page at a time', async () => {
+        const { client } = fakeServer({ media: { '/': ['/a', '/b', '/c'], '/a': [] } });
         const tree = new TreeController(client, { pageLimit: 2 });
-        await tree.loadVolumes();
-        assert.deepEqual(tree.volumes?.map((v) => [v.name, v.mounted]), [['media', true], ['down', false]]);
         await tree.expand('media', '/');
         const folders = tree.folders('media', '/');
         assert.equal(folders?.state, 'loaded');
@@ -156,17 +155,15 @@ test('TreeController', async (t) => {
         assert.equal(tree.folders('media', '/b'), undefined);
     });
 
-    await t.test("a volume which isn't mounted any more is forgotten", async () => {
-        const { client } = fakeServer({ media: { '/': ['/a'] } });
+    await t.test("a volume's folders are forgotten", async () => {
+        const { client } = fakeServer({ media: { '/': ['/a'] }, other: { '/': [] } });
         const tree = new TreeController(client);
         await tree.expand('media', '/');
-        const unmounted = fakeServer({ media: {} }, []);
-        (tree as unknown as { client: Client }).client.fetch = unmounted.client.fetch;
-        tree.change({ action: 'update', schema: 'registry', table: 'volume', row: 'media' });
-        await settle();
-        assert.equal(tree.volumes?.[0].mounted, false);
+        await tree.expand('other', '/');
+        tree.forgetVolume('media');
         assert.equal(tree.folders('media', '/'), undefined);
         assert.ok(!tree.isExpanded('media', '/'));
+        assert.equal(tree.folders('other', '/')?.state, 'loaded');
     });
 
     await t.test("an older load doesn't replace a newer one", async () => {
@@ -195,4 +192,46 @@ test('TreeController.reveal', async () => {
     assert.deepEqual(listed, ['media:/', 'media:/a']);
     assert.ok(tree.isExpanded('media', '/') && tree.isExpanded('media', '/a'));
     assert.ok(!tree.isExpanded('media', '/a/b'), "it's shown, not expanded");
+});
+
+test('VolumesController', async (t) => {
+    await t.test('the volumes, which are loaded again when they change', async () => {
+        const volumes: Record<string, Record<string, string[]>> = { media: {}, down: {} };
+        const { client } = fakeServer(volumes, ['media']);
+        const controller = new VolumesController(client);
+        const seen: string[][] = [];
+        controller.subscribe((list) => seen.push(list.map((v) => `${v.name}:${v.mounted}`)));
+        await controller.reload();
+        assert.deepEqual(seen, [['media:true', 'down:false']]);
+        assert.equal(controller.volume('down')?.mounted, false);
+
+        // A change of a volume, of the store, or the registry, or without
+        // one, loads them again, and other changes don't
+        volumes.added = {};
+        controller.change({ action: 'update', schema: 'filer', table: 'media', row: '/a' });
+        await settle();
+        assert.equal(seen.length, 1);
+        controller.change({ action: 'create', schema: 'store', table: 'volume', row: 'added' });
+        await settle();
+        controller.change({ action: 'update', schema: 'registry', table: 'volume', row: 'media' });
+        await settle();
+        controller.change();
+        await settle();
+        assert.equal(seen.length, 4);
+        assert.deepEqual(seen.at(-1), ['media:true', 'down:false', 'added:false']);
+
+        // A subscriber is called with them at once, once they're loaded
+        let now: number | undefined;
+        controller.subscribe((list) => { now ??= list.length; });
+        assert.equal(now, 3);
+    });
+
+    await t.test("an error, when they can't be loaded", async () => {
+        const client: Client = { base: 'http://localhost/api', fetch: (async () => new Response('{"code":500}', { status: 500 })) as typeof fetch };
+        const errors: string[] = [];
+        const controller = new VolumesController(client).onError((title) => errors.push(title));
+        await controller.reload();
+        assert.equal(controller.volumes, undefined);
+        assert.equal(errors.length, 1);
+    });
 });
