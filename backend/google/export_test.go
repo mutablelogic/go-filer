@@ -39,6 +39,15 @@ func SetCalendarEndpoint(t testing.TB, endpoint string) {
 	SetUserinfoEndpoint(t, endpoint+"/userinfo")
 }
 
+// SetDriveEndpoint sets the endpoint of the Drive API, which is a test's,
+// until it ends
+func SetDriveEndpoint(t testing.TB, endpoint string) {
+	previous := driveEndpoint
+	driveEndpoint = endpoint
+	t.Cleanup(func() { driveEndpoint = previous })
+	SetUserinfoEndpoint(t, endpoint+"/userinfo")
+}
+
 // SetCalendarNow sets the time of a calendar filer, which the months it
 // lists are of
 func SetCalendarNow(filer *CalendarFiler, now func() time.Time) {

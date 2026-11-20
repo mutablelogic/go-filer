@@ -435,7 +435,7 @@ func Test_Registry_Keys(t *testing.T) {
 
 func Test_Registry_Schemes(t *testing.T) {
 	r, dir := newRegistry(t)
-	assert.Equal(t, []string{"file", "gcalendar", "gcontacts", "gtasks", "s3"}, r.Schemes())
+	assert.Equal(t, []string{"file", "gcalendar", "gcontacts", "gdrive", "gtasks", "s3"}, r.Schemes())
 
 	// Each scheme can be validated, and an unsupported one can't
 	for _, u := range []*url.URL{fileURL(t, dir, "media"), mustURL(t, "s3://bucket/photos?name=media&endpoint="+url.QueryEscape(fakeS3(t)))} {
@@ -449,7 +449,7 @@ func Test_Registry_Schemes(t *testing.T) {
 
 	// The schemes can be changed without changing the registry
 	r.Schemes()[0] = "changed"
-	assert.Equal(t, []string{"file", "gcalendar", "gcontacts", "gtasks", "s3"}, r.Schemes())
+	assert.Equal(t, []string{"file", "gcalendar", "gcontacts", "gdrive", "gtasks", "s3"}, r.Schemes())
 }
 
 func Test_Registry_S3(t *testing.T) {
@@ -1177,7 +1177,7 @@ func Test_Registry_WithBackend(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
-	assert.Equal(t, []string{"example", "file", "gcalendar", "gcontacts", "gtasks", "s3"}, r.Schemes())
+	assert.Equal(t, []string{"example", "file", "gcalendar", "gcontacts", "gdrive", "gtasks", "s3"}, r.Schemes())
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
 	// Its URL is parsed as a volume's is, by volume-create, and --volume
@@ -1311,7 +1311,7 @@ func Test_Registry_WithSchemes(t *testing.T) {
 	_, err = New(context.Background(), WithStore(newStore(t)), WithSchemes("file", "ftp"))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	assert.ErrorContains(t, err, `"ftp"`)
-	assert.ErrorContains(t, err, "file, gcalendar, gcontacts, gtasks, s3")
+	assert.ErrorContains(t, err, "file, gcalendar, gcontacts, gdrive, gtasks, s3")
 }
 
 // The backends are listed, with what each is, and logged, once the registry

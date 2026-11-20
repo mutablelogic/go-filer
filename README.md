@@ -14,7 +14,7 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/backend/fs` | The filesystem backend, for any `fs.FS`, and writable for a directory, with the `WriterFS` interface of a writable filesystem |
 | `github.com/mutablelogic/go-filer/backend/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
 | `github.com/mutablelogic/go-filer/backend/s3` | The S3 backend, watched through a SeaweedFS filer when it's one |
-| `github.com/mutablelogic/go-filer/backend/google` | Backends of Google's services: Google Tasks and Google Contacts |
+| `github.com/mutablelogic/go-filer/backend/google` | Backends of Google's services: Google Tasks, Contacts, Calendar and Drive |
 | `github.com/mutablelogic/go-filer/backend/rss` | The backend of an RSS feed, read with go-rss. It isn't built into the registry; the `filer` server adds it with `registry.WithBackend` |
 | `github.com/mutablelogic/go-filer/backend/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 | `github.com/mutablelogic/go-filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
@@ -160,6 +160,22 @@ A volume of the events of a Google account's calendars, of the days before today
 
 In the registry, its URL is `gcalendar://<name>`, and the `filer` command creates one with `volume-create-gcalendar`, signing in with Google, in the browser, when it needs to.
 
+### Google Drive
+
+A volume of the files a Google account owns in My Drive, read-only.
+
+* **Layout:** the folders are directories, and each file is at its path, such as `/Work/Reports/report.pdf`.
+* **Names:** a `/` in a name is `_`. Drive lets two files in a folder have the same name, so each then gets the start of its id, such as `report (1a2b3c).pdf`. Names are compared ignoring case.
+* **Google Docs, Sheets and Slides** are exported as `.docx`, `.xlsx` and `.pptx`, with no size until they're read. Google exports at most 10 MB, and a larger one is `ErrForbidden` when it's read.
+* **Not listed:** files others own, such as those shared with you, files in the bin, hidden files (a name starting with `.`), and Google's other types, such as forms and shortcuts. A file in more than one folder is in its first.
+* **Content** is streamed as it's downloaded, or exported.
+* **Entity tags:** a file's MD5 checksum, or a Doc's version.
+* **Metadata:** `drive:id`, `drive:url` (its link in Drive), `drive:owner`, and `drive:type` of a Doc, Sheet or Slides, such as `document`.
+* **Options:** `quota`, `credential` and `description`, as Google Tasks has, and `refresh_interval`, how long the list of files is kept once it's got, which is a minute. It asks for the `drive.readonly` scope.
+* **Not watched, so far:** the index scans it again from time to time.
+
+In the registry, its URL is `gdrive://<name>`, and the `filer` command creates one with `volume-create-gdrive`, signing in with Google, in the browser, when it needs to.
+
 ## RSS Feeds
 
 A volume of an RSS feed's items, read-only. It's an example of a pluggable backend: it isn't built into the registry, and the `filer` server adds it with `registry.WithBackend(rss.Scheme, rss.Description, rss.Open)`.
@@ -231,7 +247,7 @@ An action is something a volume's backend can do beyond reading and writing its 
 * **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
 * **Backends are pluggable.** `registry.WithBackend(scheme, description, open)` adds a backend for a URL scheme, such as one in another package or program, with what it is, such as `RSS feeds`.
   * `open(ctx, url, opts)` creates the volume's backend. The URL has the volume's options except `index`, which the registry handles. `opts` are the options every backend gets: the tracer, the credentials provider, and the client options.
-  * The built-in backends (`file`, `s3`, `gtasks`, `gcontacts`, `gcalendar`) are registered the same way. A scheme is lower case, of two characters or more, as one letter is a Windows drive. A scheme that's taken, or isn't valid, is an error.
+  * The built-in backends (`file`, `s3`, `gtasks`, `gcontacts`, `gcalendar`, `gdrive`) are registered the same way. A scheme is lower case, of two characters or more, as one letter is a Windows drive. A scheme that's taken, or isn't valid, is an error.
   * **A stored volume whose backend isn't registered,** such as after a server is built without it, is offline, with why: `enabled: false` and an `unsupported scheme` error. Its URL and index are kept, and it's mounted once its backend is registered again.
   * **Choosing backends:** `registry.WithSchemes(schemes...)` uses only those named. `filer run --backend file,s3,rss` (repeatable, or `FILER_BACKEND`) does this, and runs every backend without it. A volume of a backend that isn't run is offline. A name that isn't a backend's is an error that lists those that are.
   * `Backends()` lists the backends the server runs, each with its scheme and description. `GET /volume` returns them as `backends`, and `filer volume-backends` shows them as a table (`volume-schemes` is an alias). The server logs `added backend` for each when it starts.

@@ -541,3 +541,34 @@ func Test_CheckBackend(t *testing.T) {
 	assert.ErrorContains(t, err, `"gtasks"`)
 	assert.ErrorContains(t, err, "file, s3")
 }
+
+func Test_VolumeCreateGDriveCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateGDrive VolumeCreateGDriveCmd `cmd:"" name:"volume-create-gdrive"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		_, err := parser.Parse(append([]string{"volume-create-gdrive"}, args...))
+		if err != nil {
+			return "", err
+		}
+		v, err := cli.VolumeCreateGDrive.volume()
+		return v.URL, err
+	}
+
+	// A volume of a drive, and of another sign-in, with a quota, a refresh
+	// interval, and another option
+	u, err := volume("drive")
+	require.NoError(t, err)
+	assert.Equal(t, "gdrive://drive", u)
+	u, err = volume("work", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "-o", "index=metadata")
+	require.NoError(t, err)
+	assert.Equal(t, "gdrive://work?credential=GOOGLE_WORK&index=metadata&quota=60&refresh_interval=5m0s", u)
+
+	// A name which isn't an identifier, or a credential which isn't a key
+	_, err = volume("not-a-name!")
+	assert.Error(t, err)
+	_, err = volume("drive", "--credential", "not a key")
+	assert.Error(t, err)
+}

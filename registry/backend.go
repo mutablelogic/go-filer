@@ -54,6 +54,7 @@ func builtin() map[string]plugin {
 		google.TasksScheme:    {"Google Tasks", openGTasks},
 		google.ContactsScheme: {"Google Contacts", openGContacts},
 		google.CalendarScheme: {"Google Calendar", openGCalendar},
+		google.DriveScheme:    {"Google Drive", openGDrive},
 	}
 }
 
@@ -148,4 +149,13 @@ func openGCalendar(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.
 		return nil, gofiler.ErrBadParameter.Withf("a volume of Google Calendar has no path: %q", u.Path)
 	}
 	return google.NewCalendarFiler(ctx, u.Host, u.Query(), opts)
+}
+
+// openGDrive creates the backend of the files of a Google account's My
+// Drive, of its sign-in, as for tasks
+func openGDrive(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+	if u.Path != "" && u.Path != "/" {
+		return nil, gofiler.ErrBadParameter.Withf("a volume of Google Drive has no path: %q", u.Path)
+	}
+	return google.NewDriveFiler(ctx, u.Host, u.Query(), opts)
 }

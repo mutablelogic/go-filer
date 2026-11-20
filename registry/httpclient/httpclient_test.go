@@ -112,6 +112,7 @@ func TestVolumes(t *testing.T) {
 		{Scheme: "file", Description: "Server filesystem"},
 		{Scheme: "gcalendar", Description: "Google Calendar"},
 		{Scheme: "gcontacts", Description: "Google Contacts"},
+		{Scheme: "gdrive", Description: "Google Drive"},
 		{Scheme: "gtasks", Description: "Google Tasks"},
 		{Scheme: "s3", Description: "S3 bucket"},
 	}, list.Backends)
