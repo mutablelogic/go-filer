@@ -295,9 +295,44 @@ test("a folder which is deleted, which doesn't say it was one, is one the tree h
     assert.deepEqual(listed.sort(), ['media:/', 'media:/a']);
     assert.equal(tree.folders('media', '/a/x'), undefined);
 
-    // A file which is deleted isn't a folder
+    // A file which is deleted isn't a folder, but, in a bucket, may delete
+    // its folder, so its folder's folder is loaded again
     listed.length = 0;
     tree.change({ action: 'delete', schema: 'filer', table: 'media', row: '/a/file.txt' });
+    await settle();
+    assert.deepEqual(listed, ['media:/']);
+    assert.equal(tree.folders('media', '/a')?.state, 'loaded', "it isn't forgotten");
+});
+
+test("a bucket's folders, which are created, and deleted, with their objects", async () => {
+    const { client, listed, volumes } = fakeServer({ media: { '/': ['/a'], '/a': [] } });
+    const tree = new TreeController(client);
+    await tree.expand('media', '/');
+    listed.length = 0;
+
+    // An object in a folder which the tree doesn't have creates it, and its
+    // folder, which the tree has, is loaded again
+    volumes.media['/a'] = ['/a/b'];
+    tree.change({ action: 'create', schema: 'filer', table: 'media', row: '/a/b/c/object.pdf' });
+    await settle();
+    assert.deepEqual(listed, ['media:/'], "/a isn't expanded, so the root is loaded again, of its count");
+
+    // An object in a folder which the tree has doesn't
+    await tree.expand('media', '/a');
+    listed.length = 0;
+    tree.change({ action: 'create', schema: 'filer', table: 'media', row: '/a/b/other.pdf' });
+    await settle();
+    assert.deepEqual(listed, []);
+
+    // An object which is deleted may delete its folder
+    tree.change({ action: 'delete', schema: 'filer', table: 'media', row: '/a/b/other.pdf' });
+    await settle();
+    assert.deepEqual(listed.sort(), ['media:/', 'media:/a']);
+
+    // An object in the root doesn't change its folders
+    listed.length = 0;
+    tree.change({ action: 'create', schema: 'filer', table: 'media', row: '/object.pdf' });
+    tree.change({ action: 'delete', schema: 'filer', table: 'media', row: '/object.pdf' });
     await settle();
     assert.deepEqual(listed, []);
 });

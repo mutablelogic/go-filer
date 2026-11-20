@@ -235,6 +235,23 @@ export class TreeController {
                 this.forget((v, p) => v === volume && within(p, row));
             }
             this.reload((v, p) => v === volume && (p === parent || p === grandparent || (change.action === 'update' && p === row)));
+        } else {
+            // An object, which isn't a folder. In a bucket, its folders are
+            // the prefixes of its key, which are created, and deleted, with
+            // it, without changes of their own: one which is created, in a
+            // folder the tree doesn't have, may have created it, so the
+            // folders it's in, which are loaded, are loaded again, and one
+            // which is deleted may have deleted its folder, so its folder's
+            // folder, and its count, is loaded again
+            const folder = parentPath(row);
+            if (folder === '/') {
+                return;
+            } else if (change.action === 'delete') {
+                const parent = parentPath(folder);
+                this.reload((v, p) => v === volume && (p === parent || p === parentPath(parent)));
+            } else if (!this.isFolder(volume, folder)) {
+                this.reload((v, p) => v === volume && p !== folder && within(folder, p));
+            }
         }
     }
 
