@@ -21,7 +21,9 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	fsbackend "github.com/mutablelogic/go-filer/backend/fs"
 	fsevents "github.com/mutablelogic/go-filer/backend/fs/fsevents"
+	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -1133,4 +1135,57 @@ func Test_Registry_UpdateRescan(t *testing.T) {
 			t.Fatal("no rescan once the volume was updated")
 		}
 	}
+}
+
+// example is a backend of another package, of example://<name>, of a
+// directory, which it's told of when it's added
+type example struct {
+	gofiler.Filer
+	u *url.URL
+}
+
+func (e example) URL() *url.URL {
+	u := *e.u
+	return &u
+}
+
+// A backend which is added, of its scheme, creates volumes of URLs of it,
+// with the registry's options, and is one of its schemes
+func Test_Registry_WithBackend(t *testing.T) {
+	dir := t.TempDir()
+	var given gofiler.Opts
+	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+		given = opts
+		assert.False(t, u.Query().Has(indexer.IndexParam), "the index option is the registry's")
+		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
+		if err != nil {
+			return nil, err
+		}
+		return example{Filer: b, u: u}, nil
+	}
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithCredentials(credentials{}), WithBackend("example", open))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	runRegistry(t, r)
+	assert.Equal(t, []string{"example", "file", "gcalendar", "gcontacts", "gtasks", "s3"}, r.Schemes())
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
+	b, err := add(t, r, "things", mustURL(t, "example://things?index=objects"))
+	require.NoError(t, err)
+	assert.Equal(t, "example", b.URL().Scheme)
+	assert.Equal(t, credentials{}, given.Credentials, "it's created with the registry's options")
+	object, err := r.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "things", Path: "/a.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, "/a.txt", object.Path)
+
+	// A scheme which isn't valid, a backend which is nil, and a scheme which
+	// is taken, such as one which is built in, can't be added
+	for _, opt := range []Opt{WithBackend("Example", open), WithBackend("1x", open), WithBackend("x", nil)} {
+		_, err := New(context.Background(), WithStore(newStore(t)), opt)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	}
+	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("file", open))
+	assert.ErrorIs(t, err, gofiler.ErrConflict)
+	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("example", open), WithBackend("example", open))
+	assert.ErrorIs(t, err, gofiler.ErrConflict)
 }

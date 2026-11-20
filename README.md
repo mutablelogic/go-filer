@@ -182,6 +182,10 @@ In the registry, its URL is `gcalendar://<name>`, and the `filer` command create
 
 * **The store is the source of truth.** `CreateVolume`, `UpdateVolume` and `DeleteVolume` validate a volume, by creating its backend and closing it, and write the store. They return before it's mounted.
 * **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
+* **Backends are pluggable.** `registry.WithBackend(scheme, open)` adds a backend for a URL scheme, such as one in another package or program.
+  * `open(ctx, url, opts)` creates the volume's backend. The URL has the volume's options except `index`, which the registry handles. `opts` are the options every backend gets: the tracer, the credentials provider, and the client options.
+  * The built-in backends (`file`, `s3`, `gtasks`, `gcontacts`, `gcalendar`) are registered the same way. A scheme that's taken, or isn't valid, is an error.
+  * `Schemes()`, which is `filer volume-schemes`, lists them all. `filer volume-create <url>` creates a volume of any of them.
 * **A volume's scheme isn't changed** by an update, which is `ErrBadParameter`, so a directory stays a directory. Its path, or a bucket's prefix, can be.
 * **Creating and updating are atomic in the store:** a volume is created once, of the servers which create it at once, and an update of one which is deleted meanwhile is `ErrNotFound`.
 * **Enabled:** a volume which isn't enabled is stored, with its index, but isn't mounted. `filer volume-unmount NAME` disables one, `filer volume-mount NAME` enables it, and `filer volume-update NAME --[no-]enabled` does either, with its options. Over HTTP, it's `PATCH /volume/{name}?enabled=false`.
