@@ -171,8 +171,8 @@ A volume of the files a Google account owns in My Drive, read-only.
 * **Content** of a file is streamed from the revision it was listed with, so it always matches its size and entity tag. A Doc is exported into memory, and its version is checked before and after. If it changed since it was listed, the read is `ErrPreconditionFailed`, and the list of files is got again.
 * **Entity tags:** a file's MD5 checksum, or a Doc's id and version, as each file counts its own versions.
 * **Metadata:** `drive:id`, `drive:url` (its link in Drive), `drive:owner`, and `drive:type` of a Doc, Sheet or Slides, such as `document`.
-* **Options:** `quota`, `credential` and `description`, as Google Tasks has, and `refresh_interval`, how long the list of files is kept once it's got, which is a minute. It asks for the `drive.readonly` scope.
-* **Not watched, so far:** the index scans it again from time to time.
+* **Options:** `quota`, `credential` and `description`, as Google Tasks has, and `refresh_interval`, how often changes are polled for, which is a minute, or `0` not to watch it. When it isn't watched, it's how long the list of files is kept. It asks for the `drive.readonly` scope.
+* **Watching** polls Drive's changes feed, applies the changes to the files it knows, and sends what changed: created, updated, or deleted (such as a file that's moved, renamed, binned or given away, and everything in a folder that's renamed or moved). While it's watched, the filer lists and reads the files the watch knows, rather than listing them again. The first change is a rescan. A token Google doesn't accept lists the files again, with a rescan. When Google is unavailable, it polls again at the next interval. The token isn't stored, so a restart lists the files again (#170 will keep them).
 
 In the registry, its URL is `gdrive://<name>`, and the `filer` command creates one with `volume-create-gdrive`, signing in with Google, in the browser, when it needs to.
 
