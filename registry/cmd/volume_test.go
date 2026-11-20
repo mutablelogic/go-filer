@@ -504,10 +504,10 @@ func Test_VolumeCreateRSSCmd(t *testing.T) {
 	// A volume of a feed, of its URL, and its options
 	u, err := volume("news", "https://example.com/feed.xml?format=rss")
 	require.NoError(t, err)
-	assert.Equal(t, "rss://news?url=https%3A%2F%2Fexample.com%2Ffeed.xml%3Fformat%3Drss", u)
-	u, err = volume("podcast", "https://example.com/podcast", "--refresh-interval", "1h", "--description", "A podcast", "-o", "index=metadata")
+	assert.Equal(t, "rss://news/example.com/feed.xml?format=rss", u)
+	u, err = volume("podcast", "http://localhost:8080/podcast", "--refresh-interval", "1h", "--description", "A podcast", "-o", "index=metadata")
 	require.NoError(t, err)
-	assert.Equal(t, "rss://podcast?description=A+podcast&index=metadata&refresh_interval=1h0m0s&url=https%3A%2F%2Fexample.com%2Fpodcast", u)
+	assert.Equal(t, "rss://podcast/localhost:8080/podcast?description=A+podcast&index=metadata&insecure=true&refresh_interval=1h0m0s", u)
 
 	// A name which isn't an identifier, or a URL which isn't a feed's
 	_, err = volume("not-a-name!", "https://example.com/feed.xml")

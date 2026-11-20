@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -36,6 +37,7 @@ type items struct {
 	objects map[string]*schema.Object // of their paths, folders with "/" after them
 	content map[string]string         // the pages of the items, of their paths
 	paths   []string                  // every path, in order
+	keys    map[string]string         // the paths of the items, of their guids, or links, when they have none
 }
 
 // item is an item of a feed, with its path, which is of its day
@@ -74,7 +76,7 @@ const (
 // dated, of the folder undated. Items of the same title and day are told
 // apart by a number, in the order of their guids, or links.
 func newItems(channel *rss.Channel) *items {
-	self := &items{title: strings.TrimSpace(channel.Title), objects: make(map[string]*schema.Object), content: make(map[string]string)}
+	self := &items{title: strings.TrimSpace(channel.Title), objects: make(map[string]*schema.Object), content: make(map[string]string), keys: make(map[string]string)}
 	self.dir("/")
 
 	// The items, of their folders, in an order which doesn't change of the
@@ -112,6 +114,7 @@ func newItems(channel *rss.Channel) *items {
 			taken[name] = 1
 		}
 		self.file(name+".html", it, channel)
+		self.keys[it.key] = name + ".html"
 	}
 	self.paths = slices.Sorted(func(yield func(string) bool) {
 		for p := range self.objects {
@@ -271,8 +274,15 @@ func meta(it item, channel *rss.Channel) []schema.Meta {
 		add("dc", "date", it.date.Format(time.RFC3339))
 	}
 	add("dc", "identifier", firstOf(guid(it.Item), link(it.Item)))
-	add("rss", "link", link(it.Item))
+	if subjects := categories(it.Categories); len(subjects) > 0 {
+		add("dc", "subject", subjects)
+	}
+	add("dc", "language", strings.TrimSpace(channel.Language))
+	add("dc", "rights", strings.TrimSpace(channel.Copyright))
+	add("rss", "url", link(it.Item))
+	add("rss", "comments", strings.TrimSpace(it.Comments))
 	add("rss", "feed", strings.TrimSpace(channel.Title))
+	add("rss", "image", image(it.Item, channel))
 	if e := it.Enclosure; e != nil && e.URL != "" {
 		enclosure := map[string]any{"url": e.URL}
 		if e.Type != "" {
@@ -285,12 +295,41 @@ func meta(it item, channel *rss.Channel) []schema.Meta {
 	}
 	add("rss", "episode", strings.TrimSpace(it.Episode))
 	add("rss", "season", strings.TrimSpace(it.Season))
+	add("rss", "episode_type", strings.TrimSpace(it.EpisodeType))
 	if it.Duration != nil {
 		if d, err := it.Duration.Seconds(); err == nil && d > 0 {
 			add("rss", "duration", d.Seconds())
 		}
 	}
 	return result
+}
+
+// categories returns the names of categories, in order, without those which
+// are repeated, or empty
+func categories(list []*rss.Category) []string {
+	var result []string
+	for _, c := range list {
+		if c == nil {
+			continue
+		}
+		if name := strings.TrimSpace(html.UnescapeString(firstOf(c.Value, c.Text))); name != "" && !slices.Contains(result, name) {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
+// image returns the URL of an item's image, of a podcast's episode, or of
+// its feed, or empty
+func image(i *rss.Item, channel *rss.Channel) string {
+	for _, img := range []*rss.Image{i.Image, channel.Image} {
+		if img != nil {
+			if u := strings.TrimSpace(firstOf(img.HRef, img.URL)); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
 }
 
 // author returns the author of an item
@@ -385,4 +424,65 @@ func isBadParameter(err error) bool {
 func isStatus(err error, status int) bool {
 	var e httpresponse.Err
 	return errors.As(err, &e) && int(e) == status
+}
+
+// changes returns the changes of the items, of their guids, or links, when
+// they have none, and of their folders, of their paths, of one fetch of a
+// feed to the next, in the order of their paths: an item which is new is
+// created, one which is gone is deleted, one whose page changed, of its
+// entity tag, is updated, and one which moved, as its title, or date,
+// changed, is deleted where it was, and created where it is. A path which
+// is deleted, and created, of other items, is updated.
+func changes(before, after *items) []schema.Event {
+	created, updated, deleted := make(map[string]bool), make(map[string]bool), make(map[string]bool)
+	for key, path := range after.keys {
+		was, exists := before.keys[key]
+		switch {
+		case !exists:
+			created[path] = true
+		case was != path:
+			deleted[was], created[path] = true, true
+		case types.Value(before.objects[was].ETag) != types.Value(after.objects[path].ETag):
+			updated[path] = true
+		}
+	}
+	for key, was := range before.keys {
+		if _, exists := after.keys[key]; !exists {
+			deleted[was] = true
+		}
+	}
+	for path := range created {
+		if deleted[path] {
+			delete(created, path)
+			delete(deleted, path)
+			updated[path] = true
+		}
+	}
+
+	// The folders, of their paths
+	for _, p := range after.paths {
+		if after.objects[p].IsDir {
+			if _, exists := before.objects[p]; !exists {
+				created[p] = true
+			}
+		}
+	}
+	for _, p := range before.paths {
+		if before.objects[p].IsDir {
+			if _, exists := after.objects[p]; !exists {
+				deleted[p] = true
+			}
+		}
+	}
+
+	var result []schema.Event
+	add := func(paths map[string]bool, t schema.EventType) {
+		for _, p := range slices.Sorted(maps.Keys(paths)) {
+			result = append(result, schema.Event{EventType: t, ObjectKey: schema.ObjectKey{Path: p}})
+		}
+	}
+	add(created, schema.EventTypeCreated)
+	add(updated, schema.EventTypeUpdated)
+	add(deleted, schema.EventTypeDeleted)
+	return result
 }

@@ -695,10 +695,17 @@ func (cmd *VolumeCreateRSSCmd) volume() (schema.Volume, error) {
 	if !types.IsIdentifier(cmd.Name) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
-	if u, err := url.Parse(cmd.Feed); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	feed, err := url.Parse(cmd.Feed)
+	if err != nil || (feed.Scheme != "http" && feed.Scheme != "https") || feed.Host == "" {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("the url of a feed is http or https: %q", cmd.Feed)
 	}
-	query := url.Values{"url": {cmd.Feed}}
+
+	// The feed is the URL's path, rss://<name>/<host>/<path>, with its own
+	// parameters, and is http, rather than https, with insecure=true
+	query := feed.Query()
+	if feed.Scheme == "http" {
+		query.Set("insecure", "true")
+	}
 	if cmd.RefreshInterval != nil {
 		query.Set("refresh_interval", cmd.RefreshInterval.String())
 	}
@@ -708,7 +715,7 @@ func (cmd *VolumeCreateRSSCmd) volume() (schema.Volume, error) {
 	if err := setOpts(query, cmd.Opt); err != nil {
 		return schema.Volume{}, err
 	}
-	u := url.URL{Scheme: rss.Scheme, Host: cmd.Name, RawQuery: query.Encode()}
+	u := url.URL{Scheme: rss.Scheme, Host: cmd.Name, Path: "/" + feed.Host + feed.Path, RawPath: "/" + feed.Host + feed.EscapedPath(), RawQuery: query.Encode()}
 	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
 }
 
