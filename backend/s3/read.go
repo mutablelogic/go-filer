@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"strings"
+	"sync"
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
@@ -34,9 +35,21 @@ type reader struct {
 	offset int64         // where the next read is from
 	at     int64         // where the content which is requested is read from
 	body   io.ReadCloser // the content which is requested, or nil when it isn't
+
+	// The block which ReadAt read last, and where it's from, so reads near
+	// each other, such as a parser's, are of one request
+	mu         sync.Mutex
+	block      []byte
+	blockStart int64
 }
 
 var _ io.ReadSeekCloser = (*reader)(nil)
+var _ io.ReaderAt = (*reader)(nil)
+
+// readAtBlock is the least of a file which ReadAt requests, so small reads
+// near each other, such as a parser's of a video's headers, aren't each a
+// request
+const readAtBlock = 512 << 10
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -129,6 +142,35 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	return r.offset, nil
 }
 
+// ReadAt reads the content at the offset, which is requested of its range,
+// with the file's entity tag, at least readAtBlock of it, which is kept, so
+// a file is read in place, such as of its headers, rather than all of it,
+// apart from Read and Seek, and is safe to call at once
+func (r *reader) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, &fs.PathError{Op: "read", Path: "/" + r.rel, Err: fs.ErrInvalid}
+	} else if off >= r.size {
+		return 0, io.EOF
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for n < len(p) && off < r.size {
+		if off < r.blockStart || off >= r.blockStart+int64(len(r.block)) {
+			if err := r.fetch(off, int64(len(p)-n)); err != nil {
+				return n, err
+			}
+		}
+		copied := copy(p[n:], r.block[off-r.blockStart:])
+		n += copied
+		off += int64(copied)
+	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
 // Close closes the content which is requested, if any
 func (r *reader) Close() error {
 	if r.body == nil {
@@ -141,6 +183,29 @@ func (r *reader) Close() error {
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
+
+// fetch requests the block of the file from the offset, of at least
+// readAtBlock, or of want, when it's more, up to the end of the file, with
+// the file's entity tag, which must be locked
+func (r *reader) fetch(off, want int64) error {
+	end := min(off+max(want, readAtBlock), r.size) - 1
+	response, err := r.client.GetObject(r.ctx, &s3.GetObjectInput{
+		Bucket:  aws.String(r.bucket),
+		Key:     aws.String(r.prefix + r.rel),
+		IfMatch: aws.String(`"` + r.etag + `"`),
+		Range:   aws.String(fmt.Sprintf("bytes=%d-%d", off, end)),
+	})
+	if err != nil {
+		return r.objectError("read", r.rel, err)
+	}
+	defer response.Body.Close()
+	block := make([]byte, end-off+1)
+	if _, err := io.ReadFull(response.Body, block); err != nil {
+		return r.objectError("read", r.rel, err)
+	}
+	r.block, r.blockStart = block, off
+	return nil
+}
 
 // request requests the content from the offset, of the file with the
 // entity tag, which is ErrPreconditionFailed when it has changed, in place of

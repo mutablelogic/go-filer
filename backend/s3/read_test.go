@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	// Packages
@@ -214,4 +215,67 @@ func Test_S3_ReadChangedResponse(t *testing.T) {
 	}))
 	assert.Equal(t, http.StatusPartialContent, w.Code)
 	assert.Equal(t, "234", w.Body.String())
+}
+
+func Test_S3_ReadAt(t *testing.T) {
+	bucket, b := newFakeBucket(t, "", "a.txt")
+	content := strings.Repeat("0123456789", readAtBlock/4) // 2.5 blocks
+	bucket.Lock()
+	bucket.keys["a.txt"] = content
+	bucket.Unlock()
+	gets := func() int {
+		bucket.Lock()
+		defer bucket.Unlock()
+		return bucket.gets
+	}
+
+	read, _, err := b.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.txt"}})
+	require.NoError(t, err)
+	require.NoError(t, read(context.Background(), func(r io.Reader) error {
+		at, ok := r.(io.ReaderAt)
+		require.True(t, ok)
+		before := gets()
+
+		// Small reads near each other are of one request, of a block
+		data := make([]byte, 4)
+		for _, off := range []int64{0, 100, 4000, readAtBlock - 4} {
+			n, err := at.ReadAt(data, off)
+			require.NoError(t, err)
+			assert.Equal(t, content[off:off+4], string(data[:n]))
+		}
+		assert.Equal(t, before+1, gets())
+
+		// A read across blocks requests the next
+		data = make([]byte, 8)
+		_, err := at.ReadAt(data, readAtBlock-4)
+		require.NoError(t, err)
+		assert.Equal(t, content[readAtBlock-4:readAtBlock+4], string(data))
+		assert.Equal(t, before+2, gets())
+
+		// A read of more than a block is of one request
+		data = make([]byte, readAtBlock*2)
+		_, err = at.ReadAt(data, 1)
+		require.NoError(t, err)
+		assert.Equal(t, content[1:1+readAtBlock*2], string(data))
+		assert.Equal(t, before+3, gets())
+
+		// The end of the file is io.EOF, with what was read
+		size := int64(len(content))
+		data = make([]byte, 10)
+		n, err := at.ReadAt(data, size-4)
+		assert.ErrorIs(t, err, io.EOF)
+		assert.Equal(t, content[size-4:], string(data[:n]))
+		_, err = at.ReadAt(data, size)
+		assert.ErrorIs(t, err, io.EOF)
+		_, err = at.ReadAt(data, -1)
+		assert.ErrorIs(t, err, fs.ErrInvalid)
+
+		// A file which changes isn't read
+		bucket.Lock()
+		bucket.keys["a.txt"] = "changed"
+		bucket.Unlock()
+		_, err = at.ReadAt(data, 0)
+		assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+		return nil
+	}))
 }
