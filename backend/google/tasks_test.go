@@ -1771,6 +1771,25 @@ func Test_TaskAction(t *testing.T) {
 	}
 	_, err = run(`{"op":"update","path":"/L1/Q.ics","title":"x"}`)
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+
+	// The default list is only of a create without a path, which needs a
+	// title as another does, and a path can't name it
+	for _, input := range []string{
+		`{"op":"create"}`,
+		`{"op":"create","title":"  "}`,
+		`{"op":"create","path":"/@default/A.ics","title":"x"}`,
+	} {
+		_, err := run(input)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, input)
+	}
+	for _, input := range []string{
+		`{"op":"create","path":"/@default","title":"x"}`,
+		`{"op":"update","path":"/@default/A.ics","title":"x"}`,
+		`{"op":"delete","path":"/@default/~new.ics"}`,
+	} {
+		_, err := run(input)
+		assert.ErrorIs(t, err, fs.ErrNotExist, input)
+	}
 }
 
 // A list which the action creates, or renames, is sent to the volume's

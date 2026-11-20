@@ -311,8 +311,10 @@ func (input taskInput) check() (taskPath, httpclient.TaskFields, error) {
 	}
 
 	// A task which is created without a path is of the default list, whose
-	// id is got when it's created
-	if input.Path == "" {
+	// id is got when it's created, which a path can't name, as its alias
+	// isn't a list's path
+	defaulted := input.Path == ""
+	if defaulted {
 		path.list = defaultList
 	} else if p, err := parseTaskPath("task", input.Path); err != nil {
 		return path, nil, err
@@ -320,12 +322,11 @@ func (input taskInput) check() (taskPath, httpclient.TaskFields, error) {
 		path = p
 	}
 	switch {
-	case input.Op == opCreate && path.list == defaultList:
 	case input.Op == opCreate && (path.list == "" || path.task != ""):
 		return path, nil, gofiler.ErrBadParameter.With("task: create's path is of a list, such as /<list>, as Google names the task")
 	case input.Op != opCreate && path.task == "":
 		return path, nil, gofiler.ErrBadParameter.Withf("task: %s's path is of a task, such as /<list>/<id>%s", input.Op, taskExt)
-	case path.list != defaultList && (!googleId(path.list) || (path.task != "" && !googleId(path.task))):
+	case !defaulted && (!googleId(path.list) || (path.task != "" && !googleId(path.task))):
 		return path, nil, &fs.PathError{Op: "task", Path: input.Path, Err: fs.ErrNotExist}
 	case input.Op == opDelete && (input.Title != nil || input.Notes != nil || input.Due != nil || input.Completed != nil || input.Parent != nil):
 		return path, nil, gofiler.ErrBadParameter.With("task: delete has only a path")
