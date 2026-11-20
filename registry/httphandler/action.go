@@ -27,12 +27,6 @@ type actionKey struct {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// GLOBALS
-
-// maxActionInput is the most bytes of an action's input
-const maxActionInput = 1 << 20
-
-////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
 
 // actionHandlers registers the handlers of the actions of volumes, which
@@ -78,7 +72,7 @@ func actionHandlers(reg *registry.Registry, router *httprouter.Router, documenta
 		// POST
 		path.Post(func(w http.ResponseWriter, r *http.Request) {
 			name, action := r.PathValue("name"), r.PathValue("action")
-			input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxActionInput))
+			input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, schema.ActionInputMax))
 			if err != nil {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("input: %v", err), name)
 				return
@@ -102,6 +96,7 @@ func actionHandlers(reg *registry.Registry, router *httprouter.Router, documenta
 		}, func(op httprequest.PathOperation) {
 			op.Summary("Call Action")
 			op.Description(documentation.Section(3, "POST /action/{name}/{action}").Body)
+			op.RequestBody(jsonschema.MustFor[map[string]any]())
 			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Object](), "Object the action created or changed")
 			op.ErrorResponse(http.StatusBadRequest, "Input isn't JSON, or isn't valid for the action")
 			op.ErrorResponse(http.StatusUnauthorized, "The volume's user needs to sign in, with how they sign in")

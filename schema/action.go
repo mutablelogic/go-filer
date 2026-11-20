@@ -22,6 +22,9 @@ type Action struct {
 	Input       json.RawMessage `json:"input,omitempty" help:"JSON schema of the action's input"`
 }
 
+// ActionInputMax is the most bytes of an action's input
+const ActionInputMax = 1 << 20
+
 // ActionList is the actions of volumes, in order of their volumes' names,
 // and their own
 type ActionList struct {

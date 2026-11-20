@@ -80,6 +80,32 @@ func TestActions(t *testing.T) {
 	router, err := httprouter.NewRouter(ctx, mux, "/api", "", "test", "0.0.0")
 	require.NoError(t, err)
 	require.NoError(t, httphandler.RegisterHandlers(reg, router))
+
+	// Calling an action declares its input, as an optional body of JSON
+	spec, err := json.Marshal(router.Spec())
+	require.NoError(t, err)
+	var doc struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	require.NoError(t, json.Unmarshal(spec, &doc))
+	var body bool
+	for path, item := range doc.Paths {
+		if !strings.HasSuffix(path, "/action/{name}/{action}") {
+			continue
+		}
+		var post struct {
+			RequestBody *struct {
+				Required bool                       `json:"required"`
+				Content  map[string]json.RawMessage `json:"content"`
+			} `json:"requestBody"`
+		}
+		require.NoError(t, json.Unmarshal(item["post"], &post))
+		require.NotNil(t, post.RequestBody, path)
+		assert.False(t, post.RequestBody.Required)
+		assert.Contains(t, post.RequestBody.Content, "application/json")
+		body = true
+	}
+	assert.True(t, body, "it's in the spec")
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	client, err := httpclient.New(server.URL + "/api")

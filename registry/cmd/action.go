@@ -82,11 +82,13 @@ func (cmd *ActionCallCmd) input(r io.Reader) (json.RawMessage, error) {
 	data := []byte(cmd.Input)
 	if cmd.Input == "-" {
 		var err error
-		if data, err = io.ReadAll(r); err != nil {
+		if data, err = io.ReadAll(io.LimitReader(r, schema.ActionInputMax+1)); err != nil {
 			return nil, err
 		}
 	}
-	if len(data) == 0 {
+	if len(data) > schema.ActionInputMax {
+		return nil, gofiler.ErrBadParameter.Withf("the input of action %q is more than %d bytes", cmd.Action, schema.ActionInputMax)
+	} else if len(data) == 0 {
 		return json.RawMessage("{}"), nil
 	} else if !json.Valid(data) {
 		return nil, gofiler.ErrBadParameter.Withf("the input of action %q isn't JSON", cmd.Action)

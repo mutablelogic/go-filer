@@ -33,6 +33,13 @@ func Test_ActionInput(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	_, err = input(ActionCallCmd{Action: "task list", Input: "{}"}, "")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+
+	// Input which is too large isn't read beyond the most there can be
+	large := `{"text":"` + strings.Repeat("x", schema.ActionInputMax) + `"}`
+	_, err = input(ActionCallCmd{Action: "task_list", Input: "-"}, large)
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = input(ActionCallCmd{Action: "task_list", Input: large}, "")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
 // The same action of more than one volume is one row, of its volumes
