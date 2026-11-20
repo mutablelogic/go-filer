@@ -69,6 +69,7 @@ test('TreeController', async (t) => {
         const { client } = fakeServer({ media: { '/': ['/a', '/b', '/c'], '/a': [] } });
         const tree = new TreeController(client, { pageLimit: 2 });
         await tree.expand('media', '/');
+        await tree.loadMore('media', '/');
         const folders = tree.folders('media', '/');
         assert.equal(folders?.state, 'loaded');
         assert.deepEqual(folders?.state === 'loaded' && folders.folders.map((f) => f.path), ['/a', '/b', '/c']);
@@ -77,19 +78,27 @@ test('TreeController', async (t) => {
         assert.equal(tree.folder('media', '/b')?.path, '/b');
     });
 
-    await t.test('at most the most folders are loaded', async () => {
-        const { client } = fakeServer({ media: { '/': ['/a', '/b', '/c', '/d', '/e'] } });
-        const tree = new TreeController(client, { pageLimit: 2, maxFolders: 3 });
+    await t.test('a page at first, and more as they are scrolled to', async () => {
+        const { client, listed, volumes } = fakeServer({ media: { '/': ['/a', '/b', '/c', '/d', '/e'] } });
+        const tree = new TreeController(client, { pageLimit: 2 });
         await tree.expand('media', '/');
-        const folders = tree.folders('media', '/');
-        assert.deepEqual(folders?.state === 'loaded' && folders.folders.map((f) => f.path), ['/a', '/b', '/c']);
-        assert.equal(folders?.state === 'loaded' && folders.more, true);
+        let folders = tree.folders('media', '/');
+        assert.deepEqual(folders?.state === 'loaded' && [folders.folders.map((f) => f.path), folders.more], [['/a', '/b'], true]);
+        await tree.loadMore('media', '/');
+        await tree.loadMore('media', '/');
+        folders = tree.folders('media', '/');
+        assert.deepEqual(folders?.state === 'loaded' && [folders.folders.map((f) => f.path), folders.more], [['/a', '/b', '/c', '/d', '/e'], false]);
+        await tree.loadMore('media', '/');
+        assert.equal(listed.length, 3, 'there are no more');
 
-        // Exactly the most which are loaded aren't more
-        const exact = new TreeController(fakeServer({ media: { '/': ['/a', '/b', '/c'] } }).client, { pageLimit: 2, maxFolders: 3 });
-        await exact.expand('media', '/');
-        const all = exact.folders('media', '/');
-        assert.deepEqual(all?.state === 'loaded' && [all.folders.length, all.more], [3, false]);
+        // A change loads as many as are loaded again
+        listed.length = 0;
+        volumes.media['/'] = ['/0', ...volumes.media['/']];
+        tree.change({ action: 'create', schema: 'filer', table: 'media', row: '/0', data: { folder: true } });
+        await settle();
+        folders = tree.folders('media', '/');
+        assert.deepEqual(folders?.state === 'loaded' && [folders.folders.map((f) => f.path), folders.more], [['/0', '/a', '/b', '/c', '/d', '/e'], false]);
+        assert.equal(listed.length, 3);
     });
 
     await t.test("a folder which can't be loaded is an error", async () => {
@@ -205,6 +214,12 @@ test('TreeController.reveal', async () => {
     assert.deepEqual(listed, ['media:/', 'media:/a']);
     assert.ok(tree.isExpanded('media', '/') && tree.isExpanded('media', '/a'));
     assert.ok(!tree.isExpanded('media', '/a/b'), "it's shown, not expanded");
+
+    // The root is, of the root, such as once its volume is mounted again
+    tree.forgetVolume('media');
+    await tree.reveal('media', '/');
+    assert.ok(tree.isExpanded('media', '/'));
+    assert.equal(tree.folders('media', '/')?.state, 'loaded');
 });
 
 test('VolumesController', async (t) => {
