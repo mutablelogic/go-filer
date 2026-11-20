@@ -69,6 +69,7 @@ func (push QueuePush) Insert(bind *sqlite.Bind) (string, error) {
 	bind.Set("key", push.Key)
 	bind.Set("kind", string(push.Kind))
 	bind.Set("after", push.After.UTC())
+	bind.Set("trace", push.Trace)
 	ancestors := store.Ancestors(push.Key)
 	if push.Kind == store.KindRescan {
 		lower, upper := store.Subtree(push.Key)
@@ -175,7 +176,7 @@ func (pending *Pending) Scan(row sqlite.Row) error {
 func (list *WorkList) Scan(row sqlite.Row) error {
 	var work store.Work
 	var kind string
-	if err := row.Scan(&work.Key, &kind, &work.After, &work.Attempts, &work.Outages, &work.Error, &work.Leased, &work.Revision); err != nil {
+	if err := row.Scan(&work.Key, &kind, &work.After, &work.Attempts, &work.Outages, &work.Error, &work.Leased, &work.Revision, &work.Trace); err != nil {
 		return err
 	}
 	work.Kind = store.Kind(kind)
@@ -207,6 +208,7 @@ type QueueStale struct {
 	Folder string
 	Kind   store.Kind
 	Now    time.Time
+	Trace  string // The W3C traceparent of the span which queued it, or empty
 }
 
 // Did returns the kind of the rows of the revisions which a task's work is
@@ -253,6 +255,7 @@ func (stale QueueStale) Insert(bind *sqlite.Bind) (string, error) {
 	bind.Set("kind", string(stale.Kind))
 	bind.Set("did", Did(stale.Kind))
 	bind.Set("now", stale.Now.UTC())
+	bind.Set("trace", stale.Trace)
 	lower, upper := store.Subtree(stale.Folder)
 	bind.Set("lower", lower)
 	bind.Set("upper", upper)

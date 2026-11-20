@@ -20,6 +20,7 @@ import (
 // Push queues work of the volume, coalesced, in one transaction, or returns
 // ErrNotFound when the volume isn't stored
 func (self *Store) Push(ctx context.Context, volume string, work ...store.Work) (err error) {
+	traced := store.Traceparent(ctx)
 	ctx, end := self.span(ctx, "Push", attribute.String("arg.volume", volume), attribute.Int("arg.work", len(work)))
 	defer func() { end(err) }()
 	now := time.Now()
@@ -34,6 +35,9 @@ func (self *Store) Push(ctx context.Context, volume string, work ...store.Work) 
 			}
 			if w.After.IsZero() {
 				w.After = now
+			}
+			if w.Trace == "" {
+				w.Trace = traced
 			}
 			if err := conn.Insert(ctx, nil, schema.QueuePush{Volume: volume, Work: w}); err != nil {
 				return err
@@ -125,6 +129,7 @@ func (self *Store) Tasks(ctx context.Context, volume string, kind store.Kind) (_
 // whose listings' revisions aren't those the task was last done of, or
 // returns ErrNotFound when the volume isn't stored
 func (self *Store) PushStale(ctx context.Context, volume, folder string, kind store.Kind) (err error) {
+	traced := store.Traceparent(ctx)
 	ctx, end := self.span(ctx, "PushStale", attribute.String("arg.volume", volume), attribute.String("arg.folder", folder), attribute.String("arg.kind", string(kind)))
 	defer func() { end(err) }()
 	if err := store.ValidateFolderKey(folder); err != nil {
@@ -137,7 +142,7 @@ func (self *Store) PushStale(ctx context.Context, volume, folder string, kind st
 		if err := conn.Get(ctx, &exists, schema.VolumeName(volume)); err != nil {
 			return volumeErr(err, volume)
 		}
-		return conn.Insert(ctx, nil, schema.QueueStale{Volume: volume, Folder: folder, Kind: kind, Now: time.Now()})
+		return conn.Insert(ctx, nil, schema.QueueStale{Volume: volume, Folder: folder, Kind: kind, Now: time.Now(), Trace: traced})
 	}))
 }
 

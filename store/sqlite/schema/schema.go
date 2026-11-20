@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 16
+const Version = 17
 
 var (
 	//go:embed objects.sql
@@ -139,6 +139,14 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 		// 15 is added, as none, and a queue before it is created with
 		if version >= 6 && version < 16 {
 			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_16").Exec(ctx, `ALTER TABLE object_state ADD COLUMN outages INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return err
+			}
+		}
+		// Version 17's queue has the trace which queued its work, which a
+		// queue of version 6 to 16 is added, as NULL, and a queue before it
+		// is created with
+		if version >= 6 && version < 17 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_17").Exec(ctx, `ALTER TABLE object_state ADD COLUMN trace TEXT`); err != nil {
 				return err
 			}
 		}

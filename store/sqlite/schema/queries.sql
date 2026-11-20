@@ -152,8 +152,8 @@ WHERE volume = @volume AND (key = @key OR (@folder AND key > @lower AND key < @u
 -- which does, isn't of it, which is due at the earlier of the two, so work
 -- which is pushed again and again isn't put off, or, when it's claimed, is
 -- claimed again, when the push is due
-INSERT INTO object_state (volume, key, kind, after)
-SELECT @volume, @key, @kind, @after
+INSERT INTO object_state (volume, key, kind, after, trace)
+SELECT @volume, @key, @kind, @after, nullif(@trace, '')
 WHERE NOT EXISTS (
   SELECT 1 FROM object_state
   WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors)) AND key <> '/'
@@ -165,6 +165,7 @@ ON CONFLICT (volume, key, kind) DO UPDATE SET
     WHEN julianday(excluded.after) < julianday(after) THEN excluded.after
     ELSE after
   END,
+  trace = coalesce(excluded.trace, trace),
   leased_until = NULL;
 
 -- queue.push_rescan
@@ -182,8 +183,8 @@ AND NOT EXISTS (
   WHERE above.volume = @volume AND above.kind = 'rescan' AND above.key IN (SELECT value FROM json_each(@ancestors)) AND above.key <> '/'
     AND (above.leased_until IS NULL OR julianday(above.leased_until) <= julianday('now'))
 );
-INSERT INTO object_state (volume, key, kind, after)
-SELECT @volume, @key, @kind, @after
+INSERT INTO object_state (volume, key, kind, after, trace)
+SELECT @volume, @key, @kind, @after, nullif(@trace, '')
 WHERE NOT EXISTS (
   SELECT 1 FROM object_state
   WHERE volume = @volume AND kind = 'rescan' AND key IN (SELECT value FROM json_each(@ancestors)) AND key <> '/'
@@ -195,11 +196,12 @@ ON CONFLICT (volume, key, kind) DO UPDATE SET
     WHEN julianday(excluded.after) < julianday(after) THEN excluded.after
     ELSE after
   END,
+  trace = coalesce(excluded.trace, trace),
   leased_until = NULL;
 
 -- queue.due
 -- The work of the kinds which is due, and isn't leased, earliest first
-SELECT key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '') FROM object_state
+SELECT key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, ''), coalesce(trace, '') FROM object_state
 WHERE volume = @volume AND kind IN (SELECT value FROM json_each(@kinds))
   AND julianday(after) <= julianday(@now)
   AND (leased_until IS NULL OR julianday(leased_until) <= julianday(@now))
@@ -214,14 +216,14 @@ UPDATE object_state SET leased_until = @leased,
     WHERE listed.volume = object_state.volume AND listed.key = object_state.key AND listed.kind = 'listed'
   ) END
 WHERE volume = @volume AND key = @key AND kind = @kind
-RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '');
+RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, ''), coalesce(trace, '');
 
 -- queue.done
 -- Work which is done, of its claim, which is kept when it's pushed again
 -- since, as its lease is cleared
 DELETE FROM object_state
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
-RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '');
+RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, ''), coalesce(trace, '');
 
 -- queue.did
 -- The revision of the file which a task's work was done of, its listing's
@@ -253,8 +255,8 @@ SELECT
 -- hasn't been done of, including those which have no revision, such as a
 -- file which is stored of a change, until it's scanned, which isn't queued
 -- again
-INSERT INTO object_state (volume, key, kind, after)
-SELECT object.volume, object.key, @kind, @now
+INSERT INTO object_state (volume, key, kind, after, trace)
+SELECT object.volume, object.key, @kind, @now, nullif(@trace, '')
 FROM object
 LEFT JOIN object_state AS listed ON listed.volume = object.volume AND listed.key = object.key AND listed.kind = 'listed'
 LEFT JOIN object_state AS did ON did.volume = object.volume AND did.key = object.key AND did.kind = @did
@@ -265,7 +267,7 @@ ON CONFLICT (volume, key, kind) DO NOTHING;
 -- queue.failed
 UPDATE object_state SET attempts = attempts + (1 - @outage), outages = outages + @outage, error = @error, failed = @failed, after = @after, leased_until = NULL
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
-RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '');
+RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, ''), coalesce(trace, '');
 
 -- queue.pending
 -- Whether a key has work which would change its index: an index or a

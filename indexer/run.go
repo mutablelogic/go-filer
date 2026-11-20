@@ -11,6 +11,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
+	attribute "go.opentelemetry.io/otel/attribute"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -48,7 +49,10 @@ func (self *Indexer) Run(ctx context.Context, logger *slog.Logger) error {
 		// volume whose files were indexed, which is enriched now, are queued
 		// at once, rather than once it's scanned again, as their revisions are
 		// known, and what's new, or changed, is queued by its scan
-		if err := self.queue.stale(ctx, "/", store.KindMetadata); err != nil {
+		sctx, end := self.span(ctx, "indexer.stale", "", attribute.String("kind", string(store.KindMetadata)))
+		err := self.queue.stale(sctx, "/", store.KindMetadata)
+		end(err)
+		if err != nil {
 			self.failed(ctx, err)
 		}
 		workers.Go(func() { self.enrich(ctx) })
@@ -100,7 +104,10 @@ func (self *Indexer) watch(ctx context.Context) error {
 			// the background, and a watcher which doesn't read its changes
 			// doesn't hold up the index. When it can't be queued, the watch
 			// is started again, with a rescan, so it isn't missed.
-			if err := self.apply(ctx, event); err != nil {
+			ectx, end := self.span(ctx, "indexer.event", "", attribute.String("event.type", event.EventType.String()), attribute.String("path", event.Path))
+			err := self.apply(ectx, event)
+			end(err)
+			if err != nil {
 				return err
 			}
 			self.forward(ctx, event)
@@ -113,7 +120,10 @@ func (self *Indexer) watch(ctx context.Context) error {
 // to compare what they know with it, as its changes aren't known
 func (self *Indexer) poll(ctx context.Context) error {
 	for {
-		if err := self.queue.rescan(ctx, "/"); err != nil && ctx.Err() == nil {
+		pctx, end := self.span(ctx, "indexer.poll", "")
+		err := self.queue.rescan(pctx, "/")
+		end(err)
+		if err != nil && ctx.Err() == nil {
 			self.failed(ctx, err)
 		}
 		self.forward(ctx, schema.Rescan(self.name))
@@ -178,7 +188,9 @@ func (self *Indexer) work(ctx context.Context) {
 		// Do the work, which is done, or failed, of its claim
 		done := make([]store.Work, 0, len(claimed))
 		for i, w := range claimed {
-			err := self.do(ctx, w)
+			wctx, end := self.workSpan(ctx, w)
+			err := self.do(wctx, w)
+			end(err)
 			if ctx.Err() != nil {
 				self.release(claimed[i:])
 				break

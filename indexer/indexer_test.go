@@ -29,6 +29,9 @@ import (
 	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	tracetest "go.opentelemetry.io/otel/sdk/trace/tracetest"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1367,6 +1370,53 @@ func Test_MetadataTaskOutagesThenFailures(t *testing.T) {
 		return err == nil && state.Queued == 0 && state.Failed == 1
 	}, time.Minute, 5*time.Millisecond, "it's given up")
 	assert.Equal(t, 6+5, z.count("/a/y.txt"))
+}
+
+// Each piece of work is a span of its own trace, linked to the span which
+// queued it, so where a task came from is known: a poll queues a rescan, a
+// rescan queues the task of a file, and the task is of its span
+func Test_WorkTraced(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer provider.Shutdown(context.Background())
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	z := &sizer{}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithDebounce(0), indexer.WithRetry(time.Millisecond), indexer.WithTracer(provider.Tracer("test")))
+	require.NoError(t, err)
+	run(t, i)
+	require.Eventually(t, func() bool { return z.count("/x.txt") == 1 }, 10*time.Second, 5*time.Millisecond)
+
+	// The spans, by their IDs, once the task's has ended
+	var spans map[trace.SpanID]sdktrace.ReadOnlySpan
+	var task sdktrace.ReadOnlySpan
+	require.Eventually(t, func() bool {
+		spans, task = make(map[trace.SpanID]sdktrace.ReadOnlySpan), nil
+		for _, span := range recorder.Ended() {
+			spans[span.SpanContext().SpanID()] = span
+			for _, a := range span.Attributes() {
+				if span.Name() == "indexer.metadata" && a.Key == "key" && a.Value.AsString() == "/x.txt" {
+					task = span
+				}
+			}
+		}
+		return task != nil
+	}, 10*time.Second, 5*time.Millisecond)
+	linked := func(span sdktrace.ReadOnlySpan) sdktrace.ReadOnlySpan {
+		t.Helper()
+		require.Len(t, span.Links(), 1, span.Name())
+		assert.False(t, span.Parent().IsValid(), "%s is of its own trace", span.Name())
+		return spans[span.Links()[0].SpanContext.SpanID()]
+	}
+
+	// The task is linked to the scan which queued it, which is linked to the
+	// poll which queued it
+	scan := linked(task)
+	require.NotNil(t, scan, "the task is linked to a span which ended")
+	assert.Equal(t, "indexer.rescan", scan.Name())
+	poll := linked(scan)
+	require.NotNil(t, poll)
+	assert.Equal(t, "indexer.poll", poll.Name())
 }
 
 func Test_MetadataTaskUpgrade(t *testing.T) {

@@ -90,6 +90,7 @@ type Work struct {
 	Error    string    `json:"error,omitempty"`    // Why it last failed
 	Leased   time.Time `json:"leased,omitzero"`    // Until when it's leased, of a claim, which Done and Failed are of
 	Revision string    `json:"revision,omitempty"` // Of a task's work which is claimed, the revision of the file's listing, which it's done of
+	Trace    string    `json:"trace,omitempty"`    // The W3C traceparent of the span which queued it, of the context it's pushed with by default
 }
 
 ////////////////////////////////////////////////////////////////////////////////
