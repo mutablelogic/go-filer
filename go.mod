@@ -12,7 +12,7 @@ require (
 	github.com/mutablelogic/go-client v1.4.14
 	github.com/mutablelogic/go-metadata v1.1.7
 	github.com/mutablelogic/go-pg v1.5.1
-	github.com/mutablelogic/go-server v1.8.20
+	github.com/mutablelogic/go-server v1.8.21
 	github.com/mutablelogic/go-sqlite v1.1.3
 	github.com/mutablelogic/go-tokenizer v0.0.3
 	github.com/stretchr/testify v1.12.1
