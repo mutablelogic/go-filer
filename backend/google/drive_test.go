@@ -3,6 +3,7 @@ package google_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -35,6 +36,7 @@ type fakeDrive struct {
 	exported []string          // The types files are exported as
 	onExport func()            // Called as a file is exported, such as to change it
 	ranges   []string          // The ranges of the downloads, or "" of all of a file
+	noRanges bool              // A range is ignored, and all of a file is returned, as a server can
 
 	// The changes, whose tokens are their indexes, and whether a token
 	// isn't accepted, as it's expired, or Google is unavailable
@@ -140,8 +142,8 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// A range, of bytes=<from>-, or bytes=<from>-<to>
 			header := r.Header.Get("Range")
 			f.ranges = append(f.ranges, header)
-			status := http.StatusOK
-			if spec, ok := strings.CutPrefix(header, "bytes="); ok {
+			status, contentRange := http.StatusOK, ""
+			if spec, ok := strings.CutPrefix(header, "bytes="); ok && !f.noRanges {
 				from, to, _ := strings.Cut(spec, "-")
 				start, _ := strconv.Atoi(from)
 				end := len(content) - 1
@@ -152,7 +154,9 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusRequestedRangeNotSatisfiable)
 					return
 				}
-				content, status = content[start:min(end, len(content)-1)+1], http.StatusPartialContent
+				end = min(end, len(content)-1)
+				contentRange = fmt.Sprintf("bytes %d-%d/%d", start, end, len(content))
+				content, status = content[start:end+1], http.StatusPartialContent
 			}
 
 			// It's written without the fake locked, as a reader which seeks
@@ -160,6 +164,9 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.Unlock()
 			defer f.Lock()
 			w.Header().Set("Content-Type", "application/octet-stream")
+			if contentRange != "" {
+				w.Header().Set("Content-Range", contentRange)
+			}
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, content)
 			return
@@ -691,11 +698,45 @@ func Test_DriveReadRanges(t *testing.T) {
 		return nil
 	}))
 
-	// A file which can't be got is an error before it's read
+	// A server which ignores a range, and returns all of the file, isn't
+	// read as if it were of the range
 	fake.Lock()
-	delete(fake.content, "v1@rev1")
+	fake.noRanges = true
 	fake.Unlock()
+	require.NoError(t, readFn(ctx, func(r io.Reader) error {
+		_, err := r.(io.Seeker).Seek(1_000, io.SeekStart)
+		assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable, "of a seek")
+		_, err = r.(io.ReaderAt).ReadAt(make([]byte, 10), 2_000)
+		assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable, "of ReadAt")
+		return nil
+	}))
+	fake.Lock()
+	fake.noRanges = false
+	fake.Unlock()
+
+	// A file which can't be got is an error before it's read, and when it's
+	// sought, so before a response of the range is written
+	require.NoError(t, readFn(ctx, func(r io.Reader) error {
+		fake.Lock()
+		delete(fake.content, "v1@rev1")
+		fake.Unlock()
+		_, err := r.(io.Seeker).Seek(1_000, io.SeekStart)
+		assert.ErrorIs(t, err, fs.ErrNotExist)
+		return nil
+	}))
 	called := false
+	err = readFn(ctx, func(r io.Reader) error { called = true; return nil })
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	assert.False(t, called)
+
+	// And so is an empty file, which can't be got
+	fake.Lock()
+	fake.files = append(fake.files, httpclient.DriveFile{Id: "z1", Name: "empty.txt", MimeType: "text/plain", Parents: []string{driveRoot}, Size: "0", MD5Checksum: "md5-z1", HeadRevision: "rev1", OwnedByMe: true})
+	fake.Unlock()
+	filer = newDriveFiler(t, endpoint, url.Values{"refresh_interval": {"0"}})
+	readFn, _, err = filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/empty.txt"}})
+	require.NoError(t, err)
+	called = false
 	err = readFn(ctx, func(r io.Reader) error { called = true; return nil })
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 	assert.False(t, called)

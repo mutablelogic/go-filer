@@ -81,7 +81,10 @@ func (r *driveReader) Read(p []byte) (int, error) {
 }
 
 // Seek changes the offset of the next read, from the start or end of the
-// file, or the offset, which is requested when it's read
+// file, or the offset, and requests it from there, unless it's requested
+// from there, or it's at the end of the file, or beyond it, so a request
+// which fails is known when it seeks, before a response of the range is
+// written
 func (r *driveReader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	case io.SeekStart:
@@ -96,6 +99,11 @@ func (r *driveReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, &fs.PathError{Op: "seek", Path: r.path, Err: fs.ErrInvalid}
 	}
 	r.offset = offset
+	if r.offset < r.size && (r.stream == nil || r.stream.at != r.offset) {
+		if err := r.open(r.offset); err != nil {
+			return 0, err
+		}
+	}
 	return r.offset, nil
 }
 

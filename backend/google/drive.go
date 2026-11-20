@@ -289,20 +289,19 @@ func (self *DriveFiler) ReadObject(ctx context.Context, req schema.GetObjectRequ
 		if export, exists := driveExports[file.MimeType]; exists {
 			return self.export(ctx, object.Path, file, export, fn)
 		}
-		if size, err := strconv.ParseInt(file.Size, 10, 64); err == nil && file.HeadRevision != "" {
+		if size, err := strconv.ParseInt(file.Size, 10, 64); err == nil && size > 0 && file.HeadRevision != "" {
 			// It's read in place, of the ranges which are read, and requested
 			// before it's read, so a request which fails is known first
 			r := &driveReader{DriveFiler: self, ctx: ctx, path: object.Path, file: file, size: size}
 			defer r.Close()
-			if size > 0 {
-				if err := r.open(0); err != nil {
-					return err
-				}
+			if err := r.open(0); err != nil {
+				return err
 			}
 			return fn(r)
 		}
 
-		// Without a size, or a revision, it's read as it's downloaded
+		// Without a size, or a revision, or of no bytes, it's read as it's
+		// downloaded, so a download which fails is known first
 		var fnErr error
 		if err := self.client.Download(ctx, file.Id, file.HeadRevision, 0, 0, func(r io.Reader) error {
 			fnErr = fn(&streamReader{ctx: ctx, r: r})

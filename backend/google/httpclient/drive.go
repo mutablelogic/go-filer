@@ -3,6 +3,7 @@ package httpclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -69,12 +70,23 @@ type driveFiles struct {
 	NextPageToken string      `json:"nextPageToken,omitempty"`
 }
 
+// errRange is the error of a response which isn't of the range requested
+var errRange = errors.New("the response isn't of the range requested")
+
 // errNoToken is the error of a response without the token of the changes
 // after it, which it must have
 var errNoToken = errors.New("no token of the changes was returned")
 
 // bodyReader reads a response's body, as it's received, of a function
 type bodyReader func(io.Reader) error
+
+// rangeReader reads a response's body of a range, from, to the end, or to
+// to, when it isn't empty, as it's received, of a function, once its
+// Content-Range says it's of the range
+type rangeReader struct {
+	from, to string
+	fn       func(io.Reader) error
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -242,13 +254,18 @@ func (c *DriveClient) Download(ctx context.Context, id, revision string, offset,
 		client.OptQuery(url.Values{"alt": {"media"}}),
 		client.OptNoTimeout(),
 	}
-	switch {
-	case length > 0:
-		opts = append(opts, client.OptReqHeader("Range", "bytes="+strconv.FormatInt(offset, 10)+"-"+strconv.FormatInt(offset+length-1, 10)))
-	case offset > 0:
-		opts = append(opts, client.OptReqHeader("Range", "bytes="+strconv.FormatInt(offset, 10)+"-"))
+	if offset == 0 && length <= 0 {
+		return c.DoAuthWithContext(ctx, client.NewRequest(), bodyReader(fn), opts...)
 	}
-	return c.DoAuthWithContext(ctx, client.NewRequest(), bodyReader(fn), opts...)
+
+	// A range, whose response must be of it, rather than all of the file,
+	// or another range, which would be read as if it were
+	from, to := strconv.FormatInt(offset, 10), ""
+	if length > 0 {
+		to = strconv.FormatInt(offset+length-1, 10)
+	}
+	opts = append(opts, client.OptReqHeader("Range", "bytes="+from+"-"+to))
+	return c.DoAuthWithContext(ctx, client.NewRequest(), rangeReader{from: from, to: to, fn: fn}, opts...)
 }
 
 // Export reads the content of a Google Doc, Sheet or Slides, of its id, as
@@ -269,4 +286,17 @@ func (c *DriveClient) Export(ctx context.Context, id, mimeType string, fn func(i
 // prefers it to decoding it
 func (fn bodyReader) Unmarshal(_ http.Header, r io.Reader) error {
 	return fn(r)
+}
+
+// Unmarshal reads a response's body, once its Content-Range, such as
+// "bytes 100-199/1000", is of the range, or returns errRange, such as when
+// the server ignored the range, and returned all of the file
+func (rr rangeReader) Unmarshal(header http.Header, r io.Reader) error {
+	spec, ok := strings.CutPrefix(header.Get("Content-Range"), "bytes ")
+	span, _, _ := strings.Cut(spec, "/")
+	from, to, _ := strings.Cut(span, "-")
+	if !ok || from != rr.from || (rr.to != "" && to != rr.to) {
+		return fmt.Errorf("%w: requested %s-%s, but got %q", errRange, rr.from, rr.to, header.Get("Content-Range"))
+	}
+	return rr.fn(r)
 }
