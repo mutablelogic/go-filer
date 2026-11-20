@@ -42,6 +42,7 @@ type fakePeople struct {
 	snapshots map[string]map[string]string
 	fullSyncs int
 	expired   bool
+	synced    []string // The tokens which are synced of
 	photos    int // How many times a photo is got
 }
 
@@ -84,6 +85,7 @@ func (f *fakePeople) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 3 && parts[0] == "people" && parts[1] == "me" && parts[2] == "connections" && r.URL.Query().Get("syncToken") != "":
 		// What changed since the token: those which are new, or whose entity
 		// tags changed, and those which are deleted, or gone
+		f.synced = append(f.synced, r.URL.Query().Get("syncToken"))
 		snapshot, exists := f.snapshots[r.URL.Query().Get("syncToken")]
 		if f.expired || !exists {
 			writeError(w, http.StatusGone)
@@ -780,4 +782,76 @@ func Test_ContactPhotoCache(t *testing.T) {
 	fake.Lock()
 	assert.Equal(t, 1, fake.photos, "it's got once")
 	fake.Unlock()
+}
+
+// Test_ContactWatchAbsent tests a contact the watch knows is deleted isn't
+// read of what was got before it was watched, and a restart syncs of the
+// last token, though nothing changed since it was saved
+func Test_ContactWatchAbsent(t *testing.T) {
+	// They're saved after each sync, so one of a new token, of nothing which
+	// changed, is saved, too
+	google.SetContactSaveInterval(t, 0)
+	fake, endpoint := newFakePeople(t)
+	fake.add("c1", nil)
+	fake.add("c2", nil)
+	cache := testCache()
+	filer := func() *google.ContactFiler {
+		t.Helper()
+		f, err := google.NewContactFiler(t.Context(), "contacts", url.Values{"quota": {"0"}, "refresh_interval": {"10ms"}}, cache, gofiler.Opts{Credentials: contactCredentials(t, endpoint)})
+		require.NoError(t, err)
+		return f
+	}
+	f := filer()
+
+	// It's listed before it's watched, so what was got is kept
+	assert.Equal(t, []string{"/c1.vcf", "/c2.vcf"}, listed(t, f, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
+	ch, done := make(chan schema.Event, 64), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- f.WatchObjects(ctx, ch) }()
+	next := func() string {
+		select {
+		case event := <-ch:
+			return event.EventType.String() + " " + event.Path
+		case <-time.After(5 * time.Second):
+			return ""
+		}
+	}
+	assert.Equal(t, "rescan /", next())
+
+	// A contact which is deleted isn't there, once the watch knows it
+	fake.Lock()
+	fake.people = fake.people[:1]
+	fake.Unlock()
+	assert.Equal(t, "deleted /c2.vcf", next())
+	_, err := f.GetObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c2.vcf"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+
+	// It syncs, of new tokens, though nothing changes, and stops
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	assert.ErrorIs(t, <-done, context.Canceled)
+	fake.Lock()
+	last := len(fake.snapshots) - 1
+	synced := len(fake.synced)
+	fake.Unlock()
+
+	// A restart syncs of the last token
+	f = filer()
+	ctx, cancel = context.WithCancel(t.Context())
+	done = make(chan error, 1)
+	go func() { done <- f.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	require.Eventually(t, func() bool {
+		fake.Lock()
+		defer fake.Unlock()
+		return len(fake.synced) > synced
+	}, 5*time.Second, 5*time.Millisecond)
+	fake.Lock()
+	n, err := strconv.Atoi(strings.TrimPrefix(fake.synced[synced], "s"))
+	fake.Unlock()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, n, last-1, "the token which was saved is the last, or the one before, of a sync which was cancelled as it stopped")
 }

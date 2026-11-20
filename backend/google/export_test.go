@@ -85,3 +85,11 @@ func ClearTaskCache(filer *TaskFiler) {
 func ClearContactCache(filer *ContactFiler) {
 	filer.people.clear()
 }
+
+// SetContactSaveInterval sets the least time between the saves of the
+// contacts a watch knows, until the test ends
+func SetContactSaveInterval(t testing.TB, interval time.Duration) {
+	previous := contactSaveInterval
+	contactSaveInterval = interval
+	t.Cleanup(func() { contactSaveInterval = previous })
+}

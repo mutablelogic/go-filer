@@ -23,6 +23,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	vcard "github.com/mutablelogic/go-metadata/pkg/vcard"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -47,6 +48,12 @@ type ContactFiler struct {
 	people *cache[[]httpclient.Person]
 	mu     sync.Mutex
 	live   *contactWatch
+
+	// syncing is held by a sync, and by a write, from its request until
+	// what it got is applied, so a sync whose response is older doesn't
+	// undo a write, nor a write a sync. It's a channel of one, so waiting
+	// for it stops when the context is cancelled.
+	syncing chan struct{}
 }
 
 // contactOpt are the options of a contact filer, of its parameters
@@ -117,7 +124,7 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, cache 
 		return nil, err
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
-	self := &ContactFiler{contactOpt: opt, name: name, opts: opts, cache: cache}
+	self := &ContactFiler{contactOpt: opt, name: name, opts: opts, cache: cache, syncing: make(chan struct{}, 1)}
 	self.people = newCache[[]httpclient.Person](time.Now, func() time.Duration { return self.refreshInterval })
 
 	// The user's sign-in, which has the access the volume needs: to read
@@ -384,8 +391,12 @@ func (self *ContactFiler) connections(ctx context.Context) ([]httpclient.Person,
 // person returns a contact, of its id, of the contacts which were got,
 // when they were, or else of Google
 func (self *ContactFiler) person(ctx context.Context, id string) (*httpclient.Person, error) {
+	// The watch knows whether it's there, which is so, rather than what was
+	// got before, which may have it still
 	if person, ok := self.livePerson(id); ok && person != nil {
 		return person, nil
+	} else if ok {
+		return nil, httpresponse.Err(http.StatusNotFound).Withf("contact %q", id)
 	}
 	if people, ok := self.people.peek(""); ok {
 		for i := range people {
