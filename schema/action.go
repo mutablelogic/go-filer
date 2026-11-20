@@ -13,16 +13,17 @@ import (
 // its objects, such as creating a calendar event, as it's listed, without
 // running it
 type Action struct {
+	Volume      string             `json:"volume,omitempty" help:"Name of the volume whose action it is"`
 	Name        string             `json:"name" help:"Identifier of the action, such as create_event"`
 	Title       string             `json:"title,omitempty" help:"Short label of the action, such as Create event"`
 	Description string             `json:"description,omitempty" help:"What the action does"`
 	Input       *jsonschema.Schema `json:"input,omitempty" help:"JSON schema of the action's input"`
 }
 
-// ActionList is the actions of a volume, in order of their names
+// ActionList is the actions of volumes, in order of their volumes' names,
+// and their own
 type ActionList struct {
-	Name string   `json:"name" help:"Volume name"`
-	Body []Action `json:"body" help:"Actions of the volume, in order of their names"`
+	Body []Action `json:"body" help:"Actions, in order of their volumes, and their names"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////
