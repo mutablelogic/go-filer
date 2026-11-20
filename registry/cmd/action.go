@@ -19,12 +19,12 @@ import (
 // TYPES
 
 type ActionCommands struct {
-	ActionList ActionListCmd `cmd:"" name:"actions" help:"List the actions of a volume, which its backend can do beyond reading and writing its objects." group:"VOLUME"`
-	ActionCall ActionCallCmd `cmd:"" name:"action" help:"Call an action of a volume, with its input, of JSON, and show the object it created or changed." group:"VOLUME"`
+	ActionList ActionListCmd `cmd:"" name:"actions" help:"List the actions of a volume, or of every volume, which their backends can do beyond reading and writing their objects." group:"ACTION"`
+	ActionCall ActionCallCmd `cmd:"" name:"action" help:"Call an action of a volume, with its input, of JSON, and show the object it created or changed." group:"ACTION"`
 }
 
 type ActionListCmd struct {
-	Name string `arg:"" name:"name" help:"Volume name"`
+	Name string `arg:"" name:"name" optional:"" help:"Volume name, or every volume which is mounted, and online, without it"`
 }
 
 type ActionCallCmd struct {

@@ -193,8 +193,8 @@ An action is something a volume's backend can do beyond reading and writing its 
 
 * **`Filer.Actions()`** returns a backend's actions, or nil, such as for a filesystem. Each `gofiler.Action` has a `Name` (a tool name, such as `task_list`), `Title`, `Description`, `Input` (a JSON schema) and `Run(ctx, input)`, which returns the object it created or changed.
 * **The registry:** `ListActions(ctx, volume)` and `CallAction(ctx, volume, name, input)`. Actions aren't available while a volume is unmounted or offline, which is `ErrServiceUnavailable`.
-* **HTTP:** `GET /volume/{name}/action` lists them, and `POST /volume/{name}/action/{action}` calls one with its input as the body.
-* **CLI:** `filer actions VOLUME` lists them, and `filer action VOLUME NAME '<json>'` calls one, or `-` reads the input from stdin.
+* **HTTP:** `GET /action` lists every volume's, `GET /action/{name}` one volume's, and `POST /action/{name}/{action}` calls one with its input as the body.
+* **CLI:** `filer actions [VOLUME]` lists them, of every volume without one, and `filer action VOLUME NAME '<json>'` calls one, or `-` reads the input from stdin.
 * **Google Tasks** has `task_list` on a writable volume: `{"op":"create","title":"Work"}`, `{"op":"update","path":"/<id>","title":"Office"}` or `{"op":"delete","path":"/<id>"}`.
 
 ## Indexer

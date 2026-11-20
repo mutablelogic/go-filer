@@ -14,10 +14,16 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// ListActions returns the actions of a volume, in order of their names
+// ListActions returns the actions of a volume, in order of their names, or,
+// when it's empty, of every volume which is mounted, and online, in order of
+// their volumes
 func (c *Client) ListActions(ctx context.Context, volume string) (*schema.ActionList, error) {
+	path := []any{"action"}
+	if volume != "" {
+		path = append(path, volume)
+	}
 	var response schema.ActionList
-	if err := c.DoWithContext(ctx, client.MethodGet, &response, client.OptPath("volume", volume, "action")); err != nil {
+	if err := c.DoWithContext(ctx, client.MethodGet, &response, client.OptPath(path...)); err != nil {
 		return nil, err
 	}
 	return types.Ptr(response), nil
@@ -35,7 +41,7 @@ func (c *Client) CallAction(ctx context.Context, volume, action string, input js
 		return nil, err
 	}
 	var response schema.Object
-	if err := c.DoWithContext(ctx, req, &response, client.OptPath("volume", volume, "action", action)); err != nil {
+	if err := c.DoWithContext(ctx, req, &response, client.OptPath("action", volume, action)); err != nil {
 		return nil, err
 	}
 	return types.Ptr(response), nil

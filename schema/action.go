@@ -16,23 +16,24 @@ import (
 // running it, whose input's schema is JSON, as a schema of a schema can't be
 // described
 type Action struct {
+	Volume      string          `json:"volume,omitempty" help:"Name of the volume whose action it is"`
 	Name        string          `json:"name" help:"Identifier of the action, such as create_event"`
 	Title       string          `json:"title,omitempty" help:"Short label of the action, such as Create event"`
 	Description string          `json:"description,omitempty" help:"What the action does"`
 	Input       json.RawMessage `json:"input,omitempty" help:"JSON schema of the action's input"`
 }
 
-// ActionList is the actions of a volume, in order of their names
+// ActionList is the actions of volumes, in order of their volumes' names,
+// and their own
 type ActionList struct {
-	Name string   `json:"name" help:"Volume name"`
-	Body []Action `json:"body" help:"Actions of the volume, in order of their names"`
+	Body []Action `json:"body" help:"Actions, in order of their volumes, and their names"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // TABLE
 
 func (a Action) Header() []string {
-	return []string{"Name", "Title", "Description"}
+	return []string{"Volume", "Name", "Title", "Description"}
 }
 
 func (a Action) Width(col int) int {
@@ -42,10 +43,12 @@ func (a Action) Width(col int) int {
 func (a Action) Cell(col int) tui.CellText {
 	switch col {
 	case 0:
-		return a.Name
+		return a.Volume
 	case 1:
-		return a.Title
+		return a.Name
 	case 2:
+		return a.Title
+	case 3:
 		return a.Description
 	default:
 		return ""

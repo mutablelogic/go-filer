@@ -29,7 +29,7 @@ type searchQuery struct {
 
 func searchHandlers(reg *registry.Registry, router *httprouter.Router, documentation *openapi.MarkdownDoc) error {
 	return router.Register("search", nil, func(path httprequest.PathItem) {
-		path.Tag("Search")
+		path.Tag("Objects")
 		path.Get(func(w http.ResponseWriter, r *http.Request) {
 			var query searchQuery
 			if err := httprequest.Query(r.URL.Query(), &query); err != nil {

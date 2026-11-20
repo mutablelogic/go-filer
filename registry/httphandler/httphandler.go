@@ -24,11 +24,11 @@ var readme []byte
 // broadcaster's owner, as go-server's /changes.
 func RegisterHandlers(reg *registry.Registry, router *httprouter.Router) error {
 	var documentation = openapi.ParseMarkdown(readme)
-	router.Spec().AddTagGroup("Filer", "Volumes", "Actions", "Objects", "Search")
+	router.Spec().AddTagGroup("Filer", "Volumes", "Objects", "Actions")
 	return errors.Join(
 		volumeHandlers(reg, router, documentation),
-		actionHandlers(reg, router, documentation),
 		objectHandlers(reg, router, documentation),
 		searchHandlers(reg, router, documentation),
+		actionHandlers(reg, router, documentation),
 	)
 }

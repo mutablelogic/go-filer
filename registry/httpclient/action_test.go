@@ -95,11 +95,17 @@ func TestActions(t *testing.T) {
 	// Its actions are listed, with their inputs
 	list, err := client.ListActions(ctx, "notes")
 	require.NoError(t, err)
-	assert.Equal(t, "notes", list.Name)
 	require.Len(t, list.Body, 1)
+	assert.Equal(t, "notes", list.Body[0].Volume)
 	assert.Equal(t, "note", list.Body[0].Name)
 	assert.Equal(t, "Write a note", list.Body[0].Title)
 	require.NotNil(t, list.Body[0].Input)
+
+	// And every volume's, of no volume
+	list, err = client.ListActions(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, list.Body, 1)
+	assert.Equal(t, "notes", list.Body[0].Volume)
 
 	// An action is called, and returns its object, of the volume
 	object, err := client.CallAction(ctx, "notes", "note", json.RawMessage(`{"name":"a.txt"}`))
@@ -118,7 +124,7 @@ func TestActions(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status(err), err)
 	_, err = client.ListActions(ctx, "nowhere")
 	assert.Equal(t, http.StatusNotFound, status(err), err)
-	resp, err := http.Post(server.URL+"/api/volume/notes/action/note", "application/json", strings.NewReader("not json"))
+	resp, err := http.Post(server.URL+"/api/action/notes/note", "application/json", strings.NewReader("not json"))
 	require.NoError(t, err)
 	resp.Body.Close()
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -130,4 +136,7 @@ func TestActions(t *testing.T) {
 		_, err := client.ListActions(ctx, "notes")
 		return status(err) == http.StatusServiceUnavailable
 	}, 5*time.Second, time.Millisecond)
+	list, err = client.ListActions(ctx, "")
+	require.NoError(t, err)
+	assert.Empty(t, list.Body, "nor are they listed, of every volume")
 }

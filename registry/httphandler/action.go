@@ -35,22 +35,36 @@ const maxActionInput = 1 << 20
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
 
-// actionHandlers registers the handlers of the actions of volumes
+// actionHandlers registers the handlers of the actions of volumes, which
+// are a resource of their own: /action of every volume which is mounted,
+// and online, /action/{name} of a volume, and /action/{name}/{action}, which
+// calls one
 func actionHandlers(reg *registry.Registry, router *httprouter.Router, documentation *openapi.MarkdownDoc) error {
-	if err := router.Register("volume/{name}/action", jsonschema.MustFor[objectName](), func(path httprequest.PathItem) {
-		path.Tag("Actions")
-
-		// GET
-		path.Get(func(w http.ResponseWriter, r *http.Request) {
+	list := func() func(w http.ResponseWriter, r *http.Request) {
+		return func(w http.ResponseWriter, r *http.Request) {
 			name := r.PathValue("name")
 			if list, err := reg.ListActions(r.Context(), name); err != nil {
 				httpresponse.Error(w, gofiler.HTTPErr(err), name)
 			} else {
 				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), list)
 			}
-		}, func(op httprequest.PathOperation) {
+		}
+	}
+	if err := router.Register("action", nil, func(path httprequest.PathItem) {
+		path.Tag("Actions")
+		path.Get(list(), func(op httprequest.PathOperation) {
 			op.Summary("List Actions")
-			op.Description(documentation.Section(3, "GET /volume/{name}/action").Body)
+			op.Description(documentation.Section(3, "GET /action").Body)
+			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.ActionList](), "Actions of the volumes, in order of their volumes, and their names")
+		})
+	}); err != nil {
+		return err
+	}
+	if err := router.Register("action/{name}", jsonschema.MustFor[objectName](), func(path httprequest.PathItem) {
+		path.Tag("Actions")
+		path.Get(list(), func(op httprequest.PathOperation) {
+			op.Summary("List Volume Actions")
+			op.Description(documentation.Section(3, "GET /action/{name}").Body)
 			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.ActionList](), "Actions of the volume, in order of their names")
 			op.ErrorResponse(http.StatusNotFound, "Volume doesn't exist")
 			op.ErrorResponse(http.StatusServiceUnavailable, "Volume is unmounted, or offline")
@@ -58,7 +72,7 @@ func actionHandlers(reg *registry.Registry, router *httprouter.Router, documenta
 	}); err != nil {
 		return err
 	}
-	return router.Register("volume/{name}/action/{action}", jsonschema.MustFor[actionKey](), func(path httprequest.PathItem) {
+	return router.Register("action/{name}/{action}", jsonschema.MustFor[actionKey](), func(path httprequest.PathItem) {
 		path.Tag("Actions")
 
 		// POST
@@ -87,7 +101,7 @@ func actionHandlers(reg *registry.Registry, router *httprouter.Router, documenta
 			}
 		}, func(op httprequest.PathOperation) {
 			op.Summary("Call Action")
-			op.Description(documentation.Section(3, "POST /volume/{name}/action/{action}").Body)
+			op.Description(documentation.Section(3, "POST /action/{name}/{action}").Body)
 			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Object](), "Object the action created or changed")
 			op.ErrorResponse(http.StatusBadRequest, "Input isn't JSON, or isn't valid for the action")
 			op.ErrorResponse(http.StatusUnauthorized, "The volume's user needs to sign in, with how they sign in")
