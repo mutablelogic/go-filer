@@ -1,37 +1,26 @@
-// The gf-file-view element is the objects of a folder, its folders and its
-// files, as a table of their names, sizes and when they were changed, which
-// loads more as it's scrolled, in the element it's in, which scrolls. A
-// folder which is chosen fires gf-file-view-opened, with its volume and path.
+// The gf-file-view element is the objects of a folder, which aren't folders,
+// as the tree has those, as a table of their names, sizes and when they
+// were changed, which loads more as it's scrolled, in the element it's in,
+// which scrolls.
 
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
-import FolderIcon from '@carbon/icons/es/folder/16.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
-import { objectTitle, type FilerObject } from '../filer/schema.ts';
+import EmptyIcon from '@carbon/icons/es/folders/32.js';
+import { objectTitle } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// FileViewOpened is a folder which is chosen: its volume, and its path
-export interface FileViewOpened {
-    volume: string;
-    path: string;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
-// FileViewTag is the element's tag, and FileViewOpenedEvent the event it
-// fires, with a FileViewOpened, when a folder is chosen
+// FileViewTag is the element's tag
 export const FileViewTag = 'gf-file-view';
-export const FileViewOpenedEvent = 'gf-file-view-opened';
 
-const Icons = {
-    folder: iconLoader(FolderIcon),
-    file: iconLoader(FileIcon),
-};
+const fileIcon = iconLoader(FileIcon);
 
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
@@ -39,11 +28,14 @@ const Icons = {
 export class FileViewElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
+        empty: { type: String },
         state: { state: true },
     };
 
-    // controller keeps the folder's objects
+    // controller keeps the folder's objects, and empty is what's said when
+    // it has none, such as to choose another folder
     declare controller?: FolderController;
+    declare empty?: string;
     declare private state?: FolderState;
 
     private unsubscribe?: () => void;
@@ -100,13 +92,17 @@ export class FileViewElement extends LitElement {
         } else if (!state.objects) {
             return html`<p class="gf-empty">Loading…</p>`;
         } else if (state.objects.length === 0) {
-            return html`<p class="gf-empty">This folder is empty</p>`;
+            return html`
+                <div class="gf-file-view-empty">
+                    ${iconLoader(EmptyIcon)}
+                    <p>${this.empty || 'No objects'}</p>
+                </div>
+            `;
         }
-        const volume = state.volume;
         // A table of Carbon's styles, rather than its element, whose own
         // scrolling would keep its header from staying at the top of the
         // element which scrolls
-        const count = state.count ?? (state.more ? null : state.objects.length);
+        const count = state.count;
         return html`
             <table class="cds--data-table cds--data-table--sm gf-file-view-table">
                 <thead>
@@ -117,12 +113,12 @@ export class FileViewElement extends LitElement {
                     </tr>
                 </thead>
                 <tbody>
-                    ${repeat(state.objects, (object) => (object.dir ? 'd:' : 'f:') + object.path, (object) => html`
-                        <tr class=${object.dir ? 'gf-file-view-folder' : ''} @click=${() => object.dir && this.opened(volume, object)}>
+                    ${repeat(state.objects, (object) => object.path, (object) => html`
+                        <tr>
                             <td>
-                                <span class="gf-file-view-name" title=${object.path}>${object.dir ? Icons.folder : Icons.file}<span>${objectTitle(object)}</span></span>
+                                <span class="gf-file-view-name" title=${object.path}>${fileIcon}<span>${objectTitle(object)}</span></span>
                             </td>
-                            <td class="gf-file-view-size">${object.dir ? '' : formatSize(object.size)}</td>
+                            <td class="gf-file-view-size">${formatSize(object.size)}</td>
                             <td>${formatTime(object.mtime)}</td>
                         </tr>
                     `)}
@@ -131,11 +127,6 @@ export class FileViewElement extends LitElement {
             ${state.more ? html`<p class="gf-file-view-end gf-empty">${state.loading ? 'Loading…' : ''}</p>` : nothing}
             ${count !== null ? html`<p class="gf-file-view-count">${countText(count)}</p>` : nothing}
         `;
-    }
-
-    // opened fires that a folder is chosen
-    private opened(volume: string, folder: FilerObject) {
-        this.dispatchEvent(new CustomEvent<FileViewOpened>(FileViewOpenedEvent, { detail: { volume, path: folder.path }, bubbles: true, composed: true }));
     }
 }
 

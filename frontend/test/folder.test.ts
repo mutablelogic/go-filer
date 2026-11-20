@@ -39,16 +39,29 @@ test('FolderController', async (t) => {
         await folder.open('media', '/a');
         assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/a/1', '/a/2']);
         assert.equal(folder.current.more, true);
-        assert.equal(folder.current.count, 3);
+        assert.equal(folder.current.count, null, "it isn't known until they're all loaded");
         await folder.loadMore();
         assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/a/1', '/a/2', '/a/3']);
         assert.equal(folder.current.more, false);
+        assert.equal(folder.current.count, 3);
         await folder.loadMore();
         assert.deepEqual(listed, ['/a@', '/a@/a/2']);
 
         // The folder which is shown isn't loaded again
         await folder.open('media', '/a');
         assert.equal(listed.length, 2);
+    });
+
+    await t.test('folders are left out, of pages until one has an object', async () => {
+        const { client, listed } = fakeServer({ '/': ['/a/', '/b/', '/c/', '/d/', '/x.txt', '/y/', '/z.txt'] });
+        const folder = new FolderController(client, { pageLimit: 2 });
+        await folder.open('media', '/');
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt']);
+        assert.deepEqual(listed, ['/@', '/@/b/', '/@/d/'], 'the pages of only folders are skipped');
+        await folder.loadMore();
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt', '/z.txt']);
+        assert.equal(folder.current.more, false);
+        assert.equal(folder.current.count, 2, 'its objects, without its folders');
     });
 
     await t.test('another folder replaces it, and an older load is ignored', async () => {
@@ -76,7 +89,7 @@ test('FolderController', async (t) => {
         folder.change({ action: 'create', schema: 'filer', table: 'media', row: '/a/0' });
         await settle();
         assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/a/0', '/a/1', '/a/2', '/a/3']);
-        assert.equal(folder.current.count, 6);
+        assert.equal(folder.current.count, null);
         assert.deepEqual(listed, ['/a@', '/a@/a/1']);
     });
 
