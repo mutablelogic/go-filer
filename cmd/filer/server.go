@@ -9,6 +9,7 @@ import (
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	google "github.com/mutablelogic/go-filer/backend/google"
 	rss "github.com/mutablelogic/go-filer/backend/rss"
+	frontend "github.com/mutablelogic/go-filer/frontend/cmd"
 	metadatacmd "github.com/mutablelogic/go-filer/metadata/cmd"
 	registry "github.com/mutablelogic/go-filer/registry"
 	filercmd "github.com/mutablelogic/go-filer/registry/cmd"
@@ -16,6 +17,7 @@ import (
 	server "github.com/mutablelogic/go-server"
 	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	changes "github.com/mutablelogic/go-server/broadcaster/httphandler"
+	config "github.com/mutablelogic/go-server/config"
 	servercmd "github.com/mutablelogic/go-server/pkg/cmd"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 )
@@ -38,6 +40,7 @@ type RunServer struct {
 	Credentials CredentialFlags   `embed:""`
 	Indexer     IndexerFlags      `embed:""`
 	Enrichment  metadatacmd.Flags `embed:""`
+	Frontend    frontend.Flags    `embed:""`
 	servercmd.RunServer
 }
 
@@ -64,9 +67,19 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// registry, and the store, are closed
 	b := broadcaster.New()
 	runner.RunServer.Register(func(router *httprouter.Router) error {
-		// What a UI uses, apart from the filer: watching for changes, and
-		// the OpenAPI spec
-		router.Spec().AddTagGroup("UI", changes.Tag, "OpenAPI")
+		// The configuration, at /config.json, and the web UI, at /, when
+		// it's built in, or else a handler of / which isn't found
+		if ui, err := runner.Frontend.RegisterUI(ctx, ctx.Logger(), router, runner.RunServer.OpenAPI); err != nil {
+			return err
+		} else if !ui {
+			if err := router.RegisterCatchAll("/", true); err != nil {
+				return err
+			}
+		}
+
+		// What a UI uses, apart from the filer: its configuration, watching
+		// for changes, and the OpenAPI spec
+		router.Spec().AddTagGroup("UI", config.Tag, changes.Tag, "OpenAPI")
 		return changes.RegisterHandlers(b, router)
 	})
 	runCtx, cancel := context.WithCancel(ctx.Context())

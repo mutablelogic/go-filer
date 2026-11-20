@@ -27,6 +27,8 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/registry/cmd` | The `filer` command's subcommands |
 | `github.com/mutablelogic/go-filer/metadata` | The task which enriches files with go-metadata's metadata |
 | `github.com/mutablelogic/go-filer/metadata/cmd` | The enrichment flags of a server, and `WithMetadataEnrichment`, its registry option |
+| `github.com/mutablelogic/go-filer/frontend` | The web UI, which the server embeds with the `frontend` tag (see [frontend/README.md](frontend/README.md)) |
+| `github.com/mutablelogic/go-filer/frontend/cmd` | Serves the web UI, and `/config.json`, and its `--[no-]ui` flag |
 
 ## Building
 
@@ -35,6 +37,7 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 * `make go-media` downloads the libraries from the release of the go-media version in `go.mod`, into `build/go-media`. The builds and tests with cgo run it first.
 * `GO_MEDIA_PREFIX` uses another build of them instead, such as `build/install` in a clone of go-media, or `/opt/go-media` in its dev image. `GO_MEDIA_LICENSE=gpl` uses the GPL build of FFmpeg, rather than the LGPL one.
 * On macOS, the libraries link some Homebrew packages, listed in `build/go-media/Brewfile`: `brew bundle --file build/go-media/Brewfile` installs them.
+* `make` builds the web UI first, which the server embeds and serves at `/`. It needs npm, and `GITHUB_TOKEN` with `read:packages`, such as `$(gh auth token)`. See [frontend/README.md](frontend/README.md).
 * `make CGO_ENABLED=0` builds without cgo, and so without the libraries. It reads less metadata, and can't watch volumes on macOS, which are polled instead.
 
 ## Usage
@@ -451,9 +454,10 @@ The packages are vetted and tested with `make`, with `GOWORK=off`:
 | `make vet` | Vet the packages for macOS, Linux, Windows and FreeBSD |
 | `make race-test` | Run the tests with the race detector, which needs cgo |
 | `make tidy` | Tidy the module |
-| `make clean` | Remove `build/` |
+| `make frontend-test` | Type check the web UI, and run its tests |
+| `make clean` | Remove `build/`, and the web UI's builds |
 
-The test workflow vets the packages, and runs the race tests on Linux, macOS and Windows, for pull requests and pushes to `main`.
+The test workflow vets the packages, runs the race tests on Linux, macOS and Windows, and tests and builds the web UI, for pull requests and pushes to `main`.
 
 `make` builds the `filer` server with the store of its indexes chosen by `INDEXER_BACKEND`, as the build tag `indexer_<backend>`:
 
