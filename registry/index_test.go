@@ -558,11 +558,12 @@ func Test_Registry_ViewTraced(t *testing.T) {
 	s, err := sqlite.New(context.Background(), gosqlite.Memory, store.WithTracer(tracer))
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s))
+	noop := func(context.Context, gofiler.Filer, indexer.MetadataStore, *schema.Object) error { return nil }
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithMetadataTask(noop))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
-	_, err = add(t, r, "media", indexedURL(t, dir, "media", "folders"))
+	_, err = add(t, r, "media", indexedURL(t, dir, "media", "metadata"))
 	require.NoError(t, err)
 	ready(t, r, "media")
 
@@ -570,11 +571,16 @@ func Test_Registry_ViewTraced(t *testing.T) {
 	_, err = r.ListVolumes(ctx)
 	span.End()
 	require.NoError(t, err)
-	var states int
+	var states, tasks int
 	for _, s := range recorder.Ended() {
-		if strings.HasSuffix(s.Name(), ".State") && s.SpanContext().TraceID() == span.SpanContext().TraceID() {
+		if s.SpanContext().TraceID() != span.SpanContext().TraceID() {
+			continue
+		} else if strings.HasSuffix(s.Name(), ".State") {
 			states++
+		} else if strings.HasSuffix(s.Name(), ".Tasks") {
+			tasks++
 		}
 	}
 	assert.NotZero(t, states, "the index's state is read in the request's trace")
+	assert.NotZero(t, tasks, "the metadata task's state is read in the request's trace")
 }
