@@ -26,6 +26,7 @@ import (
 	fsevents "github.com/mutablelogic/go-filer/backend/fs/fsevents"
 	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -1164,7 +1165,7 @@ func (e example) Close() error {
 func Test_Registry_WithBackend(t *testing.T) {
 	dir := t.TempDir()
 	var given gofiler.Opts
-	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		given = opts
 		assert.False(t, u.Query().Has(indexer.IndexParam), "the index option is the registry's")
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
@@ -1255,7 +1256,7 @@ func Test_Registry_BackendGone(t *testing.T) {
 	r.close()
 
 	// Once its backend is registered, it's mounted
-	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err
@@ -1283,7 +1284,7 @@ func Test_Registry_BackendGone(t *testing.T) {
 // backend's is an error, of those which are
 func Test_Registry_WithSchemes(t *testing.T) {
 	dir := t.TempDir()
-	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err
@@ -1317,7 +1318,7 @@ func Test_Registry_WithSchemes(t *testing.T) {
 // The backends are listed, with what each is, and logged, once the registry
 // runs
 func Test_Registry_Backends(t *testing.T) {
-	open := func(context.Context, *url.URL, gofiler.Opts) (gofiler.Filer, error) {
+	open := func(context.Context, *url.URL, store.CacheStore, gofiler.Opts) (gofiler.Filer, error) {
 		return nil, gofiler.ErrNotImplemented
 	}
 	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithBackend("example", "Examples", open), WithSchemes("example", "file"))

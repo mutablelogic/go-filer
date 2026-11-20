@@ -27,8 +27,11 @@ import (
 	google "github.com/mutablelogic/go-filer/backend/google"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
+	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	ical "github.com/mutablelogic/go-metadata/pkg/ical"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 	oauth2 "golang.org/x/oauth2"
@@ -1506,13 +1509,13 @@ func Test_TaskWriteConcurrent(t *testing.T) {
 // newTaskFiler returns a task filer, of the credentials, as the registry
 // creates one, with them as its options
 func newTaskFiler(ctx context.Context, name string, params url.Values, credentials credential.CredentialProvider) (*google.TaskFiler, error) {
-	return google.NewTaskFiler(ctx, name, params, gofiler.Opts{Credentials: credentials})
+	return google.NewTaskFiler(ctx, name, params, testCache(), gofiler.Opts{Credentials: credentials})
 }
 
 // newContactFilerOf returns a contact filer, of the credentials, as the
 // registry creates one, with them as its options
 func newContactFilerOf(ctx context.Context, name string, params url.Values, credentials credential.CredentialProvider) (*google.ContactFiler, error) {
-	return google.NewContactFiler(ctx, name, params, gofiler.Opts{Credentials: credentials})
+	return google.NewContactFiler(ctx, name, params, testCache(), gofiler.Opts{Credentials: credentials})
 }
 
 func Test_TaskCache(t *testing.T) {
@@ -1825,4 +1828,14 @@ func Test_TaskListActionWatched(t *testing.T) {
 	event = <-events
 	assert.Equal(t, "updated /L2", event.EventType.String()+" "+event.Path)
 	quiet()
+}
+
+// testCache returns a cache of a volume, in memory, as the registry passes
+// a volume's backend its own
+func testCache() store.CacheStore {
+	cache, err := sqlite.NewCacheStore(context.Background(), gosqlite.Memory)
+	if err != nil {
+		panic(err)
+	}
+	return cache
 }

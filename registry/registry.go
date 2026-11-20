@@ -16,6 +16,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -57,6 +58,9 @@ type Registry struct {
 	syncMu  sync.Mutex
 	syncs   syncs
 	workers sync.WaitGroup
+
+	// caches are the caches of the volumes' backends
+	caches *caches
 
 	// opener creates the backends which Run mounts, in place of openURL, in
 	// tests, which set it before it runs
@@ -137,6 +141,13 @@ func New(ctx context.Context, opts ...Opt) (*Registry, error) {
 		return nil, err
 	}
 
+	// The caches of the volumes' backends
+	if caches, err := newCaches(self.cacheDir); err != nil {
+		return nil, err
+	} else {
+		self.caches = caches
+	}
+
 	// Register the metrics, with the meter
 	if metrics, err := newMetrics(self.meter, self.worker); err != nil {
 		return nil, err
@@ -191,8 +202,9 @@ func (self *Registry) close() error {
 		}
 	}
 
-	// Return any errors encountered while closing backends
-	return result
+	// The caches, once their backends are closed, which are removed when
+	// they're temporary
+	return errors.Join(result, self.caches.close())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -309,8 +321,11 @@ func (self *Registry) With(ctx context.Context, volume string, fn func(context.C
 
 // new creates a backend from a URL, whose path must be absolute, which is
 // indexed, of its index option, such as index=folders, which is the
-// registry's, so the backend doesn't see it. The caller must close it.
-func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error) {
+// registry's, so the backend doesn't see it, with its cache, of the volume's
+// name, and its identity, as it's stored (see cacheID), or in memory, when
+// it's empty, such as of one which checks its URL. The caller must close it,
+// which releases its cache.
+func (self *Registry) new(ctx context.Context, u *url.URL, id string) (gofiler.Filer, error) {
 	if u == nil {
 		return nil, gofiler.ErrBadParameter.With("url is nil")
 	}
@@ -325,11 +340,15 @@ func (self *Registry) new(ctx context.Context, u *url.URL) (gofiler.Filer, error
 	stripped := *u
 	query.Del(indexer.IndexParam)
 	stripped.RawQuery = query.Encode()
-	b, err := self.newBackend(ctx, &stripped)
+	cache, release, retain, err := self.caches.acquire(ctx, VolumeName(u), id)
 	if err != nil {
 		return nil, err
 	}
-	return self.indexed(VolumeName(u), b, mode)
+	b, err := self.newBackend(ctx, &stripped, cache)
+	if err != nil {
+		return nil, errors.Join(err, release())
+	}
+	return self.indexed(VolumeName(u), &cachedFiler{Filer: b, retain: retain, release: release}, mode)
 }
 
 // indexMode returns what's indexed of a volume, of its options
@@ -358,8 +377,8 @@ func (self *Registry) indexed(volume string, b gofiler.Filer, mode indexer.Mode)
 }
 
 // newBackend creates a backend from a URL, without the registry's options,
-// of the backend of its scheme (see WithBackend)
-func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer, error) {
+// of the backend of its scheme (see WithBackend), with its cache
+func (self *Registry) newBackend(ctx context.Context, u *url.URL, cache store.CacheStore) (gofiler.Filer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	} else if u == nil {
@@ -375,7 +394,7 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 	if !exists {
 		return nil, gofiler.ErrBadParameter.Withf("unsupported scheme: %q", u.Scheme)
 	}
-	return backend.open(ctx, u, self.backendOpts)
+	return backend.open(ctx, u, cache, self.backendOpts)
 }
 
 // register registers the backend with the entry of the volume, unless the

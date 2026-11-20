@@ -20,6 +20,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -34,7 +35,8 @@ import (
 type DriveFiler struct {
 	driveOpt
 	name   string
-	opts   gofiler.Opts // Its credentials, and client options, which a clone is created with
+	opts   gofiler.Opts     // Its credentials, and client options, which a clone is created with
+	cache  store.CacheStore // The volume's cache, which the registry owns
 	tokens *tokens
 	client *httpclient.DriveClient
 
@@ -122,7 +124,10 @@ var driveEndpoint = httpclient.DriveEndpoint
 // are polled for, when it's watched, and how long the files are kept, once
 // they're got, when it isn't, which is DefaultRefreshInterval, or zero not
 // to watch it, nor keep them.
-func NewDriveFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*DriveFiler, error) {
+func NewDriveFiler(ctx context.Context, name string, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*DriveFiler, error) {
+	if cache == nil {
+		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
+	}
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
@@ -131,7 +136,7 @@ func NewDriveFiler(ctx context.Context, name string, params url.Values, opts gof
 		return nil, err
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
-	self := &DriveFiler{driveOpt: opt, name: name, opts: opts}
+	self := &DriveFiler{driveOpt: opt, name: name, opts: opts, cache: cache}
 	self.tree = newCache[*driveTree](time.Now, func() time.Duration { return self.refreshInterval })
 
 	// The user's sign-in, which can read the files, or write them, too
@@ -245,7 +250,7 @@ func (self *DriveFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Fi
 	if credential != self.credential && !patch.Has(schema.OptDescription) {
 		params.Del(schema.OptDescription)
 	}
-	clone, err := NewDriveFiler(ctx, self.name, params, self.opts)
+	clone, err := NewDriveFiler(ctx, self.name, params, self.cache, self.opts)
 	if err != nil {
 		return nil, err
 	}

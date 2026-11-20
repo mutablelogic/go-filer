@@ -15,6 +15,7 @@ import (
 	google "github.com/mutablelogic/go-filer/backend/google"
 	s3 "github.com/mutablelogic/go-filer/backend/s3"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -28,9 +29,11 @@ import (
 // credentials, which expands the placeholders of credentials in the URL,
 // such as ${S3_SECRET}, and the client options of a backend which calls
 // other services over HTTP. The volume's name is the URL's name option, or
-// its host. A backend which holds resources implements io.Closer, which the
-// registry calls.
-type Backend func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error)
+// its host. The cache is the volume's own, which the backend uses, or not,
+// and which the registry closes, and deletes, once the volume's URL changes,
+// or it's deleted, so the backend doesn't. A backend which holds resources
+// implements io.Closer, which the registry calls.
+type Backend func(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error)
 
 // plugin is a backend, with what it is
 type plugin struct {
@@ -103,7 +106,7 @@ func WithSchemes(schemes ...string) Opt {
 // whose path is absolute, so a URL without one isn't the directory the
 // registry is running in. On Windows, it's /C:/media, which is converted to
 // C:/media.
-func openFile(_ context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+func openFile(_ context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	if !types.IsIdentifier(u.Host) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", u.Host)
 	}
@@ -118,44 +121,44 @@ func openFile(_ context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, 
 }
 
 // openS3 creates the backend of a bucket, of s3://<bucket>/<prefix>
-func openS3(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+func openS3(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	return s3.New(ctx, u, opts)
 }
 
 // openGTasks creates the backend of the tasks of a Google account, of its
 // sign-in, of the provider of credentials, which is a SignInError, with how
 // to sign in, when it's needed
-func openGTasks(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+func openGTasks(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	if u.Path != "" && u.Path != "/" {
 		return nil, gofiler.ErrBadParameter.Withf("a volume of Google Tasks has no path: %q", u.Path)
 	}
-	return google.NewTaskFiler(ctx, u.Host, u.Query(), opts)
+	return google.NewTaskFiler(ctx, u.Host, u.Query(), cache, opts)
 }
 
 // openGContacts creates the backend of the contacts of a Google account, of
 // its sign-in, as for tasks
-func openGContacts(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+func openGContacts(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	if u.Path != "" && u.Path != "/" {
 		return nil, gofiler.ErrBadParameter.Withf("a volume of Google Contacts has no path: %q", u.Path)
 	}
-	return google.NewContactFiler(ctx, u.Host, u.Query(), opts)
+	return google.NewContactFiler(ctx, u.Host, u.Query(), cache, opts)
 }
 
 // openGCalendar creates the backend of the events of a Google account's
 // calendars, of its sign-in, as for tasks, whose sync tokens are stored with
 // its credentials
-func openGCalendar(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+func openGCalendar(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	if u.Path != "" && u.Path != "/" {
 		return nil, gofiler.ErrBadParameter.Withf("a volume of Google Calendar has no path: %q", u.Path)
 	}
-	return google.NewCalendarFiler(ctx, u.Host, u.Query(), opts)
+	return google.NewCalendarFiler(ctx, u.Host, u.Query(), cache, opts)
 }
 
 // openGDrive creates the backend of the files of a Google account's My
 // Drive, of its sign-in, as for tasks
-func openGDrive(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+func openGDrive(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	if u.Path != "" && u.Path != "/" {
 		return nil, gofiler.ErrBadParameter.Withf("a volume of Google Drive has no path: %q", u.Path)
 	}
-	return google.NewDriveFiler(ctx, u.Host, u.Query(), opts)
+	return google.NewDriveFiler(ctx, u.Host, u.Query(), cache, opts)
 }

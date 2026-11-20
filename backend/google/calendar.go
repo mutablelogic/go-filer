@@ -22,6 +22,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	ical "github.com/mutablelogic/go-metadata/pkg/ical"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -40,7 +41,8 @@ import (
 type CalendarFiler struct {
 	calendarOpt
 	name   string
-	opts   gofiler.Opts // Its credentials, and client options, which a clone is created with
+	opts   gofiler.Opts     // Its credentials, and client options, which a clone is created with
+	cache  store.CacheStore // The volume's cache, which the registry owns
 	tokens *tokens
 	client *httpclient.CalendarClient
 
@@ -178,7 +180,10 @@ var (
 // credential, as a task filer's, and window, the time of events which are
 // listed, before today, and after it, such as 30d, 52w, or 720h, which is
 // DefaultCalendarWindow, of whole days.
-func NewCalendarFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*CalendarFiler, error) {
+func NewCalendarFiler(ctx context.Context, name string, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*CalendarFiler, error) {
+	if cache == nil {
+		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
+	}
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
@@ -187,7 +192,7 @@ func NewCalendarFiler(ctx context.Context, name string, params url.Values, opts 
 		return nil, err
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
-	self := &CalendarFiler{calendarOpt: opt, name: name, opts: opts, now: time.Now, writing: make(chan struct{}, 1)}
+	self := &CalendarFiler{calendarOpt: opt, name: name, opts: opts, cache: cache, now: time.Now, writing: make(chan struct{}, 1)}
 	ttl := func() time.Duration { return self.refreshInterval }
 	self.calendarList = newCache[[]httpclient.Calendar](func() time.Time { return self.now() }, ttl)
 	self.listings = newCache[[]calendarEvent](func() time.Time { return self.now() }, ttl)
@@ -311,7 +316,7 @@ func (self *CalendarFiler) Clone(ctx context.Context, patch url.Values) (gofiler
 	if credential != self.credential && !patch.Has(schema.OptDescription) {
 		params.Del(schema.OptDescription)
 	}
-	clone, err := NewCalendarFiler(ctx, self.name, params, self.opts)
+	clone, err := NewCalendarFiler(ctx, self.name, params, self.cache, self.opts)
 	if err != nil {
 		return nil, err
 	}
