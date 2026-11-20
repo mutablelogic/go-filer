@@ -13,7 +13,7 @@ import type { NotificationController } from '@mutablelogic/go-server/notificatio
 import type { Route, Router } from '@mutablelogic/go-server/router';
 import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
-import { baseName, objectTitle, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeLabel, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -81,7 +81,7 @@ export class VolumesElement extends LitElement {
                 .icon=${VolumesIcon}></gs-page-header>
             ${volumes ? html`<ul class="gf-volumes">${repeat(volumes, (volume) => volume.name, (volume) => html`
                 <li>
-                    <a href=${volumeHref(volume.name)}>${volume.name}</a>
+                    <a href=${volumeHref(volume.name)} title=${volumeTitle(volume, this.controller?.backends)}>${volumeLabel(volume)}</a>
                     <span title=${volume.url}>${volume.url}</span>
                     ${volumeState(volume)}
                 </li>
@@ -185,7 +185,7 @@ export class VolumeElement extends LitElement {
         const folder = path !== '/' ? this.tree?.folder(name, path) : undefined;
         const header = html`
             <gs-page-header
-                heading=${folder ? objectTitle(folder) : baseName(path) || name}
+                heading=${folder ? objectTitle(folder) : baseName(path) || (volume ? volumeLabel(volume) : name)}
                 subtitle=${`${name}${path === '/' ? '' : path}`}
                 .icon=${path === '/' ? VolumesIcon : FolderIcon}></gs-page-header>
         `;
@@ -199,6 +199,7 @@ export class VolumeElement extends LitElement {
             ${volume.error ? html`<p class="gf-volume-error">${volume.error}</p>` : nothing}
             <div class="gf-volume">
                 <gf-file-tree class="gf-volume-tree" .controller=${this.tree} .changes=${this.changes} volume=${name}
+                    label=${volumeLabel(volume)} .labelTitle=${volumeTitle(volume, this.controller?.backends)}
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
                 <div class="gf-volume-view"></div>
@@ -268,7 +269,7 @@ export function volumesModule(app: VolumesApp, section = 'Volumes'): VolumesCont
     volumePage.append(volumeElement);
 
     // The sidebar, of the volumes
-    const setPages = (volumes: readonly Volume[]) => app.nav.setSection(section, navPages(volumes));
+    const setPages = (volumes: readonly Volume[]) => app.nav.setSection(section, navPages(volumes, controller.backends));
     setPages([]);
     controller.subscribe(setPages);
 
@@ -296,11 +297,15 @@ export function navPage(route: Route): string {
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
 
-// navPages returns the sidebar's pages: Volumes, and each volume beneath it
-function navPages(volumes: readonly Volume[]): NavPage[] {
+// navPages returns the sidebar's pages: Volumes, and each volume beneath it,
+// of its label, which is cut short, when it's long, and its title
+function navPages(volumes: readonly Volume[], backends?: readonly Backend[]): NavPage[] {
     return [
         { id: VolumesRoute, label: 'Volumes', href: '#' + VolumesRoute },
-        ...volumes.map((volume) => ({ id: `${VolumeRoute}/${volume.name}`, label: volume.name, href: volumeHref(volume.name), parent: VolumesRoute })),
+        ...volumes.map((volume) => ({
+            id: `${VolumeRoute}/${volume.name}`, label: volumeLabel(volume), title: volumeTitle(volume, backends),
+            href: volumeHref(volume.name), parent: VolumesRoute,
+        })),
     ];
 }
 

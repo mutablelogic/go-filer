@@ -235,3 +235,19 @@ test('VolumesController', async (t) => {
         assert.equal(errors.length, 1);
     });
 });
+
+test('volume labels', async () => {
+    const { volumeBackend, volumeLabel, volumeTitle } = await import('../src/filer/schema.ts');
+    const backends = [{ scheme: 'gdrive', description: 'Google Drive' }];
+    const drive = { name: 'drive', url: 'gdrive://drive?description=me%40example.com&index=folders', enabled: true, mounted: true };
+    assert.equal(volumeLabel(drive), 'me@example.com');
+    assert.equal(volumeBackend(drive, backends), 'Google Drive');
+    assert.equal(volumeTitle(drive, backends), 'me@example.com\ndrive · Google Drive');
+
+    // Without a description, it's its name, and a backend which isn't known
+    // is its scheme
+    const media = { name: 'media', url: 'file://media/mnt/media', enabled: true, mounted: true };
+    assert.equal(volumeLabel(media), 'media');
+    assert.equal(volumeTitle(media, backends), 'media\nmedia · file');
+    assert.equal(volumeLabel({ ...media, url: 'not a url' }), 'media');
+});

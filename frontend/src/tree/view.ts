@@ -45,6 +45,8 @@ export class FileTreeElement extends LitElement {
         controller: { attribute: false },
         changes: { attribute: false },
         volume: { type: String },
+        label: { type: String },
+        labelTitle: { attribute: false },
         selected: { attribute: false },
         version: { state: true },
     };
@@ -54,8 +56,12 @@ export class FileTreeElement extends LitElement {
     declare controller?: TreeController;
     declare changes?: ChangesController;
 
-    // volume is the name of the volume whose folders are shown
+    // volume is the name of the volume whose folders are shown, label its
+    // root's label, which is its name, by default, and labelTitle what's
+    // shown when it's pointed at
     declare volume?: string;
+    declare label?: string;
+    declare labelTitle?: string;
 
     // selected is the folder which is selected
     declare selected?: TreeSelection;
@@ -125,7 +131,7 @@ export class FileTreeElement extends LitElement {
             <cds-tree-view label=${`Folders of ${volume}`} hide-label size="sm"
                 @cds-tree-node-toggled=${(event: CustomEvent<{ expanded: boolean }>) => this.toggled(event)}
                 @cds-tree-node-selected=${(event: Event) => this.chosen(event)}>
-                ${this.nodeView(volume, '/', volume, Icons.volume)}
+                ${this.nodeView(volume, '/', this.label || volume, Icons.volume, undefined, this.labelTitle)}
             </cds-tree-view>
         `;
     }
@@ -134,14 +140,14 @@ export class FileTreeElement extends LitElement {
     // One which may have subfolders, but whose aren't loaded, has a node
     // which says they're loading, so it can be expanded; one which has none
     // has no caret.
-    private nodeView(volume: string, path: string, label: string, icon: unknown, folder?: FilerObject): TemplateResult {
+    private nodeView(volume: string, path: string, label: string, icon: unknown, folder?: FilerObject, title?: string): TemplateResult {
         const controller = this.controller!;
         const folders = controller.folders(volume, path);
         const loaded = folders?.state === 'loaded' ? folders : undefined;
         const leaf = (folder !== undefined && subfolderCount(folder) === 0) || loaded?.folders.length === 0;
         const selected = this.selected?.volume === volume && this.selected.path === path;
         return html`
-            <cds-tree-node label=${label} data-volume=${volume} data-path=${path} .isExpanded=${!leaf && controller.isExpanded(volume, path)} .selected=${selected}>
+            <cds-tree-node label=${label} title=${title ?? nothing} data-volume=${volume} data-path=${path} .isExpanded=${!leaf && controller.isExpanded(volume, path)} .selected=${selected}>
                 ${icon}
                 ${leaf ? nothing : loaded ? html`
                     ${repeat(loaded.folders, (child) => child.path, (child) => this.nodeView(volume, child.path, objectTitle(child), Icons.folder, child))}

@@ -121,3 +121,37 @@ export function parentPath(path: string): string {
     const i = trimmed.lastIndexOf('/');
     return i <= 0 ? '/' : trimmed.slice(0, i);
 }
+
+// volumeDescription returns what a volume is, of its URL's description, such
+// as the folder it's of, or the account of a Google volume, or ""
+export function volumeDescription(volume: Volume): string {
+    try {
+        return new URL(volume.url).searchParams.get('description')?.trim() ?? '';
+    } catch {
+        return '';
+    }
+}
+
+// volumeLabel returns a volume's label: its description, or its name
+export function volumeLabel(volume: Volume): string {
+    return volumeDescription(volume) || volume.name;
+}
+
+// volumeBackend returns what a volume's backend is, such as Google Drive,
+// of the backends, or its scheme
+export function volumeBackend(volume: Volume, backends: readonly Backend[] = []): string {
+    let scheme = '';
+    try {
+        scheme = new URL(volume.url).protocol.replace(/:$/, '');
+    } catch {
+        return '';
+    }
+    return backends.find((backend) => backend.scheme === scheme)?.description || scheme;
+}
+
+// volumeTitle returns a volume's title, which is shown when it's pointed at:
+// its whole label, and its name and backend
+export function volumeTitle(volume: Volume, backends: readonly Backend[] = []): string {
+    const backend = volumeBackend(volume, backends);
+    return `${volumeLabel(volume)}\n${volume.name}${backend ? ` · ${backend}` : ''}`;
+}
