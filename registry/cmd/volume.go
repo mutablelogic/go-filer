@@ -16,6 +16,7 @@ import (
 	credentialclient "github.com/mutablelogic/go-auth/credential/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/backend/google"
+	rss "github.com/mutablelogic/go-filer/backend/rss"
 	registry "github.com/mutablelogic/go-filer/registry"
 	httpclient "github.com/mutablelogic/go-filer/registry/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
@@ -39,6 +40,7 @@ type VolumeCommands struct {
 	VolumeCreateGTasks    VolumeCreateGTasksCmd    `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGContacts VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts" help:"Create a volume of a Google account's contacts, as vCards, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGCalendar VolumeCreateGCalendarCmd `cmd:"" name:"volume-create-gcalendar" help:"Create a volume of a Google account's calendars' events, as iCalendars, of the days before today and after it, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
+	VolumeCreateRSS       VolumeCreateRSSCmd       `cmd:"" name:"volume-create-rss" help:"Create a volume of an RSS feed's items, read-only, of its URL." group:"VOLUME"`
 	VolumeUpdate          VolumeUpdateCmd          `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, and whether it's enabled, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
 	VolumeMount           VolumeMountCmd           `cmd:"" name:"volume-mount" help:"Enable a volume by its name, so the server mounts it, and does when it starts, signing in when its user needs to." group:"VOLUME"`
 	VolumeUnmount         VolumeUnmountCmd         `cmd:"" name:"volume-unmount" help:"Disable a volume by its name, so the server unmounts it, keeping it, and its index." group:"VOLUME"`
@@ -132,6 +134,14 @@ type VolumeCreateGCalendarCmd struct {
 	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
 	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=metadata, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
 	Description     string         `name:"description" help:"What the volume is, such as \"Work calendar\", which the server sets, of its backend, when it isn't set."`
+}
+
+type VolumeCreateRSSCmd struct {
+	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Feed            string         `arg:"" name:"url" help:"URL of the feed, which is http or https."`
+	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How long a feed which is fetched is kept, which is 5m, unless it's set."`
+	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=metadata, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description     string         `name:"description" help:"What the volume is, such as \"News\", which the server sets, of the feed's title, when it isn't set."`
 }
 
 type VolumeCreateGTasksCmd struct {
@@ -249,6 +259,14 @@ func (cmd *VolumeCreateGCalendarCmd) Run(ctx server.Cmd) error {
 		return err
 	}
 	return createSignedIn(ctx, "filer.VolumeCreateGCalendarCmd", volume, signInClient, cmd.NoBrowser)
+}
+
+func (cmd *VolumeCreateRSSCmd) Run(ctx server.Cmd) error {
+	volume, err := cmd.volume()
+	if err != nil {
+		return err
+	}
+	return createVolume(ctx, "filer.VolumeCreateRSSCmd", volume)
 }
 
 func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
@@ -670,6 +688,27 @@ func (cmd *VolumeCreateGCalendarCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, err
 	}
 	u := url.URL{Scheme: google.CalendarScheme, Host: cmd.Name, RawQuery: query.Encode()}
+	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
+}
+
+func (cmd *VolumeCreateRSSCmd) volume() (schema.Volume, error) {
+	if !types.IsIdentifier(cmd.Name) {
+		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
+	}
+	if u, err := url.Parse(cmd.Feed); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return schema.Volume{}, gofiler.ErrBadParameter.Withf("the url of a feed is http or https: %q", cmd.Feed)
+	}
+	query := url.Values{"url": {cmd.Feed}}
+	if cmd.RefreshInterval != nil {
+		query.Set("refresh_interval", cmd.RefreshInterval.String())
+	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
+	}
+	if err := setOpts(query, cmd.Opt); err != nil {
+		return schema.Volume{}, err
+	}
+	u := url.URL{Scheme: rss.Scheme, Host: cmd.Name, RawQuery: query.Encode()}
 	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
 }
 

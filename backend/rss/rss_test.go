@@ -171,9 +171,9 @@ func Test_Feed(t *testing.T) {
 	assert.ErrorIs(t, f.WatchObjects(context.Background(), make(chan schema.Event)), gofiler.ErrNotImplemented)
 
 	// A clone has its options, changed
-	clone, err := f.Clone(context.Background(), url.Values{"refresh-interval": {"1m"}})
+	clone, err := f.Clone(context.Background(), url.Values{"refresh_interval": {"1m"}})
 	require.NoError(t, err)
-	assert.Equal(t, "1m0s", clone.URL().Query().Get("refresh-interval"))
+	assert.Equal(t, "1m0s", clone.URL().Query().Get("refresh_interval"))
 	assert.Equal(t, "RSS feed The Example Podcast", clone.URL().Query().Get("description"))
 }
 
@@ -186,7 +186,7 @@ func Test_FeedErrors(t *testing.T) {
 	for _, query := range []url.Values{
 		{},
 		{"url": {"ftp://example.com/feed"}},
-		{"url": {server.URL}, "refresh-interval": {"soon"}},
+		{"url": {server.URL}, "refresh_interval": {"soon"}},
 		{"url": {server.URL}, "readonly": {"false"}},
 		{"url": {server.URL}, "unknown": {"1"}},
 	} {

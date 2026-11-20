@@ -486,6 +486,38 @@ func Test_VolumeCreateGCalendarCmd(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func Test_VolumeCreateRSSCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateRSS VolumeCreateRSSCmd `cmd:"" name:"volume-create-rss"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		_, err := parser.Parse(append([]string{"volume-create-rss"}, args...))
+		if err != nil {
+			return "", err
+		}
+		v, err := cli.VolumeCreateRSS.volume()
+		return v.URL, err
+	}
+
+	// A volume of a feed, of its URL, and its options
+	u, err := volume("news", "https://example.com/feed.xml?format=rss")
+	require.NoError(t, err)
+	assert.Equal(t, "rss://news?url=https%3A%2F%2Fexample.com%2Ffeed.xml%3Fformat%3Drss", u)
+	u, err = volume("podcast", "https://example.com/podcast", "--refresh-interval", "1h", "--description", "A podcast", "-o", "index=metadata")
+	require.NoError(t, err)
+	assert.Equal(t, "rss://podcast?description=A+podcast&index=metadata&refresh_interval=1h0m0s&url=https%3A%2F%2Fexample.com%2Fpodcast", u)
+
+	// A name which isn't an identifier, or a URL which isn't a feed's
+	_, err = volume("not-a-name!", "https://example.com/feed.xml")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	for _, feed := range []string{"ftp://example.com/feed", "example.com/feed", "https://"} {
+		_, err = volume("news", feed)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, feed)
+	}
+}
+
 // A volume of a backend which the server doesn't run isn't created, with
 // those it does run, before it's created, such as before signing in
 func Test_CheckBackend(t *testing.T) {

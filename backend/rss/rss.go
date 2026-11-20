@@ -61,7 +61,7 @@ const (
 	Description = "RSS feed"
 
 	paramURL      = "url"
-	paramRefresh  = "refresh-interval"
+	paramRefresh  = "refresh_interval"
 	paramReadonly = "readonly"
 
 	// DefaultRefresh is how long a feed which is fetched is kept, so the
@@ -93,7 +93,7 @@ func Open(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, er
 }
 
 // New creates the backend of a feed, of the options: its url, its
-// refresh-interval, and its description
+// refresh_interval, and its description
 func New(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*Filer, error) {
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
