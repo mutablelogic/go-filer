@@ -49,7 +49,7 @@
     "peerDependencies": {
         "@carbon/icons": "^11.92.0",
         "@carbon/web-components": "^2.67.0",
-        "@mutablelogic/go-server": "^1.8.23",
+        "@mutablelogic/go-server": "^1.8.24",
         "lit": "^3.3.3"
     },
     "devDependencies": {
@@ -58,7 +58,7 @@
         "@carbon/web-components": "^2.67.0",
         "@ibm/plex-mono": "^2.5.0",
         "@ibm/plex-sans": "^1.1.0",
-        "@mutablelogic/go-server": "^1.8.23",
+        "@mutablelogic/go-server": "^1.8.24",
         "@types/node": "^24.19.2",
         "esbuild": "^0.25.12",
         "lit": "^3.3.3",

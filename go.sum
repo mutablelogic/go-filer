@@ -201,8 +201,8 @@ github.com/mutablelogic/go-pg v1.5.1 h1:a7fbAvrm9t7OO6suxKfZ3A8ui3xxMhQTUi8cQzFK
 github.com/mutablelogic/go-pg v1.5.1/go.mod h1:5X2kRfnnvBzwNhZysUr4JTjwV/OwGXNumiRbDEeMzlM=
 github.com/mutablelogic/go-rss v1.0.0 h1:ipKjYd9dvKi4OkKHsVFIRfJ8a6cr3K4XzE6dsWBV9SU=
 github.com/mutablelogic/go-rss v1.0.0/go.mod h1:2Q4ypIXZ3/PLsgr/QAmK0jnubvASpMTwFNtsp6sTSqU=
-github.com/mutablelogic/go-server v1.8.23 h1:6yrpkcgmG3RoqLsNStI+ydG134X1Vbq+rB9Aa8uopus=
-github.com/mutablelogic/go-server v1.8.23/go.mod h1:juCTtb6sKtGgvf0rOEs3cIM+agKJrZ5lwJZYjefHZPo=
+github.com/mutablelogic/go-server v1.8.24 h1:P+0jI952H1kIS3VRyzR6Gt1sHX7f80bbpWLPYWcj4S4=
+github.com/mutablelogic/go-server v1.8.24/go.mod h1:juCTtb6sKtGgvf0rOEs3cIM+agKJrZ5lwJZYjefHZPo=
 github.com/mutablelogic/go-sqlite v1.1.3 h1:b9c8za+KVUA/gtsepSnKp6YCzWzaINSfYoVQAXx0hUo=
 github.com/mutablelogic/go-sqlite v1.1.3/go.mod h1:tEYzRuNFAX7uiwyr1C+ApaRXUPOFk9V/moCgN8RYWq8=
 github.com/mutablelogic/go-tokenizer v0.0.3 h1:6oaa80TaAl+nVpd+M9QhlJPbP7y5/thq4d0dKjreiLs=
