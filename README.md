@@ -167,7 +167,7 @@ A volume of an RSS feed's items, read-only. It's an example of a pluggable backe
 * **URL:** `rss://<name>?url=<feed>`. `filer volume-create-rss news https://example.com/feed.xml -o index=metadata` creates one, with `--refresh-interval` and `--description`.
 * **Layout:** a folder of each year and month, of the day each item was published, in UTC: `/2026/2026-11/20-<title>.html`. Items without a date are in `/undated/`. Items of the same title and day are numbered, in the order of their guids.
 * **Content:** each item is an HTML page of its title, author, date, link, description and enclosure.
-* **Metadata:** `dc:title`, `dc:creator`, `dc:date` and `dc:identifier` (its link), and `rss:guid` and `rss:feed`. A podcast's item also has `rss:enclosure` (its URL, type and length), `rss:episode`, `rss:season` and `rss:duration` in seconds.
+* **Metadata:** `dc:title`, `dc:creator`, `dc:date` and `dc:identifier` (its guid, or its link when it has none), and `rss:link` and `rss:feed`. A podcast's item also has `rss:enclosure` (its URL, type and length), `rss:episode`, `rss:season` and `rss:duration` in seconds.
 * **Options:**
   * `refresh_interval`: how long a fetched feed is kept, `5m` by default.
   * `description`: by default, the feed's title.

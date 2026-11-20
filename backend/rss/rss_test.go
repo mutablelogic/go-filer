@@ -132,8 +132,9 @@ func Test_Feed(t *testing.T) {
 	}
 	assert.Equal(t, `"Episode One: Hello, World!"`, meta["dc:title"])
 	assert.Equal(t, `"ada@example.com (Ada)"`, meta["dc:creator"])
-	assert.Equal(t, `"https://example.com/1"`, meta["dc:identifier"])
-	assert.Equal(t, `"ep-1"`, meta["rss:guid"])
+	assert.Equal(t, `"ep-1"`, meta["dc:identifier"], "it's the guid")
+	assert.Equal(t, `"https://example.com/1"`, meta["rss:link"])
+	assert.NotContains(t, meta, "rss:guid")
 	assert.Equal(t, `"The Example Podcast"`, meta["rss:feed"])
 	assert.Equal(t, `"1"`, meta["rss:episode"])
 	assert.Equal(t, `3723`, meta["rss:duration"])
