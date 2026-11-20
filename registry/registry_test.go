@@ -1205,8 +1205,9 @@ func Test_Registry_WithBackend(t *testing.T) {
 }
 
 // A stored volume whose backend isn't registered, such as one of a backend
-// a server was built with, which this one wasn't, is offline, with why, and
-// can be unmounted, and deleted, and is mounted once its backend is
+// a server was built with, which this one wasn't, is offline, with why, of
+// its objects too, and can be unmounted, and mounted, and deleted, and is
+// mounted once its backend is
 func Test_Registry_BackendGone(t *testing.T) {
 	dir := t.TempDir()
 	s := newStore(t)
@@ -1226,12 +1227,30 @@ func Test_Registry_BackendGone(t *testing.T) {
 	assert.False(t, v.Mounted)
 	assert.Contains(t, v.Error, "unsupported scheme")
 	assert.Equal(t, "example://things", v.URL, "its URL is kept")
+	_, err = r.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "things", Path: "/"}})
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.ErrorContains(t, err, "offline")
+	_, err = r.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Name: "things", Path: "/"}})
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
 
-	// It can be unmounted, and mounted again, which it can't be, still
+	// It can be unmounted, which its objects say, and mounted again, which
+	// it is, offline, without its backend
 	_, err = r.UpdateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: false})
 	require.NoError(t, err, "it's unmounted, without its backend")
+	require.Eventually(t, func() bool {
+		_, err := r.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "things", Path: "/"}})
+		return errors.Is(err, gofiler.ErrServiceUnavailable) && strings.Contains(err.Error(), "unmounted")
+	}, 5*time.Second, time.Millisecond)
 	_, err = r.UpdateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: true})
-	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	require.NoError(t, err, "it's mounted, without its backend")
+	require.Eventually(t, func() bool {
+		v, err := r.GetVolume(context.Background(), "things")
+		return err == nil && !v.Enabled && strings.Contains(v.Error, "unsupported scheme")
+	}, 5*time.Second, time.Millisecond, "it's offline")
+
+	// A volume which doesn't exist isn't found
+	_, err = r.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Name: "missing", Path: "/"}})
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	r.close()
 
 	// Once its backend is registered, it's mounted
