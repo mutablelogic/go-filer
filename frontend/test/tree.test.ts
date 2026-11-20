@@ -336,3 +336,31 @@ test("a bucket's folders, which are created, and deleted, with their objects", a
     await settle();
     assert.deepEqual(listed, []);
 });
+
+test('TreeController.reveal of a folder beyond the first page', async () => {
+    const many = Array.from({ length: 5 }, (_, i) => `/f${i}`);
+    const { client, listed } = fakeServer({ media: { '/': many, '/f4': ['/f4/a', '/f4/b', '/f4/c'], '/f4/c': [] } });
+    const tree = new TreeController(client, { pageLimit: 2 });
+
+    // Its folder, and the folder it's in, are loaded, until they have it
+    await tree.reveal('media', '/f4/c');
+    const root = tree.folders('media', '/');
+    const f4 = tree.folders('media', '/f4');
+    assert.ok(root?.state === 'loaded' && root.folders.some((f) => f.path === '/f4'));
+    assert.ok(f4?.state === 'loaded' && f4.folders.some((f) => f.path === '/f4/c'));
+    assert.ok(tree.isExpanded('media', '/f4'));
+    assert.ok(!tree.isExpanded('media', '/f4/c'));
+    assert.deepEqual(listed, ['media:/', 'media:/', 'media:/', 'media:/f4', 'media:/f4']);
+
+    // One which isn't there loads them all, and stops
+    listed.length = 0;
+    await tree.reveal('media', '/missing');
+    assert.deepEqual(listed, []);
+
+    // A load which is in progress is waited for
+    const other = new TreeController(fakeServer({ media: { '/': many, '/f4': [] } }).client, { pageLimit: 2 });
+    void other.expand('media', '/');
+    await other.reveal('media', '/f4');
+    const folders = other.folders('media', '/');
+    assert.ok(folders?.state === 'loaded' && folders.folders.some((f) => f.path === '/f4'));
+});

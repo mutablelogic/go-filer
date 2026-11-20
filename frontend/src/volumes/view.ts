@@ -147,7 +147,7 @@ export class VolumeElement extends LitElement {
             this.volume = this.name ? this.controller?.volume(this.name) : undefined;
         }
         if ((changed.has('name') || changed.has('path')) && this.name && this.path) {
-            void this.tree?.reveal(this.name, this.path);
+            void this.reveal();
         }
         if (changed.has('name') || changed.has('path') || (changed as Map<string, unknown>).has('volume')) {
             this.openFolder();
@@ -170,7 +170,7 @@ export class VolumeElement extends LitElement {
                     }
                 }
                 if (this.volume?.mounted && !wasMounted && this.name && this.path) {
-                    void this.tree?.reveal(this.name, this.path);
+                    void this.reveal();
                 }
             }));
         }
@@ -180,6 +180,22 @@ export class VolumeElement extends LitElement {
         const folder = this.folder;
         if (folder && this.changes) {
             this.unsubscribe.push(this.changes.subscribe({ schema: ObjectChangeSchema }, (change) => folder.change(change)));
+        }
+    }
+
+    // reveal shows the folder which is chosen in the tree, and scrolls to it
+    private async reveal() {
+        const name = this.name;
+        const path = this.path;
+        if (!name || !path || !this.tree) {
+            return;
+        }
+        await this.tree.reveal(name, path);
+        await this.updateComplete;
+        const tree = this.querySelector('gf-file-tree');
+        await tree?.updateComplete;
+        if (name === this.name && path === this.path) {
+            tree?.querySelector(`cds-tree-node[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'nearest' });
         }
     }
 
