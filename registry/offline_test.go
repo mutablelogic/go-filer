@@ -205,6 +205,9 @@ func Test_Registry_OfflineLogs(t *testing.T) {
 	// A volume which is offline, and can't be opened again, of the same
 	// reason, is logged as a warning once, rather than of each attempt,
 	// which is logged for debugging, until it's mounted again
+	// The directory is made first, so it's removed after the registry is
+	// closed, as cleanups run in reverse
+	dir := t.TempDir()
 	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
@@ -220,7 +223,7 @@ func Test_Registry_OfflineLogs(t *testing.T) {
 	})
 	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
 
-	f := addFailing(t, r, t.TempDir(), "down", gofiler.ErrServiceUnavailable.With("server is down"))
+	f := addFailing(t, r, dir, "down", gofiler.ErrServiceUnavailable.With("server is down"))
 	require.Eventually(t, func() bool { return f.opens.Load() > 4 }, 5*time.Second, time.Millisecond)
 	assert.Equal(t, 1, logs.count("level=WARN", "watching a volume failed"))
 	assert.Zero(t, logs.count("level=WARN", "can't be mounted"), "it's of the reason it's offline")
@@ -236,5 +239,5 @@ func Test_Registry_OfflineLogs(t *testing.T) {
 	// And it's mounted again, which is logged
 	f.failWith(nil)
 	require.Eventually(t, func() bool { return online(r, "down") }, 5*time.Second, time.Millisecond)
-	assert.GreaterOrEqual(t, logs.count("level=INFO", "mounted volume", "volume=down"), 2)
+	require.Eventually(t, func() bool { return logs.count("level=INFO", "mounted volume", "volume=down") >= 2 }, 5*time.Second, time.Millisecond)
 }
