@@ -43,7 +43,7 @@ type fakePeople struct {
 	fullSyncs int
 	expired   bool
 	synced    []string // The tokens which are synced of
-	photos    int // How many times a photo is got
+	photos    int      // How many times a photo is got
 }
 
 func newFakePeople(t *testing.T) (*fakePeople, string) {
@@ -340,7 +340,8 @@ func Test_ContactObjects(t *testing.T) {
 	root, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
 	require.NoError(t, err)
 	assert.True(t, root.IsDir)
-	assert.Contains(t, root.Meta, schema.Meta{Namespace: schema.FolderNamespace, Key: "children-count", Value: []byte(`3`)})
+	assert.Contains(t, root.Meta, schema.Meta{Namespace: schema.FolderNamespace, Key: schema.FolderObjectCount, Value: []byte(`3`)})
+	assert.Contains(t, root.Meta, schema.Meta{Namespace: schema.FolderNamespace, Key: schema.FolderSubfolderCount, Value: []byte(`0`)})
 	assert.Equal(t, []string{"/c1.vcf", "/c2.vcf", "/c4.vcf"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}))
 	assert.Equal(t, []string{"/c1.vcf", "/c2.vcf", "/c4.vcf"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}))
 	assert.Equal(t, []string{"/c4.vcf"}, list(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, StartAfter: "/c2.vcf"}))

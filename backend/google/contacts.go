@@ -359,7 +359,7 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 			}
 		}
 		root := &schema.Object{ObjectKey: schema.ObjectKey{Name: self.name, Path: "/"}, ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType}, ObjectAttr: schema.ObjectAttr{IsDir: true}}
-		root.Meta = append(root.Meta, schema.FolderMeta(count)...)
+		root.Meta = append(root.Meta, schema.FolderMeta(count, 0)...)
 		return root, nil, nil
 	}
 	person, err := self.person(ctx, id)

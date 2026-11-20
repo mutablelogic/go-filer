@@ -164,15 +164,16 @@ func Test_GetObjectChildren(t *testing.T) {
 		return result
 	}
 
-	// A directory has the count of the objects it lists: its file, its
-	// directory, and its package, which is a file, but not a name it skips
-	if got := children("/music"); got["children"] != "true" || got["children-count"] != "3" {
+	// A directory has how many files, and subfolders, it lists: its file,
+	// and its package, which is a file, and its directory, but not a name it
+	// skips
+	if got := children("/music"); got["object-count"] != "2" || got["subfolder-count"] != "1" {
 		t.Errorf("music: %v", got)
 	}
-	if got := children("/"); got["children-count"] != "2" {
+	if got := children("/"); got["object-count"] != "0" || got["subfolder-count"] != "2" {
 		t.Errorf("root: %v", got)
 	}
-	if got := children("/empty"); got["children"] != "false" || got["children-count"] != "0" {
+	if got := children("/empty"); got["object-count"] != "0" || got["subfolder-count"] != "0" {
 		t.Errorf("empty: %v", got)
 	}
 

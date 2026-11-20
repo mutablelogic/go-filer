@@ -106,7 +106,7 @@ An unknown option, an expression which doesn't compile, or a `readonly` which is
 
 `google.NewTaskFiler` returns a filer of a person's Google Tasks:
 
-* **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata, as `task:title` and `dc:title`, and `folder:children` and `folder:children-count`, whether they have tasks, and how many. The API doesn't count them, so they're read: one request a list, for each 100 tasks.
+* **Lists** are directories, named by their ids, such as `/MTA3NjI`, with their titles as metadata, as `task:title` and `dc:title`, and `folder:object-count`, how many tasks they have, with `folder:subfolder-count` of 0. The API doesn't count them, so they're read: one request a list, for each 100 tasks.
 * **Tasks** are iCalendar files, `text/calendar; component=VTODO`, named by their ids, such as `/MTA3NjI/Q2xvdWQ.ics`, so a path stays the same when a task is renamed.
 * **Content:** one `VTODO`, which calendar and task apps can import: the task's id as its `UID`, its title, notes, due date, status, completion, parent as `RELATED-TO`, URL, and update time.
 * **Metadata:** only what iCalendar can't have, as what it has is go-metadata's, of it, when the volume is `index=metadata`, and `dc:title`, so a task has its title when it isn't: `task:hidden`, of a completed task cleared from its list, and `task:links`, such as to the email a task was created from. The user's default list's folder has `task:default`, of `true`.
@@ -275,7 +275,7 @@ A `store.CacheStore` keeps what a volume's backend gets from a service, by key, 
 * **Rescans** are coalesced, a rescan of a folder replacing those beneath it, and a folder is rescanned at most once a minute, by default (`WithRescanMinInterval`). A rescan which is sooner is deferred, not dropped.
 * **Backends which can't be watched**, such as a bucket without SeaweedFS, are scanned again at the rescan interval, 15 minutes by default (`WithRescanInterval`).
 * **A watch which fails** is watched, and scanned, again after a while, which doubles each time, up to a minute. Why it failed is in the state.
-* **`ListFolders`** lists a folder's folders, or every folder beneath it, with `Recursive`, in the order a backend lists them. **`GetObject`** of a folder is the index's, with `folder:children` and `folder:children-count`. Until the first scan finishes, both are the backend's.
+* **`ListFolders`** lists a folder's folders, or every folder beneath it, with `Recursive`, in the order a backend lists them. **`GetObject`** of a folder is the index's, with `folder:object-count` and `folder:subfolder-count`. Until the first scan finishes, both are the backend's.
 * **Writes and deletes** through it queue the index of what they change, as the backend's changes do.
 * **Everything else**, such as files, is the backend's. Files are indexed later.
 * **`State`** is the index's status (never indexed, scanning, or ready), how many folders the scan has indexed, when it started and finished, and why it last failed.

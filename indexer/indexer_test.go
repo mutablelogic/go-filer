@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,15 +90,34 @@ func folders(t *testing.T, i *indexer.Indexer, path string, recursive bool) []st
 	}
 }
 
-// count returns a folder's folder:children-count
+// count returns how many objects a folder lists, of its folder:object-count
+// and folder:subfolder-count, or "" without them
 func count(t *testing.T, object *schema.Object) string {
 	t.Helper()
+	files, subfolders := counts(t, object)
+	if files == "" || subfolders == "" {
+		return ""
+	}
+	f, err := strconv.Atoi(files)
+	require.NoError(t, err)
+	s, err := strconv.Atoi(subfolders)
+	require.NoError(t, err)
+	return strconv.Itoa(f + s)
+}
+
+// counts returns a folder's folder:object-count and folder:subfolder-count
+func counts(t *testing.T, object *schema.Object) (files, subfolders string) {
+	t.Helper()
 	for _, m := range object.Meta {
-		if m.Namespace == schema.FolderNamespace && m.Key == "children-count" {
-			return string(m.Value)
+		switch {
+		case m.Namespace != schema.FolderNamespace:
+		case m.Key == schema.FolderObjectCount:
+			files = string(m.Value)
+		case m.Key == schema.FolderSubfolderCount:
+			subfolders = string(m.Value)
 		}
 	}
-	return ""
+	return files, subfolders
 }
 
 // eventually waits for the folders beneath the root to be the ones wanted
@@ -242,7 +262,9 @@ func Test_Scan(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, object.IsDir)
 	assert.Equal(t, "media", object.Name)
-	assert.Equal(t, "2", count(t, object), "its folder, and its file")
+	files, subfolders := counts(t, object)
+	assert.Equal(t, "1", files, "its file")
+	assert.Equal(t, "1", subfolders, "its folder")
 	indexed, err := s.GetObject(context.Background(), "media", "/a/")
 	require.NoError(t, err)
 	assert.Equal(t, "/a", indexed.Path, "it's got from the index")
