@@ -252,8 +252,9 @@ func page(it item, channel *rss.Channel) string {
 }
 
 // meta returns the metadata of an item, which its page doesn't have of its
-// own, as the backend's: its title, author, date, link and guid, its feed,
-// and its enclosure, with a podcast's episode, season and duration
+// own, as the backend's: its title, author, date, its identifier, which is
+// its guid, or its link, when it has none, its link, its feed, and its
+// enclosure, with a podcast's episode, season and duration
 func meta(it item, channel *rss.Channel) []schema.Meta {
 	var result []schema.Meta
 	add := func(ns, key string, value any) {
@@ -269,8 +270,8 @@ func meta(it item, channel *rss.Channel) []schema.Meta {
 	if !it.date.IsZero() {
 		add("dc", "date", it.date.Format(time.RFC3339))
 	}
-	add("dc", "identifier", link(it.Item))
-	add("rss", "guid", guid(it.Item))
+	add("dc", "identifier", firstOf(guid(it.Item), link(it.Item)))
+	add("rss", "link", link(it.Item))
 	add("rss", "feed", strings.TrimSpace(channel.Title))
 	if e := it.Enclosure; e != nil && e.URL != "" {
 		enclosure := map[string]any{"url": e.URL}
