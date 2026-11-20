@@ -1041,14 +1041,17 @@ func withCount(object *schema.Object, count folderCount) *schema.Object {
 	return object
 }
 
-// mergeCount returns a folder's metadata, from a listing, with the count of
-// its files, and subfolders, which the index has, until it's indexed again
+// mergeCount returns a folder's metadata, from a listing, with the counts
+// the index has, until it's indexed again, unless the listing has them. Any
+// of the index's metadata of the folder namespace is kept, so those of an
+// earlier version, folder:children and folder:children-count, aren't lost
+// before it's indexed, which replaces them.
 func mergeCount(meta, indexed []schema.Meta) []schema.Meta {
 	if hasCount(meta) {
 		return meta
 	}
 	for _, m := range indexed {
-		if isCount(m) {
+		if m.Namespace == schema.FolderNamespace {
 			meta = append(meta, m)
 		}
 	}
