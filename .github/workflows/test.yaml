@@ -23,11 +23,17 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The packages are vetted for every platform, including those which aren't
-  # tested
+  # The packages are vetted for each platform, including those which aren't
+  # tested, as each has files of its own, such as of watching files, and the
+  # client's, without cgo, a job of each, at once. The build with cgo is
+  # vetted by its tests, as go test vets what it tests.
   vet:
-    name: Vet
+    name: Vet (${{ matrix.platform }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [client, linux/amd64, darwin/arm64, windows/amd64, freebsd/amd64]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -37,13 +43,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The libraries which go-media's link with, on Linux, which its
-      # etc/docker/packages.sh lists, of the LGPL build
-      - name: Install go-media's dependencies
-        run: sudo apt-get -y update && sudo apt-get -y install --no-install-recommends pkg-config libde265-dev libaom-dev libdav1d-dev libxml2-dev liblzma-dev zlib1g-dev libssl-dev libzstd-dev
-
       - name: Vet
-        run: make vet
+        run: make vet-platform PLATFORM=${{ matrix.platform }}
 
   # The code which is generated from the protocol buffers is committed, so
   # it's generated again, with the versions of protoc and its plugins which
