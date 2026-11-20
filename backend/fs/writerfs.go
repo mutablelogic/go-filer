@@ -89,8 +89,11 @@ func newWriterFS(path string) (WriterFS, error) {
 	self := new(writerfs)
 	if abspath, err := filepath.Abs(path); err != nil {
 		return nil, filer.ErrBadParameter.Withf("Invalid path: %q", path)
-	} else if stat, err := os.Stat(abspath); err != nil {
-		return nil, filer.ErrBadParameter.Withf("Invalid path: %q", path)
+	} else if stat, err := os.Stat(abspath); errors.Is(err, fs.ErrNotExist) {
+		// Such as a network share which isn't mounted
+		return nil, filer.ErrBadParameter.Withf("directory %q doesn't exist, or isn't mounted", path)
+	} else if err != nil {
+		return nil, filer.ErrBadParameter.Withf("directory %q: %v", path, err)
 	} else if stat.IsDir() == false {
 		return nil, filer.ErrBadParameter.Withf("Path is not a directory: %q", path)
 	} else if root, err := os.OpenRoot(abspath); err != nil {

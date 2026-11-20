@@ -1580,3 +1580,33 @@ func newStore(t *testing.T) *sqlite.Store {
 	require.NoError(t, err)
 	return s
 }
+
+// watchDown is a backend whose watches fail, as its server is down
+type watchDown struct {
+	gofiler.Filer
+}
+
+func (w watchDown) WatchObjects(context.Context, chan<- schema.Event) error {
+	return gofiler.ErrServiceUnavailable.With("server is down")
+}
+
+func Test_IndexingFailedLogs(t *testing.T) {
+	backend, _ := newBackend(t)
+	i, err := indexer.New("media", watchDown{Filer: backend}, newStore(t), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	var logs syncBuffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- i.Run(ctx, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}()
+	defer func() {
+		cancel()
+		require.NoError(t, <-done)
+	}()
+
+	// Watching which fails again, of the same reason, is a warning once, and
+	// then for debugging, as its state says why it failed
+	require.Eventually(t, func() bool { return strings.Count(logs.String(), "indexing failed, again") >= 3 }, 10*time.Second, time.Millisecond)
+	assert.Equal(t, 1, strings.Count(logs.String(), "level=WARN msg=\"indexing failed\""))
+}

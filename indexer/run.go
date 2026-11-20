@@ -277,8 +277,16 @@ func (self *Indexer) fail(err error) {
 
 // failed records why the index's scan, or watch, failed
 func (self *Indexer) failed(ctx context.Context, err error) {
+	// It's logged as a warning when it's why it failed, for the first time,
+	// rather than of each attempt, such as while its backend is unavailable,
+	// as its state says why it last failed, until a rescan clears it
+	state, e := self.store.State(ctx, self.name)
+	if e == nil && state.Error == err.Error() {
+		self.log().DebugContext(ctx, "indexing failed, again", "error", err.Error())
+		return
+	}
 	self.log().WarnContext(ctx, "indexing failed", "error", err.Error())
-	if state, e := self.store.State(ctx, self.name); e == nil {
+	if e == nil {
 		state.Error = err.Error()
 		_ = self.store.SetState(ctx, self.name, state)
 	}
