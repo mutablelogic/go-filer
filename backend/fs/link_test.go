@@ -40,7 +40,7 @@ func Test_Links(t *testing.T) {
 	iter.Close()
 	root, err := self.GetObject(ctx, key("/"))
 	require.NoError(t, err)
-	assert.Equal(t, schema.FolderMeta(2), root.Meta)
+	assert.Equal(t, schema.FolderMeta(1, 1), root.Meta)
 
 	// They, and the files beneath them, aren't got, or read
 	for _, path := range []string{"/file.txt", "/folder", "/folder/b.txt"} {

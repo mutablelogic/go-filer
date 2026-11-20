@@ -337,13 +337,13 @@ func Test_DriveObjects(t *testing.T) {
 	assert.Equal(t, []string{"/Work/Reports/a_b.txt", "/Work/Reports/report (r1abcd).pdf"}, (listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/Work/Reports"}, StartAfter: "/Work/Reports/Report (r2abcd).pdf"})))
 	assert.Equal(t, []string{"/notes.txt"}, (listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/notes.txt"}})))
 
-	// A folder is a directory, of how many objects are in it, and a file
+	// A folder is a directory, of how many files, and subfolders, are in it, and a file
 	// has its size, and checksum, as its entity tag, and its link, but a
 	// Doc has its version, and is exported
 	work, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/Work"}})
 	require.NoError(t, err)
 	assert.True(t, work.IsDir)
-	assert.Equal(t, []string{"true", "4"}, metaValues(work, schema.FolderNamespace))
+	assert.Equal(t, []string{"3", "1"}, metaValues(work, schema.FolderNamespace))
 	notes, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/notes.txt"}})
 	require.NoError(t, err)
 	assert.Equal(t, "text/plain", notes.ContentType)

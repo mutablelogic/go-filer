@@ -86,16 +86,20 @@ func ASCIIJSON(value string) string {
 // FOLDERS
 
 const (
-	// FolderNamespace is the namespace of the metadata of a folder: its
-	// "children", whether it has objects, and "children-count", how many,
-	// which are those it lists
+	// FolderNamespace is the namespace of the metadata of a folder: how
+	// many objects which aren't folders, and how many subfolders, it lists
 	FolderNamespace = "folder"
+
+	// The keys of a folder's metadata
+	FolderObjectCount    = "object-count"
+	FolderSubfolderCount = "subfolder-count"
 )
 
-// FolderMeta returns the metadata of a folder, of how many objects it has
-func FolderMeta(count int) []Meta {
+// FolderMeta returns the metadata of a folder, of how many objects which
+// aren't folders, and how many subfolders, it lists
+func FolderMeta(objects, subfolders int) []Meta {
 	return []Meta{
-		{Namespace: FolderNamespace, Key: "children", Value: json.RawMessage(strconv.FormatBool(count > 0))},
-		{Namespace: FolderNamespace, Key: "children-count", Value: json.RawMessage(strconv.Itoa(count))},
+		{Namespace: FolderNamespace, Key: FolderObjectCount, Value: json.RawMessage(strconv.Itoa(objects))},
+		{Namespace: FolderNamespace, Key: FolderSubfolderCount, Value: json.RawMessage(strconv.Itoa(subfolders))},
 	}
 }

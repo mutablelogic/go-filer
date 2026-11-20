@@ -488,7 +488,7 @@ func (self *DriveFiler) export(ctx context.Context, p string, file *httpclient.D
 }
 
 // object returns the root, a folder, which is a directory, of how many
-// objects are in it, or a file: one which is Google's own, such as a Doc,
+// files, and subfolders, are in it, or a file: one which is Google's own, such as a Doc,
 // has no size, nor checksum, until it's exported, so its entity tag is its
 // version, and another's is its checksum, with its metadata which its
 // content can't have
@@ -499,7 +499,15 @@ func (self *DriveFiler) object(tree *driveTree, p string) *schema.Object {
 		if file != nil {
 			modtime = file.ModifiedTime
 		}
-		dir := dirObject(self.name, p, len(tree.children[p]), modtime)
+		files, subfolders := 0, 0
+		for _, child := range tree.children[p] {
+			if f := tree.files[child]; f != nil && f.MimeType == httpclient.DriveFolderType {
+				subfolders++
+			} else {
+				files++
+			}
+		}
+		dir := dirObject(self.name, p, files, subfolders, modtime)
 		if file != nil {
 			dir.Meta = append(dir.Meta, driveMeta(file)...)
 		}

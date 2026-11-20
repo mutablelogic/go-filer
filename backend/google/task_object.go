@@ -32,7 +32,7 @@ const (
 	ProdID = "-//mutablelogic//go-filer//EN"
 
 	// TaskNamespace is the namespace of the metadata of tasks and lists. A
-	// list's folder:children and folder:children-count are schema's.
+	// list's folder:object-count and folder:subfolder-count are schema's.
 	TaskNamespace = "task"
 
 	// DCNamespace is the namespace of the Dublin Core metadata, whose
@@ -119,7 +119,7 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.
 	if list.Title != "" {
 		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(list.Title))})
 	}
-	object.Meta = append(object.Meta, schema.FolderMeta(count)...)
+	object.Meta = append(object.Meta, schema.FolderMeta(count, 0)...)
 	return object
 }
 
