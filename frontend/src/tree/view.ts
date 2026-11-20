@@ -6,6 +6,7 @@
 // and path. A volume without folders has no tree.
 
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
+import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import type { ChangesController } from '@mutablelogic/go-server/broadcaster';
@@ -169,14 +170,16 @@ export class FileTreeElement extends LitElement {
     // nodeView is a folder's node, and, when it's expanded, its subfolders'.
     // One which may have subfolders, but whose aren't loaded, has a node
     // which says they're loading, so it can be expanded; one which has none
-    // has no caret.
-    private nodeView(volume: string, path: string, label: string, icon: unknown, folder?: FilerObject): TemplateResult {
+    // has no caret. Carbon sets a node's indent once it has children, but
+    // not again when it hasn't any more, so a node is another when it
+    // becomes one without subfolders, or with them.
+    private nodeView(volume: string, path: string, label: string, icon: unknown, folder?: FilerObject): unknown {
         const controller = this.controller!;
         const folders = controller.folders(volume, path);
         const loaded = folders?.state === 'loaded' ? folders : undefined;
         const leaf = (folder !== undefined && subfolderCount(folder) === 0) || loaded?.folders.length === 0;
         const selected = this.selected?.volume === volume && this.selected.path === path;
-        return html`
+        return keyed(leaf, html`
             <cds-tree-node label=${label} data-volume=${volume} data-path=${path} ?data-leaf=${leaf} .isExpanded=${!leaf && controller.isExpanded(volume, path)} .selected=${selected}>
                 ${icon}
                 ${leaf ? nothing : loaded ? html`
@@ -184,7 +187,7 @@ export class FileTreeElement extends LitElement {
                     ${loaded.more ? moreView(volume, path) : nothing}
                 ` : html`<cds-tree-node label=${folders?.state === 'error' ? "They couldn't be loaded" : 'Loading…'} disabled></cds-tree-node>`}
             </cds-tree-node>
-        `;
+        `);
     }
 
     // toggled loads a folder's subfolders when it's expanded, the first time.
