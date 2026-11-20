@@ -42,6 +42,29 @@ func Test_ServerWorker(t *testing.T) {
 	assert.Equal(t, "worker-1", parse("--worker", "worker-1").Worker)
 }
 
+// The backends are the flag's, comma separated, or repeated, or the
+// environment's, FILER_BACKEND, and are otherwise every backend
+func Test_ServerBackend(t *testing.T) {
+	parse := func(args ...string) Flags {
+		t.Helper()
+		var cli struct {
+			Flags
+		}
+		parser, err := kong.New(&cli)
+		require.NoError(t, err)
+		_, err = parser.Parse(args)
+		require.NoError(t, err)
+		return cli.Flags
+	}
+	t.Setenv("FILER_BACKEND", "")
+	require.NoError(t, os.Unsetenv("FILER_BACKEND"))
+	assert.Empty(t, parse().Backend)
+	assert.Equal(t, []string{"file", "s3"}, parse("--backend", "file,s3").Backend)
+	assert.Equal(t, []string{"file", "rss"}, parse("--backend", "file", "--backend", "rss").Backend)
+	t.Setenv("FILER_BACKEND", "s3,gtasks")
+	assert.Equal(t, []string{"s3", "gtasks"}, parse().Backend)
+}
+
 func Test_VolumeURL(t *testing.T) {
 	// abs returns the URL path of a directory, which is absolute
 	abs := func(path string) string {
