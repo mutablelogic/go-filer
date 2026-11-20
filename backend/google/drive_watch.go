@@ -38,6 +38,11 @@ type driveWatch struct {
 	signal    chan struct{}
 	relisting bool
 	during    []httpclient.DriveChange
+
+	// Whether the files have changed since they were saved in the volume's
+	// cache, and when they were
+	dirty bool
+	saved time.Time
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -80,9 +85,30 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 		return err
 	}
 	defer self.unwatch(w)
-	if err := self.relist(ctx, w); err != nil {
-		return err
-	} else if err := send(schema.Rescan(self.name)); err != nil {
+
+	// The files, and their token, which were saved in the volume's cache,
+	// such as before a restart, are of what changed since, which is got,
+	// and applied, before the rescan, so the files aren't listed again,
+	// unless there are none, or the token isn't accepted
+	restored := self.restore(ctx, w)
+	if restored {
+		if _, err := self.changes(ctx, w); errors.Is(err, fs.ErrNotExist) || errors.Is(err, gofiler.ErrBadParameter) {
+			restored = false
+		} else if err != nil && !errors.Is(err, gofiler.ErrServiceUnavailable) {
+			return err
+		}
+	}
+	if !restored {
+		if err := self.relist(ctx, w); err != nil {
+			return err
+		}
+	}
+
+	// They're saved, once they've changed, and when it stops, so a restart
+	// carries on from where it was
+	defer self.save(context.WithoutCancel(ctx), w, true)
+	self.save(ctx, w, false)
+	if err := send(schema.Rescan(self.name)); err != nil {
 		return err
 	}
 	ticker := time.NewTicker(self.refreshInterval)
@@ -98,6 +124,7 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 					return err
 				}
 			}
+			self.save(ctx, w, false)
 			continue
 		case <-ticker.C:
 		}
@@ -129,6 +156,7 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 				return err
 			}
 		}
+		self.save(ctx, w, false)
 	}
 }
 
@@ -157,7 +185,7 @@ func (self *DriveFiler) relist(ctx context.Context, w *driveWatch) error {
 	}
 	gone := make(map[string]int64)
 	applyChanges(byId, gone, during)
-	w.token, w.root, w.files, w.gone = token, root, byId, gone
+	w.token, w.root, w.files, w.gone, w.dirty = token, root, byId, gone, true
 	w.tree = newDriveTree(root, slices.Collect(maps.Values(byId)))
 	return nil
 }
@@ -206,7 +234,7 @@ func (self *DriveFiler) apply(w *driveWatch, changes []httpclient.DriveChange) [
 	files := maps.Clone(w.files)
 	applyChanges(files, w.gone, changes)
 	before, after := w.tree, newDriveTree(w.root, slices.Collect(maps.Values(files)))
-	w.files, w.tree = files, after
+	w.files, w.tree, w.dirty = files, after, true
 	return self.diff(before, after)
 }
 
