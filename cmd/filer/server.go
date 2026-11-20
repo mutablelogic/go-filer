@@ -8,6 +8,7 @@ import (
 	// Packages
 	credentialhandler "github.com/mutablelogic/go-auth/credential/httphandler"
 	google "github.com/mutablelogic/go-filer/backend/google"
+	rss "github.com/mutablelogic/go-filer/backend/rss"
 	metadatacmd "github.com/mutablelogic/go-filer/metadata/cmd"
 	registry "github.com/mutablelogic/go-filer/registry"
 	filercmd "github.com/mutablelogic/go-filer/registry/cmd"
@@ -97,5 +98,9 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// when the registry, and its volumes, are closed
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*registry.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, registry.WithCredentials(credentials), registry.WithStore(s), task)
+	}, registry.WithCredentials(credentials), registry.WithStore(s), task,
+		// RSS feeds are a backend which isn't built into the registry, which
+		// is added, as another program's would be
+		registry.WithBackend(rss.Scheme, rss.Open),
+	)
 }

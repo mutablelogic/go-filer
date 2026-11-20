@@ -15,6 +15,7 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/backend/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
 | `github.com/mutablelogic/go-filer/backend/s3` | The S3 backend, watched through a SeaweedFS filer when it's one |
 | `github.com/mutablelogic/go-filer/backend/google` | Backends of Google's services: Google Tasks and Google Contacts |
+| `github.com/mutablelogic/go-filer/backend/rss` | The backend of an RSS feed, read with go-rss. It isn't built into the registry; the `filer` server adds it with `registry.WithBackend` |
 | `github.com/mutablelogic/go-filer/backend/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 | `github.com/mutablelogic/go-filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
 | `github.com/mutablelogic/go-filer/store/sqlite` | A store in a SQLite database, in a file, or in memory |
@@ -158,6 +159,20 @@ A volume of the events of a Google account's calendars, read-only, of the days b
 * **Watching** syncs each calendar with its sync token, at the refresh interval, and sends what changed: an event, or a time one which repeats occurs, which is created, updated, moved (deleted where it was, and created where it is), or cancelled, of where the events which were last listed are, as a change doesn't say where an event was. The root is rescanned instead when an event which repeats changed, as a sync doesn't say which times it occurs, before anything is listed, when a calendar is added, removed or renamed, when a token is rejected, and each day, as the window moves on. The tokens are stored with the server's credentials, of the sign-in, as `GOOGLE_TOKEN_CALENDAR_SYNC` (of `GOOGLE_TOKEN`), so after a restart only what changed since is synced, and volumes of the same sign-in share them. A token which Google rejects is synced again, at most once an hour.
 
 In the registry, its URL is `gcalendar://<name>`, and the `filer` command creates one with `volume-create-gcalendar`, signing in with Google, in the browser, when it needs to.
+
+## RSS Feeds
+
+A volume of an RSS feed's items, read-only. It's an example of a pluggable backend: it isn't built into the registry, and the `filer` server adds it with `registry.WithBackend(rss.Scheme, rss.Open)`.
+
+* **URL:** `rss://<name>?url=<feed>`, such as `filer volume-create 'rss://news?url=https%3A%2F%2Fexample.com%2Ffeed.xml&index=metadata'`.
+* **Layout:** a folder of each year and month, of the day each item was published, in UTC: `/2026/2026-11/20-<title>.html`. Items without a date are in `/undated/`. Items of the same title and day are numbered, in the order of their guids.
+* **Content:** each item is an HTML page of its title, author, date, link, description and enclosure.
+* **Metadata:** `dc:title`, `dc:creator`, `dc:date` and `dc:identifier` (its link), and `rss:guid` and `rss:feed`. A podcast's item also has `rss:enclosure` (its URL, type and length), `rss:episode`, `rss:season` and `rss:duration` in seconds.
+* **Options:**
+  * `refresh-interval`: how long a fetched feed is kept, `5m` by default.
+  * `description`: by default, the feed's title.
+* **Watching:** feeds aren't watched, so an indexed volume is rescanned at the indexer's interval.
+* **Errors:** a feed that isn't found, or isn't RSS, is `ErrBadParameter`. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.
 
 ## Indexer
 
