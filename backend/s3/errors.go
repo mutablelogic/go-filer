@@ -40,7 +40,7 @@ func (self *S3) objectError(op, rel string, err error) error {
 	case http.StatusForbidden, http.StatusUnauthorized:
 		return gofiler.ErrForbidden.Withf("%s /%s: access denied", op, rel)
 	default:
-		return gofiler.ErrServiceUnavailable.Withf("%s /%s: %s", op, rel, http.StatusText(status))
+		return gofiler.ErrServiceUnavailable.Withf("%s /%s: %d %s: %v", op, rel, status, http.StatusText(status), responseErr.Err)
 	}
 }
 

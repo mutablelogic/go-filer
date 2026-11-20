@@ -61,7 +61,8 @@ const (
 	taskLease = 10 * time.Minute
 
 	// taskAttempts is how many times a task fails of a file before it's
-	// given up, until the file changes
+	// given up, until the file changes, apart from when its backend is
+	// unavailable, which is tried until it isn't
 	taskAttempts = 5
 
 	// DefaultTaskWorkers is how many workers do the work of tasks
@@ -128,7 +129,7 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 		case ctx.Err() != nil:
 			self.release(claimed)
 			return
-		case err != nil && w.Attempts+1 < taskAttempts && !errors.Is(err, gofiler.ErrBadParameter):
+		case err != nil && retry(err, w.Attempts+1):
 			self.log().DebugContext(ctx, "a task failed of a file, which is tried again", "task", string(kind), "key", w.Key, "attempt", w.Attempts+1, "error", err.Error())
 			_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
 		default:
@@ -178,5 +179,21 @@ func (self *Indexer) idleTask(ctx context.Context, wait time.Duration) bool {
 		return true
 	case <-time.After(wait):
 		return true
+	}
+}
+
+// retry returns true when a task which failed of a file is tried again: an
+// error of its backend, which is unavailable, such as a server which is
+// busy, or offline, for a while, is, however many times it fails, at most
+// once each maxRetry, and others, apart from a file which can't be read, until
+// it's failed taskAttempts times
+func retry(err error, attempts uint) bool {
+	switch {
+	case errors.Is(err, gofiler.ErrBadParameter):
+		return false
+	case errors.Is(err, gofiler.ErrServiceUnavailable):
+		return true
+	default:
+		return attempts < taskAttempts
 	}
 }

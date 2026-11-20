@@ -1174,6 +1174,10 @@ type sizer struct {
 	fail  map[string]bool
 	bad   map[string]bool // The files which can't be read, as they aren't valid
 	gone  map[string]bool // The files which are gone, once they're read
+
+	// The files whose backend is unavailable, how many times, before
+	// they're read
+	unavailable map[string]int
 }
 
 func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataStore, object *schema.Object) error {
@@ -1183,8 +1187,11 @@ func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataSto
 	}
 	z.calls[object.Path]++
 	fail, bad, gone := z.fail[object.Path], z.bad[object.Path], z.gone[object.Path]
+	unavailable := z.calls[object.Path] <= z.unavailable[object.Path]
 	z.mu.Unlock()
-	if bad {
+	if unavailable {
+		return gofiler.ErrServiceUnavailable.With("read: the server is busy")
+	} else if bad {
 		return gofiler.ErrBadParameter.With("not a valid file")
 	} else if fail {
 		return errors.New("it can't be read")
@@ -1307,6 +1314,25 @@ func Test_MetadataTaskUnreadable(t *testing.T) {
 	assert.Contains(t, logs.String(), "volume=media")
 	assert.Contains(t, logs.String(), "key=/a/y.txt")
 	assert.Contains(t, logs.String(), "not a valid file")
+}
+
+// A file whose backend is unavailable, for a while, isn't given up, as
+// it's tried again, until it's read
+func Test_MetadataTaskUnavailable(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	z := &sizer{unavailable: map[string]int{"/a/y.txt": 8}}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	require.Eventually(t, func() bool {
+		state, err := i.Metadata(context.Background())
+		return err == nil && state != nil && state.Queued == 0 && state.Indexed == 2
+	}, 30*time.Second, 5*time.Millisecond, "it's enriched, once it's read")
+	assert.Equal(t, 9, z.count("/a/y.txt"))
+	state, err := i.Metadata(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, state.Failed)
 }
 
 func Test_MetadataTaskUpgrade(t *testing.T) {
