@@ -29,7 +29,8 @@ import (
 // DriveFiler is a filer of the files a person owns in their Google Drive's
 // My Drive, by their paths, whose folders are directories, and whose Google
 // Docs, Sheets and Slides are Word, Excel and PowerPoint documents. It's
-// read, and watched, but not written, so far.
+// read, and watched, and written, when it's writable, of its files, but
+// not of its Docs, Sheets and Slides, and what's deleted goes to its bin.
 type DriveFiler struct {
 	driveOpt
 	name   string
@@ -47,6 +48,8 @@ type DriveFiler struct {
 
 // driveOpt are the options of a drive filer, of its parameters
 type driveOpt struct {
+	readonly        bool          // Files can't be created, updated or deleted
+	upload          int           // The bytes of each request of an upload, or zero, of the client's default
 	quota           uint          // The most requests each minute, or zero
 	refreshInterval time.Duration // How long the files are kept, once they're got
 	endpoint        string        // The endpoint of the API, which is Google's, but a test's
@@ -57,6 +60,7 @@ type driveOpt struct {
 // driveTree is the files, and folders, beneath My Drive, by their paths,
 // and the paths in each folder, of its path, which the root's is "/"
 type driveTree struct {
+	root     string // The id of My Drive's folder
 	files    map[string]*httpclient.DriveFile
 	children map[string][]string
 }
@@ -108,7 +112,8 @@ var driveEndpoint = httpclient.DriveEndpoint
 // with the parameters, the user's sign-in, of the provider of credentials,
 // and go-client's options of its requests, such as a tracer. The sign-in,
 // and the files, are checked, as for NewTaskFiler, and its parameters are
-// readonly, which is true, as a drive isn't written, so far, quota, and
+// readonly, which is true by default, and, when it's false, needs a sign-in
+// which can write files, of the drive scope, quota, and
 // credential, as a task filer's, and refresh_interval, how often changes
 // are polled for, when it's watched, and how long the files are kept, once
 // they're got, when it isn't, which is DefaultRefreshInterval, or zero not
@@ -125,8 +130,11 @@ func NewDriveFiler(ctx context.Context, name string, params url.Values, opts gof
 	self := &DriveFiler{driveOpt: opt, name: name, opts: opts}
 	self.tree = newCache[*driveTree](time.Now, func() time.Duration { return self.refreshInterval })
 
-	// The user's sign-in, which can read the files
-	required, scopes := []string{httpclient.DriveReadonlyScope, httpclient.DriveScope}, []string{httpclient.DriveReadonlyScope, httpclient.EmailScope}
+	// The user's sign-in, which can read the files, or write them, too
+	required, scopes := []string{httpclient.DriveScope}, []string{httpclient.DriveScope, httpclient.EmailScope}
+	if opt.readonly {
+		required, scopes = []string{httpclient.DriveReadonlyScope, httpclient.DriveScope}, []string{httpclient.DriveReadonlyScope, httpclient.EmailScope}
+	}
 	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, scopes); err != nil {
 		return nil, err
 	}
@@ -162,7 +170,7 @@ func NewDriveFiler(ctx context.Context, name string, params url.Values, opts gof
 // parseDriveOpts returns the options of the parameters, which are rejected
 // when they can't be parsed, or are for writing
 func parseDriveOpts(params url.Values) (driveOpt, error) {
-	opt := driveOpt{quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: driveEndpoint}
+	opt := driveOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: driveEndpoint}
 	for key := range params {
 		switch key {
 		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, schema.OptDescription:
@@ -174,8 +182,8 @@ func parseDriveOpts(params url.Values) (driveOpt, error) {
 	if value := params.Get(paramReadonly); value != "" {
 		if readonly, err := strconv.ParseBool(value); err != nil {
 			return opt, gofiler.ErrBadParameter.Withf("%s: %q", paramReadonly, value)
-		} else if !readonly {
-			return opt, gofiler.ErrNotImplemented.Withf("%s: a volume of Google Drive is read-only, so far", paramReadonly)
+		} else {
+			opt.readonly = readonly
 		}
 	}
 	if value := params.Get(paramQuota); value != "" {
@@ -240,12 +248,12 @@ func (self *DriveFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Fi
 	return clone, nil
 }
 
-// Readonly returns true, as a drive isn't written, so far
+// Readonly returns true unless the volume is writable, with readonly=false
 func (self *DriveFiler) Readonly() bool {
-	return true
+	return self.readonly
 }
 
-// Actions returns none, as a drive isn't written, so far
+// Actions returns none, as a drive is written of its objects
 func (self *DriveFiler) Actions() []gofiler.Action {
 	return nil
 }
@@ -351,16 +359,6 @@ func (self *DriveFiler) ListObjects(ctx context.Context, req schema.ListObjectsR
 	return &objectList{objects: objects}, nil
 }
 
-// CreateObject isn't implemented, as a drive isn't written, so far
-func (self *DriveFiler) CreateObject(context.Context, schema.CreateObjectRequest) (*schema.Object, error) {
-	return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
-}
-
-// DeleteObjects isn't implemented, as a drive isn't written, so far
-func (self *DriveFiler) DeleteObjects(context.Context, schema.DeleteObjectsRequest) (*schema.DeleteObjectsResponse, error) {
-	return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -368,7 +366,7 @@ func (self *DriveFiler) DeleteObjects(context.Context, schema.DeleteObjectsReque
 // set up
 func (self *DriveFiler) params() url.Values {
 	return url.Values{
-		paramReadonly:         {"true"},
+		paramReadonly:         {strconv.FormatBool(self.readonly)},
 		paramQuota:            {strconv.FormatUint(uint64(self.quota), 10)},
 		paramRefreshInterval:  {self.refreshInterval.String()},
 		paramCredential:       {self.credential},
@@ -529,7 +527,7 @@ func versionTag(file *httpclient.DriveFile) string {
 // Doc, Sheet or Slides, such as forms, and shortcuts, or which aren't
 // beneath the root, aren't in it, nor is what's in a folder which isn't.
 func newDriveTree(root string, files []httpclient.DriveFile) *driveTree {
-	tree := &driveTree{files: make(map[string]*httpclient.DriveFile), children: make(map[string][]string)}
+	tree := &driveTree{root: root, files: make(map[string]*httpclient.DriveFile), children: make(map[string][]string)}
 
 	// The files in each folder, of its id
 	in := make(map[string][]*httpclient.DriveFile)
