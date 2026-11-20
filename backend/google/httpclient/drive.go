@@ -229,18 +229,26 @@ func (c *DriveClient) Version(ctx context.Context, id string) (string, error) {
 
 // Download reads the content of a file, of its id, which isn't Google's
 // own, such as a Doc, of a revision, or the current one, when it's empty,
+// from the offset, to the end, or of its length, when it's more than zero,
 // with the function, as it's received, without a timeout, other than the
 // context's, as a file can be large
-func (c *DriveClient) Download(ctx context.Context, id, revision string, fn func(io.Reader) error) error {
+func (c *DriveClient) Download(ctx context.Context, id, revision string, offset, length int64, fn func(io.Reader) error) error {
 	path := []any{"files", id}
 	if revision != "" {
 		path = append(path, "revisions", revision)
 	}
-	return c.DoAuthWithContext(ctx, client.NewRequest(), bodyReader(fn),
+	opts := []client.RequestOpt{
 		client.OptPath(path...),
 		client.OptQuery(url.Values{"alt": {"media"}}),
 		client.OptNoTimeout(),
-	)
+	}
+	switch {
+	case length > 0:
+		opts = append(opts, client.OptReqHeader("Range", "bytes="+strconv.FormatInt(offset, 10)+"-"+strconv.FormatInt(offset+length-1, 10)))
+	case offset > 0:
+		opts = append(opts, client.OptReqHeader("Range", "bytes="+strconv.FormatInt(offset, 10)+"-"))
+	}
+	return c.DoAuthWithContext(ctx, client.NewRequest(), bodyReader(fn), opts...)
 }
 
 // Export reads the content of a Google Doc, Sheet or Slides, of its id, as

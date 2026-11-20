@@ -34,6 +34,7 @@ type fakeDrive struct {
 	lists    int               // How many times the files are listed
 	exported []string          // The types files are exported as
 	onExport func()            // Called as a file is exported, such as to change it
+	ranges   []string          // The ranges of the downloads, or "" of all of a file
 
 	// The changes, whose tokens are their indexes, and whether a token
 	// isn't accepted, as it's expired, or Google is unavailable
@@ -136,7 +137,30 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, page)
 	case len(parts) == 4 && parts[0] == "files" && parts[2] == "revisions" && query.Get("alt") == "media":
 		if content, exists := f.content[parts[1]+"@"+parts[3]]; exists {
+			// A range, of bytes=<from>-, or bytes=<from>-<to>
+			header := r.Header.Get("Range")
+			f.ranges = append(f.ranges, header)
+			status := http.StatusOK
+			if spec, ok := strings.CutPrefix(header, "bytes="); ok {
+				from, to, _ := strings.Cut(spec, "-")
+				start, _ := strconv.Atoi(from)
+				end := len(content) - 1
+				if to != "" {
+					end, _ = strconv.Atoi(to)
+				}
+				if start >= len(content) || end < start {
+					writeError(w, http.StatusRequestedRangeNotSatisfiable)
+					return
+				}
+				content, status = content[start:min(end, len(content)-1)+1], http.StatusPartialContent
+			}
+
+			// It's written without the fake locked, as a reader which seeks
+			// doesn't read the rest of it
+			f.Unlock()
+			defer f.Lock()
 			w.Header().Set("Content-Type", "application/octet-stream")
+			w.WriteHeader(status)
 			_, _ = io.WriteString(w, content)
 			return
 		}
@@ -599,4 +623,80 @@ func Test_DriveReadRevision(t *testing.T) {
 		err = readFn(ctx, func(r io.Reader) error { return sentinel })
 		assert.Equal(t, sentinel, err, p)
 	}
+}
+
+func Test_DriveReadRanges(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFakeDrive(t)
+	content := strings.Repeat("0123456789", 200_000) // 2 MB, of four blocks
+	fake.Lock()
+	fake.files = append(fake.files, httpclient.DriveFile{Id: "v1", Name: "video.mp4", MimeType: "video/mp4", Parents: []string{driveRoot}, Size: strconv.Itoa(len(content)), MD5Checksum: "md5-v1", HeadRevision: "rev1", OwnedByMe: true})
+	fake.content["v1@rev1"] = content
+	fake.Unlock()
+	filer := newDriveFiler(t, endpoint, nil)
+	ranges := func() []string {
+		fake.Lock()
+		defer fake.Unlock()
+		result := fake.ranges
+		fake.ranges = nil
+		return result
+	}
+	readFn, _, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/video.mp4"}})
+	require.NoError(t, err)
+	require.NoError(t, readFn(ctx, func(r io.Reader) error {
+		// It can seek, and be read at an offset, as a file can
+		ra, ok := r.(io.ReaderAt)
+		require.True(t, ok)
+		rs, ok := r.(io.ReadSeeker)
+		require.True(t, ok)
+
+		// It's requested once it's read, from the start, which reads on
+		buf := make([]byte, 10)
+		_, err := io.ReadFull(rs, buf)
+		require.NoError(t, err)
+		assert.Equal(t, "0123456789", string(buf))
+		_, err = io.ReadFull(rs, buf)
+		require.NoError(t, err)
+		assert.Equal(t, "0123456789", string(buf))
+		assert.Equal(t, []string{""}, ranges(), "one request, from the start")
+
+		// Seeking requests it from there, once it's read, and seeking where
+		// it's read from doesn't
+		_, err = rs.Seek(1_500_003, io.SeekStart)
+		require.NoError(t, err)
+		_, err = io.ReadFull(rs, buf)
+		require.NoError(t, err)
+		assert.Equal(t, "3456789012", string(buf))
+		end, err := rs.Seek(-4, io.SeekEnd)
+		require.NoError(t, err)
+		assert.Equal(t, int64(len(content)-4), end)
+		rest, err := io.ReadAll(rs)
+		require.NoError(t, err)
+		assert.Equal(t, "6789", string(rest))
+		assert.Equal(t, []string{"bytes=1500003-", "bytes=1999996-"}, ranges())
+
+		// ReadAt reads a block, which reads near it are of, and at the end,
+		// it's short, and EOF
+		n, err := ra.ReadAt(buf, 100)
+		require.NoError(t, err)
+		assert.Equal(t, 10, n)
+		assert.Equal(t, "0123456789", string(buf))
+		_, err = ra.ReadAt(buf, 1_000)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"bytes=100-524387"}, ranges(), "one block")
+		n, err = ra.ReadAt(buf, int64(len(content)-3))
+		assert.Equal(t, 3, n)
+		assert.ErrorIs(t, err, io.EOF)
+		assert.Equal(t, "789", string(buf[:n]))
+		return nil
+	}))
+
+	// A file which can't be got is an error before it's read
+	fake.Lock()
+	delete(fake.content, "v1@rev1")
+	fake.Unlock()
+	called := false
+	err = readFn(ctx, func(r io.Reader) error { called = true; return nil })
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	assert.False(t, called)
 }
