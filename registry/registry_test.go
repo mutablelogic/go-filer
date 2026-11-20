@@ -1203,3 +1203,57 @@ func Test_Registry_WithBackend(t *testing.T) {
 	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("example", open), WithBackend("example", open))
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 }
+
+// A stored volume whose backend isn't registered, such as one of a backend
+// a server was built with, which this one wasn't, is offline, with why, and
+// can be unmounted, and deleted, and is mounted once its backend is
+func Test_Registry_BackendGone(t *testing.T) {
+	dir := t.TempDir()
+	s := newStore(t)
+	_, err := s.CreateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: true})
+	require.NoError(t, err)
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s))
+	require.NoError(t, err)
+	runRegistry(t, r)
+
+	// It's offline, with why
+	var v *schema.Volume
+	require.Eventually(t, func() bool {
+		v, err = r.GetVolume(context.Background(), "things")
+		return err == nil && v.Error != ""
+	}, 5*time.Second, time.Millisecond)
+	assert.False(t, v.Enabled)
+	assert.False(t, v.Mounted)
+	assert.Contains(t, v.Error, "unsupported scheme")
+	assert.Equal(t, "example://things", v.URL, "its URL is kept")
+
+	// It can be unmounted, and mounted again, which it can't be, still
+	_, err = r.UpdateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: false})
+	require.NoError(t, err, "it's unmounted, without its backend")
+	_, err = r.UpdateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: true})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	r.close()
+
+	// Once its backend is registered, it's mounted
+	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
+		if err != nil {
+			return nil, err
+		}
+		return example{Filer: b, u: u}, nil
+	}
+	_, err = s.UpdateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: true})
+	require.NoError(t, err)
+	r, err = New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithBackend("example", open))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	runRegistry(t, r)
+	require.Eventually(t, func() bool {
+		v, err := r.GetVolume(context.Background(), "things")
+		return err == nil && v.Mounted && v.Enabled && v.Error == ""
+	}, 5*time.Second, time.Millisecond, "it's mounted, once its backend is registered")
+
+	// And deleted
+	_, err = r.DeleteVolume(context.Background(), "things")
+	require.NoError(t, err)
+}
