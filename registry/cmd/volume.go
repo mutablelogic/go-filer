@@ -40,6 +40,7 @@ type VolumeCommands struct {
 	VolumeCreateGTasks    VolumeCreateGTasksCmd    `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGContacts VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts" help:"Create a volume of a Google account's contacts, as vCards, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGCalendar VolumeCreateGCalendarCmd `cmd:"" name:"volume-create-gcalendar" help:"Create a volume of a Google account's calendars' events, as iCalendars, of the days before today and after it, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
+	VolumeCreateGDrive    VolumeCreateGDriveCmd    `cmd:"" name:"volume-create-gdrive" help:"Create a volume of the files a Google account owns in My Drive, read-only, whose Docs, Sheets and Slides are Word, Excel and PowerPoint documents, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateRSS       VolumeCreateRSSCmd       `cmd:"" name:"volume-create-rss" help:"Create a volume of an RSS feed's items, read-only, of its URL." group:"VOLUME"`
 	VolumeUpdate          VolumeUpdateCmd          `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, and whether it's enabled, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
 	VolumeMount           VolumeMountCmd           `cmd:"" name:"volume-mount" help:"Enable a volume by its name, so the server mounts it, and does when it starts, signing in when its user needs to." group:"VOLUME"`
@@ -121,6 +122,16 @@ type VolumeCreateGContactsCmd struct {
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
+	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
+	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description     string         `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
+}
+
+type VolumeCreateGDriveCmd struct {
+	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
+	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
+	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How long the list of files is kept, once it's got, or 0 not to keep it, which is a minute, unless it's set."`
 	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
 	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
 	Description     string         `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
@@ -281,6 +292,18 @@ func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
 		return err
 	}
 	return createSignedIn(ctx, "filer.VolumeCreateGContactsCmd", volume, signInClient, cmd.NoBrowser)
+}
+
+func (cmd *VolumeCreateGDriveCmd) Run(ctx server.Cmd) error {
+	volume, err := cmd.volume()
+	if err != nil {
+		return err
+	}
+	signInClient, err := newSignInClient(ctx)
+	if err != nil {
+		return err
+	}
+	return createSignedIn(ctx, "filer.VolumeCreateGDriveCmd", volume, signInClient, cmd.NoBrowser)
 }
 
 // createSignedIn creates a volume, and, when its user needs to sign in,
@@ -661,6 +684,35 @@ func (cmd *VolumeCreateGContactsCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, err
 	}
 	u := url.URL{Scheme: google.ContactsScheme, Host: cmd.Name, RawQuery: query.Encode()}
+	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
+}
+
+// volume returns the volume of Google Drive, whose URL is gdrive://<name>,
+// with its parameters, of the flags which are set
+func (cmd *VolumeCreateGDriveCmd) volume() (schema.Volume, error) {
+	if !types.IsIdentifier(cmd.Name) {
+		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
+	}
+	query := url.Values{}
+	if cmd.Credential != "" {
+		if !credentialName.MatchString(cmd.Credential) {
+			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid key of a credential: %q", cmd.Credential)
+		}
+		query.Set("credential", cmd.Credential)
+	}
+	if cmd.Quota != nil {
+		query.Set("quota", strconv.FormatUint(uint64(*cmd.Quota), 10))
+	}
+	if cmd.RefreshInterval != nil {
+		query.Set("refresh_interval", cmd.RefreshInterval.String())
+	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
+	}
+	if err := setOpts(query, cmd.Opt); err != nil {
+		return schema.Volume{}, err
+	}
+	u := url.URL{Scheme: google.DriveScheme, Host: cmd.Name, RawQuery: query.Encode()}
 	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
 }
 
