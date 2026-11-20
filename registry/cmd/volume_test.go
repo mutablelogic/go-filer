@@ -492,7 +492,7 @@ func Test_CheckBackend(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/volume", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(schema.VolumeList{Schemes: []string{"file", "s3"}})
+		json.NewEncoder(w).Encode(schema.VolumeList{Backends: []schema.Backend{{Scheme: "file"}, {Scheme: "s3"}}})
 	}))
 	defer server.Close()
 	client, err := httpclient.New(server.URL)

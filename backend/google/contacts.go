@@ -198,6 +198,11 @@ func (self *ContactFiler) Close() error {
 
 // URL returns the URL of the filer, such as gcontacts://contacts, with each
 // of its parameters
+// Description returns what the volume is, such as "Google Contacts for ada@example.com"
+func (self *ContactFiler) Description() string {
+	return self.description
+}
+
 func (self *ContactFiler) URL() *url.URL {
 	return &url.URL{Scheme: ContactsScheme, Host: self.name, RawQuery: self.params().Encode()}
 }

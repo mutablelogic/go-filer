@@ -115,14 +115,14 @@ func volumeListHandlers(reg *registry.Registry, router *httprouter.Router, docum
 				httpresponse.Error(w, gofiler.HTTPErr(err))
 			} else {
 				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), schema.VolumeList{
-					Body:    volumes,
-					Schemes: reg.Schemes(),
+					Body:     volumes,
+					Backends: reg.Backends(),
 				})
 			}
 		}, func(op httprequest.PathOperation) {
 			op.Summary("List Volumes")
 			op.Description(documentation.Section(3, "GET /volume").Body)
-			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.VolumeList](), "Volumes, and the schemes of their URLs")
+			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.VolumeList](), "Volumes, and the backends they can be added of")
 		})
 
 		// POST

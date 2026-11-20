@@ -101,6 +101,6 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	}, registry.WithCredentials(credentials), registry.WithStore(s), task,
 		// RSS feeds are a backend which isn't built into the registry, which
 		// is added, as another program's would be
-		registry.WithBackend(rss.Scheme, rss.Open),
+		registry.WithBackend(rss.Scheme, rss.Description, rss.Open),
 	)
 }

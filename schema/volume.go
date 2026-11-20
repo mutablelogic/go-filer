@@ -157,10 +157,17 @@ type IndexStatus string
 type IndexPhase string
 
 // VolumeList is the volumes which are registered, in order of their names,
-// and the schemes of the URLs which volumes can be added from
+// and the backends which volumes can be added of
 type VolumeList struct {
-	Body    []Volume `json:"body" help:"Volumes, in order of their names"`
-	Schemes []string `json:"schemes" help:"Schemes of the URLs which volumes can be added from, such as file"`
+	Body     []Volume  `json:"body" help:"Volumes, in order of their names"`
+	Backends []Backend `json:"backends" help:"Backends which volumes can be added of, in order of their schemes"`
+}
+
+// Backend is a type of backend, of the scheme of its volumes' URLs, such as
+// file, and what it is
+type Backend struct {
+	Scheme      string `json:"scheme" help:"Scheme of the URLs of its volumes, such as file"`
+	Description string `json:"description,omitempty" help:"What it is, such as Folders of the server"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -176,6 +183,25 @@ func (v VolumeList) String() string {
 
 ////////////////////////////////////////////////////////////////////////////////
 // TABLE
+
+func (b Backend) Header() []string {
+	return []string{"Scheme", "Description"}
+}
+
+func (b Backend) Width(col int) int {
+	return 0
+}
+
+func (b Backend) Cell(col int) tui.CellText {
+	switch col {
+	case 0:
+		return b.Scheme
+	case 1:
+		return b.Description
+	default:
+		return ""
+	}
+}
 
 func (v Volume) Header() []string {
 	return []string{"Name", "Status", "Index", "Description", "URL", "Options"}

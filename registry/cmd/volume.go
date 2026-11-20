@@ -32,7 +32,7 @@ import (
 type VolumeCommands struct {
 	VolumeList            VolumeListCmd            `cmd:"" name:"volumes" help:"List volumes, with the URLs of their backends." group:"VOLUME"`
 	VolumeGet             VolumeGetCmd             `cmd:"" name:"volume" help:"Get a volume by its name, with the URL of its backend." group:"VOLUME"`
-	VolumeSchemes         VolumeSchemesCmd         `cmd:"" name:"volume-schemes" help:"List the schemes of the URLs which volumes can be created from." group:"VOLUME"`
+	VolumeBackends        VolumeBackendsCmd        `cmd:"" name:"volume-backends" aliases:"volume-schemes" help:"List the backends the server runs, of their schemes, which volumes can be created of, with what each is." group:"VOLUME"`
 	VolumeCreate          VolumeCreateCmd          `cmd:"" name:"volume-create" help:"Create a volume from the URL of its backend, or a directory." group:"VOLUME"`
 	VolumeCreateFS        VolumeCreateFSCmd        `cmd:"" name:"volume-create-fs" help:"Create a volume of a directory on the server." group:"VOLUME"`
 	VolumeCreateS3        VolumeCreateS3Cmd        `cmd:"" name:"volume-create-s3" help:"Create a volume of an S3 bucket, or one which is compatible, such as MinIO's or SeaweedFS's." group:"VOLUME"`
@@ -48,7 +48,7 @@ type VolumeCommands struct {
 
 type VolumeListCmd struct{}
 
-type VolumeSchemesCmd struct{}
+type VolumeBackendsCmd struct{}
 
 type VolumeGetCmd struct {
 	Name string `arg:"" name:"name" help:"Volume name."`
@@ -182,18 +182,18 @@ func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 	})
 }
 
-func (cmd *VolumeSchemesCmd) Run(ctx server.Cmd) error {
-	return withClient(ctx, "filer.VolumeSchemesCmd", func(ctx context.Context, client *httpclient.Client) error {
+func (cmd *VolumeBackendsCmd) Run(ctx server.Cmd) error {
+	width := ctx.IsTerm()
+	return withClient(ctx, "filer.VolumeBackendsCmd", func(ctx context.Context, client *httpclient.Client) error {
 		list, err := client.ListVolumes(ctx)
 		if err != nil {
 			return err
 		}
 
-		// The schemes, one on each line
-		for _, scheme := range list.Schemes {
-			fmt.Println(scheme)
-		}
-		return nil
+		// The backends, of their schemes, and what each is
+		table := tui.TableFor[schema.Backend](tui.SetWidth(width))
+		_, err = table.Write(os.Stdout, list.Backends...)
+		return err
 	})
 }
 
@@ -743,8 +743,13 @@ func checkBackend(ctx context.Context, client *httpclient.Client, volumeURL stri
 	list, err := client.ListVolumes(ctx)
 	if err != nil {
 		return err
-	} else if !slices.Contains(list.Schemes, u.Scheme) {
-		return gofiler.ErrBadParameter.Withf("the server doesn't run the %q backend, but %s", u.Scheme, strings.Join(list.Schemes, ", "))
+	}
+	schemes := make([]string, 0, len(list.Backends))
+	for _, backend := range list.Backends {
+		schemes = append(schemes, backend.Scheme)
+	}
+	if !slices.Contains(schemes, u.Scheme) {
+		return gofiler.ErrBadParameter.Withf("the server doesn't run the %q backend, but %s", u.Scheme, strings.Join(schemes, ", "))
 	}
 	return nil
 }

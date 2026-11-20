@@ -37,6 +37,8 @@ func (b *bucket) URL() *url.URL { return &url.URL{Scheme: "bucket", Host: "media
 
 func (b *bucket) Clone(context.Context, url.Values) (gofiler.Filer, error) { return b, nil }
 
+func (b *bucket) Description() string { return "A bucket" }
+
 func (b *bucket) WatchObjects(context.Context, chan<- schema.Event) error {
 	return gofiler.ErrNotImplemented.With("a bucket isn't watched")
 }

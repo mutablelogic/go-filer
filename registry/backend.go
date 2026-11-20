@@ -32,6 +32,12 @@ import (
 // registry calls.
 type Backend func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error)
 
+// plugin is a backend, with what it is
+type plugin struct {
+	description string
+	open        Backend
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
@@ -41,13 +47,13 @@ type Backend func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.F
 var scheme = regexp.MustCompile(`^[a-z][a-z0-9+.-]+$`)
 
 // builtin returns the backends which are built in, of their schemes
-func builtin() map[string]Backend {
-	return map[string]Backend{
-		schema.SchemeFile:     openFile,
-		schema.SchemeS3:       openS3,
-		google.TasksScheme:    openGTasks,
-		google.ContactsScheme: openGContacts,
-		google.CalendarScheme: openGCalendar,
+func builtin() map[string]plugin {
+	return map[string]plugin{
+		schema.SchemeFile:     {"Folders of the server", openFile},
+		schema.SchemeS3:       {"S3 buckets, or those which are compatible, such as MinIO and SeaweedFS", openS3},
+		google.TasksScheme:    {"Google Tasks of a Google account", openGTasks},
+		google.ContactsScheme: {"Google Contacts of a Google account", openGContacts},
+		google.CalendarScheme: {"Google Calendar events of a Google account", openGCalendar},
 	}
 }
 
@@ -56,10 +62,10 @@ func builtin() map[string]Backend {
 
 // WithBackend adds a backend, which the volumes whose URLs have its scheme
 // are created with, such as one of another package, or program, which
-// embeds the registry. A scheme is of two characters or more, in lower
+// embeds the registry, with what it is, such as "RSS feeds". A scheme is of two characters or more, in lower
 // case, and one which another backend has, such as one which is built in,
 // is an error.
-func WithBackend(name string, backend Backend) Opt {
+func WithBackend(name, description string, backend Backend) Opt {
 	return func(o *opt) error {
 		if !scheme.MatchString(name) {
 			return gofiler.ErrBadParameter.Withf("invalid scheme: %q", name)
@@ -68,7 +74,7 @@ func WithBackend(name string, backend Backend) Opt {
 		} else if _, exists := o.backends[name]; exists {
 			return gofiler.ErrConflict.Withf("a backend of scheme %q is already registered", name)
 		}
-		o.backends[name] = backend
+		o.backends[name] = plugin{description: description, open: backend}
 		return nil
 	}
 }

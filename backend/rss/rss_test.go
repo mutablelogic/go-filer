@@ -103,6 +103,7 @@ func Test_Feed(t *testing.T) {
 	assert.Equal(t, "podcast", u.Host)
 	assert.Equal(t, server.URL+"/feed?format=rss", u.Query().Get("url"))
 	assert.Equal(t, "RSS feed The Example Podcast", u.Query().Get("description"))
+	assert.Equal(t, "RSS feed The Example Podcast", f.Description())
 	assert.Equal(t, "true", u.Query().Get("readonly"))
 
 	// The items are of their days, in UTC, of the folders of their years

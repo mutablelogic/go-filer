@@ -4,7 +4,8 @@
 // metadata, and its enclosure, such as a podcast's episode, too. It's read
 // only, and isn't watched, so an indexed volume is scanned again at the
 // indexer's interval. It's a backend which isn't built into the registry,
-// which a program adds with registry.WithBackend(rss.Scheme, rss.Open).
+// which a program adds with
+// registry.WithBackend(rss.Scheme, rss.Description, rss.Open).
 package rss
 
 import (
@@ -55,6 +56,9 @@ type feed struct {
 const (
 	// Scheme is the scheme of a feed's URL, rss://<name>?url=<feed>
 	Scheme = "rss"
+
+	// Description is what the backend is
+	Description = "RSS feeds, of their items"
 
 	paramURL      = "url"
 	paramRefresh  = "refresh-interval"
@@ -149,6 +153,11 @@ func New(ctx context.Context, name string, params url.Values, opts gofiler.Opts)
 // PUBLIC METHODS
 
 // URL returns the URL of the feed's volume, with its options
+// Description returns what the feed is, such as "RSS feed The Example Podcast"
+func (self *Filer) Description() string {
+	return self.description
+}
+
 func (self *Filer) URL() *url.URL {
 	return &url.URL{Scheme: Scheme, Host: self.name, RawQuery: self.params().Encode()}
 }

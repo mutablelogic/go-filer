@@ -259,6 +259,16 @@ func (self *Registry) Schemes() []string {
 	return slices.Sorted(maps.Keys(self.backends))
 }
 
+// Backends returns the backends which volumes can be created of, in order
+// of their schemes, with what each is
+func (self *Registry) Backends() []schema.Backend {
+	result := make([]schema.Backend, 0, len(self.backends))
+	for _, scheme := range self.Schemes() {
+		result = append(result, schema.Backend{Scheme: scheme, Description: self.backends[scheme].description})
+	}
+	return result
+}
+
 // forget removes a volume's index, and its state, from the registry's store,
 // when it isn't indexed any more, or its backend is another, which doesn't
 // write the state when there's none
@@ -361,11 +371,11 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 	if _, err := url.ParseQuery(u.RawQuery); err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("invalid options: %v", err)
 	}
-	open, exists := self.backends[u.Scheme]
+	backend, exists := self.backends[u.Scheme]
 	if !exists {
 		return nil, gofiler.ErrBadParameter.Withf("unsupported scheme: %q", u.Scheme)
 	}
-	return open(ctx, u, self.backendOpts)
+	return backend.open(ctx, u, self.backendOpts)
 }
 
 // register registers the backend with the entry of the volume, unless the

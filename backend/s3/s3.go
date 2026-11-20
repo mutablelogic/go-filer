@@ -157,6 +157,11 @@ func (self *S3) Close() error {
 
 // URL returns the URL of the bucket, with the options which are set as its
 // query, but not its credentials, so it can be returned to clients
+// Description returns what the bucket is, such as "S3 bucket photos in eu-west-1"
+func (self *S3) Description() string {
+	return self.description
+}
+
 func (self *S3) URL() *url.URL {
 	return self.url(false)
 }
