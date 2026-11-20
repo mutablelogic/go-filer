@@ -996,3 +996,92 @@ func testEventActionWatch(t *testing.T, interval string) {
 	run(`{"op":"create","title":"Far away","start":"2027-06-01"}`)
 	assert.Empty(t, events())
 }
+
+// Test_CalendarListingCache tests the listings a watch keeps are saved in
+// the volume's cache, so a watch which starts again, such as after a
+// restart, doesn't list them again, when nothing changed, and those of an
+// event which changes are listed again, but not others
+func Test_CalendarListingCache(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	credentials := calendarCredentials(t, endpoint)
+	cache := testCache()
+	filer := func() *google.CalendarFiler {
+		t.Helper()
+		f, err := google.NewCalendarFiler(t.Context(), "calendar", url.Values{"quota": {"0"}, "window": {"40d"}, "refresh_interval": {"10ms"}}, cache, gofiler.Opts{Credentials: credentials})
+		require.NoError(t, err)
+		google.SetCalendarNow(f, func() time.Time { return time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC) })
+		return f
+	}
+	lists := func() int {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.lists
+	}
+	watch := func(f *google.CalendarFiler) (chan schema.Event, func()) {
+		t.Helper()
+		ch, done := make(chan schema.Event, 64), make(chan error, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() { done <- f.WatchObjects(ctx, ch) }()
+		select {
+		case event := <-ch:
+			require.Equal(t, schema.EventTypeRescan, event.EventType)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no rescan")
+		}
+		return ch, func() {
+			cancel()
+			assert.ErrorIs(t, <-done, context.Canceled)
+		}
+	}
+	oct, nov, dec := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-10"}}, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-11"}}, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-12"}}
+
+	// Each month of the window is listed, as an index does, so where each
+	// event is, is known
+
+	// The first watch lists the months, which are saved
+	f := filer()
+	_, stop := watch(f)
+	listed(t, f, oct)
+	want := listed(t, f, nov)
+	listed(t, f, dec)
+	before := lists()
+	stop()
+
+	// A watch which starts again, when nothing changed, uses them
+	f = filer()
+	ch, stop := watch(f)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, oct)
+	assert.Equal(t, want, listed(t, f, nov))
+	listed(t, f, dec)
+	assert.Equal(t, before, lists(), "they aren't listed again")
+
+	// An event which changes, while it's watched, lists its month again,
+	// but not another's
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Changed" })
+	require.Eventually(t, func() bool {
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 5*time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, dec)
+	assert.Equal(t, before, lists(), "December isn't listed again")
+	listed(t, f, nov)
+	assert.Greater(t, lists(), before, "November is")
+	stop()
+
+	// A change while it isn't watched lists them again, as where its event
+	// was isn't known
+	fake.change(work, "e3", func(e *httpclient.Event) { e.Summary = "Away" })
+	before = lists()
+	f = filer()
+	_, stop = watch(f)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, dec)
+	assert.Greater(t, lists(), before)
+	stop()
+}

@@ -82,17 +82,29 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 	if self.refreshInterval == 0 {
 		return gofiler.ErrNotImplemented.Withf("volume %q isn't watched, as its %s is zero", self.name, paramRefreshInterval)
 	}
-	state := &calendarSync{tokens: self.loadTokens(ctx), rejected: make(map[string]time.Time), calendars: make(map[string]string)}
+	state := &calendarSync{tokens: self.loadTokens(ctx), rejected: make(map[string]time.Time), calendars: self.loadCalendarTags(ctx)}
 	state.stored = maps.Clone(state.tokens)
+	tags := maps.Clone(state.calendars)
 	from, _ := self.days()
 
 	// What the filer writes, from when it's watching, before the poll, so
 	// it's in the rescan
 	watch := self.watch()
 	defer self.unwatch(watch)
-	if _, _, err := self.poll(ctx, state); err != nil {
+	rescan, events, err := self.poll(ctx, state)
+	if err != nil {
 		return err
 	}
+
+	// The listings which were saved in the volume's cache, such as before a
+	// restart, are kept, when nothing changed since, as where an event was
+	// isn't known, until they're listed, and then used, as the watch keeps
+	// them up to date
+	if rescan || len(events) > 0 {
+		self.dropListings(ctx)
+	}
+	self.saveCalendarTags(ctx, state, tags)
+	self.setPersisting(true)
 
 	// What was got before it's watched may be out of date, of what the poll
 	// found, which isn't sent, so it's got again, of the rescan, which what
@@ -126,10 +138,12 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 			continue
 		case <-ticker.C:
 		}
+		tags := maps.Clone(state.calendars)
 		rescan, events, err := self.poll(ctx, state)
 		if err != nil {
 			return err
 		}
+		self.saveCalendarTags(ctx, state, tags)
 
 		// The days which are listed move on, so events enter, and leave,
 		// them, without changing
@@ -141,7 +155,18 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 		}
 		if len(events) > 0 {
 			// What was got from Google is out of date, so it's got again,
-			// before what changed is sent, and read
+			// before what changed is sent, and read, as are the listings
+			// which were saved, of the events which changed, or all of them,
+			// of a rescan
+			if rescan {
+				self.dropListings(ctx)
+			} else {
+				paths := make([]string, 0, len(events))
+				for _, event := range events {
+					paths = append(paths, event.Path)
+				}
+				self.dropListings(ctx, paths...)
+			}
 			self.clearCache()
 		}
 		for _, event := range events {
@@ -257,11 +282,15 @@ func (self *CalendarFiler) watch() *calendarWatch {
 	return watch
 }
 
-// unwatch removes a watch
+// unwatch removes a watch, and, of the last, stops the listings which are
+// saved being used, as they aren't kept up to date
 func (self *CalendarFiler) unwatch(watch *calendarWatch) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	delete(self.watches, watch)
+	if len(self.watches) == 0 {
+		self.persist = false
+	}
 }
 
 // wrote sends the watches what the filer wrote, as it wrote it, of an event
@@ -282,6 +311,7 @@ func (self *CalendarFiler) wrote(calendar *httpclient.Calendar, before, after *h
 		return self.eventPath(calendar, e)
 	}
 	old, now := pathOf(before), pathOf(after)
+	self.dropListings(context.Background(), old, now)
 	event := func(t schema.EventType, p string) schema.Event {
 		return schema.Event{EventType: t, ObjectKey: schema.ObjectKey{Name: self.name, Path: p}}
 	}
