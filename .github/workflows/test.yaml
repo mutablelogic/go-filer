@@ -149,3 +149,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: make race-test
+
+  # The web UI is type checked, tested and built, with @mutablelogic packages
+  # from GitHub Packages, which the workflow's token can read
+  frontend:
+    name: Test frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+
+      - name: Test and build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          make frontend-test
+          make frontend

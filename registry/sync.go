@@ -189,7 +189,7 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 			logger.WarnContext(ctx, "a volume can't be mounted", "volume", name, "error", err.Error())
 		}
 		if e != nil {
-			self.setOffline(e, err)
+			self.setOffline(name, e, err)
 		} else {
 			self.setFailed(name, err)
 		}
@@ -200,6 +200,7 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 		return
 	}
 	self.setFailed(name, nil)
+	self.publishState(name)
 	self.syncMu.Lock()
 	if state, exists := self.syncs.volumes[name]; exists {
 		state.retry = 0
@@ -330,13 +331,17 @@ func (self *Registry) whyFailed(name string, e *entry) error {
 }
 
 // setFailed records why the volume can't be mounted, or that it can, with
-// nil
+// nil, which is published, when it's changed
 func (self *Registry) setFailed(name string, err error) {
 	self.Lock()
-	defer self.Unlock()
+	changed := errorText(self.failed[name]) != errorText(err)
 	if err == nil {
 		delete(self.failed, name)
 	} else {
 		self.failed[name] = err
+	}
+	self.Unlock()
+	if changed {
+		self.publishState(name)
 	}
 }

@@ -191,7 +191,7 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 			// they can do, with volume-update
 			delete(watches, w.e)
 			if w.err != nil && !errors.Is(w.err, gofiler.ErrNotImplemented) && w.e.ctx.Err() == nil {
-				self.setOffline(w.e, w.err)
+				self.setOffline(w.volume, w.e, w.err)
 				logger.WarnContext(ctx, "watching a volume failed", "volume", w.volume, "error", w.err.Error())
 				self.retry(ctx, logger, w.volume, w.err)
 			}

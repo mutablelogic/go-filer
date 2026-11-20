@@ -4,6 +4,7 @@
 # Executables
 GO ?= $(shell which go 2>/dev/null)
 GOWORK ?= off
+NPM ?= $(shell which npm 2>/dev/null)
 PROTOC ?= $(shell which protoc 2>/dev/null)
 PROTOC_GEN_GO ?= $(shell which protoc-gen-go 2>/dev/null)
 PROTOC_GEN_GO_GRPC ?= $(shell which protoc-gen-go-grpc 2>/dev/null)
@@ -11,6 +12,7 @@ PROTOC_GEN_GO_GRPC ?= $(shell which protoc-gen-go-grpc 2>/dev/null)
 # Locations
 BUILD_DIR ?= build
 CMD_DIR := $(wildcard cmd/*)
+TS_DIR := frontend
 
 # Set OS and Architecture
 ARCH ?= $(shell arch | tr A-Z a-z | sed 's/x86_64/amd64/' | sed 's/i386/amd64/' | sed 's/armv7l/arm/' | sed 's/aarch64/arm64/')
@@ -28,7 +30,7 @@ INDEXER_BACKEND ?= sqlite
 ifeq ($(filter $(INDEXER_BACKEND),memory sqlite pg),)
 $(error INDEXER_BACKEND is memory, sqlite or pg, not "$(INDEXER_BACKEND)")
 endif
-BUILD_TAGS = indexer_$(INDEXER_BACKEND)
+BUILD_TAGS = indexer_$(INDEXER_BACKEND)$(if $(wildcard $(TS_DIR)/app/dist/index.html),$(comma)frontend)
 
 ###############################################################################
 # GO-MEDIA
@@ -105,12 +107,15 @@ all: build
 ###############################################################################
 # BUILD
 
-# Build the commands in the cmd directory, with cgo, which watching files on
-# macOS needs, and go-media's libraries, which enriching media does, or
-# without cgo, with CGO_ENABLED=0, which doesn't need them, but reads less
-# metadata, and can't watch volumes on macOS
+# Build the web UI, and then the commands in the cmd directory, which embed
+# it, with cgo, which watching files on macOS needs, and go-media's
+# libraries, which enriching media does, or without cgo, with
+# CGO_ENABLED=0, which doesn't need them, but reads less metadata, and can't
+# watch volumes on macOS. The commands are built by another make, so they
+# embed the UI which was just built.
 .PHONY: build
-build: tidy $(CMD_DIR)
+build: frontend
+	@$(MAKE) --no-print-directory tidy $(CMD_DIR)
 
 CGO_ENABLED ?= 1
 CGO_BUILD_ENV = $(if $(filter 1,$(CGO_ENABLED)),$(CGO_ENV))
@@ -129,6 +134,23 @@ $(CMD_DIR): go-dep mkdir $(CGO_BUILD_DEP)
 client: go-dep mkdir
 	@echo Build filer client GOOS=${OS} GOARCH=${ARCH}
 	@GOWORK=${GOWORK} GOOS=${OS} GOARCH=${ARCH} CGO_ENABLED=0 ${GO} build -tags client ${BUILD_FLAGS} -o ${BUILD_DIR}/filer ./cmd/filer
+
+###############################################################################
+# FRONTEND
+
+# Build the web UI's modules into frontend/dist, and the server's app into
+# frontend/app/dist, which the commands embed, with the "frontend" tag, from
+# package-lock.json, once they're type checked. It needs npm, and a token
+# which can read GitHub Packages, in GITHUB_TOKEN.
+.PHONY: frontend
+frontend: npm-dep
+	@echo Build frontend
+	@cd $(TS_DIR) && ${NPM} ci --silent && ${NPM} run --silent check && ${NPM} run --silent build && ${NPM} run --silent build-app
+
+.PHONY: frontend-test
+frontend-test: npm-dep
+	@echo Frontend Tests
+	@cd $(TS_DIR) && ${NPM} ci --silent && ${NPM} run --silent check && ${NPM} test --silent
 
 ###############################################################################
 # GENERATE
@@ -204,7 +226,7 @@ tidy: go-dep
 .PHONY: clean
 clean:
 	@echo 'clean'
-	@rm -fr $(BUILD_DIR)
+	@rm -fr $(BUILD_DIR) $(TS_DIR)/dist $(TS_DIR)/app/dist
 	@$(GO) clean
 
 ###############################################################################
@@ -221,3 +243,8 @@ protoc-dep:
 	@test -f "${PROTOC}" && test -x "${PROTOC}" || (echo "Missing protoc binary: brew install protobuf" && exit 1)
 	@test -f "${PROTOC_GEN_GO}" && test -x "${PROTOC_GEN_GO}" || (echo "Missing protoc-gen-go binary: brew install protoc-gen-go" && exit 1)
 	@test -f "${PROTOC_GEN_GO_GRPC}" && test -x "${PROTOC_GEN_GO_GRPC}" || (echo "Missing protoc-gen-go-grpc binary: brew install protoc-gen-go-grpc" && exit 1)
+
+.PHONY: npm-dep
+npm-dep:
+	@test -f "${NPM}" && test -x "${NPM}"  || (echo "Missing npm binary, which builds the web UI" && exit 1)
+	@test -n "$${GITHUB_TOKEN}" || (echo "Missing GITHUB_TOKEN, which needs read:packages to install @mutablelogic packages from GitHub Packages" && exit 1)

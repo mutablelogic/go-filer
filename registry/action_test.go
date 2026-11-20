@@ -146,7 +146,7 @@ func Test_Registry_Actions(t *testing.T) {
 	r.RLock()
 	e := r.backend["things"]
 	r.RUnlock()
-	r.setOffline(e, gofiler.ErrServiceUnavailable.With("the watch failed"))
+	r.setOffline("things", e, gofiler.ErrServiceUnavailable.With("the watch failed"))
 	_, err = r.ListActions(ctx, "things")
 	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
 	assert.ErrorContains(t, err, "offline")
@@ -155,7 +155,7 @@ func Test_Registry_Actions(t *testing.T) {
 	list, err = r.ListActions(ctx, "")
 	require.NoError(t, err)
 	assert.Empty(t, list.Body, "an offline volume's aren't listed, of every volume")
-	r.setOffline(e, nil)
+	r.setOffline("things", e, nil)
 	_, err = r.CallAction(ctx, "things", "echo", json.RawMessage(`{"name":"a"}`))
 	require.NoError(t, err, "nor once it's online again")
 
@@ -195,7 +195,7 @@ func Test_Registry_ActionsRemounted(t *testing.T) {
 	e, err := r.use(ctx, "things")
 	require.NoError(t, err)
 	defer e.wg.Done()
-	r.setOffline(e, gofiler.ErrServiceUnavailable.With("the watch failed"))
+	r.setOffline("things", e, gofiler.ErrServiceUnavailable.With("the watch failed"))
 	r.Lock()
 	r.backend["things"] = &entry{state: stateAdding}
 	r.Unlock()

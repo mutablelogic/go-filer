@@ -24,6 +24,12 @@ const (
 	VolumeChangeTable = "volume"
 )
 
+// RegistryChangeSchema is of the changes of what a registry knows of a
+// volume, whose table is VolumeChangeTable, and whose row is its name: that
+// it's mounted, or unmounted, or offline, or can't be mounted, or is again,
+// which aren't changes of the store
+const RegistryChangeSchema = "registry"
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
@@ -67,6 +73,12 @@ func VolumeChange(action changes.ChangeAction, volume *Volume) changes.Change {
 		}
 	}
 	return change
+}
+
+// VolumeStateChange returns the change of what a registry knows of a volume,
+// of its name, which is read again, as it's an update without data
+func VolumeStateChange(name string) changes.Change {
+	return changes.Change{Action: changes.ChangeUpdate, Schema: RegistryChangeSchema, Table: VolumeChangeTable, Row: name}
 }
 
 // ChangeEvent returns the event of a change of ChangeSchema, or false when
