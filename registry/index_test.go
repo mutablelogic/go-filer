@@ -24,6 +24,8 @@ import (
 	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	tracetest "go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // newIndexedRegistry returns a running registry, with an index store, and
@@ -543,4 +545,36 @@ func Test_Registry_ListCount(t *testing.T) {
 	data, err := json.Marshal(list)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"count":null`)
+}
+
+// A volume's index state is read of the request's context, so its store's
+// spans are part of the request's trace, rather than traces of their own
+func Test_Registry_ViewTraced(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer provider.Shutdown(context.Background())
+	tracer := provider.Tracer("test")
+	dir := t.TempDir()
+	s, err := sqlite.New(context.Background(), gosqlite.Memory, store.WithTracer(tracer))
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	runRegistry(t, r)
+	_, err = add(t, r, "media", indexedURL(t, dir, "media", "folders"))
+	require.NoError(t, err)
+	ready(t, r, "media")
+
+	ctx, span := tracer.Start(context.Background(), "request")
+	_, err = r.ListVolumes(ctx)
+	span.End()
+	require.NoError(t, err)
+	var states int
+	for _, s := range recorder.Ended() {
+		if strings.HasSuffix(s.Name(), ".State") && s.SpanContext().TraceID() == span.SpanContext().TraceID() {
+			states++
+		}
+	}
+	assert.NotZero(t, states, "the index's state is read in the request's trace")
 }

@@ -38,7 +38,7 @@ func (self *Registry) CreateVolume(ctx context.Context, volume schema.VolumeMeta
 		return nil, err
 	}
 	self.sync(meta.Name, false)
-	return self.view(stored), nil
+	return self.view(ctx, stored), nil
 }
 
 // UpdateVolume stores a volume's URL, and whether it's enabled, which Run
@@ -74,7 +74,7 @@ func (self *Registry) UpdateVolume(ctx context.Context, volume schema.VolumeMeta
 		self.forget(ctx, stored.Name)
 	}
 	self.sync(meta.Name, true)
-	return self.view(stored), nil
+	return self.view(ctx, stored), nil
 }
 
 // GetVolume returns a volume of the store, with its index, when it's
@@ -85,7 +85,7 @@ func (self *Registry) GetVolume(ctx context.Context, name string) (*schema.Volum
 	if err != nil {
 		return nil, err
 	}
-	return self.view(stored), nil
+	return self.view(ctx, stored), nil
 }
 
 // ListVolumes returns the volumes of the store, in order of their names, as
@@ -97,7 +97,7 @@ func (self *Registry) ListVolumes(ctx context.Context) ([]schema.Volume, error) 
 	}
 	result := make([]schema.Volume, 0, len(stored))
 	for _, volume := range stored {
-		result = append(result, *self.view(volume))
+		result = append(result, *self.view(ctx, volume))
 	}
 	return result, nil
 }
@@ -194,8 +194,9 @@ func (self *Registry) validate(ctx context.Context, volume schema.VolumeMeta) (s
 
 // view returns a stored volume, with what the registry knows of it: whether
 // it's enabled, which it isn't while it's offline, or can't be mounted, with
-// why, and its index's state, when it's mounted and indexed
-func (self *Registry) view(stored *schema.Volume) *schema.Volume {
+// why, and its index's state, when it's mounted and indexed, which is read
+// of the context, so it's traced as part of the request
+func (self *Registry) view(ctx context.Context, stored *schema.Volume) *schema.Volume {
 	volume := *stored
 	if !volume.Enabled {
 		return &volume
@@ -218,12 +219,12 @@ func (self *Registry) view(stored *schema.Volume) *schema.Volume {
 	if backend != nil {
 		if i, ok := backend.(*indexer.Indexer); ok {
 			volume.Index = &schema.VolumeIndex{Mode: string(i.Mode())}
-			if state, err := i.State(context.Background()); err != nil {
+			if state, err := i.State(ctx); err != nil {
 				volume.Index.Error = err.Error()
 			} else {
 				volume.Index.IndexState = state
 			}
-			if task, err := i.Metadata(context.Background()); err != nil && volume.Index.Error == "" {
+			if task, err := i.Metadata(ctx); err != nil && volume.Index.Error == "" {
 				volume.Index.Error = err.Error()
 			} else {
 				volume.Index.Metadata = task
