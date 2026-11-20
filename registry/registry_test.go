@@ -1149,6 +1149,15 @@ func (e example) URL() *url.URL {
 	return &u
 }
 
+// Close closes the directory's backend, which the registry closes, as it's
+// an io.Closer
+func (e example) Close() error {
+	if closer, ok := e.Filer.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 // A backend which is added, of its scheme, creates volumes of URLs of it,
 // with the registry's options, and is one of its schemes
 func Test_Registry_WithBackend(t *testing.T) {
@@ -1170,7 +1179,11 @@ func Test_Registry_WithBackend(t *testing.T) {
 	assert.Equal(t, []string{"example", "file", "gcalendar", "gcontacts", "gtasks", "s3"}, r.Schemes())
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
-	b, err := add(t, r, "things", mustURL(t, "example://things?index=objects"))
+	// Its URL is parsed as a volume's is, by volume-create, and --volume
+	u, err := ParseURL("example://things?index=objects")
+	require.NoError(t, err)
+	assert.Equal(t, "example", u.Scheme)
+	b, err := add(t, r, "things", u)
 	require.NoError(t, err)
 	assert.Equal(t, "example", b.URL().Scheme)
 	assert.Equal(t, credentials{}, given.Credentials, "it's created with the registry's options")
@@ -1178,9 +1191,10 @@ func Test_Registry_WithBackend(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/a.txt", object.Path)
 
-	// A scheme which isn't valid, a backend which is nil, and a scheme which
-	// is taken, such as one which is built in, can't be added
-	for _, opt := range []Opt{WithBackend("Example", open), WithBackend("1x", open), WithBackend("x", nil)} {
+	// A scheme which isn't valid, or of a single letter, which is a Windows
+	// drive, a backend which is nil, and a scheme which is taken, such as
+	// one which is built in, can't be added
+	for _, opt := range []Opt{WithBackend("Example", open), WithBackend("1x", open), WithBackend("x", open), WithBackend("xy", nil)} {
 		_, err := New(context.Background(), WithStore(newStore(t)), opt)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	}

@@ -34,8 +34,9 @@ type Backend func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.F
 // GLOBALS
 
 // scheme is a URL's scheme, of RFC 3986, in lower case, as url.Parse
-// returns it
-var scheme = regexp.MustCompile(`^[a-z][a-z0-9+.-]*$`)
+// returns it, of two characters or more, as one of a single letter is a
+// Windows drive, such as C:/media, which ParseURL reads as a path
+var scheme = regexp.MustCompile(`^[a-z][a-z0-9+.-]+$`)
 
 // builtin returns the backends which are built in, of their schemes
 func builtin() map[string]Backend {
@@ -53,8 +54,9 @@ func builtin() map[string]Backend {
 
 // WithBackend adds a backend, which the volumes whose URLs have its scheme
 // are created with, such as one of another package, or program, which
-// embeds the registry. A scheme which another backend has, such as one
-// which is built in, is an error.
+// embeds the registry. A scheme is of two characters or more, in lower
+// case, and one which another backend has, such as one which is built in,
+// is an error.
 func WithBackend(name string, backend Backend) Opt {
 	return func(o *opt) error {
 		if !scheme.MatchString(name) {
