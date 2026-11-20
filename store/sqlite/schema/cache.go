@@ -217,11 +217,14 @@ func (expired CacheExpired) Select(bind *sqlite.Bind, op sqlite.Op) (string, err
 }
 
 func (id CacheId) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
-	if op != sqlite.Delete {
-		return "", sqlite.ErrNotImplemented.Withf("cache id: %v", op)
-	}
 	bind.Set("id", int64(id))
-	return bind.Query("cache.delete"), nil
+	switch op {
+	case sqlite.Delete:
+		return bind.Query("cache.delete"), nil
+	case sqlite.Update:
+		return bind.Query("cache.release_id"), nil
+	}
+	return "", sqlite.ErrNotImplemented.Withf("cache id: %v", op)
 }
 
 func (read CacheRead) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {

@@ -36,6 +36,10 @@ type CacheStore struct {
 	readers  map[int64]int
 	released map[int64]bool
 	creating map[string]*cacheCreate
+
+	// beforeCreate is called once a key is claimed, before it's got again,
+	// of a test, which creates it meanwhile
+	beforeCreate func()
 }
 
 // cacheCreate is a creation of a key's entry, which is closed once it's
@@ -111,23 +115,31 @@ func (self *CacheStore) Close() error {
 // PUBLIC METHODS
 
 // Get returns the entry of the key, or ErrNotFound when there's none, or it
-// expired, which is deleted
+// expired, which is deleted. It's selected, and its reader registered, at
+// once, so a Put, or Delete, which releases it, deletes it once it's closed.
 func (self *CacheStore) Get(ctx context.Context, key string) (store.CacheEntry, error) {
 	if err := checkKey(key); err != nil {
 		return nil, err
 	}
+	self.mu.Lock()
 	var entry schema.CacheEntry
 	if err := self.conn.Get(ctx, &entry, schema.CacheKey(key)); errors.Is(err, sqlite.ErrNotFound) {
+		self.mu.Unlock()
 		return nil, notFound(key)
 	} else if err != nil {
+		self.mu.Unlock()
 		return nil, storeErr(err)
 	} else if !entry.Expires.IsZero() && !self.now().Before(entry.Expires) {
-		if err := self.release(ctx, schema.CacheKey(key)); err != nil {
+		// It's released of its id, so one which has replaced it isn't
+		self.mu.Unlock()
+		if err := self.release(ctx, schema.CacheId(entry.Id)); err != nil {
 			return nil, err
 		}
 		return nil, notFound(key)
 	}
-	return self.open(entry), nil
+	self.readers[entry.Id]++
+	self.mu.Unlock()
+	return &cacheEntry{store: self, entry: entry, at: -1}, nil
 }
 
 // Put stores the content, as it's read, in chunks, as an entry without a
@@ -154,10 +166,16 @@ func (self *CacheStore) put(ctx context.Context, key string, ttl time.Duration, 
 	if err := self.conn.Insert(ctx, &ids, schema.CacheCreate{Now: self.now()}); err != nil {
 		return nil, storeErr(err)
 	}
+	// It's read, so it isn't deleted, until the entry which is returned is
+	// closed, which a Put, or Delete, which releases it once it's committed,
+	// before it's returned, doesn't
 	id := ids[0]
+	self.mu.Lock()
+	self.readers[id]++
+	self.mu.Unlock()
 	size, err := self.write(ctx, id, r)
 	if err != nil {
-		return nil, errors.Join(err, self.delete(context.WithoutCancel(ctx), id))
+		return nil, errors.Join(err, self.abandon(context.WithoutCancel(ctx), id))
 	}
 
 	// It's given the key, in place of the entry of the key
@@ -174,12 +192,25 @@ func (self *CacheStore) put(ctx context.Context, key string, ttl time.Duration, 
 		}
 		return conn.Update(ctx, &entry, commit, commit)
 	}); err != nil {
-		return nil, errors.Join(storeErr(err), self.delete(context.WithoutCancel(ctx), id))
+		return nil, errors.Join(storeErr(err), self.abandon(context.WithoutCancel(ctx), id))
 	}
+	result := &cacheEntry{store: self, entry: entry, at: -1}
 	if err := self.forget(ctx, released...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, result.Close())
 	}
-	return self.open(entry), nil
+	return result, nil
+}
+
+// abandon deletes an entry which isn't written, and its reader, which wasn't
+// returned
+func (self *CacheStore) abandon(ctx context.Context, id int64) error {
+	self.mu.Lock()
+	if self.readers[id]--; self.readers[id] <= 0 {
+		delete(self.readers, id)
+		delete(self.released, id)
+	}
+	self.mu.Unlock()
+	return self.delete(ctx, id)
 }
 
 // GetOrCreate returns the entry of the key, when there's one of the
@@ -216,6 +247,19 @@ func (self *CacheStore) GetOrCreate(ctx context.Context, key, version string, tt
 			self.mu.Unlock()
 			close(f.done)
 		}()
+
+		// Another may have created it, since it was got, and finished, before
+		// this claimed it, so it's got again, now this has
+		if self.beforeCreate != nil {
+			self.beforeCreate()
+		}
+		if entry, err := self.Get(ctx, key); err == nil && entry.Meta().Version == version {
+			return entry, nil
+		} else if err == nil {
+			entry.Close()
+		} else if !errors.Is(err, gofiler.ErrNotFound) {
+			return nil, err
+		}
 		return self.create(ctx, key, version, ttl, valuefn)
 	}
 }
@@ -246,7 +290,13 @@ func (self *CacheStore) create(ctx context.Context, key, version string, ttl tim
 			if r := recover(); r != nil {
 				err = gofiler.ErrInternalServerError.Withf("cache %q: its value panicked: %v", key, r)
 			}
-			pw.CloseWithError(err)
+			// Its error is wrapped, so one which is io.EOF isn't read as the
+			// end of the content, which is stored
+			if err != nil {
+				pw.CloseWithError(valueError{err})
+			} else {
+				pw.Close()
+			}
 			created <- err
 		}()
 		meta, err = valuefn(pw)
@@ -278,34 +328,26 @@ func (self *CacheStore) create(ctx context.Context, key, version string, ttl tim
 }
 
 // write writes the content to an entry, in chunks, as it's read, and
-// returns how many bytes it is
+// returns how many bytes it is. Only io.EOF of the reader is its end, so
+// content which is cut short, such as of a response, whose reader returns
+// io.ErrUnexpectedEOF, isn't stored.
 func (self *CacheStore) write(ctx context.Context, id int64, r io.Reader) (int64, error) {
 	var size int64
 	buf := make([]byte, cacheChunk)
 	for n := int64(0); ; n++ {
-		read, err := io.ReadFull(r, buf)
+		read, err := readChunk(r, buf)
 		if read > 0 {
 			if err := self.conn.Insert(ctx, nil, schema.CacheChunk{Entry: id, N: n, Data: buf[:read]}); err != nil {
 				return 0, storeErr(err)
 			}
 			size += int64(read)
 		}
-		switch {
-		case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		if err == io.EOF {
 			return size, nil
-		case err != nil:
+		} else if err != nil {
 			return 0, err
 		}
 	}
-}
-
-// open returns an entry, which is read, so it isn't deleted until it's
-// closed
-func (self *CacheStore) open(entry schema.CacheEntry) *cacheEntry {
-	self.mu.Lock()
-	defer self.mu.Unlock()
-	self.readers[entry.Id]++
-	return &cacheEntry{store: self, entry: entry, at: -1}
 }
 
 // close closes an entry which was read, which is deleted, when it lost its
@@ -489,4 +531,28 @@ func checkKey(key string) error {
 // notFound returns ErrNotFound of a key
 func notFound(key string) error {
 	return gofiler.ErrNotFound.Withf("cache %q", key)
+}
+
+// readChunk reads into the buffer, until it's full, or the reader returns
+// an error, which is io.EOF at its end, and returns how many bytes it read
+func readChunk(r io.Reader, buf []byte) (int, error) {
+	n := 0
+	for n < len(buf) {
+		read, err := r.Read(buf[n:])
+		n += read
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+// valueError is the error of a function which creates an entry's value,
+// which isn't the end of its content, even when it's io.EOF
+type valueError struct {
+	error
+}
+
+func (e valueError) Unwrap() error {
+	return e.error
 }

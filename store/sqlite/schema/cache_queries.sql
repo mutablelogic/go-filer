@@ -11,6 +11,11 @@ INSERT INTO cache_chunk (entry, n, data) VALUES (@entry, @n, @data);
 -- deleted, once it isn't read
 UPDATE cache_entry SET key = NULL WHERE key = @key RETURNING id;
 
+-- cache.release_id
+-- An entry, of its id, which loses its key, when it has one, such as one
+-- which expired, so an entry which has replaced it isn't released
+UPDATE cache_entry SET key = NULL WHERE id = @id AND key IS NOT NULL RETURNING id;
+
 -- cache.release_prefix
 -- The entries of the keys which start with the prefix
 UPDATE cache_entry SET key = NULL WHERE key IS NOT NULL AND substr(key, 1, length(@prefix)) = @prefix RETURNING id;

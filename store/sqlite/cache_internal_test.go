@@ -13,6 +13,7 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	store "github.com/mutablelogic/go-filer/store"
+	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
 	sqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -177,6 +178,13 @@ func Test_CacheReplace(t *testing.T) {
 	assert.Equal(t, "old", readAll(t, old))
 	assert.Equal(t, int64(1), count(t, cache, "cache_entry"))
 
+	// Content which is cut short, of io.ErrUnexpectedEOF, such as a response
+	// which ends before its length, isn't stored
+	_, err = cache.Put(ctx, "tree", 0, store.CacheMeta{Version: "3"}, io.MultiReader(strings.NewReader("partial"), shortReader{}))
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.Equal(t, "new", get(t, cache, "tree"))
+	assert.Equal(t, int64(1), count(t, cache, "cache_entry"))
+
 	// Content which can't be read keeps the entry, and isn't kept
 	_, err = cache.Put(ctx, "tree", 0, store.CacheMeta{Version: "3"}, io.MultiReader(strings.NewReader("partial"), errReader{}))
 	assert.ErrorIs(t, err, errBroken)
@@ -185,6 +193,22 @@ func Test_CacheReplace(t *testing.T) {
 	assert.Equal(t, "2", entry.Meta().Version)
 	assert.Equal(t, "new", readAll(t, entry))
 	assert.Equal(t, int64(1), count(t, cache, "cache_entry"))
+}
+
+// Test_CacheExpiredReplaced tests an entry which expired, which is
+// replaced, before it's released, doesn't release the one which replaced it
+func Test_CacheExpiredReplaced(t *testing.T) {
+	ctx := t.Context()
+	cache, now := newCache(t)
+	put(t, cache, "feed", time.Hour, store.CacheMeta{Version: "old"}, strings.NewReader("old"))
+	var old schema.CacheEntry
+	require.NoError(t, cache.conn.Get(ctx, &old, schema.CacheKey("feed")))
+	*now = now.Add(2 * time.Hour)
+	put(t, cache, "feed", time.Hour, store.CacheMeta{Version: "new"}, strings.NewReader("new"))
+
+	// Get found the old one expired, and releases it, of its id
+	require.NoError(t, cache.release(ctx, schema.CacheId(old.Id)))
+	assert.Equal(t, "new", get(t, cache, "feed"))
 }
 
 func Test_CacheDelete(t *testing.T) {
@@ -258,12 +282,37 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	assert.Equal(t, "8", entry.Meta().Version)
 	entry.Close()
 
+	// As does one which returns io.EOF, or io.ErrUnexpectedEOF, after some
+	// of its content, which isn't its end
+	for _, end := range []error{io.EOF, io.ErrUnexpectedEOF} {
+		_, err = cache.GetOrCreate(ctx, "export/d1", "eof", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
+			io.WriteString(w, "partial")
+			return store.CacheMeta{}, end
+		})
+		assert.ErrorIs(t, err, end)
+		entry, err = cache.Get(ctx, "export/d1")
+		require.NoError(t, err)
+		assert.Equal(t, "8", entry.Meta().Version, "it's kept, of %v", end)
+		entry.Close()
+	}
+
+	// A key which another creates, after it's got, and before it's claimed,
+	// isn't created again
+	cache.beforeCreate = func() {
+		put(t, cache, "export/d2", time.Hour, store.CacheMeta{Version: "3"}, strings.NewReader("theirs"))
+	}
+	entry, err = cache.GetOrCreate(ctx, "export/d2", "3", time.Hour, valuefn("ours"))
+	cache.beforeCreate = nil
+	require.NoError(t, err)
+	assert.Equal(t, "theirs", readAll(t, entry))
+	assert.Equal(t, int32(2), creates.Load())
+
 	// As does one which panics
 	_, err = cache.GetOrCreate(ctx, "export/d1", "10", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
 		panic("oops")
 	})
 	assert.ErrorIs(t, err, gofiler.ErrInternalServerError)
-	assert.Equal(t, int64(1), count(t, cache, "cache_entry"))
+	assert.Equal(t, int64(2), count(t, cache, "cache_entry"), "export/d1, and export/d2")
 }
 
 func Test_CacheJSON(t *testing.T) {
@@ -295,6 +344,11 @@ func Test_CacheJSON(t *testing.T) {
 
 // errBroken is the error of content which can't be read
 var errBroken = errors.New("broken")
+
+// shortReader is content which is cut short
+type shortReader struct{}
+
+func (shortReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 // errReader is content which can't be read
 type errReader struct{}
