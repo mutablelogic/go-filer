@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 
@@ -14,22 +15,34 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// ListActions returns the actions of a volume's backend, in order of their
-// names, which is empty for a backend which has none, such as a
-// filesystem. A volume which isn't mounted is as GetObject's, and one which
-// is offline, as its watch failed, is ErrServiceUnavailable, as actions are
-// done of its backend, whose changes are of its watch.
+// ListActions returns the actions of a volume's backend, or, when the
+// volume is empty, of every volume which is mounted, and online, in order of
+// their volumes, and their names, which is empty for a backend which has
+// none, such as a filesystem. A volume which isn't mounted is as GetObject's,
+// and one which is offline, as its watch failed, is ErrServiceUnavailable,
+// as actions are done of its backend, whose changes are of its watch.
 func (self *Registry) ListActions(ctx context.Context, volume string) (*schema.ActionList, error) {
-	result := &schema.ActionList{Name: volume, Body: []schema.Action{}}
-	if err := self.withOnline(ctx, volume, func(ctx context.Context, b gofiler.Filer) error {
-		for _, action := range b.Actions() {
-			result.Body = append(result.Body, gofiler.ActionOf(action))
+	result := &schema.ActionList{Body: []schema.Action{}}
+	if volume != "" {
+		actions, err := self.actionsOf(ctx, volume)
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	}); err != nil {
-		return nil, err
+		result.Body = append(result.Body, actions...)
+		return result, nil
 	}
-	slices.SortFunc(result.Body, func(a, b schema.Action) int { return strings.Compare(a.Name, b.Name) })
+
+	// Every volume which is mounted, apart from those which are offline, or
+	// are unmounted meanwhile
+	for _, volume := range self.Keys() {
+		actions, err := self.actionsOf(ctx, volume)
+		if errors.Is(err, gofiler.ErrServiceUnavailable) || errors.Is(err, gofiler.ErrNotFound) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		result.Body = append(result.Body, actions...)
+	}
 	return result, nil
 }
 
@@ -59,6 +72,24 @@ func (self *Registry) CallAction(ctx context.Context, volume, name string, input
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
+
+// actionsOf returns the actions of a volume, in order of their names, with
+// the volume's name
+func (self *Registry) actionsOf(ctx context.Context, volume string) ([]schema.Action, error) {
+	var result []schema.Action
+	if err := self.withOnline(ctx, volume, func(ctx context.Context, b gofiler.Filer) error {
+		for _, action := range b.Actions() {
+			listed := gofiler.ActionOf(action)
+			listed.Volume = volume
+			result = append(result, listed)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	slices.SortFunc(result, func(a, b schema.Action) int { return strings.Compare(a.Name, b.Name) })
+	return result, nil
+}
 
 // withOnline calls the function with the backend of a volume, as With does,
 // unless it's offline, as its watch failed, which is ErrServiceUnavailable,

@@ -96,9 +96,9 @@ func Test_Registry_Actions(t *testing.T) {
 	// filesystem's are none
 	list, err := r.ListActions(ctx, "things")
 	require.NoError(t, err)
-	assert.Equal(t, "things", list.Name)
 	names := []string{}
 	for _, action := range list.Body {
+		assert.Equal(t, "things", action.Volume)
 		names = append(names, action.Name)
 	}
 	assert.Equal(t, []string{"echo", "nothing", "touch"}, names)
@@ -108,6 +108,12 @@ func Test_Registry_Actions(t *testing.T) {
 	list, err = r.ListActions(ctx, "media")
 	require.NoError(t, err)
 	assert.Empty(t, list.Body)
+
+	// Every volume's are listed, of their volumes, of no volume
+	list, err = r.ListActions(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, list.Body, 3, "of things, as media has none")
+	assert.Equal(t, "things", list.Body[0].Volume)
 
 	// An action is called, of its name, with its input, and returns its
 	// object, of the volume
@@ -145,6 +151,9 @@ func Test_Registry_Actions(t *testing.T) {
 	assert.ErrorContains(t, err, "offline")
 	_, err = r.CallAction(ctx, "things", "echo", json.RawMessage(`{"name":"a"}`))
 	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	list, err = r.ListActions(ctx, "")
+	require.NoError(t, err)
+	assert.Empty(t, list.Body, "an offline volume's aren't listed, of every volume")
 	r.setOffline(e, nil)
 	_, err = r.CallAction(ctx, "things", "echo", json.RawMessage(`{"name":"a"}`))
 	require.NoError(t, err, "nor once it's online again")
