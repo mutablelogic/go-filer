@@ -160,8 +160,11 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 // The tokens are stored when they change.
 func (self *CalendarFiler) poll(ctx context.Context, state *calendarSync) (bool, []schema.Event, error) {
 	// A write isn't synced until it's sent to the watches, as the filer's
-	self.writing.Lock()
-	defer self.writing.Unlock()
+	unlock, err := self.lockWrites(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+	defer unlock()
 
 	// The calendars are got from Google, rather than the cache, as what
 	// changed of them is found of them
@@ -335,6 +338,18 @@ func (self *calendarWatch) take() []schema.Event {
 	events := self.pending
 	self.pending = nil
 	return events
+}
+
+// lockWrites waits for a write, or a sync, to finish, and returns the
+// function which lets the next one start, or the context's error, when it's
+// cancelled first
+func (self *CalendarFiler) lockWrites(ctx context.Context) (func(), error) {
+	select {
+	case self.writing <- struct{}{}:
+		return func() { <-self.writing }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // loadTokens returns the sync tokens which are stored, of the sign-in, or
