@@ -150,12 +150,12 @@ In the registry, its URL is `gcontacts://<name>`, and the `filer` command create
 
 ### Google Calendar
 
-A volume of the events of a Google account's calendars, read-only, of the days before today and after it.
+A volume of the events of a Google account's calendars, of the days before today and after it.
 
 * **Layout:** a folder of each year, and of each month, with every calendar's events in it: `/2026/2026-11/20-<calendar>-<id>.ics`. The day is the one an event starts on, in its own zone (its `timeZone`, or else its time's offset), and `<calendar>` is its calendar's id, with characters such as `#` as `_`.
 * **Repeating events** are an event of each time they occur, as Google lists them, so there are no rules to expand, and only those of the window are there.
 * **Content:** written with go-metadata's `pkg/ical`, as a VEVENT: title, description, location, link, start and end (a date, or a time in its zone), status, organiser, attendees, its type (such as Birthday) as a category, and whether it's busy. Its UID is Google's iCalendar UID, which an invitation of it has too, and an occurrence has its `RECURRENCE-ID`. Metadata is only what iCalendar can't have, `calendar:calendar`, its calendar's id, and `dc:title`, as the rest, such as when it starts, is go-metadata's, of it.
-* **Options:** `window`, the time before today and after it, such as `30d`, `52w` or `720h`, of whole days, which is `365d` by default, and `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has. It's read-only, so far.
+* **Options:** `window`, the time before today and after it, such as `30d`, `52w` or `720h`, of whole days, which is `365d` by default, and `quota`, `refresh_interval`, `credential` and `description`, as Google Tasks has. It's read-only by default. With `readonly=false` (`volume-create-gcalendar --writable`), it asks for the `calendar` scope and has the `event` action.
 * **Watching** syncs each calendar with its sync token, at the refresh interval, and sends what changed: an event, or a time one which repeats occurs, which is created, updated, moved (deleted where it was, and created where it is), or cancelled, of where the events which were last listed are, as a change doesn't say where an event was. The root is rescanned instead when an event which repeats changed, as a sync doesn't say which times it occurs, before anything is listed, when a calendar is added, removed or renamed, when a token is rejected, and each day, as the window moves on. The tokens are stored with the server's credentials, of the sign-in, as `GOOGLE_TOKEN_CALENDAR_SYNC` (of `GOOGLE_TOKEN`), so after a restart only what changed since is synced, and volumes of the same sign-in share them. A token which Google rejects is synced again, at most once an hour.
 
 In the registry, its URL is `gcalendar://<name>`, and the `filer` command creates one with `volume-create-gcalendar`, signing in with Google, in the browser, when it needs to.
@@ -196,6 +196,13 @@ An action is something a volume's backend can do beyond reading and writing its 
 * **HTTP:** `GET /action` lists every volume's, `GET /action/{name}` one volume's, and `POST /action/{name}/{action}` calls one with its input as the body.
 * **CLI:** `filer actions [VOLUME]` lists them, of every volume without one, and `filer action VOLUME NAME '<json>'` calls one, or `-` reads the input from stdin.
 * **Google Tasks** has `task_list` on a writable volume: `{"op":"create","title":"Work"}`, `{"op":"update","path":"/<id>","title":"Office"}` or `{"op":"delete","path":"/<id>"}`.
+* **Google Calendar** has `event` on a writable volume: `{"op":"create","title":"Lunch","start":"2026-11-25T12:30"}` creates an event in the primary calendar, or another with `"calendar":"<id>"`.
+  * `start` and `end` are both days (`YYYY-MM-DD`, of whole days, the end being the day after the last) or both times (RFC 3339, or `YYYY-MM-DDTHH:MM` in `timezone`, or the calendar's zone).
+  * Without `end`, it lasts a day, or an hour.
+  * `update` of an event's path changes the fields given (`title`, `description`, `location`, `start`, `end`, `timezone`, `attendees`). A new `start` alone keeps its length. The path of one time a repeating event occurs changes that time alone.
+  * `delete` deletes it.
+  * Those who are invited aren't emailed. A repeating series can't be changed as a whole, only one occurrence at a time.
+  * Watches are sent the change as it's made, not at the next sync.
 * **Google Tasks** also has `task`: `{"op":"create","title":"Call"}` creates a task in the default list, or in a list with `"path":"/<list>"`. `update` changes the fields given (`title`, `notes`, `due`, `completed`, `parent`) of `/<list>/<id>.ics`, and `delete` deletes it.
 * **Google Contacts** has `contact` on a writable volume: `{"op":"create","given_name":"Grace","emails":["grace@example.com"]}`, `update` of `/<id>.vcf` with the fields to change (`given_name`, `family_name`, `emails`, `phones`, `organization`, `job_title`, `birthday`, `notes`, `addresses`), or `delete`. A list replaces the contact's.
 

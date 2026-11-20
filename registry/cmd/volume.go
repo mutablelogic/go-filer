@@ -128,6 +128,7 @@ type VolumeCreateGContactsCmd struct {
 
 type VolumeCreateGCalendarCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Writable        bool           `name:"writable" help:"Events can be created, updated and deleted, of the event action, which needs Google's calendar scope, rather than calendar.readonly."`
 	Window          string         `name:"window" placeholder:"DURATION" help:"The time of events before today, and after it, such as 30d, 52w or 720h, which is 365d, unless it's set."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
@@ -670,6 +671,9 @@ func (cmd *VolumeCreateGCalendarCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
 	query := url.Values{}
+	if cmd.Writable {
+		query.Set("readonly", "false")
+	}
 	if cmd.Window != "" {
 		query.Set("window", cmd.Window)
 	}

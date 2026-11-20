@@ -35,7 +35,8 @@ import (
 // /2026/2026-11/20-work@example.com-abc123.ics, which is the day it starts,
 // in its own zone, its calendar, and its id. An event which repeats is an
 // event of each time it occurs, so an event is of a day, which it starts
-// on. It's read, and watched, but not written, so far.
+// on. It's read, and watched, and written of the event action, when it's
+// writable.
 type CalendarFiler struct {
 	calendarOpt
 	name   string
@@ -61,10 +62,17 @@ type CalendarFiler struct {
 	mu     sync.Mutex
 	paths  map[string]string
 	months map[string]bool
+
+	// The entity tags of the events the filer wrote, by their keys, which
+	// were sent as they were written, so a sync doesn't send them again, and
+	// the watches, which are sent them
+	written map[string]string
+	watches map[*calendarWatch]struct{}
 }
 
 // calendarOpt are the options of a calendar filer, of its parameters
 type calendarOpt struct {
+	readonly        bool          // Events can't be created, updated or deleted
 	quota           uint          // The most requests each minute, or zero
 	refreshInterval time.Duration // How often changes are polled for, or zero not to
 	endpoint        string        // The endpoint of the API, which is Google's, but a test's
@@ -158,7 +166,8 @@ var (
 // volume's name, with the parameters, the user's sign-in, of the provider
 // of credentials, and go-client's options of its requests. The sign-in,
 // and the calendars, are checked, as for NewTaskFiler. Its parameters are
-// readonly, which must be true, so far, quota, refresh_interval and
+// readonly, which is true by default, and, when it's false, needs a
+// sign-in which can write events, of the event action, quota, refresh_interval and
 // credential, as a task filer's, and window, the time of events which are
 // listed, before today, and after it, such as 30d, 52w, or 720h, which is
 // DefaultCalendarWindow, of whole days.
@@ -176,9 +185,13 @@ func NewCalendarFiler(ctx context.Context, name string, params url.Values, opts 
 	self.calendarList = newCache[[]httpclient.Calendar](func() time.Time { return self.now() }, ttl)
 	self.listings = newCache[[]calendarEvent](func() time.Time { return self.now() }, ttl)
 
-	// The user's sign-in, which can read calendars
-	required := []string{httpclient.CalendarReadonlyScope, httpclient.CalendarScope}
-	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, []string{httpclient.CalendarReadonlyScope, httpclient.EmailScope}); err != nil {
+	// The user's sign-in, which has the access the volume needs: to read
+	// calendars, or to write their events, too
+	required, scopes := []string{httpclient.CalendarScope}, []string{httpclient.CalendarScope, httpclient.EmailScope}
+	if opt.readonly {
+		required, scopes = []string{httpclient.CalendarReadonlyScope, httpclient.CalendarScope}, []string{httpclient.CalendarReadonlyScope, httpclient.EmailScope}
+	}
+	if self.tokens, err = newTokens(ctx, opts.Credentials, opt.credential, required, scopes); err != nil {
 		return nil, err
 	}
 
@@ -213,7 +226,7 @@ func NewCalendarFiler(ctx context.Context, name string, params url.Values, opts 
 // parseCalendarOpts returns the options of the parameters, which are
 // rejected when they can't be parsed, or are for writing
 func parseCalendarOpts(params url.Values) (calendarOpt, error) {
-	opt := calendarOpt{quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: calendarEndpoint, window: DefaultCalendarWindow}
+	opt := calendarOpt{readonly: true, quota: DefaultTasksQuota, refreshInterval: DefaultRefreshInterval, credential: DefaultCredential, endpoint: calendarEndpoint, window: DefaultCalendarWindow}
 	for key := range params {
 		switch key {
 		case paramReadonly, paramQuota, paramRefreshInterval, paramCredential, paramWindow, schema.OptDescription:
@@ -225,8 +238,8 @@ func parseCalendarOpts(params url.Values) (calendarOpt, error) {
 	if value := params.Get(paramReadonly); value != "" {
 		if readonly, err := strconv.ParseBool(value); err != nil {
 			return opt, gofiler.ErrBadParameter.Withf("%s: %q", paramReadonly, value)
-		} else if !readonly {
-			return opt, gofiler.ErrNotImplemented.With("writing events isn't implemented yet, so a volume of calendars is read-only")
+		} else {
+			opt.readonly = readonly
 		}
 	}
 	if value := params.Get(paramQuota); value != "" {
@@ -267,11 +280,6 @@ func (self *CalendarFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-// Actions returns nil, as calendars have no actions, so far
-func (self *CalendarFiler) Actions() []gofiler.Action {
-	return nil
-}
-
 // Description returns what the volume is, such as "Google Calendar for ada@example.com"
 func (self *CalendarFiler) Description() string {
 	return self.description
@@ -304,9 +312,10 @@ func (self *CalendarFiler) Clone(ctx context.Context, patch url.Values) (gofiler
 	return clone, nil
 }
 
-// Readonly returns true, as events aren't written, so far
+// Readonly returns true when events can't be created, updated or deleted,
+// of the event action
 func (self *CalendarFiler) Readonly() bool {
-	return true
+	return self.readonly
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -399,7 +408,7 @@ func (self *CalendarFiler) DeleteObjects(context.Context, schema.DeleteObjectsRe
 // set up
 func (self *CalendarFiler) params() url.Values {
 	return url.Values{
-		paramReadonly:         {"true"},
+		paramReadonly:         {strconv.FormatBool(self.readonly)},
 		paramQuota:            {strconv.FormatUint(uint64(self.quota), 10)},
 		paramRefreshInterval:  {self.refreshInterval.String()},
 		paramCredential:       {self.credential},
@@ -463,6 +472,19 @@ func (self *CalendarFiler) span(p calendarPath) (time.Time, time.Time) {
 // is fs.ErrNotExist of another path, or a year, or month, which isn't
 // listed
 func (self *CalendarFiler) parsePath(op, p string) (calendarPath, error) {
+	return self.parsePathOf(op, p, true)
+}
+
+// parseEventPath returns a path, as parsePath does, but of any day, rather
+// than of those which are listed, as an event outside them can still be
+// changed, such as one an action created there
+func (self *CalendarFiler) parseEventPath(op, p string) (calendarPath, error) {
+	return self.parsePathOf(op, p, false)
+}
+
+// parsePathOf returns a path, of the days which are listed, when listed is
+// true, or of any day
+func (self *CalendarFiler) parsePathOf(op, p string, listed bool) (calendarPath, error) {
 	notExist := &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	rel := strings.Trim(path.Clean("/"+p), "/")
 	if rel == "" {
@@ -481,10 +503,10 @@ func (self *CalendarFiler) parsePath(op, p string) (calendarPath, error) {
 			return result, notExist
 		}
 		result.month, _ = strconv.Atoi(m[2])
-		if result.month < 1 || result.month > 12 || !self.listed(result.year, result.month) {
+		if result.month < 1 || result.month > 12 || (listed && !self.listed(result.year, result.month)) {
 			return result, notExist
 		}
-	} else {
+	} else if listed {
 		// A year of a month which is listed
 		from, to := self.days()
 		if result.year < from.Year() || result.year > to.AddDate(0, 0, -1).Year() {
@@ -691,6 +713,14 @@ func (self *CalendarFiler) hinted(calendar *httpclient.Calendar, changed []httpc
 	for i := range changed {
 		e := &changed[i]
 		key := eventKey(calendar.Id, e.Id)
+
+		// What the filer wrote was sent as it was, so isn't sent again
+		if etag, wrote := self.written[key]; wrote {
+			delete(self.written, key)
+			if etag != "" && etag == e.ETag && e.Status != "cancelled" {
+				continue
+			}
+		}
 		old, had := self.paths[key]
 		switch {
 		case e.Status == "cancelled":

@@ -14,6 +14,7 @@ import (
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	client "github.com/mutablelogic/go-client"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -253,4 +254,54 @@ func (c *CalendarClient) Sync(ctx context.Context, calendar, token string) ([]Ev
 		query.Set("pageToken", page.NextPageToken)
 	}
 	return nil, "", errTooManyPages
+}
+
+// noUpdates is the query of a write, which doesn't send those who are
+// invited emails of it
+var noUpdates = client.OptQuery(url.Values{"sendUpdates": {"none"}})
+
+// EventFields are the fields of an event which are written, by their names
+// in the API, such as "summary", or "start"
+type EventFields map[string]any
+
+// InsertEvent creates an event in a calendar, of its fields, and returns it,
+// with the id Google gives it. Those who are invited aren't sent emails, of
+// it, nor of a patch, or a delete.
+func (c *CalendarClient) InsertEvent(ctx context.Context, calendar string, fields EventFields) (*Event, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPost, fields, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result Event
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("calendars", calendar, "events"), noUpdates,
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// PatchEvent changes the fields of an event of a calendar, or of one time
+// an event which repeats occurs, of its id, and returns it, keeping those
+// which aren't in the fields
+func (c *CalendarClient) PatchEvent(ctx context.Context, calendar, id string, fields EventFields) (*Event, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPatch, fields, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result Event
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("calendars", calendar, "events", id), noUpdates,
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteEvent deletes an event of a calendar, or one time an event which
+// repeats occurs, of its id
+func (c *CalendarClient) DeleteEvent(ctx context.Context, calendar, id string) error {
+	return c.DoAuthWithContext(ctx, client.MethodDelete, nil,
+		client.OptPath("calendars", calendar, "events", id), noUpdates,
+	)
 }
