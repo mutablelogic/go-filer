@@ -6,6 +6,7 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	store "github.com/mutablelogic/go-filer/store"
+	trace "go.opentelemetry.io/otel/trace"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -22,6 +23,7 @@ type opt struct {
 	mode           Mode                // What's indexed, which is ModeFolders, by default
 	tasks          map[store.Kind]Task // The tasks of the files, of their kinds, such as KindMetadata
 	taskWorkers    int                 // How many workers do the tasks' work
+	tracer         trace.Tracer        // The tracer of the work, which is linked to what queued it, or nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -137,6 +139,16 @@ func WithRetry(retry time.Duration) Opt {
 			return gofiler.ErrBadParameter.Withf("retry: %v", retry)
 		}
 		o.retry = retry
+		return nil
+	}
+}
+
+// WithTracer sets the tracer of the index's work: each change it's told of,
+// each scan it's queued, and each piece of work it does, which is linked to
+// the span which queued it, so it's known where work came from
+func WithTracer(tracer trace.Tracer) Opt {
+	return func(o *opt) error {
+		o.tracer = tracer
 		return nil
 	}
 }

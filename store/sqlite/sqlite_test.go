@@ -319,7 +319,7 @@ func Test_MigrateOutages(t *testing.T) {
 
 	db, err := ncruces.Open(ctx, path)
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(ctx, `ALTER TABLE object_state DROP COLUMN outages; PRAGMA user_version = 15;`))
+	require.NoError(t, db.Exec(ctx, `ALTER TABLE object_state DROP COLUMN outages; ALTER TABLE object_state DROP COLUMN trace; PRAGMA user_version = 15;`))
 	require.NoError(t, db.Close())
 
 	s, err = sqlite.New(ctx, path)
@@ -346,4 +346,53 @@ func Test_MigrateOutages(t *testing.T) {
 	w = claim()
 	assert.Equal(t, uint(2), w.Attempts)
 	assert.Equal(t, uint(1), w.Outages)
+}
+
+func Test_WorkTrace(t *testing.T) {
+	// Work keeps the trace of the span which pushed it, the latest of those
+	// which are coalesced, and work which is pushed untraced keeps the one it
+	// had, so it's linked to what queued it
+	ctx := context.Background()
+	s, err := sqlite.New(ctx, gosqlite.Memory)
+	require.NoError(t, err)
+	defer s.Close()
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/tmp?index=metadata", Enabled: true})
+	require.NoError(t, err)
+	require.NoError(t, s.PutObject(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}, &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.txt"}}))
+	tracer := sdktrace.NewTracerProvider().Tracer("test")
+	claim := func(kind store.Kind) store.Work {
+		t.Helper()
+		claimed, err := s.Claim(ctx, "media", []store.Kind{kind}, 1, time.Minute)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		return claimed[0]
+	}
+
+	first, span1 := tracer.Start(ctx, "first")
+	span1.End()
+	second, span2 := tracer.Start(ctx, "second")
+	span2.End()
+	require.NoError(t, s.Push(first, "media", store.Work{Key: "/a.txt", Kind: store.KindIndex}))
+	require.NoError(t, s.Push(second, "media", store.Work{Key: "/a.txt", Kind: store.KindIndex}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/a.txt", Kind: store.KindIndex}))
+	w := claim(store.KindIndex)
+	link, ok := store.Link(w.Trace)
+	require.True(t, ok, w.Trace)
+	assert.Equal(t, span2.SpanContext().TraceID(), link.SpanContext.TraceID())
+	assert.Equal(t, span2.SpanContext().SpanID(), link.SpanContext.SpanID())
+
+	// A task's stale work keeps the trace which queued it too, the newest,
+	// when it's queued again before it's claimed, but not an untraced one
+	require.NoError(t, s.PushStale(first, "media", "/", store.KindMetadata))
+	require.NoError(t, s.PushStale(second, "media", "/", store.KindMetadata))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
+	w = claim(store.KindMetadata)
+	link, ok = store.Link(w.Trace)
+	require.True(t, ok, w.Trace)
+	assert.Equal(t, span2.SpanContext().SpanID(), link.SpanContext.SpanID())
+
+	// Untraced work has none
+	_, ok = store.Link("")
+	assert.False(t, ok)
+	assert.Empty(t, store.Traceparent(ctx))
 }
