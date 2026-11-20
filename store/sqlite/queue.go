@@ -152,7 +152,7 @@ func (self *Store) Failed(ctx context.Context, volume string, work store.Work, c
 		message = cause.Error()
 	}
 	var result schema.WorkList
-	if err := self.conn.Update(ctx, &result, schema.QueueKey{Volume: volume, Work: work}, schema.QueueFailure{Error: message, Failed: now, After: now.Add(retry)}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+	if err := self.conn.Update(ctx, &result, schema.QueueKey{Volume: volume, Work: work}, schema.QueueFailure{Error: message, Outage: errors.Is(cause, gofiler.ErrServiceUnavailable), Failed: now, After: now.Add(retry)}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
 		return storeErr(err)
 	}
 	return nil

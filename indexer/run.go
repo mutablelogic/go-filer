@@ -184,7 +184,7 @@ func (self *Indexer) work(ctx context.Context) {
 				break
 			} else if err != nil {
 				self.failed(ctx, err)
-				_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
+				_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts+w.Outages, 16), maxRetry))
 			} else {
 				done = append(done, w)
 			}
@@ -217,7 +217,7 @@ func (self *Indexer) do(ctx context.Context, w store.Work) error {
 // claimed again at once, rather than once its lease has passed
 func (self *Indexer) release(work []store.Work) {
 	for i := range work {
-		work[i].Attempts, work[i].Error = 0, ""
+		work[i].Attempts, work[i].Outages, work[i].Error = 0, 0, ""
 	}
 	_ = self.store.Push(context.Background(), self.name, work...)
 }

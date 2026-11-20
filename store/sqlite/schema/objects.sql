@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS object_state (
   etag            TEXT,                   -- of the object the work was done of, for enrichment
   after           TIMESTAMP NOT NULL,     -- when it's due
   attempts        INTEGER NOT NULL DEFAULT 0,
+  outages         INTEGER NOT NULL DEFAULT 0, -- failures while its backend was unavailable, which aren't attempts
   leased_until    TIMESTAMP,              -- when its claim ends, which Done and Failed are of
   error           TEXT,                   -- why it last failed
   revision        TEXT,                   -- of a listed file, what the backend's listing said of it

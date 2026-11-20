@@ -57,7 +57,9 @@ type QueueStore interface {
 	Tasks(ctx context.Context, volume string, kind Kind) (schema.TaskState, error)
 
 	// Failed counts an attempt of the work, which is claimed, with why it
-	// failed, and makes it due again after the retry
+	// failed, and makes it due again after the retry. A failure of
+	// gofiler.ErrServiceUnavailable, as the backend is unavailable, is
+	// counted as an outage, rather than an attempt.
 	Failed(ctx context.Context, volume string, work Work, err error, retry time.Duration) error
 
 	// Pending returns true when the key has work queued, or claimed, which
@@ -83,7 +85,8 @@ type Work struct {
 	Key      string    `json:"key"`
 	Kind     Kind      `json:"kind"`
 	After    time.Time `json:"after,omitzero"`     // When it's due, which is now when it's pushed without one
-	Attempts uint      `json:"attempts,omitzero"`  // How many times it failed
+	Attempts uint      `json:"attempts,omitzero"`  // How many times it failed, apart from outages
+	Outages  uint      `json:"outages,omitzero"`   // How many times it failed as its backend was unavailable
 	Error    string    `json:"error,omitempty"`    // Why it last failed
 	Leased   time.Time `json:"leased,omitzero"`    // Until when it's leased, of a claim, which Done and Failed are of
 	Revision string    `json:"revision,omitempty"` // Of a task's work which is claimed, the revision of the file's listing, which it's done of

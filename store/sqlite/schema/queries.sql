@@ -199,7 +199,7 @@ ON CONFLICT (volume, key, kind) DO UPDATE SET
 
 -- queue.due
 -- The work of the kinds which is due, and isn't leased, earliest first
-SELECT key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '') FROM object_state
+SELECT key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '') FROM object_state
 WHERE volume = @volume AND kind IN (SELECT value FROM json_each(@kinds))
   AND julianday(after) <= julianday(@now)
   AND (leased_until IS NULL OR julianday(leased_until) <= julianday(@now))
@@ -214,14 +214,14 @@ UPDATE object_state SET leased_until = @leased,
     WHERE listed.volume = object_state.volume AND listed.key = object_state.key AND listed.kind = 'listed'
   ) END
 WHERE volume = @volume AND key = @key AND kind = @kind
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
+RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.done
 -- Work which is done, of its claim, which is kept when it's pushed again
 -- since, as its lease is cleared
 DELETE FROM object_state
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
+RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.did
 -- The revision of the file which a task's work was done of, its listing's
@@ -263,9 +263,9 @@ WHERE object.volume = @volume AND object.key > @lower AND object.key < @upper AN
 ON CONFLICT (volume, key, kind) DO NOTHING;
 
 -- queue.failed
-UPDATE object_state SET attempts = attempts + 1, error = @error, failed = @failed, after = @after, leased_until = NULL
+UPDATE object_state SET attempts = attempts + (1 - @outage), outages = outages + @outage, error = @error, failed = @failed, after = @after, leased_until = NULL
 WHERE volume = @volume AND key = @key AND kind = @kind AND leased_until = @leased
-RETURNING key, kind, after, attempts, coalesce(error, ''), leased_until, coalesce(revision, '');
+RETURNING key, kind, after, attempts, outages, coalesce(error, ''), leased_until, coalesce(revision, '');
 
 -- queue.pending
 -- Whether a key has work which would change its index: an index or a

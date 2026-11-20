@@ -131,7 +131,7 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 			return
 		case err != nil && retry(err, w.Attempts+1):
 			self.log().DebugContext(ctx, "a task failed of a file, which is tried again", "task", string(kind), "key", w.Key, "attempt", w.Attempts+1, "error", err.Error())
-			_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts, 16), maxRetry))
+			_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts+w.Outages, 16), maxRetry))
 		default:
 			// It's done, or given up, until the file changes, with why, as
 			// it failed too often, or can't be read, which won't change
@@ -186,7 +186,8 @@ func (self *Indexer) idleTask(ctx context.Context, wait time.Duration) bool {
 // error of its backend, which is unavailable, such as a server which is
 // busy, or offline, for a while, is, however many times it fails, at most
 // once each maxRetry, and others, apart from a file which can't be read, until
-// it's failed taskAttempts times
+// it's failed taskAttempts times, of its attempts, which the store counts
+// apart from its outages
 func retry(err error, attempts uint) bool {
 	switch {
 	case errors.Is(err, gofiler.ErrBadParameter):
