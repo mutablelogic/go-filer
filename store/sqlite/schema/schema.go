@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 17
+const Version = 18
 
 var (
 	//go:embed objects.sql
@@ -142,7 +142,15 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 				return err
 			}
 		}
-		// Version 17 has an index of the work which failed, which is created,
+		// Version 17's queue has the trace which queued its work, which a
+		// queue of version 6 to 16 is added, as NULL, and a queue before it
+		// is created with
+		if version >= 6 && version < 17 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_17").Exec(ctx, `ALTER TABLE object_state ADD COLUMN trace TEXT`); err != nil {
+				return err
+			}
+		}
+		// Version 18 has an index of the work which failed, which is created,
 		// as a schema's of every version is
 		// Version 13 has the shapes of where objects are, and 14 the times of
 		// their events, whose tables are created, as a schema's of every

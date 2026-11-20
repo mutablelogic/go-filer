@@ -345,7 +345,7 @@ func (self *Registry) indexed(volume string, b gofiler.Filer, mode indexer.Mode)
 	if mode == indexer.ModeNone {
 		return b, nil
 	}
-	opts := []indexer.Opt{indexer.WithMode(mode)}
+	opts := []indexer.Opt{indexer.WithMode(mode), indexer.WithTracer(self.backendOpts.Tracer)}
 	if self.metadata != nil {
 		opts = append(opts, indexer.WithMetadataTask(self.metadata))
 	}

@@ -124,7 +124,9 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 			continue
 		}
 		w := claimed[0]
-		err = self.doTask(ctx, task, kind, w)
+		tctx, end := self.workSpan(ctx, w)
+		err = self.doTask(tctx, task, kind, w)
+		end(err)
 		switch {
 		case ctx.Err() != nil:
 			self.release(claimed)

@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS object_state (
   error           TEXT,                   -- why it last failed
   revision        TEXT,                   -- of a listed file, what the backend's listing said of it
   failed          TIMESTAMP,              -- when it last failed, of its error, rather than when it's due again
+  trace           TEXT,                   -- the W3C traceparent of the span which queued it, which its work links to
   PRIMARY KEY (volume, key, kind)
 );
 
