@@ -89,6 +89,8 @@ func (self taskListAction) Run(ctx context.Context, data json.RawMessage) (*sche
 		return nil, gofiler.ErrBadParameter.Withf("task_list: %s needs a title", input.Op)
 	case input.Op == opCreate && input.Path != "":
 		return nil, gofiler.ErrBadParameter.With("task_list: create has no path, as Google names the list")
+	case input.Op == opDelete && input.Title != "":
+		return nil, gofiler.ErrBadParameter.With("task_list: delete has no title")
 	case input.Op != opCreate && input.Path == "":
 		return nil, gofiler.ErrBadParameter.Withf("task_list: %s needs the path of a list", input.Op)
 	}
