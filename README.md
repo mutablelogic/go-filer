@@ -325,7 +325,11 @@ A `store.CacheStore` keeps what a volume's backend gets from a service, by key, 
   * The registry runs each indexer while the volume is mounted. Turning indexing off, or pointing the volume at another backend (scheme, host or path), removes the index. Deleting a volume deletes its index.
 * **Volume changes:** with `store.WithBroadcaster`, a store publishes a change when a volume is created, updated or deleted, of schema `store`, table `volume`, whose row is the volume's name, and whose data is the volume. The `filer` server serves them on `/changes`, with its objects' changes.
 * **Listing folders:** `ListObjects` with `Type` `inode/directory`, `inode`, or `directory`, which is `GET /object/{name}?type=directory`, or `filer objects --type directory`, lists an indexed volume's folders from its index, once it's ready. A listing of a type is filtered for every volume.
-* **The `filer` server** keeps its store in `<name>-index.db`, in the user's cache folder, with `make INDEXER_BACKEND=sqlite`, the default.
+* **The `filer` server** keeps its store in `index.sqlite`, in its folder of the user's data, beside its credentials, with `make INDEXER_BACKEND=sqlite`, the default.
+* **Where it keeps its files:**
+  * **Data,** which is kept: its credentials and their passphrase (`credentials/`, `credentials.key`), and its index (`index.sqlite`). It's in its folder of the user's data: `~/Library/Application Support/filer` on macOS, `$XDG_DATA_HOME/filer` (or `~/.local/share/filer`) on Linux, and `%AppData%\filer` on Windows.
+  * **Caches,** which can be cleared: the volumes' caches, in its folder of the user's cache, such as `~/Library/Caches/filer`.
+  * **Earlier versions** kept the credentials and the index in the user's cache folder. They're moved to the data folder when the server starts, unless they're there already.
 
 ## Object Model
 
@@ -445,7 +449,7 @@ The test workflow vets the packages, and runs the race tests on Linux, macOS and
 
 `make` builds the `filer` server with the store of its indexes chosen by `INDEXER_BACKEND`, as the build tag `indexer_<backend>`:
 
-* **`sqlite`**, the default, is a SQLite database, `<name>-index.db`, such as `filer-index.db`, in the user's cache folder.
+* **`sqlite`**, the default, is a SQLite database, `index.sqlite`, in the server's folder of the user's data, such as `~/Library/Application Support/filer/index.sqlite`. An index of an earlier version, `<name>-index.db` in the user's cache folder, is moved there when the server starts, unless there's one there already.
 * **`memory`** is a SQLite database in memory, so volumes aren't kept, and are scanned again, when the server starts.
 * **`pg`** is a Postgres database, of go-pg's flags, `--pg.url` and `--pg.password`, or `PG_URL` and `PG_PASSWORD`.
 

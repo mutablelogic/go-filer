@@ -23,9 +23,9 @@ import (
 
 // CredentialFlags are the passphrases which the server's credentials, such
 // as the secrets of buckets, and sign-ins, are encrypted with, which it
-// keeps in the user's cache folder
+// keeps in its folder of the user's data
 type CredentialFlags struct {
-	Passphrase []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASE" sep:"none" help:"Passphrase which the server's credentials are encrypted with, which can be repeated, for versions 1, 2 and so on, the last of which encrypts new ones. Without one, a passphrase is made, the first time, and kept in credentials.key, beside them, in the user's cache folder."`
+	Passphrase []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASE" sep:"none" help:"Passphrase which the server's credentials are encrypted with, which can be repeated, for versions 1, 2 and so on, the last of which encrypts new ones. Without one, a passphrase is made, the first time, and kept in credentials.key, beside them, in the server's folder of the user's data."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -33,7 +33,7 @@ type CredentialFlags struct {
 
 const (
 	// credentialsDir is the directory of the credentials, in the
-	// command's folder of the user's cache, and credentialsKeyFile the file
+	// command's folder of the user's data, and credentialsKeyFile the file
 	// beside it which has the passphrase they're encrypted with, without
 	// --passphrase
 	credentialsDir     = "credentials"
@@ -44,15 +44,25 @@ const (
 // PRIVATE METHODS
 
 // provider returns the provider of the credentials, which are kept,
-// encrypted, in the command's folder of the user's cache, or else the
+// encrypted, in the command's folder of the user's data, or else the
 // environment's, such as S3_SECRET, so a volume's placeholder, such as
-// ${S3_SECRET}, is either
+// ${S3_SECRET}, is either. Those of an earlier version, in its folder of
+// the user's cache, and their passphrase, are moved there, when there are
+// none there.
 func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, error) {
-	cache, err := os.UserCacheDir()
+	dir, err := ctx.DataDir()
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(cache, ctx.Name())
+	if old, err := oldCacheDir(); err != nil {
+		return nil, err
+	} else {
+		for _, name := range []string{credentialsDir, credentialsKeyFile} {
+			if err := moveFrom(filepath.Join(old, ctx.Name(), name), filepath.Join(dir, name)); err != nil {
+				return nil, err
+			}
+		}
+	}
 	passphrases := flags.Passphrase
 	if len(passphrases) == 0 {
 		passphrase, err := credentialsKey(filepath.Join(dir, credentialsKeyFile))
