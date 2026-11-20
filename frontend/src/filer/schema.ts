@@ -25,8 +25,11 @@ export interface VolumeList {
     backends: Backend[];
 }
 
-// The schema and table of the changes of the stored volumes, and the schema
-// of the changes of their objects, whose table is the volume's name
+// The schema and table of the changes of the stored volumes, the schema of
+// the changes of what the registry knows of them, such as whether they're
+// mounted, or offline, whose table is the same, and the schema of the
+// changes of their objects, whose table is the volume's name
 export const StoreChangeSchema = 'store';
+export const RegistryChangeSchema = 'registry';
 export const VolumeChangeTable = 'volume';
 export const ObjectChangeSchema = 'filer';

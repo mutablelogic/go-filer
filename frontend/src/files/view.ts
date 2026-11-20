@@ -9,7 +9,7 @@ import type { NotificationController } from '@mutablelogic/go-server/notificatio
 import type { Router } from '@mutablelogic/go-server/router';
 import Folder32 from '@carbon/icons/es/folder/32.js';
 import { listVolumes } from '../filer/httpclient.ts';
-import { StoreChangeSchema, VolumeChangeTable, type Volume } from '../filer/schema.ts';
+import { RegistryChangeSchema, StoreChangeSchema, VolumeChangeTable, type Volume } from '../filer/schema.ts';
 import '@mutablelogic/go-server/page/view';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -30,7 +30,9 @@ export class FilesElement extends LitElement {
     };
 
     // client is the filer API's client, notifications show its errors, and
-    // changes are followed, so the volumes are loaded again when they change
+    // changes are followed, so the volumes are loaded again when they, or
+    // what the registry knows of them, such as whether they're mounted,
+    // change
     declare client?: Client;
     declare notifications?: NotificationController;
     declare changes?: ChangesController;
@@ -46,13 +48,15 @@ export class FilesElement extends LitElement {
         return this;
     }
 
+    // The volumes are loaded at once, rather than once the changes are
+    // watched, so they're shown when they can't be
     override connectedCallback() {
         super.connectedCallback();
-        if (this.changes) {
-            this.unsubscribe = this.changes.subscribe({ schema: StoreChangeSchema, table: VolumeChangeTable }, () => this.load());
-        } else {
-            this.load();
-        }
+        this.load();
+        this.unsubscribe = this.changes?.subscribe([
+            { schema: StoreChangeSchema, table: VolumeChangeTable },
+            { schema: RegistryChangeSchema, table: VolumeChangeTable },
+        ], () => this.load());
     }
 
     override disconnectedCallback() {
@@ -89,7 +93,7 @@ export class FilesElement extends LitElement {
                 <li>
                     <strong>${volume.name}</strong>
                     <span>${volume.url}</span>
-                    ${volume.mounted ? nothing : html`<em>${volume.error || 'Not mounted'}</em>`}
+                    ${volume.error ? html`<em>${volume.error}</em>` : volume.mounted ? nothing : html`<em>Not mounted</em>`}
                 </li>
             `)}</ul>` : nothing}
         `;

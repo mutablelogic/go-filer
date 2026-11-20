@@ -335,6 +335,7 @@ A `store.CacheStore` keeps what a volume's backend gets from a service, by key, 
   * Lowering it to `folders` removes the files from the index after the next scan.
   * The registry runs each indexer while the volume is mounted. Turning indexing off, or pointing the volume at another backend (scheme, host or path), removes the index. Deleting a volume deletes its index.
 * **Volume changes:** with `store.WithBroadcaster`, a store publishes a change when a volume is created, updated or deleted, of schema `store`, table `volume`, whose row is the volume's name, and whose data is the volume. The `filer` server serves them on `/changes`, with its objects' changes.
+* **Volume state changes:** with a broadcaster, the registry publishes a change when what it knows of a volume changes: it's mounted or unmounted, goes offline, can't be mounted, or is mounted again. They're of schema `registry`, table `volume`, whose row is the volume's name, without data, so the volume is read again. An attempt which fails for the same reason isn't published again.
 * **Listing folders:** `ListObjects` with `Type` `inode/directory`, `inode`, or `directory`, which is `GET /object/{name}?type=directory`, or `filer objects --type directory`, lists an indexed volume's folders from its index, once it's ready. A listing of a type is filtered for every volume.
 * **The `filer` server** keeps its store in `index.sqlite`, in its folder of the user's data, beside its credentials, with `make INDEXER_BACKEND=sqlite`, the default.
 * **Where it keeps its files:**

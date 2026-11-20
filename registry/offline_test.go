@@ -15,6 +15,7 @@ import (
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
+	changes "github.com/mutablelogic/go-server/broadcaster/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -240,4 +241,66 @@ func Test_Registry_OfflineLogs(t *testing.T) {
 	f.failWith(nil)
 	require.Eventually(t, func() bool { return online(r, "down") }, 5*time.Second, time.Millisecond)
 	require.Eventually(t, func() bool { return logs.count("level=INFO", "mounted volume", "volume=down") >= 2 }, 5*time.Second, time.Millisecond)
+}
+
+func Test_Registry_StateChanges(t *testing.T) {
+	retry := watchRetry
+	watchRetry = 10 * time.Millisecond
+	t.Cleanup(func() { watchRetry = retry })
+
+	// What the registry knows of a volume is published as it changes: when
+	// it's mounted, when it's offline, and when it's mounted again, but not
+	// of each attempt which fails for the same reason
+	dir := t.TempDir()
+	b := newBroadcaster(t)
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(b), WithStore(newStore(t)))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan changes.Change, 100)
+	_, err = b.Watch(ctx, changes.ChangeFilter{Schema: schema.RegistryChangeSchema, Table: schema.VolumeChangeTable}, ch)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
+	var mu sync.Mutex
+	var rows []string
+	go func() {
+		for change := range ch {
+			if change.Row != "" {
+				mu.Lock()
+				rows = append(rows, change.Row)
+				mu.Unlock()
+			}
+		}
+	}()
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(rows)
+	}
+
+	// It's mounted, and then goes offline, when its watch fails, and isn't
+	// published again of each attempt to open it again, which fails
+	f := addFailing(t, r, dir, "down", gofiler.ErrServiceUnavailable.With("server is down"))
+	require.Eventually(t, func() bool { return f.opens.Load() > 4 }, 5*time.Second, time.Millisecond)
+	offline := count()
+	assert.GreaterOrEqual(t, offline, 2, "it's mounted, and offline")
+	opens := f.opens.Load()
+	require.Eventually(t, func() bool { return f.opens.Load() > opens+3 }, 5*time.Second, time.Millisecond)
+	assert.Equal(t, offline, count(), "of the same reason")
+
+	// And it's mounted again
+	f.failWith(nil)
+	require.Eventually(t, func() bool { return online(r, "down") }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return count() > offline }, 5*time.Second, time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, row := range rows {
+		assert.Equal(t, "down", row)
+	}
 }

@@ -22,7 +22,7 @@ filesModule({ nav, router, client, root: document.querySelector('main')!, notifi
 ```
 
 - **The module:** adds the Files section to the app's `NavController`, its page to `root`, and its route to the `Router`.
-- **The page:** lists the volumes, with their URLs, and why each one which isn't mounted isn't. They're loaded again when the stored volumes change.
+- **The page:** lists the volumes, with their URLs, and the error of each one which is offline, or can't be mounted, or that it isn't mounted. They're loaded at once, and again when the stored volumes change, or the registry's state of them does, such as when one is mounted, or goes offline.
 
 ## Layout
 

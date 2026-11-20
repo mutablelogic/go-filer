@@ -257,11 +257,32 @@ func (self *Registry) metaOf(name string, b gofiler.Filer) schema.VolumeMeta {
 	return schema.VolumeMeta{Name: name, URL: u.String(), Enabled: true}
 }
 
-// setOffline records why the volume of the entry is offline
-func (self *Registry) setOffline(e *entry, err error) {
+// setOffline records why the volume of the entry is offline, which is
+// published, when it's changed
+func (self *Registry) setOffline(name string, e *entry, err error) {
 	self.Lock()
-	defer self.Unlock()
+	changed := errorText(e.offline) != errorText(err)
 	e.offline = err
+	self.Unlock()
+	if changed {
+		self.publishState(name)
+	}
+}
+
+// publishState publishes that what the registry knows of a volume changed,
+// when there's a broadcaster
+func (self *Registry) publishState(name string) {
+	if self.broadcaster != nil {
+		self.broadcaster.Publish(schema.VolumeStateChange(name))
+	}
+}
+
+// errorText returns an error's text, or "" when it's nil
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // Schemes returns the schemes of the URLs which backends can be created from,
@@ -457,6 +478,9 @@ func (self *Registry) startClose(e *entry, volume string) {
 		delete(self.teardown, e)
 		self.Unlock()
 		close(e.closed)
+
+		// It's unmounted, or replaced by the backend which is mounted
+		self.publishState(volume)
 	}()
 }
 
