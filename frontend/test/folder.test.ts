@@ -122,13 +122,55 @@ test('FolderController', async (t) => {
         assert.equal(listed.length, 1, 'without a change, it is loaded again, and a change of a volume is not of it');
     });
 
-    await t.test("an error, when it can't be loaded", async () => {
-        const { client } = fakeServer({});
+    await t.test("an error, when it can't be loaded, which can be tried again", async () => {
+        const { client, folders } = fakeServer({});
         const errors: string[] = [];
         const folder = new FolderController(client).onError((title) => errors.push(title));
         await folder.open('media', '/missing');
-        assert.deepEqual(folder.current.objects, []);
+        assert.deepEqual([folder.current.objects, folder.current.failed, folder.current.more], [[], true, true]);
         assert.equal(errors.length, 1);
+        folders['/missing'] = ['/missing/1'];
+        await folder.loadMore();
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/missing/1']);
+        assert.deepEqual([folder.current.failed, folder.current.more, folder.current.count], [false, false, 1]);
+    });
+
+    await t.test("more which can't be loaded are tried again, from where they couldn't be", async () => {
+        const { client, folders, listed } = fakeServer({ '/a': ['/a/1', '/a/2', '/a/3'] });
+        const folder = new FolderController(client, { pageLimit: 2 });
+        await folder.open('media', '/a');
+        const saved = folders['/a'];
+        delete folders['/a'];
+        await folder.loadMore();
+        assert.deepEqual([folder.current.objects?.length, folder.current.failed, folder.current.more, folder.current.count], [2, true, true, null], "it's still more, and isn't counted");
+        folders['/a'] = saved;
+        listed.length = 0;
+        await folder.loadMore();
+        assert.deepEqual(listed, ['/a@/a/2']);
+        assert.deepEqual([folder.current.objects?.length, folder.current.failed, folder.current.count], [3, false, 3]);
+    });
+
+    await t.test('more are not loaded while it is loaded again', async () => {
+        const { client, listed } = fakeServer({ '/a': ['/a/1', '/a/2', '/a/3'] });
+        const folder = new FolderController(client, { pageLimit: 2 });
+        await folder.open('media', '/a');
+        listed.length = 0;
+        const reload = folder.reload();
+        assert.equal(folder.current.loading, true);
+        await folder.loadMore();
+        await reload;
+        assert.deepEqual(listed, ['/a@'], 'only the reload');
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/a/1', '/a/2']);
+    });
+
+    await t.test('a reload without a folder does nothing, and later reloads still do', async () => {
+        const { client, listed } = fakeServer({ '/a': ['/a/1'] });
+        const folder = new FolderController(client);
+        await folder.reload();
+        await folder.open('media', '/a');
+        listed.length = 0;
+        await folder.reload();
+        assert.deepEqual(listed, ['/a@']);
     });
 });
 
