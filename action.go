@@ -54,10 +54,15 @@ func ValidActionName(name string) bool {
 // ActionOf returns what an action is, without running it, as it's listed,
 // such as over HTTP
 func ActionOf(action Action) schema.Action {
-	return schema.Action{
+	result := schema.Action{
 		Name:        action.Name(),
 		Title:       action.Title(),
 		Description: action.Description(),
-		Input:       action.Input(),
 	}
+	if input := action.Input(); input != nil {
+		if data, err := json.Marshal(input); err == nil {
+			result.Input = data
+		}
+	}
+	return result
 }

@@ -19,6 +19,7 @@ type ClientCommands struct {
 	VolumeCommands
 	ObjectCommands
 	SearchCommands
+	ActionCommands
 
 	// The server's credentials, such as GOOGLE_CLIENT, and the sign-ins
 	// which are stored, of go-auth's

@@ -64,6 +64,9 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// registry, and the store, are closed
 	b := broadcaster.New()
 	runner.RunServer.Register(func(router *httprouter.Router) error {
+		// What a UI uses, apart from the filer: watching for changes, and
+		// the OpenAPI spec
+		router.Spec().AddTagGroup("UI", changes.Tag, "OpenAPI")
 		return changes.RegisterHandlers(b, router)
 	})
 	runCtx, cancel := context.WithCancel(ctx.Context())

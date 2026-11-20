@@ -52,6 +52,7 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 		b = broadcaster.New()
 		if srv != nil {
 			srv.Register(func(router *httprouter.Router) error {
+				router.Spec().AddTagGroup("UI", changes.Tag, "OpenAPI")
 				return changes.RegisterHandlers(b, router)
 			})
 		}
