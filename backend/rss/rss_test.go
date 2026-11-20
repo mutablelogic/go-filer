@@ -201,6 +201,12 @@ func Test_Feed(t *testing.T) {
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 	_, err = f.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}, IfNoneMatch: []string{*object.ETag}})
 	assert.ErrorIs(t, err, gofiler.ErrNotModified)
+	_, err = f.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}, IfNoneMatch: []string{"*"}})
+	assert.ErrorIs(t, err, gofiler.ErrNotModified, "of any entity tag")
+	_, _, err = f.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}, IfModifiedSince: object.ModTime})
+	assert.ErrorIs(t, err, gofiler.ErrNotModified, "since it was modified")
+	_, err = f.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}, IfModifiedSince: object.ModTime.Add(-time.Hour)})
+	assert.NoError(t, err, "it was modified since")
 
 	// It's read-only
 	_, err = f.CreateObject(context.Background(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.html"}, Body: strings.NewReader("a")})
