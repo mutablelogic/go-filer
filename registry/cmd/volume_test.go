@@ -374,6 +374,9 @@ func Test_VolumeCreateGContactsCmd(t *testing.T) {
 	u, err = volume("work", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "-o", "index=folders")
 	require.NoError(t, err)
 	assert.Equal(t, "gcontacts://work?credential=GOOGLE_WORK&index=folders&quota=60&refresh_interval=5m0s", u)
+	u, err = volume("writable", "--writable")
+	require.NoError(t, err)
+	assert.Equal(t, "gcontacts://writable?readonly=false", u)
 
 	// A name which isn't an identifier, or a credential which isn't a key
 	_, err = volume("not-a-name!")

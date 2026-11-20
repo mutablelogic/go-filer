@@ -117,6 +117,7 @@ type VolumeCreateS3Cmd struct {
 
 type VolumeCreateGContactsCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Writable        bool           `name:"writable" help:"Contacts can be created, updated and deleted, of the contact action, which needs Google's contacts scope, rather than contacts.readonly."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
@@ -638,6 +639,9 @@ func (cmd *VolumeCreateGContactsCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
 	query := url.Values{}
+	if cmd.Writable {
+		query.Set("readonly", "false")
+	}
 	if cmd.Credential != "" {
 		if !credentialName.MatchString(cmd.Credential) {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid key of a credential: %q", cmd.Credential)
