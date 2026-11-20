@@ -23,6 +23,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	vcard "github.com/mutablelogic/go-metadata/pkg/vcard"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -36,7 +37,8 @@ import (
 type ContactFiler struct {
 	contactOpt
 	name   string
-	opts   gofiler.Opts // Its credentials, and client options, which a clone is created with
+	opts   gofiler.Opts     // Its credentials, and client options, which a clone is created with
+	cache  store.CacheStore // The volume's cache, which the registry owns
 	tokens *tokens
 	client *httpclient.PeopleClient
 
@@ -102,7 +104,10 @@ var peopleEndpoint = httpclient.PeopleEndpoint
 // parameters are readonly, which is true by default, and, when it's false,
 // needs a sign-in which can write contacts, of the contact action, quota,
 // refresh_interval and credential, as a task filer's.
-func NewContactFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*ContactFiler, error) {
+func NewContactFiler(ctx context.Context, name string, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*ContactFiler, error) {
+	if cache == nil {
+		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
+	}
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
@@ -111,7 +116,7 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, opts g
 		return nil, err
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
-	self := &ContactFiler{contactOpt: opt, name: name, opts: opts}
+	self := &ContactFiler{contactOpt: opt, name: name, opts: opts, cache: cache}
 	self.people = newCache[[]httpclient.Person](time.Now, func() time.Duration { return self.refreshInterval })
 
 	// The user's sign-in, which has the access the volume needs: to read
@@ -226,7 +231,7 @@ func (self *ContactFiler) Clone(ctx context.Context, patch url.Values) (gofiler.
 	if credential != self.credential && !patch.Has(schema.OptDescription) {
 		params.Del(schema.OptDescription)
 	}
-	clone, err := NewContactFiler(ctx, self.name, params, self.opts)
+	clone, err := NewContactFiler(ctx, self.name, params, self.cache, self.opts)
 	if err != nil {
 		return nil, err
 	}

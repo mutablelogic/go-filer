@@ -201,7 +201,7 @@ func (self *Registry) validate(ctx context.Context, volume schema.VolumeMeta) (s
 	if err != nil {
 		return volume, gofiler.ErrBadParameter.Withf("invalid url of volume %q", volume.Name)
 	}
-	b, err := self.new(ctx, u)
+	b, err := self.new(ctx, u, "")
 	if err != nil {
 		return volume, err
 	}

@@ -21,6 +21,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -34,7 +35,8 @@ import (
 type TaskFiler struct {
 	taskOpt
 	name   string
-	opts   gofiler.Opts // Its credentials, and client options, which a clone is created with
+	opts   gofiler.Opts     // Its credentials, and client options, which a clone is created with
+	cache  store.CacheStore // The volume's cache, which the registry owns
 	tokens *tokens
 	client *httpclient.TasksClient
 
@@ -123,7 +125,10 @@ const (
 //     watched, which is DefaultRefreshInterval, or zero not to watch them
 //   - hidden: tasks which are hidden, as they're completed, and cleared from
 //     their list, are included, which they aren't unless it's true
-func NewTaskFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*TaskFiler, error) {
+func NewTaskFiler(ctx context.Context, name string, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*TaskFiler, error) {
+	if cache == nil {
+		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
+	}
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	}
@@ -132,7 +137,7 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, opts gofi
 		return nil, err
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
-	self := &TaskFiler{taskOpt: opt, name: name, opts: opts}
+	self := &TaskFiler{taskOpt: opt, name: name, opts: opts, cache: cache}
 	ttl := func() time.Duration { return self.refreshInterval }
 	self.lists = newCache[[]httpclient.TaskList](time.Now, ttl)
 	self.tasks = newCache[[]httpclient.Task](time.Now, ttl)
@@ -260,7 +265,7 @@ func (self *TaskFiler) Clone(ctx context.Context, patch url.Values) (gofiler.Fil
 	if credential != self.credential && !patch.Has(schema.OptDescription) {
 		params.Del(schema.OptDescription)
 	}
-	clone, err := NewTaskFiler(ctx, self.name, params, self.opts)
+	clone, err := NewTaskFiler(ctx, self.name, params, self.cache, self.opts)
 	if err != nil {
 		return nil, err
 	}

@@ -34,6 +34,7 @@ type opt struct {
 	metadata    indexer.Task      // the task which enriches the files of volumes with index=metadata, or nil
 	backends    map[string]plugin // the backends of the volumes, of their URLs' schemes, which are built in, and of WithBackend
 	schemes     []string          // the schemes of the backends which are used, of WithSchemes, or all of them, when it's empty
+	cacheDir    string            // the directory of the volumes' caches, or a temporary one, when it's empty
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -189,6 +190,20 @@ func defaultWorker() string {
 		return hostname
 	}
 	return "unknown"
+}
+
+// WithCacheDir sets the directory of the volumes' caches, which is created,
+// where each volume's backend has a cache of its own, which is kept, so it
+// isn't got again after a restart. Without it, the caches are in a
+// temporary directory, which is removed once the registry is closed.
+func WithCacheDir(dir string) Opt {
+	return func(o *opt) error {
+		if dir == "" {
+			return gofiler.ErrBadParameter.With("the cache's directory can't be empty")
+		}
+		o.cacheDir = dir
+		return nil
+	}
 }
 
 // WithStore sets the store of the volumes, and their indexes, which is

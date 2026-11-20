@@ -12,7 +12,10 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	store "github.com/mutablelogic/go-filer/store"
+	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	rss "github.com/mutablelogic/go-rss"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -34,7 +37,7 @@ func Test_Interval(t *testing.T) {
 		if refresh != "" {
 			query.Set("refresh_interval", refresh)
 		}
-		f, err := Open(context.Background(), &url.URL{Scheme: Scheme, Host: "feed", Path: "/" + host + "/", RawQuery: query.Encode()}, gofiler.Opts{})
+		f, err := Open(context.Background(), &url.URL{Scheme: Scheme, Host: "feed", Path: "/" + host + "/", RawQuery: query.Encode()}, memoryCache(t), gofiler.Opts{})
 		require.NoError(t, err)
 		return f.(*Filer)
 	}
@@ -94,4 +97,14 @@ func mustChannel(t *testing.T, xml string) *rss.Channel {
 	f, err := rss.Read(strings.NewReader(xml))
 	require.NoError(t, err)
 	return f.Channel
+}
+
+// memoryCache returns a cache of a volume, in memory, which is closed when
+// the test ends
+func memoryCache(t *testing.T) store.CacheStore {
+	t.Helper()
+	cache, err := sqlite.NewCacheStore(t.Context(), gosqlite.Memory)
+	require.NoError(t, err)
+	t.Cleanup(func() { cache.Close() })
+	return cache
 }

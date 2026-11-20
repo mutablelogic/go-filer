@@ -15,6 +15,7 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	fsbackend "github.com/mutablelogic/go-filer/backend/fs"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -75,7 +76,7 @@ func (b actioned) Actions() []gofiler.Action {
 
 func Test_Registry_Actions(t *testing.T) {
 	dir := t.TempDir()
-	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err
@@ -174,7 +175,7 @@ func Test_Registry_Actions(t *testing.T) {
 // isn't offline yet
 func Test_Registry_ActionsRemounted(t *testing.T) {
 	dir := t.TempDir()
-	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err

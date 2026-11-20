@@ -65,7 +65,7 @@ func addFailing(t *testing.T, r *Registry, dir, volume string, err error) *faili
 	f := &failing{}
 	f.failWith(err)
 	r.opener = func(ctx context.Context, name, volumeURL string) (gofiler.Filer, error) {
-		b, err := r.openURL(ctx, name, volumeURL)
+		b, err := r.openURL(ctx, name, volumeURL, time.Time{})
 		if err != nil || name != volume {
 			return b, err
 		}

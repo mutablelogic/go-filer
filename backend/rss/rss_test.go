@@ -20,7 +20,10 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	rss "github.com/mutablelogic/go-filer/backend/rss"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
+	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	types "github.com/mutablelogic/go-server/pkg/types"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -86,7 +89,7 @@ func newFeed(t *testing.T, body string) (*httptest.Server, *atomic.Int32) {
 
 func open(t *testing.T, feed string) (gofiler.Filer, error) {
 	t.Helper()
-	return rss.Open(context.Background(), feedURL(t, feed, nil), gofiler.Opts{})
+	return rss.Open(context.Background(), feedURL(t, feed, nil), testCache(), gofiler.Opts{})
 }
 
 // feedURL returns the volume's URL of a feed of a test server, which is
@@ -233,10 +236,10 @@ func Test_FeedErrors(t *testing.T) {
 		{"insecure": {"maybe"}},
 		{"name": {"not a name"}},
 	} {
-		_, err := rss.Open(context.Background(), feedURL(t, server.URL, params), gofiler.Opts{})
+		_, err := rss.Open(context.Background(), feedURL(t, server.URL, params), testCache(), gofiler.Opts{})
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
-	_, err := rss.Open(context.Background(), &url.URL{Scheme: rss.Scheme, Host: "podcast"}, gofiler.Opts{})
+	_, err := rss.Open(context.Background(), &url.URL{Scheme: rss.Scheme, Host: "podcast"}, testCache(), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter, "it has no host")
 	_, err = open(t, server.URL+"/missing")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
@@ -269,7 +272,7 @@ func Test_FeedWatch(t *testing.T) {
 		io.WriteString(w, b)
 	}))
 	defer server.Close()
-	f, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"10ms"}}), gofiler.Opts{})
+	f, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"10ms"}}), testCache(), gofiler.Opts{})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -325,4 +328,14 @@ func Test_FeedWatch(t *testing.T) {
 	cancel()
 	assert.ErrorIs(t, <-done, context.Canceled)
 	assert.Contains(t, list(t, f, "/", true), "/2027/2027-01/05-new.html")
+}
+
+// testCache returns a cache of a volume, in memory, as the registry passes
+// a volume's backend its own
+func testCache() store.CacheStore {
+	cache, err := sqlite.NewCacheStore(context.Background(), gosqlite.Memory)
+	if err != nil {
+		panic(err)
+	}
+	return cache
 }
