@@ -237,7 +237,7 @@ A `store.CacheStore` keeps what a volume's backend gets from a service, by key, 
 
 * **`Get(ctx, key)`** returns an entry, or `ErrNotFound` if there's none or it expired.
 * **`Put(ctx, key, ttl, meta, r)`** stores the content as it's read, with its metadata, for the TTL (zero keeps it until it's replaced or deleted). The old entry is replaced only once all the new content is read, and kept if it can't be.
-* **`GetOrCreate(ctx, key, version, ttl, create)`** returns the entry if it's of the version, or else calls `create`, which writes the content to an `io.Writer` and returns its metadata, and stores it as it's written. Concurrent calls for a key create it once.
+* **`GetOrCreate(ctx, key, version, ttl, valuefn)`** returns the entry if it's of the version, or else calls `valuefn`, which writes the content to an `io.Writer` and returns its metadata, and stores it as it's written. Concurrent calls for a key create it once.
 * **`Delete(ctx, key)`** deletes a key, or every key under a prefix ending `/`.
 * **Entries** can seek and `ReadAt`, have their `Meta()` (a version and small values), `Size()`, `Stored()` and `Expires()`, and are closed by the caller.
 * **JSON:** `store.GetCacheJSON` and `store.PutCacheJSON` store a value.

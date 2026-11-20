@@ -34,12 +34,12 @@ type CacheStore interface {
 	Put(ctx context.Context, key string, ttl time.Duration, meta CacheMeta, r io.Reader) (CacheEntry, error)
 
 	// GetOrCreate returns the entry of the key when there's one of the
-	// version, or else calls create, which writes the content to w, and
-	// stores it, with the metadata create returns, whose
+	// version, or else calls valuefn, which writes the content to w, and
+	// stores it, with the metadata valuefn returns, whose
 	// version is the version, when it hasn't one, for the TTL, and returns
 	// it, which the caller closes. A key is created once, however many ask for
 	// it at once, which wait for it.
-	GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, create func(w io.Writer) (CacheMeta, error)) (CacheEntry, error)
+	GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (CacheMeta, error)) (CacheEntry, error)
 
 	// Delete deletes the entry of the key, or every entry beneath it, when it
 	// ends with "/", such as "export/", which isn't an error when there's

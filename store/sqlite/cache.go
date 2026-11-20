@@ -184,8 +184,8 @@ func (self *CacheStore) put(ctx context.Context, key string, ttl time.Duration, 
 
 // GetOrCreate returns the entry of the key, when there's one of the
 // version, or else, once another which creates it is done, when there's
-// one, or else stores what create writes, as it's written
-func (self *CacheStore) GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, create func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
+// one, or else stores what valuefn writes, as it's written
+func (self *CacheStore) GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
 	for {
 		entry, err := self.Get(ctx, key)
 		if err == nil && entry.Meta().Version == version {
@@ -216,7 +216,7 @@ func (self *CacheStore) GetOrCreate(ctx context.Context, key, version string, tt
 			self.mu.Unlock()
 			close(f.done)
 		}()
-		return self.create(ctx, key, version, ttl, create)
+		return self.create(ctx, key, version, ttl, valuefn)
 	}
 }
 
@@ -234,9 +234,9 @@ func (self *CacheStore) Delete(ctx context.Context, key string) error {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// create stores what create writes, as it's written, through a pipe, with the
+// create stores what valuefn writes, as it's written, through a pipe, with the
 // metadata it returns, whose version is the version, when it hasn't one
-func (self *CacheStore) create(ctx context.Context, key, version string, ttl time.Duration, create func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
+func (self *CacheStore) create(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
 	pr, pw := io.Pipe()
 	var meta store.CacheMeta
 	created := make(chan error, 1)
@@ -244,15 +244,15 @@ func (self *CacheStore) create(ctx context.Context, key, version string, ttl tim
 		var err error
 		defer func() {
 			if r := recover(); r != nil {
-				err = gofiler.ErrInternalServerError.Withf("cache %q: create panicked: %v", key, r)
+				err = gofiler.ErrInternalServerError.Withf("cache %q: its value panicked: %v", key, r)
 			}
 			pw.CloseWithError(err)
 			created <- err
 		}()
-		meta, err = create(pw)
+		meta, err = valuefn(pw)
 	}()
 
-	// The metadata is read once the content is, as create returns it then,
+	// The metadata is read once the content is, as valuefn returns it then,
 	// which put commits after it's read all of it
 	entry, err := self.put(ctx, key, ttl, func() store.CacheMeta {
 		if meta.Version == "" {
@@ -261,7 +261,7 @@ func (self *CacheStore) create(ctx context.Context, key, version string, ttl tim
 		return meta
 	}, pr)
 
-	// When it isn't stored, create's writes fail, so it returns, and its error
+	// When it isn't stored, valuefn's writes fail, so it returns, and its error
 	// is returned, which is why the content couldn't be read, when it is
 	pr.CloseWithError(err)
 	ferr := <-created

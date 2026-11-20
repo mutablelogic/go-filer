@@ -212,7 +212,7 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	ctx := t.Context()
 	cache, _ := newCache(t)
 	var creates atomic.Int32
-	create := func(content string) func(io.Writer) (store.CacheMeta, error) {
+	valuefn := func(content string) func(io.Writer) (store.CacheMeta, error) {
 		return func(w io.Writer) (store.CacheMeta, error) {
 			creates.Add(1)
 			time.Sleep(20 * time.Millisecond)
@@ -226,7 +226,7 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	results := make([]string, 4)
 	for i := range results {
 		wg.Go(func() {
-			entry, err := cache.GetOrCreate(ctx, "export/d1", "7", time.Hour, create("seven"))
+			entry, err := cache.GetOrCreate(ctx, "export/d1", "7", time.Hour, valuefn("seven"))
 			require.NoError(t, err)
 			assert.Equal(t, "7", entry.Meta().Version)
 			assert.Equal(t, "docx", entry.Meta().Values["type"])
@@ -238,11 +238,11 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	assert.Equal(t, int32(1), creates.Load())
 
 	// It isn't created again, of the version, but is of another
-	entry, err := cache.GetOrCreate(ctx, "export/d1", "7", time.Hour, create("again"))
+	entry, err := cache.GetOrCreate(ctx, "export/d1", "7", time.Hour, valuefn("again"))
 	require.NoError(t, err)
 	assert.Equal(t, "seven", readAll(t, entry))
 	assert.Equal(t, int32(1), creates.Load())
-	entry, err = cache.GetOrCreate(ctx, "export/d1", "8", time.Hour, create("eight"))
+	entry, err = cache.GetOrCreate(ctx, "export/d1", "8", time.Hour, valuefn("eight"))
 	require.NoError(t, err)
 	assert.Equal(t, "eight", readAll(t, entry))
 	assert.Equal(t, int32(2), creates.Load())
