@@ -59,6 +59,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/djthorpe/go-errors v1.0.3 // indirect
 	github.com/dlclark/regexp2/v2 v2.13.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/giraffesyo/pdf v0.8.0 // indirect
@@ -81,6 +82,7 @@ require (
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/mutablelogic/go-media v1.11.5 // indirect
+	github.com/mutablelogic/go-rss v1.0.0 // indirect
 	github.com/ncruces/go-sqlite3 v0.37.0 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.5.35401 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
