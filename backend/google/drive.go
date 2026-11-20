@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	// Packages
@@ -28,7 +29,7 @@ import (
 // DriveFiler is a filer of the files a person owns in their Google Drive's
 // My Drive, by their paths, whose folders are directories, and whose Google
 // Docs, Sheets and Slides are Word, Excel and PowerPoint documents. It's
-// read, but not watched, nor written, so far.
+// read, and watched, but not written, so far.
 type DriveFiler struct {
 	driveOpt
 	name   string
@@ -37,8 +38,11 @@ type DriveFiler struct {
 	client *httpclient.DriveClient
 
 	// The files, by their paths, got from Google, for the refresh interval,
-	// which a file is read of, rather than got again
+	// which a file is read of, rather than got again, or, while it's
+	// watched, those the watch knows, which it keeps up to date
 	tree *cache[*driveTree]
+	mu   sync.Mutex
+	live *driveWatch
 }
 
 // driveOpt are the options of a drive filer, of its parameters
@@ -105,9 +109,10 @@ var driveEndpoint = httpclient.DriveEndpoint
 // and go-client's options of its requests, such as a tracer. The sign-in,
 // and the files, are checked, as for NewTaskFiler, and its parameters are
 // readonly, which is true, as a drive isn't written, so far, quota, and
-// credential, as a task filer's, and refresh_interval, how long the files
-// are kept, once they're got, which is DefaultRefreshInterval, or zero not
-// to keep them.
+// credential, as a task filer's, and refresh_interval, how often changes
+// are polled for, when it's watched, and how long the files are kept, once
+// they're got, when it isn't, which is DefaultRefreshInterval, or zero not
+// to watch it, nor keep them.
 func NewDriveFiler(ctx context.Context, name string, params url.Values, opts gofiler.Opts) (*DriveFiler, error) {
 	if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
@@ -342,12 +347,6 @@ func (self *DriveFiler) DeleteObjects(context.Context, schema.DeleteObjectsReque
 	return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
 }
 
-// WatchObjects isn't implemented, so far, so the index scans the drive
-// again, from time to time, rather than following its changes
-func (self *DriveFiler) WatchObjects(context.Context, chan<- schema.Event) error {
-	return gofiler.ErrNotImplemented.Withf("volume %q isn't watched, so far", self.name)
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -369,8 +368,12 @@ func (self *DriveFiler) apiError(op, path string, err error) error {
 }
 
 // files returns the files, and folders, beneath My Drive, by their paths,
-// or those which were got, for the refresh interval
+// of the watch, while it's watched, or those which were got, for the
+// refresh interval
 func (self *DriveFiler) files(ctx context.Context, op, p string) (*driveTree, error) {
+	if tree := self.liveTree(); tree != nil {
+		return tree, nil
+	}
 	tree, err := self.tree.get(ctx, "", func() (*driveTree, error) {
 		root, err := self.client.Root(ctx)
 		if err != nil {

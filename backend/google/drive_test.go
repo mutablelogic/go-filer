@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,12 @@ type fakeDrive struct {
 	lists    int               // How many times the files are listed
 	exported []string          // The types files are exported as
 	onExport func()            // Called as a file is exported, such as to change it
+
+	// The changes, whose tokens are their indexes, and whether a token
+	// isn't accepted, as it's expired, or Google is unavailable
+	log         []httpclient.DriveChange
+	expired     bool
+	unavailable bool
 }
 
 const (
@@ -44,7 +51,7 @@ func newFakeDrive(t *testing.T) (*fakeDrive, string) {
 	t.Helper()
 	modified := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
 	file := func(id, name, mimeType, parent string) httpclient.DriveFile {
-		return httpclient.DriveFile{Id: id, Name: name, MimeType: mimeType, Parents: []string{parent}, ModifiedTime: modified, Version: "7", WebViewLink: "https://drive.google.com/file/d/" + id, Owners: []httpclient.DriveOwner{{EmailAddress: "ada@example.com"}}}
+		return httpclient.DriveFile{Id: id, Name: name, MimeType: mimeType, Parents: []string{parent}, ModifiedTime: modified, Version: "7", WebViewLink: "https://drive.google.com/file/d/" + id, Owners: []httpclient.DriveOwner{{EmailAddress: "ada@example.com"}}, OwnedByMe: true}
 	}
 	sized := func(f httpclient.DriveFile, size int) httpclient.DriveFile {
 		f.Size, f.MD5Checksum, f.HeadRevision = strconv.Itoa(size), "md5-"+f.Id, "rev1"
@@ -87,6 +94,26 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	query := r.URL.Query()
 	switch {
+	case len(parts) == 2 && parts[0] == "changes" && parts[1] == "startPageToken":
+		writeJSON(w, map[string]string{"startPageToken": strconv.Itoa(len(f.log))})
+	case len(parts) == 1 && parts[0] == "changes":
+		start, err := strconv.Atoi(query.Get("pageToken"))
+		switch {
+		case f.unavailable:
+			writeError(w, http.StatusServiceUnavailable)
+			return
+		case f.expired, err != nil, start > len(f.log), query.Get("includeRemoved") != "true", query.Get("restrictToMyDrive") != "true":
+			writeError(w, http.StatusNotFound)
+			return
+		}
+		end := min(start+2, len(f.log))
+		page := map[string]any{"changes": f.log[start:end]}
+		if end < len(f.log) {
+			page["nextPageToken"] = strconv.Itoa(end)
+		} else {
+			page["newStartPageToken"] = strconv.Itoa(end)
+		}
+		writeJSON(w, page)
 	case len(parts) == 2 && parts[0] == "files" && parts[1] == "root":
 		writeJSON(w, httpclient.DriveFile{Id: driveRoot})
 	case len(parts) == 1 && parts[0] == "files":
@@ -182,12 +209,12 @@ func Test_NewDriveFiler(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrNotImplemented)
 
 	// Its URL has each of its parameters, and it's read-only, without
-	// actions, and isn't watched
+	// actions
 	filer := newDriveFiler(t, endpoint, nil)
 	assert.Equal(t, "gdrive://drive?credential=GOOGLE_TOKEN&description=Google+Drive&quota=0&readonly=true&refresh_interval=1m0s", filer.URL().String())
 	assert.True(t, filer.Readonly())
 	assert.Nil(t, filer.Actions())
-	assert.ErrorIs(t, filer.WatchObjects(ctx, make(chan schema.Event)), gofiler.ErrNotImplemented)
+	assert.ErrorIs(t, newDriveFiler(t, endpoint, url.Values{"refresh_interval": {"0"}}).WatchObjects(ctx, make(chan schema.Event)), gofiler.ErrNotImplemented, "without a refresh interval")
 	_, err = filer.CreateObject(ctx, schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/x.txt"}})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 
@@ -307,13 +334,139 @@ func Test_DriveReadCancelled(t *testing.T) {
 	assert.ErrorIs(t, readFn(ctx, func(r io.Reader) error { _, err := io.ReadAll(r); return err }), context.Canceled)
 }
 
-// change changes a file, of its id, which the fake must be locked for
+// change changes a file, of its id, which the fake must be locked for,
+// which is a change
 func (f *fakeDrive) change(id string, fn func(*httpclient.DriveFile)) {
 	for i := range f.files {
 		if f.files[i].Id == id {
 			fn(&f.files[i])
+			f.log = append(f.log, httpclient.DriveChange{FileId: id, File: f.files[i]})
 		}
 	}
+}
+
+// add adds a file, which is a change
+func (f *fakeDrive) add(file httpclient.DriveFile) {
+	f.Lock()
+	defer f.Unlock()
+	file.OwnedByMe = true
+	f.files = append(f.files, file)
+	f.log = append(f.log, httpclient.DriveChange{FileId: file.Id, File: file})
+}
+
+// remove deletes a file, which is a change, which says it's removed
+func (f *fakeDrive) remove(id string) {
+	f.Lock()
+	defer f.Unlock()
+	f.files = slices.DeleteFunc(f.files, func(file httpclient.DriveFile) bool { return file.Id == id })
+	f.log = append(f.log, httpclient.DriveChange{FileId: id, Removed: true})
+}
+
+// update changes a file, of its id, which is a change
+func (f *fakeDrive) update(id string, fn func(*httpclient.DriveFile)) {
+	f.Lock()
+	defer f.Unlock()
+	f.change(id, fn)
+}
+
+func Test_DriveWatch(t *testing.T) {
+	fake, endpoint := newFakeDrive(t)
+	filer := newDriveFiler(t, endpoint, url.Values{"refresh_interval": {"10ms"}})
+	ch, done := make(chan schema.Event, 64), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		assert.ErrorIs(t, <-done, context.Canceled)
+	}()
+	// events returns the events which are sent, until none are, for a while
+	events := func() []string {
+		t.Helper()
+		var result []string
+		for {
+			select {
+			case event := <-ch:
+				result = append(result, event.EventType.String()+" "+event.Path)
+			case <-time.After(150 * time.Millisecond):
+				return result
+			}
+		}
+	}
+	lists := func() int {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.lists
+	}
+
+	// The first change is a rescan of the root, once the files are listed,
+	// which the filer lists, while it's watched, rather than getting them
+	assert.Equal(t, []string{"rescan /"}, events())
+	listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true})
+	assert.Equal(t, 1, lists())
+
+	// A file which is added is created, and is there at once
+	fake.add(httpclient.DriveFile{Id: "n1", Name: "new.txt", MimeType: "text/plain", Parents: []string{"f1"}, Size: "3", MD5Checksum: "md5-n1"})
+	assert.Equal(t, []string{"created /Work/new.txt"}, events())
+	object, err := filer.GetObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/Work/new.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, "md5-n1", *object.ETag)
+
+	// Its content changes, which updates it, and so does a Doc's version,
+	// but not a folder's
+	fake.update("n1", func(f *httpclient.DriveFile) { f.MD5Checksum = "md5-n1b" })
+	fake.update("d1", func(f *httpclient.DriveFile) { f.Version = "8" })
+	fake.update("f2", func(f *httpclient.DriveFile) { f.Version = "8" })
+	assert.Equal(t, []string{"updated /Work/Plan.docx", "updated /Work/new.txt"}, events())
+
+	// A folder which is renamed is deleted, with what's in it, and created
+	// where it is
+	fake.update("f2", func(f *httpclient.DriveFile) { f.Name = "Archive" })
+	assert.Equal(t, []string{
+		"deleted /Work/Reports",
+		"deleted /Work/Reports/Report (r2abcd).pdf",
+		"deleted /Work/Reports/a_b.txt",
+		"deleted /Work/Reports/report (r1abcd).pdf",
+		"created /Work/Archive",
+		"created /Work/Archive/Report (r2abcd).pdf",
+		"created /Work/Archive/a_b.txt",
+		"created /Work/Archive/report (r1abcd).pdf",
+	}, events())
+
+	// A file which is binned, removed, or given to another is deleted, and
+	// one which becomes hidden too
+	fake.update("a2", func(f *httpclient.DriveFile) { f.Trashed = true })
+	fake.remove("n1")
+	fake.update("d2", func(f *httpclient.DriveFile) { f.OwnedByMe = false })
+	fake.update("a1", func(f *httpclient.DriveFile) { f.Name = ".notes.txt" })
+	assert.Equal(t, []string{"deleted /Work/Budget.xlsx", "deleted /Work/new.txt", "deleted /Work/photo.jpg", "deleted /notes.txt"}, events())
+	_, err = filer.GetObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/notes.txt"}})
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+
+	// When Google is unavailable, it's polled again, and nothing is missed
+	fake.Lock()
+	fake.unavailable = true
+	fake.Unlock()
+	fake.add(httpclient.DriveFile{Id: "n2", Name: "later.txt", MimeType: "text/plain", Parents: []string{driveRoot}})
+	assert.Empty(t, events())
+	fake.Lock()
+	fake.unavailable = false
+	fake.Unlock()
+	assert.Equal(t, []string{"created /later.txt"}, events())
+
+	// A token which isn't accepted lists the files again, and rescans
+	fake.Lock()
+	fake.expired = true
+	fake.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	fake.Lock()
+	fake.expired = false
+	fake.Unlock()
+	assert.Contains(t, events(), "rescan /")
+	assert.Greater(t, lists(), 1, "once when it was watched, and again")
+
+	// And then follows the changes again
+	fake.add(httpclient.DriveFile{Id: "n3", Name: "after.txt", MimeType: "text/plain", Parents: []string{driveRoot}})
+	assert.Equal(t, []string{"created /after.txt"}, events())
 }
 
 func Test_DriveReadRevision(t *testing.T) {
