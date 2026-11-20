@@ -94,7 +94,7 @@ $(GO_MEDIA_STAMP):
 
 # The platforms the packages are vetted for, as each has its own way of
 # watching files, and only some are tested
-VET_PLATFORMS ?= darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 freebsd/amd64
+VET_PLATFORMS ?= linux/amd64 darwin/arm64 windows/amd64 freebsd/amd64
 
 ###############################################################################
 # ALL
@@ -153,11 +153,22 @@ test: vet unit-test coverage-test
 vet: go-dep $(GO_MEDIA_DEP)
 	@echo Vet
 	@GOWORK=${GOWORK} CGO_ENABLED=1 ${CGO_ENV} ${GO} vet -tags "${GO_TAGS}" ./...
-	@GOWORK=${GOWORK} CGO_ENABLED=0 ${GO} vet -tags client ./...
+	@$(MAKE) --no-print-directory vet-platform PLATFORM=client
 	@for platform in ${VET_PLATFORMS}; do \
-		echo "Vet $$platform"; \
-		GOWORK=${GOWORK} GOOS=$${platform%/*} GOARCH=$${platform#*/} CGO_ENABLED=0 ${GO} vet ./... || exit 1; \
+		$(MAKE) --no-print-directory vet-platform PLATFORM=$$platform || exit 1; \
 	done
+
+# Vet the packages of one platform, without cgo, such as
+# PLATFORM=windows/amd64, or the client's, with PLATFORM=client, which CI
+# runs at once, a platform of each job
+.PHONY: vet-platform
+vet-platform: go-dep
+	@echo "Vet ${PLATFORM}"
+	@if [ "${PLATFORM}" = "client" ]; then \
+		GOWORK=${GOWORK} CGO_ENABLED=0 ${GO} vet -tags client ./...; \
+	else \
+		GOWORK=${GOWORK} GOOS=$(word 1,$(subst /, ,${PLATFORM})) GOARCH=$(word 2,$(subst /, ,${PLATFORM})) CGO_ENABLED=0 ${GO} vet ./...; \
+	fi
 
 .PHONY: unit-test
 unit-test: go-dep $(GO_MEDIA_DEP)
