@@ -82,8 +82,14 @@ test('TreeController', async (t) => {
         const tree = new TreeController(client, { pageLimit: 2, maxFolders: 3 });
         await tree.expand('media', '/');
         const folders = tree.folders('media', '/');
-        assert.deepEqual(folders?.state === 'loaded' && folders.folders.map((f) => f.path), ['/a', '/b', '/c', '/d']);
+        assert.deepEqual(folders?.state === 'loaded' && folders.folders.map((f) => f.path), ['/a', '/b', '/c']);
         assert.equal(folders?.state === 'loaded' && folders.more, true);
+
+        // Exactly the most which are loaded aren't more
+        const exact = new TreeController(fakeServer({ media: { '/': ['/a', '/b', '/c'] } }).client, { pageLimit: 2, maxFolders: 3 });
+        await exact.expand('media', '/');
+        const all = exact.folders('media', '/');
+        assert.deepEqual(all?.state === 'loaded' && [all.folders.length, all.more], [3, false]);
     });
 
     await t.test("a folder which can't be loaded is an error", async () => {
@@ -121,6 +127,13 @@ test('TreeController', async (t) => {
         tree.change({ action: 'create', schema: 'filer', table: 'media', row: '/a/file.txt' });
         await settle();
         assert.deepEqual(listed.sort(), ['media:/a'], "/a/x isn't loaded, so it's loaded when it's expanded");
+
+        // A folder which is updated, such as once it's indexed, loads its
+        // own subfolders again, too
+        listed.length = 0;
+        tree.change({ action: 'update', schema: 'filer', table: 'media', row: '/a/x', data: { folder: true } });
+        await settle();
+        assert.deepEqual(listed.sort(), ['media:/', 'media:/a'], "/a/x isn't loaded, so it isn't loaded again");
 
         // A folder which is deleted is forgotten, with what's beneath it
         await tree.expand('media', '/a/x');
@@ -250,4 +263,26 @@ test('volume labels', async () => {
     assert.equal(volumeLabel(media), 'media');
     assert.equal(volumeTitle(media, backends), 'media\nmedia · file');
     assert.equal(volumeLabel({ ...media, url: 'not a url' }), 'media');
+});
+
+test("a folder which is deleted, which doesn't say it was one, is one the tree has", async () => {
+    const { client, listed, volumes } = fakeServer({ media: { '/': ['/a'], '/a': ['/a/x'], '/a/x': [] } });
+    const tree = new TreeController(client);
+    await tree.expand('media', '/');
+    await tree.expand('media', '/a');
+    await tree.expand('media', '/a/x');
+    listed.length = 0;
+
+    // As the filesystem's watch sends it, without {"folder":true}
+    volumes.media['/a'] = [];
+    tree.change({ action: 'delete', schema: 'filer', table: 'media', row: '/a/x' });
+    await settle();
+    assert.deepEqual(listed.sort(), ['media:/', 'media:/a']);
+    assert.equal(tree.folders('media', '/a/x'), undefined);
+
+    // A file which is deleted isn't a folder
+    listed.length = 0;
+    tree.change({ action: 'delete', schema: 'filer', table: 'media', row: '/a/file.txt' });
+    await settle();
+    assert.deepEqual(listed, []);
 });

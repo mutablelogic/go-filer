@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"slices"
 	"time"
 
 	// Packages
@@ -1748,4 +1749,76 @@ func Test_IndexingFailedLogs(t *testing.T) {
 	// then for debugging, as its state says why it failed
 	require.Eventually(t, func() bool { return strings.Count(logs.String(), "indexing failed, again") >= 3 }, 10*time.Second, time.Millisecond)
 	assert.Equal(t, 1, strings.Count(logs.String(), "level=WARN msg=\"indexing failed\""))
+}
+
+func Test_WatchIndexed(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	i, err := indexer.New("media", backend, newStore(t), indexer.WithDebounce(300*time.Millisecond))
+	require.NoError(t, err)
+	events := make(chan schema.Event, 1000)
+	watchCtx, stop := context.WithCancel(context.Background())
+	t.Cleanup(stop)
+	go func() { _ = i.WatchObjects(watchCtx, events) }()
+	run(t, i)
+	time.Sleep(500 * time.Millisecond)
+	for len(events) > 0 {
+		<-events
+	}
+
+	// A folder which is created is sent to the watchers before it's
+	// indexed, which is debounced, and then again, once it is, when its
+	// folder's listing has it, so a watcher which listed it before lists it
+	// again
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "d"), 0o755))
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if event.EventType == schema.EventTypeUpdated && event.Path == "/d/" && slices.Contains(folders(t, i, "/", false), "/d") {
+				return
+			}
+		case <-timeout:
+			t.Fatal("the folder wasn't sent again once it was indexed")
+		}
+	}
+}
+
+func Test_WatchIndexedDeleted(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	} else if runtime.GOOS == "windows" {
+		t.Skip("a directory which is watched can't be removed on Windows")
+	}
+	backend, dir := newBackend(t)
+	i, err := indexer.New("media", backend, newStore(t), indexer.WithDebounce(300*time.Millisecond))
+	require.NoError(t, err)
+	events := make(chan schema.Event, 1000)
+	watchCtx, stop := context.WithCancel(context.Background())
+	t.Cleanup(stop)
+	go func() { _ = i.WatchObjects(watchCtx, events) }()
+	run(t, i)
+	time.Sleep(500 * time.Millisecond)
+	for len(events) > 0 {
+		<-events
+	}
+
+	// A folder which is removed is deleted again, once it's indexed, when
+	// its folder's listing doesn't have it, and the root isn't updated, as
+	// its change would be a rescan of the volume
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "c")))
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			assert.False(t, event.EventType == schema.EventTypeUpdated && event.Path == "/", "the root isn't updated")
+			if event.EventType == schema.EventTypeDeleted && event.Path == "/c/" && !slices.Contains(folders(t, i, "/", false), "/c") {
+				return
+			}
+		case <-timeout:
+			t.Fatal("the folder wasn't deleted again once it was indexed")
+		}
+	}
 }

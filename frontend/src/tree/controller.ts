@@ -148,12 +148,11 @@ export class TreeController {
                 let more = false;
                 let startAfter: string | undefined;
                 for (;;) {
-                    const list = await listObjects(this.client, volume, { path, type: DirectoryType, start_after: startAfter, limit: this.pageLimit });
-                    folders.push(...list.body);
-                    if (!list.next || !latest()) {
-                        break;
-                    } else if (folders.length >= this.maxFolders) {
-                        more = true;
+                    const limit = Math.min(this.pageLimit, this.maxFolders - folders.length);
+                    const list = await listObjects(this.client, volume, { path, type: DirectoryType, start_after: startAfter, limit });
+                    folders.push(...list.body.slice(0, limit));
+                    more = list.body.length > limit || (list.next !== undefined && folders.length >= this.maxFolders);
+                    if (!list.next || more || !latest()) {
                         break;
                     }
                     startAfter = list.next;
@@ -198,20 +197,29 @@ export class TreeController {
             const dir = row.replace(/\/+$/, '') || '/';
             const parent = parentPath(dir);
             this.reload((v, p) => v === volume && (p === parent || within(p, dir)));
-        } else if (isFolderChange(change)) {
+        } else if (isFolderChange(change) || (change.action === 'delete' && this.isFolder(volume, row))) {
             // A folder which is created, updated or deleted, which changes
-            // its folder, and the count of its folder's folder
+            // its folder, and the count of its folder's folder, and, which is
+            // updated, such as once it's indexed, its own. A folder which is
+            // deleted mayn't say it was one, as what's deleted can't be
+            // found out, so it's one which the tree has.
             const parent = parentPath(row);
             const grandparent = parentPath(parent);
             if (change.action === 'delete') {
                 this.forget((v, p) => v === volume && within(p, row));
             }
-            this.reload((v, p) => v === volume && (p === parent || p === grandparent));
+            this.reload((v, p) => v === volume && (p === parent || p === grandparent || (change.action === 'update' && p === row)));
         }
     }
 
     ///////////////////////////////////////////////////////////////////////////
     // PRIVATE METHODS
+
+    // isFolder returns whether a path is a folder which the tree has, of its
+    // folder's subfolders, or its own
+    private isFolder(volume: string, path: string): boolean {
+        return this.loaded.has(treeKey(volume, path)) || this.folder(volume, path) !== undefined;
+    }
 
     // reload loads the subfolders of the folders it's true of again, which
     // are expanded, and forgets those which aren't

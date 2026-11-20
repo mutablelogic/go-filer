@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -204,6 +205,13 @@ func (self *Indexer) work(ctx context.Context) {
 		if err := self.store.Done(context.WithoutCancel(ctx), self.name, done...); err != nil {
 			self.failed(ctx, err)
 		}
+
+		// The changes are sent to the watchers again, once they're indexed,
+		// as they were sent before, so a watcher which listed what changed
+		// then may have the listing from before
+		for _, event := range self.indexed(context.WithoutCancel(ctx), done) {
+			self.forward(ctx, event)
+		}
 	}
 }
 
@@ -313,4 +321,39 @@ func (self *Indexer) log() *slog.Logger {
 		return logger
 	}
 	return slog.Default().With("volume", self.name)
+}
+
+// indexed returns the changes of the work which is done, once it's
+// indexed, once each: an object which is indexed is updated, or deleted,
+// when the index doesn't have it, and a folder which is scanned is updated,
+// other than the root, whose change would be a rescan of the volume, and
+// files, unless they're indexed
+func (self *Indexer) indexed(ctx context.Context, work []store.Work) []schema.Event {
+	var result []schema.Event
+	seen := make(map[string]bool)
+	for _, w := range work {
+		if w.Key == "" || w.Key == "/" || seen[w.Key] {
+			continue
+		}
+		seen[w.Key] = true
+		event := schema.Event{EventType: schema.EventTypeUpdated, ObjectKey: schema.ObjectKey{Name: self.name, Path: w.Key}}
+		switch w.Kind {
+		case store.KindRescan:
+			event.Path = store.FolderKey(w.Key)
+		case store.KindIndex:
+			// A file isn't indexed, unless the files are, when it's listed
+			// of the backend, which isn't out of date
+			if !strings.HasSuffix(w.Key, "/") && !self.mode.Files() {
+				continue
+			} else if _, err := self.store.GetObject(ctx, self.name, w.Key); errors.Is(err, gofiler.ErrNotFound) {
+				event.EventType = schema.EventTypeDeleted
+			} else if err != nil {
+				continue
+			}
+		default:
+			continue
+		}
+		result = append(result, event)
+	}
+	return result
 }
