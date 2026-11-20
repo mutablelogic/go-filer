@@ -108,6 +108,15 @@ func newFakeBucketWith(t *testing.T, opts gofiler.Opts, prefix string, keys ...s
 	return bucket, b
 }
 
+// writeUnlocked writes the content of a read without the bucket's lock, so
+// a reader which hasn't read all of a large file doesn't hold the bucket up,
+// and locks it again for ServeHTTP to unlock
+func writeUnlocked(b *fakeBucket, w io.Writer, content string) {
+	b.Unlock()
+	defer b.Lock()
+	io.WriteString(w, content)
+}
+
 func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.Lock()
 	defer b.Unlock()
@@ -150,17 +159,23 @@ func (b *fakeBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("ETag", `"`+etagOf(content)+`"`)
 		if value, ok := strings.CutPrefix(r.Header.Get("Range"), "bytes="); ok {
-			start, _ := strconv.Atoi(strings.TrimSuffix(value, "-"))
+			from, to, _ := strings.Cut(value, "-")
+			start, _ := strconv.Atoi(from)
+			end := len(content) - 1
+			if to != "" {
+				end, _ = strconv.Atoi(to)
+				end = min(end, len(content)-1)
+			}
 			if start >= len(content) {
 				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 				return
 			}
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(content)-1, len(content)))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(content)))
 			w.WriteHeader(http.StatusPartialContent)
-			io.WriteString(w, content[start:])
+			writeUnlocked(b, w, content[start:end+1])
 			return
 		}
-		io.WriteString(w, content)
+		writeUnlocked(b, w, content)
 	case r.Method == http.MethodPut && key != "" && r.URL.Query().Has("uploadId"):
 		upload, exists := b.uploads[r.URL.Query().Get("uploadId")]
 		if !exists {
