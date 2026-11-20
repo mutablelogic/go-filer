@@ -23,7 +23,7 @@ import (
 
 // CredentialFlags are the passphrases which the server's credentials, such
 // as the secrets of buckets, and sign-ins, are encrypted with, which it
-// keeps in the user's cache folder
+// keeps in its folder of the user's data
 type CredentialFlags struct {
 	Passphrase []string `name:"passphrase" env:"${ENV_NAME}_PASSPHRASE" sep:"none" help:"Passphrase which the server's credentials are encrypted with, which can be repeated, for versions 1, 2 and so on, the last of which encrypts new ones. Without one, a passphrase is made, the first time, and kept in credentials.key, beside them, in the server's folder of the user's data."`
 }
