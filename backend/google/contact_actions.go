@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
+	"slices"
 	"strings"
 	"time"
 
@@ -122,7 +123,9 @@ func (self contactAction) Run(ctx context.Context, data json.RawMessage) (*schem
 	if err != nil {
 		return nil, err
 	}
-	person.ETag = current.ETag
+	// The People API needs the contact's entity tag, and its sources, of
+	// which a CONTACT one, with its own entity tag, is what's updated
+	person.ETag, person.Metadata = current.ETag, httpclient.PersonMetadata{Sources: current.Metadata.Sources}
 	changed, err := self.client.UpdateContact(ctx, current.ResourceName, person, updated, httpclient.PersonFields)
 	if err != nil {
 		return nil, self.apiError("contact", input.Path, err)
@@ -212,22 +215,31 @@ func (input contactInput) person(current *httpclient.Person) (httpclient.Person,
 		updated = append(updated, "phoneNumbers")
 	}
 
-	// The organization, and the job title in it, of the current one
+	// The organization, and the job title in it, of the current primary
+	// one, or its first, which is replaced, as the People API replaces them
+	// all, so the others are kept
 	if input.Organization != nil || input.JobTitle != nil {
-		var org httpclient.PersonOrg
-		if current != nil && len(current.Organizations) > 0 {
-			org = current.Organizations[0]
+		var orgs []httpclient.PersonOrg
+		if current != nil {
+			orgs = slices.Clone(current.Organizations)
 		}
-		org.Metadata = httpclient.FieldMetadata{}
+		i := slices.IndexFunc(orgs, func(o httpclient.PersonOrg) bool { return o.Metadata.Primary })
+		if i < 0 {
+			i = 0
+		}
+		if i == len(orgs) {
+			orgs = append(orgs, httpclient.PersonOrg{})
+		}
 		if input.Organization != nil {
-			org.Name = trim(input.Organization)
+			orgs[i].Name = trim(input.Organization)
 		}
 		if input.JobTitle != nil {
-			org.Title = trim(input.JobTitle)
+			orgs[i].Title = trim(input.JobTitle)
 		}
-		if org != (httpclient.PersonOrg{}) {
-			person.Organizations = []httpclient.PersonOrg{org}
+		for j := range orgs {
+			orgs[j].Metadata = httpclient.FieldMetadata{}
 		}
+		person.Organizations = slices.DeleteFunc(orgs, func(o httpclient.PersonOrg) bool { return o == httpclient.PersonOrg{} })
 		updated = append(updated, "organizations")
 	}
 	if input.Birthday != nil {

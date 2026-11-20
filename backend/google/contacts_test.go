@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,7 +119,7 @@ func (f *fakePeople) write(w http.ResponseWriter, r *http.Request, parts []strin
 		}
 		id := "n" + strconv.Itoa(len(f.people)+1)
 		person.ResourceName, person.ETag = "people/"+id, id+"-1"
-		person.Metadata = httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "CONTACT"}}}
+		person.Metadata = httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "CONTACT", ID: id, ETag: "s" + id + "-1"}}}
 		f.people = append(f.people, person)
 		writeJSON(w, person)
 	case r.Method == http.MethodPatch && len(parts) == 2 && parts[0] == "people" && strings.HasSuffix(parts[1], ":updateContact"):
@@ -127,7 +128,9 @@ func (f *fakePeople) write(w http.ResponseWriter, r *http.Request, parts []strin
 		if i < 0 {
 			writeError(w, http.StatusNotFound)
 			return true
-		} else if err := json.NewDecoder(r.Body).Decode(&person); err != nil || person.ETag != f.people[i].ETag {
+		} else if err := json.NewDecoder(r.Body).Decode(&person); err != nil || person.ETag != f.people[i].ETag || !slices.Equal(contactSources(person), contactSources(f.people[i])) || len(contactSources(person)) == 0 {
+			// As the People API, which needs the contact's entity tag, and
+			// its CONTACT source, with its entity tag
 			writeError(w, http.StatusBadRequest)
 			return true
 		}
@@ -152,6 +155,9 @@ func (f *fakePeople) write(w http.ResponseWriter, r *http.Request, parts []strin
 			}
 		}
 		current.ETag = strings.TrimPrefix(current.ResourceName, "people/") + "-" + strconv.Itoa(len(f.updated)+2)
+		for j := range current.Metadata.Sources {
+			current.Metadata.Sources[j].ETag = "s" + current.ETag
+		}
 		writeJSON(w, *current)
 	case r.Method == http.MethodDelete && len(parts) == 2 && parts[0] == "people" && strings.HasSuffix(parts[1], ":deleteContact"):
 		i := find(strings.TrimSuffix(parts[1], ":deleteContact"))
@@ -167,11 +173,22 @@ func (f *fakePeople) write(w http.ResponseWriter, r *http.Request, parts []strin
 	return true
 }
 
+// contactSources returns the CONTACT sources of a person
+func contactSources(person httpclient.Person) []httpclient.PersonSource {
+	var result []httpclient.PersonSource
+	for _, source := range person.Metadata.Sources {
+		if source.Type == "CONTACT" {
+			result = append(result, source)
+		}
+	}
+	return result
+}
+
 // add adds a contact, of its id, and changes it with fn
 func (f *fakePeople) add(id string, fn func(*httpclient.Person)) {
 	f.Lock()
 	defer f.Unlock()
-	person := httpclient.Person{ResourceName: "people/" + id, ETag: id + "-1", Metadata: httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "CONTACT"}}}}
+	person := httpclient.Person{ResourceName: "people/" + id, ETag: id + "-1", Metadata: httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "CONTACT", ID: id, ETag: "s" + id + "-1"}}}}
 	if fn != nil {
 		fn(&person)
 	}
@@ -469,7 +486,7 @@ func Test_ContactAction(t *testing.T) {
 	fake.add("ada", func(p *httpclient.Person) {
 		p.Names = []httpclient.PersonName{{GivenName: "Ada", FamilyName: "Lovelace", DisplayName: "Ada Lovelace"}}
 		p.EmailAddresses = []httpclient.PersonValue{{Value: "ada@example.com"}}
-		p.Organizations = []httpclient.PersonOrg{{Name: "Analytical Engines", Title: "Programmer"}}
+		p.Organizations = []httpclient.PersonOrg{{Name: "Royal Society"}, {Metadata: httpclient.FieldMetadata{Primary: true}, Name: "Analytical Engines", Title: "Programmer"}}
 	})
 	assert.Nil(t, newContactFiler(t, endpoint, nil).Actions(), "a read-only volume has none")
 	_, err := newContactFilerOf(ctx, "contacts", url.Values{"readonly": {"false"}, "quota": {"0"}}, contactCredentials(t, endpoint))
@@ -509,6 +526,10 @@ func Test_ContactAction(t *testing.T) {
 	require.Len(t, grace.Birthdays, 1)
 	assert.Equal(t, 1906, grace.Birthdays[0].Date.Year)
 	assert.Equal(t, "1 Navy Way, Arlington", grace.Addresses[0].FormattedValue)
+	cards := readCards(t, filer, "/n2.vcf")
+	require.Len(t, cards, 1)
+	require.Len(t, cards[0].Addresses, 1)
+	assert.Equal(t, "1 Navy Way, Arlington", cards[0].Addresses[0].Street, "an address of one line reads back")
 
 	// It's updated, of the fields which are given, alone, and its name, and
 	// organization, are merged with what it had
@@ -525,7 +546,10 @@ func Test_ContactAction(t *testing.T) {
 	require.NoError(t, err)
 	ada = person("ada")
 	assert.Empty(t, ada.EmailAddresses, "an empty list clears them")
-	assert.Equal(t, []httpclient.PersonOrg{{Name: "Analytical Engines", Title: "Analyst"}}, ada.Organizations)
+	assert.Equal(t, []httpclient.PersonOrg{{Name: "Royal Society"}, {Name: "Analytical Engines", Title: "Analyst"}}, ada.Organizations, "the primary one is updated, and the others kept")
+	cards = readCards(t, filer, "/ada.vcf")
+	require.Len(t, cards, 1)
+	assert.Equal(t, []string{"Analyst"}, cards[0].Titles)
 	require.Len(t, ada.Birthdays, 1)
 	assert.Zero(t, ada.Birthdays[0].Date.Year)
 	assert.Equal(t, 12, ada.Birthdays[0].Date.Month)
@@ -556,4 +580,17 @@ func Test_ContactAction(t *testing.T) {
 	}
 	_, err = run(`{"op":"update","path":"/zz.vcf","given_name":"x"}`)
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+// readCards returns the cards of a contact's content
+func readCards(t *testing.T, filer *google.ContactFiler, path string) []*vcard.Card {
+	t.Helper()
+	read, _, err := filer.ReadObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
+	require.NoError(t, err)
+	var cards []*vcard.Card
+	require.NoError(t, read(t.Context(), func(r io.Reader) error {
+		cards, err = vcard.Decode(r)
+		return err
+	}))
+	return cards
 }

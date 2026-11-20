@@ -202,7 +202,6 @@ func (self *ContactFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-
 // Description returns what the volume is, such as "Google Contacts for ada@example.com"
 func (self *ContactFiler) Description() string {
 	return self.description
@@ -565,6 +564,11 @@ func contactCard(id string, person *httpclient.Person) *vcard.Card {
 	card.Phones = values(person.PhoneNumbers, phoneTypes)
 	card.URLs = values(person.URLs, typesOf)
 	for _, a := range person.Addresses {
+		// An address of one line, alone, such as the contact action's, is
+		// its street
+		if a.StreetAddress == "" && a.POBox == "" && a.ExtendedAddress == "" && a.City == "" && a.Region == "" && a.PostalCode == "" && a.Country == "" {
+			a.StreetAddress = a.FormattedValue
+		}
 		card.Addresses = append(card.Addresses, vcard.Address{Types: typesOf(a.Type), POBox: a.POBox, Extended: a.ExtendedAddress, Street: a.StreetAddress, Locality: a.City, Region: a.Region, PostalCode: a.PostalCode, Country: a.Country})
 	}
 	for _, org := range person.Organizations {
