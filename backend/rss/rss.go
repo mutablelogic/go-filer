@@ -45,22 +45,32 @@ type Filer struct {
 	ttl          time.Duration // the feed's ttl, of how long it can be kept, or zero
 	etag         string        // the entity tag of the feed, which it's fetched again of, if it changed
 	lastModified string        // when the feed was last modified, which it's fetched again of, too
+	restored     bool          // the feed was got from the volume's cache, or there was none
 	now          func() time.Time
 }
 
 var _ gofiler.Filer = (*Filer)(nil)
 
 // feed decodes a feed of a response, of go-rss, with its entity tag, and
-// when it was last modified, of its headers
+// when it was last modified, of its headers, and saves it, as it's read, in
+// the volume's cache, of them
 type feed struct {
 	*rss.Feed
 	etag, lastModified string
+	ctx                context.Context
+	cache              store.CacheStore
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
 const (
+	// feedKey is the key of the feed in the volume's cache, whose version is
+	// its entity tag, and lastModifiedValue the value of when it was last
+	// modified
+	feedKey           = "feed"
+	lastModifiedValue = "last-modified"
+
 	// Scheme is the scheme of a feed's URL, rss://<name>/<host>/<path>
 	Scheme = "rss"
 
@@ -363,6 +373,7 @@ func (self *Filer) intervalLocked() time.Duration {
 func (self *Filer) list(ctx context.Context, op, path string) (*items, error) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
+	self.restoreLocked(ctx)
 	if self.items != nil && self.now().Sub(self.fetched) < self.intervalLocked() {
 		return self.items, nil
 	}
@@ -375,7 +386,44 @@ func (self *Filer) list(ctx context.Context, op, path string) (*items, error) {
 func (self *Filer) fetch(ctx context.Context, op, path string) (*items, bool, error) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
+	self.restoreLocked(ctx)
 	return self.fetchLocked(ctx, op, path)
+}
+
+// restoreLocked gets the feed which was saved in the volume's cache, such as
+// before a restart, once, when it hasn't been fetched, of when it was
+// fetched, and its entity tag, and when it was last modified, so it's
+// fetched again when it would have been, of them, which it isn't, when it
+// isn't modified. A feed which can't be read of it is fetched. It must be
+// locked.
+func (self *Filer) restoreLocked(ctx context.Context) {
+	if self.restored || self.items != nil {
+		return
+	}
+	self.restored = true
+	entry, err := self.cache.Get(ctx, feedKey)
+	if err != nil {
+		return
+	}
+	defer entry.Close()
+	parsed, err := rss.Read(entry)
+	if err != nil || parsed == nil || parsed.Channel == nil {
+		return
+	}
+	meta := entry.Meta()
+	self.channelLocked(parsed.Channel)
+	self.etag, self.lastModified = meta.Version, meta.Values[lastModifiedValue]
+	self.items, self.fetched = newItems(parsed.Channel), entry.Stored()
+}
+
+// channelLocked sets the feed's ttl, of its channel, which must be locked
+func (self *Filer) channelLocked(channel *rss.Channel) {
+	self.ttl = 0
+	if channel.TTL != nil {
+		if ttl, err := channel.TTL.Minutes(); err == nil && ttl > 0 {
+			self.ttl = ttl
+		}
+	}
 }
 
 // fetchLocked fetches the feed, unless it isn't modified, of its entity tag,
@@ -389,7 +437,7 @@ func (self *Filer) fetchLocked(ctx context.Context, op, path string) (*items, bo
 	if self.items != nil && self.lastModified != "" {
 		opts = append(opts, client.OptReqHeader("If-Modified-Since", self.lastModified))
 	}
-	var response feed
+	response := feed{ctx: ctx, cache: self.cache}
 	if err := self.client.DoWithContext(ctx, client.NewRequestEx(http.MethodGet, accept), &response, opts...); self.items != nil && isStatus(err, http.StatusNotModified) {
 		self.fetched = self.now()
 		return self.items, false, nil
@@ -398,12 +446,7 @@ func (self *Filer) fetchLocked(ctx context.Context, op, path string) (*items, bo
 	} else if response.Feed == nil || response.Channel == nil {
 		return nil, false, gofiler.ErrBadParameter.Withf("%s %s: %s isn't an RSS feed", op, path, self.feed.String())
 	}
-	self.ttl = 0
-	if response.Channel.TTL != nil {
-		if ttl, err := response.Channel.TTL.Minutes(); err == nil && ttl > 0 {
-			self.ttl = ttl
-		}
-	}
+	self.channelLocked(response.Channel)
 	self.etag, self.lastModified = response.etag, response.lastModified
 	self.items, self.fetched = newItems(response.Channel), self.now()
 	return self.items, true, nil
@@ -416,15 +459,55 @@ func (self *Filer) named(object *schema.Object) *schema.Object {
 	return &result
 }
 
-// Unmarshal decodes a response, as a feed, of go-rss
+// Unmarshal decodes a response, as a feed, of go-rss, and saves it, as it's
+// read, in the volume's cache, of its entity tag, and when it was last
+// modified, once it's all read, unless it can't be decoded, so the one which
+// was saved is kept. The cache is never the only copy, so a feed which can't
+// be saved is decoded, as it would be without it.
 func (f *feed) Unmarshal(header http.Header, r io.Reader) error {
 	f.etag, f.lastModified = header.Get("ETag"), header.Get("Last-Modified")
-	parsed, err := rss.Read(r)
+	pr, pw := io.Pipe()
+	saved := make(chan struct{})
+	go func() {
+		defer close(saved)
+		meta := store.CacheMeta{Version: f.etag, Values: map[string]string{lastModifiedValue: f.lastModified}}
+		entry, err := f.cache.Put(f.ctx, feedKey, 0, meta, pr)
+		if err == nil {
+			entry.Close()
+		}
+		pr.CloseWithError(err)
+	}()
+	w := &bestEffort{w: pw}
+	parsed, err := rss.Read(io.TeeReader(r, w))
+	if err == nil {
+		// The rest of the response, such as whitespace, after the feed
+		_, err = io.Copy(w, r)
+	}
 	if err != nil {
+		pw.CloseWithError(err)
+		<-saved
 		return gofiler.ErrBadParameter.Withf("the feed can't be read: %v", err)
 	}
+	pw.Close()
+	<-saved
 	f.Feed = parsed
 	return nil
+}
+
+// bestEffort writes to a writer, until it can't, after which it discards
+// what it's written, so what reads, and writes to it, isn't stopped
+type bestEffort struct {
+	w      io.Writer
+	failed bool
+}
+
+func (b *bestEffort) Write(p []byte) (int, error) {
+	if !b.failed {
+		if _, err := b.w.Write(p); err != nil {
+			b.failed = true
+		}
+	}
+	return len(p), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -339,3 +339,62 @@ func testCache() store.CacheStore {
 	}
 	return cache
 }
+
+// Test_FeedRestart tests a feed which was fetched is saved in the volume's
+// cache, so a filer which is created again, such as after a restart, lists
+// it without fetching it, until it would be fetched again, when it's
+// fetched of its entity tag, which isn't modified
+func Test_FeedRestart(t *testing.T) {
+	var full, notModified atomic.Int32
+	sum := sha256.Sum256([]byte(feedXML))
+	etag := `"` + hex.EncodeToString(sum[:8]) + `"`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == etag {
+			notModified.Add(1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		full.Add(1)
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, feedXML)
+	}))
+	defer server.Close()
+	cache := testCache()
+	paths := func(f gofiler.Filer) []string {
+		t.Helper()
+		iter, err := f.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true})
+		require.NoError(t, err)
+		var result []string
+		for {
+			object, err := iter.Next(context.Background())
+			if err == io.EOF {
+				return result
+			}
+			require.NoError(t, err)
+			result = append(result, object.Path)
+		}
+	}
+
+	// It's fetched, and saved
+	first, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache, gofiler.Opts{})
+	require.NoError(t, err)
+	want := paths(first)
+	require.NotEmpty(t, want)
+	assert.Equal(t, int32(1), full.Load())
+
+	// Another, of the same cache, lists it, without fetching it
+	second, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache, gofiler.Opts{})
+	require.NoError(t, err)
+	assert.Equal(t, want, paths(second))
+	assert.Equal(t, int32(1), full.Load(), "it isn't fetched")
+
+	// And, once it would be fetched again, it's fetched of its entity tag,
+	// which isn't modified
+	third, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"10ms"}}), cache, gofiler.Opts{})
+	require.NoError(t, err)
+	time.Sleep(20 * time.Millisecond)
+	assert.Equal(t, want, paths(third))
+	assert.Equal(t, int32(1), full.Load())
+	assert.Equal(t, int32(1), notModified.Load(), "it's fetched of its entity tag")
+}

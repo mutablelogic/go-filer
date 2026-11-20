@@ -210,6 +210,7 @@ A volume of an RSS feed's items, read-only. It's an example of a pluggable backe
     * a changed item is updated;
     * an item whose title or date changed is deleted where it was, and created where it is.
   * Folders are created and deleted as items appear in, and leave, their months.
+* **Cache:** the feed's body is saved in the volume's cache as it's fetched, with its ETag and Last-Modified. A restart reads it from there, as old as when it was saved, so it isn't fetched again until it would have been, and then with its ETag, so an unchanged feed is a 304. A feed that can't be read isn't saved, and one that can't be saved is still read. The items' pages are kept in memory, as before.
 * **Errors:** a feed that isn't found, or isn't RSS, is `ErrBadParameter`. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.
 
 ## Actions
