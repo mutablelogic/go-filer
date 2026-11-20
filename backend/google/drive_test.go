@@ -1122,6 +1122,21 @@ func Test_DriveWatchRestart(t *testing.T) {
 	assert.NotContains(t, paths, "/Work/Reports")
 	stop()
 
+	// A token which isn't accepted, when the files can't be listed again,
+	// as Google is unavailable, keeps those which were saved, and lists
+	// them, once it can
+	fake.Lock()
+	fake.expired, fake.unlistable = true, true
+	fake.Unlock()
+	f = filer()
+	stop = watch(f)
+	assert.Contains(t, listed(t, f, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}), "/while-away.txt", "it's of the files which were saved")
+	fake.Lock()
+	fake.expired, fake.unlistable = false, false
+	fake.Unlock()
+	require.Eventually(t, func() bool { return lists() == 2 }, 5*time.Second, 5*time.Millisecond)
+	stop()
+
 	// A token which isn't accepted, such as one which has expired, lists
 	// the files again
 	fake.Lock()
@@ -1131,7 +1146,7 @@ func Test_DriveWatchRestart(t *testing.T) {
 	ch, done := make(chan schema.Event, 64), make(chan error, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() { done <- f.WatchObjects(ctx, ch) }()
-	require.Eventually(t, func() bool { return lists() == 2 }, 5*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return lists() == 3 }, 5*time.Second, 5*time.Millisecond)
 	fake.Lock()
 	fake.expired = false
 	fake.Unlock()
