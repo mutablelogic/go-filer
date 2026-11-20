@@ -90,19 +90,29 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 	// such as before a restart, are of what changed since, which is got,
 	// and applied, before the rescan, so the files aren't listed again,
 	// unless there are none, or the token isn't accepted
+	// unless there are none, or the token isn't accepted. What the filer
+	// writes meanwhile is kept, and applied to them, once they're known.
+	self.mu.Lock()
+	w.relisting, w.during = true, nil
+	self.mu.Unlock()
 	restored := self.restore(ctx, w)
 	if restored {
 		if _, err := self.changes(ctx, w); errors.Is(err, fs.ErrNotExist) || errors.Is(err, gofiler.ErrBadParameter) {
-			restored = false
+			// The token isn't accepted, so the files are listed again, or,
+			// when they can't be, as Google is unavailable, those which were
+			// saved are kept, and listed again at the next interval
+			if err := self.relist(ctx, w); errors.Is(err, gofiler.ErrServiceUnavailable) {
+				w.stale = true
+			} else if err != nil {
+				return err
+			}
 		} else if err != nil && !errors.Is(err, gofiler.ErrServiceUnavailable) {
 			return err
 		}
+	} else if err := self.relist(ctx, w); err != nil {
+		return err
 	}
-	if !restored {
-		if err := self.relist(ctx, w); err != nil {
-			return err
-		}
-	}
+	self.applyDuring(w)
 
 	// They're saved, once they've changed, and when it stops, so a restart
 	// carries on from where it was
@@ -168,17 +178,22 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 // the filer writes as they're listed, which they may not have, is applied to
 // them, once they are. The watch isn't changed when they can't be got.
 func (self *DriveFiler) relist(ctx context.Context, w *driveWatch) error {
+	// What the filer wrote before, as it starts, is kept, too
 	self.mu.Lock()
-	w.relisting, w.during = true, nil
+	if !w.relisting {
+		w.relisting, w.during = true, nil
+	}
 	self.mu.Unlock()
 	token, root, files, err := self.list(ctx)
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	during := w.during
-	w.relisting, w.during = false, nil
 	if err != nil {
+		// What the filer wrote is kept, for the files it knows, or for when
+		// they're listed again
 		return err
 	}
+	during := w.during
+	w.relisting, w.during = false, nil
 	byId := make(map[string]httpclient.DriveFile, len(files))
 	for _, file := range files {
 		byId[file.Id] = file
@@ -188,6 +203,21 @@ func (self *DriveFiler) relist(ctx context.Context, w *driveWatch) error {
 	w.token, w.root, w.files, w.gone, w.dirty = token, root, byId, gone, true
 	w.tree = newDriveTree(root, slices.Collect(maps.Values(byId)))
 	return nil
+}
+
+// applyDuring applies what the filer wrote, as the watch started, to the
+// files it knows, when it didn't list them again, which applied them, and
+// stops keeping them
+func (self *DriveFiler) applyDuring(w *driveWatch) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	during := w.during
+	w.relisting, w.during = false, nil
+	if len(during) > 0 && w.tree != nil {
+		files := maps.Clone(w.files)
+		applyChanges(files, w.gone, during)
+		w.files, w.tree, w.dirty = files, newDriveTree(w.root, slices.Collect(maps.Values(files))), true
+	}
 }
 
 // list gets the token of the changes from now, and then the root's id, and
