@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	// Packages
 	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
 	client "github.com/mutablelogic/go-client"
+	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -23,7 +25,7 @@ type PeopleClient struct {
 
 // Person is a contact, of the fields which are asked for
 type Person struct {
-	ResourceName   string         `json:"resourceName"`
+	ResourceName   string         `json:"resourceName,omitempty"`
 	ETag           string         `json:"etag,omitempty"`
 	Metadata       PersonMetadata `json:"metadata,omitzero"`
 	Names          []PersonName   `json:"names,omitempty"`
@@ -80,6 +82,7 @@ type PersonValue struct {
 // PersonAddr is a postal address of a person
 type PersonAddr struct {
 	Metadata        FieldMetadata `json:"metadata,omitzero"`
+	FormattedValue  string        `json:"formattedValue,omitempty"`
 	Type            string        `json:"type,omitempty"`
 	POBox           string        `json:"poBox,omitempty"`
 	ExtendedAddress string        `json:"extendedAddress,omitempty"`
@@ -211,4 +214,48 @@ func (c *PeopleClient) Person(ctx context.Context, resourceName, fields string) 
 		return nil, err
 	}
 	return &result, nil
+}
+
+// CreateContact creates a contact, of the person's fields, and returns it,
+// of the fields, with the resource name Google gives it
+func (c *PeopleClient) CreateContact(ctx context.Context, person Person, fields string) (*Person, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPost, person, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result Person
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("people:createContact"),
+		client.OptQuery(url.Values{"personFields": {fields}}),
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateContact changes the fields of a contact, of its resource name,
+// which are updated, such as names, of the person, whose entity tag must be
+// the contact's, and returns it, of the fields
+func (c *PeopleClient) UpdateContact(ctx context.Context, resourceName string, person Person, updated []string, fields string) (*Person, error) {
+	id, _ := strings.CutPrefix(resourceName, "people/")
+	req, err := client.NewJSONRequestEx(http.MethodPatch, person, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result Person
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("people", id+":updateContact"),
+		client.OptQuery(url.Values{"updatePersonFields": {strings.Join(updated, ",")}, "personFields": {fields}}),
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteContact deletes a contact, of its resource name
+func (c *PeopleClient) DeleteContact(ctx context.Context, resourceName string) error {
+	id, _ := strings.CutPrefix(resourceName, "people/")
+	return c.DoAuthWithContext(ctx, client.MethodDelete, nil,
+		client.OptPath("people", id+":deleteContact"),
+	)
 }
