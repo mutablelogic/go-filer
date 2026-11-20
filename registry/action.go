@@ -93,18 +93,30 @@ func (self *Registry) actionsOf(ctx context.Context, volume string) ([]schema.Ac
 
 // withOnline calls the function with the backend of a volume, as With does,
 // unless it's offline, as its watch failed, which is ErrServiceUnavailable,
-// with why
+// with why, of the entry which is used, rather than one which replaces it
+// meanwhile, such as of a remount
 func (self *Registry) withOnline(ctx context.Context, volume string, fn func(context.Context, gofiler.Filer) error) error {
-	return self.With(ctx, volume, func(ctx context.Context, b gofiler.Filer) error {
-		self.RLock()
-		var offline error
-		if e, exists := self.backend[volume]; exists {
-			offline = e.offline
-		}
-		self.RUnlock()
-		if offline != nil {
-			return gofiler.ErrServiceUnavailable.Withf("volume %q is offline: %v", volume, offline)
-		}
-		return fn(ctx, b)
-	})
+	e, err := self.use(ctx, volume)
+	if err != nil {
+		return err
+	}
+	defer e.wg.Done()
+	return self.runOnline(ctx, volume, e, fn)
+}
+
+// runOnline calls the function with the backend of the entry, which is
+// used, unless the entry is offline, with a context which is cancelled when
+// the volume is removed, as With does
+func (self *Registry) runOnline(ctx context.Context, volume string, e *entry, fn func(context.Context, gofiler.Filer) error) error {
+	self.RLock()
+	offline := e.offline
+	self.RUnlock()
+	if offline != nil {
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is offline: %v", volume, offline)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(e.ctx, cancel)
+	defer stop()
+	return fn(ctx, e.Filer)
 }

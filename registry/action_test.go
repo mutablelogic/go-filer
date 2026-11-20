@@ -168,3 +168,46 @@ func Test_Registry_Actions(t *testing.T) {
 	_, err = r.CallAction(ctx, "things", "echo", json.RawMessage(`{"name":"a"}`))
 	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
 }
+
+// An action of an entry which is used, and offline, isn't done, though the
+// volume's entry is replaced meanwhile, such as by a remount, of one which
+// isn't offline yet
+func Test_Registry_ActionsRemounted(t *testing.T) {
+	dir := t.TempDir()
+	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
+		if err != nil {
+			return nil, err
+		}
+		return actioned{example{Filer: b, u: u}}, nil
+	}
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithBackend("actions", "Actions", open))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	runRegistry(t, r)
+	_, err = add(t, r, "things", mustURL(t, "actions://things"))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// The entry which is used is offline, and the volume's entry is replaced
+	// of one which isn't
+	e, err := r.use(ctx, "things")
+	require.NoError(t, err)
+	defer e.wg.Done()
+	r.setOffline(e, gofiler.ErrServiceUnavailable.With("the watch failed"))
+	r.Lock()
+	r.backend["things"] = &entry{state: stateAdding}
+	r.Unlock()
+	t.Cleanup(func() {
+		r.Lock()
+		r.backend["things"] = e
+		r.Unlock()
+	})
+	called := false
+	err = r.runOnline(ctx, "things", e, func(context.Context, gofiler.Filer) error {
+		called = true
+		return nil
+	})
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable)
+	assert.False(t, called)
+}
