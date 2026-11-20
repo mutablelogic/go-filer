@@ -147,13 +147,15 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 // a file is read in place, such as of its headers, rather than all of it,
 // apart from Read and Seek, and is safe to call at once
 func (r *reader) ReadAt(p []byte, off int64) (int, error) {
-	if off < 0 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	} else if off < 0 {
 		return 0, &fs.PathError{Op: "read", Path: "/" + r.rel, Err: fs.ErrInvalid}
 	} else if off >= r.size {
 		return 0, io.EOF
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	n := 0
 	for n < len(p) && off < r.size {
 		if off < r.blockStart || off >= r.blockStart+int64(len(r.block)) {

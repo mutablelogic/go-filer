@@ -279,3 +279,25 @@ func Test_S3_ReadAt(t *testing.T) {
 		return nil
 	}))
 }
+
+// Once the context is cancelled, ReadAt returns its error, even of a block
+// which it has read
+func Test_S3_ReadAtCancelled(t *testing.T) {
+	_, b := newFakeBucket(t, "", "a.txt")
+	read, _, err := b.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/a.txt"}})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, read(ctx, func(r io.Reader) error {
+		at := r.(io.ReaderAt)
+		data := make([]byte, 1)
+		_, err := at.ReadAt(data, 0)
+		require.NoError(t, err)
+		cancel()
+		_, err = at.ReadAt(data, 0)
+		assert.ErrorIs(t, err, context.Canceled)
+		_, err = at.ReadAt(data, 100)
+		assert.ErrorIs(t, err, context.Canceled)
+		return nil
+	}))
+}
