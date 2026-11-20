@@ -1,7 +1,7 @@
 // The Volumes module: the sidebar's Volumes, of the Volumes page, with the
 // volumes beneath it, each of which links to its page, which are added and
 // removed as the volumes are. A volume's page has a tree of its folders,
-// which can be hidden, beside the objects of the folder which is chosen,
+// beside the objects of the folder which is chosen,
 // which is in the location, as #volume/<name>/<path>, each of which scrolls
 // on its own.
 
@@ -14,9 +14,6 @@ import type { NotificationController } from '@mutablelogic/go-server/notificatio
 import type { Route, Router } from '@mutablelogic/go-server/router';
 import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
-import HideIcon from '@carbon/icons/es/side-panel--close/16.js';
-import ShowIcon from '@carbon/icons/es/side-panel--open/16.js';
-import type { PageAction } from '@mutablelogic/go-server/page';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
 import { baseName, objectTitle, volumeLabel, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
@@ -111,7 +108,6 @@ export class VolumeElement extends LitElement {
         name: { type: String },
         path: { type: String },
         volume: { state: true },
-        collapsed: { state: true },
     };
 
     // controller keeps the volumes, tree their folders, folder the objects
@@ -127,15 +123,7 @@ export class VolumeElement extends LitElement {
     declare path?: string;
 
     declare private volume?: Volume;
-
-    // collapsed is whether the tree is hidden, which is remembered
-    declare private collapsed: boolean;
     private unsubscribe: (() => void)[] = [];
-
-    constructor() {
-        super();
-        this.collapsed = remembered(collapsedKey);
-    }
 
     protected override createRenderRoot() {
         return this;
@@ -220,21 +208,14 @@ export class VolumeElement extends LitElement {
         const volume = this.volume;
         const folder = path !== '/' ? this.tree?.folder(name, path) : undefined;
         // The tree is only shown when the volume's root has folders, once
-        // they're loaded, or couldn't be, which it says, and can be hidden
+        // they're loaded, or couldn't be, which it says
         const roots = this.tree?.folders(name, '/');
         const hasFolders = roots?.state === 'error' || (roots?.state === 'loaded' && roots.folders.length > 0);
-        const actions: PageAction[] = volume?.mounted && hasFolders ? [{
-            label: this.collapsed ? 'Show folders' : 'Hide folders',
-            kind: 'ghost',
-            icon: this.collapsed ? ShowIcon : HideIcon,
-            run: () => this.toggle(),
-        }] : [];
         const header = html`
             <gs-page-header
                 heading=${folder ? objectTitle(folder) : baseName(path) || (volume ? volumeLabel(volume) : name)}
                 subtitle=${`${name}${path === '/' ? '' : path}`}
-                .icon=${path === '/' ? VolumesIcon : FolderIcon}
-                .actions=${actions}></gs-page-header>
+                .icon=${path === '/' ? VolumesIcon : FolderIcon}></gs-page-header>
         `;
         if (!volume) {
             return html`${header}<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
@@ -245,19 +226,13 @@ export class VolumeElement extends LitElement {
             ${header}
             ${volume.error ? html`<p class="gf-volume-error">${volume.error}</p>` : nothing}
             <div class="gf-volume">
-                <gf-file-tree class="gf-volume-tree" ?hidden=${this.collapsed || !hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
+                <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
                 <gf-file-view class="gf-volume-view" .controller=${this.folder}
-                    empty=${hasFolders && !this.collapsed ? 'Select a folder from the left' : 'No objects'}></gf-file-view>
+                    empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}></gf-file-view>
             </div>
         `;
-    }
-
-    // toggle hides the tree, or shows it, which is remembered
-    private toggle() {
-        this.collapsed = !this.collapsed;
-        remember(collapsedKey, this.collapsed);
     }
 
     // chosen chooses the folder which is chosen in the tree, and adds it to
@@ -361,29 +336,6 @@ function navPages(volumes: readonly Volume[], backends?: readonly Backend[]): Na
             href: volumeHref(volume.name), parent: VolumesRoute,
         })),
     ];
-}
-
-// collapsedKey is the key of whether the tree is hidden, in the browser's
-// storage
-const collapsedKey = 'gf-tree-collapsed';
-
-// remembered returns whether something is remembered, in the browser's
-// storage, which mayn't be there
-function remembered(key: string): boolean {
-    try {
-        return localStorage.getItem(key) === 'true';
-    } catch {
-        return false;
-    }
-}
-
-// remember remembers whether something is, in the browser's storage
-function remember(key: string, value: boolean) {
-    try {
-        localStorage.setItem(key, String(value));
-    } catch {
-        // It isn't remembered
-    }
 }
 
 // page returns a page, which is hidden until it's routed to, in the root
