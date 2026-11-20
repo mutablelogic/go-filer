@@ -39,6 +39,9 @@ var _ gofiler.Action = taskListAction{}
 // GLOBALS
 
 const (
+	// defaultList is Google's alias of a user's default list
+	defaultList = "@default"
+
 	opCreate = "create"
 	opUpdate = "update"
 	opDelete = "delete"
@@ -154,7 +157,7 @@ type taskAction struct {
 // aren't changed, of an update, and an empty one is cleared.
 type taskInput struct {
 	Op        string  `json:"op" enum:"create,update,delete" help:"What's done: create a task in a list, update one, or delete one, with its subtasks"`
-	Path      string  `json:"path" help:"Path of the list to create the task in, such as /<list>, or of the task to update or delete, such as /<list>/<id>.ics"`
+	Path      string  `json:"path,omitempty" help:"Path of the list to create the task in, such as /<list>, or the default list without it, or of the task to update or delete, such as /<list>/<id>.ics"`
 	Title     *string `json:"title,omitempty" help:"Title of the task, which a task which is created has"`
 	Notes     *string `json:"notes,omitempty" help:"Notes of the task, or empty to clear them"`
 	Due       *string `json:"due,omitempty" help:"Day the task is due, as YYYY-MM-DD, or empty to clear it"`
@@ -173,7 +176,7 @@ func (taskAction) Title() string {
 }
 
 func (taskAction) Description() string {
-	return "Creates a task in the list of the path, such as /<list>, of its title, or, of the path of a task, such as /<list>/<id>.ics, updates the fields which are given, or deletes it, with its subtasks. Returns the task."
+	return "Creates a task in the list of the path, such as /<list>, or in the default list, without a path, of its title, or, of the path of a task, such as /<list>/<id>.ics, updates the fields which are given, or deletes it, with its subtasks. Returns the task."
 }
 
 func (taskAction) Input() *jsonschema.Schema {
@@ -202,6 +205,14 @@ func (self taskAction) Run(ctx context.Context, data json.RawMessage) (*schema.O
 	defer self.writes.Unlock()
 	switch input.Op {
 	case opCreate:
+		// The default list is got of its id, so the task's path is of it
+		if path.list == defaultList {
+			list, err := self.client.TaskList(ctx, defaultList)
+			if err != nil {
+				return nil, self.apiError("task", "/", err)
+			}
+			path.list = list.Id
+		}
 		parent := ""
 		if input.Parent != nil {
 			parent = *input.Parent
@@ -295,19 +306,26 @@ func (input taskInput) check() (taskPath, httpclient.TaskFields, error) {
 	var path taskPath
 	if input.Op != opCreate && input.Op != opUpdate && input.Op != opDelete {
 		return path, nil, gofiler.ErrBadParameter.Withf("task: op is create, update or delete, not %q", input.Op)
-	} else if input.Path == "" {
+	} else if input.Path == "" && input.Op != opCreate {
 		return path, nil, gofiler.ErrBadParameter.Withf("task: %s needs a path", input.Op)
 	}
-	path, err := parseTaskPath("task", input.Path)
-	if err != nil {
+
+	// A task which is created without a path is of the default list, whose
+	// id is got when it's created
+	if input.Path == "" {
+		path.list = defaultList
+	} else if p, err := parseTaskPath("task", input.Path); err != nil {
 		return path, nil, err
+	} else {
+		path = p
 	}
 	switch {
+	case input.Op == opCreate && path.list == defaultList:
 	case input.Op == opCreate && (path.list == "" || path.task != ""):
 		return path, nil, gofiler.ErrBadParameter.With("task: create's path is of a list, such as /<list>, as Google names the task")
 	case input.Op != opCreate && path.task == "":
 		return path, nil, gofiler.ErrBadParameter.Withf("task: %s's path is of a task, such as /<list>/<id>%s", input.Op, taskExt)
-	case !googleId(path.list) || (path.task != "" && !googleId(path.task)):
+	case path.list != defaultList && (!googleId(path.list) || (path.task != "" && !googleId(path.task))):
 		return path, nil, &fs.PathError{Op: "task", Path: input.Path, Err: fs.ErrNotExist}
 	case input.Op == opDelete && (input.Title != nil || input.Notes != nil || input.Due != nil || input.Completed != nil || input.Parent != nil):
 		return path, nil, gofiler.ErrBadParameter.With("task: delete has only a path")

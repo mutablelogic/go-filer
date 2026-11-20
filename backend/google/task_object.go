@@ -113,6 +113,9 @@ func (self *TaskFiler) listObject(list *httpclient.TaskList, tasks []httpclient.
 		object.ETag = types.Ptr(list.ETag + "-" + strconv.Itoa(count))
 	}
 	object.Meta = appendMeta(object.Meta, "title", list.Title)
+	if list.Id != "" && list.Id == self.defaultList {
+		object.Meta = append(object.Meta, schema.Meta{Namespace: TaskNamespace, Key: "default", Value: json.RawMessage("true")})
+	}
 	if list.Title != "" {
 		object.Meta = append(object.Meta, schema.Meta{Namespace: DCNamespace, Key: "title", Value: json.RawMessage(quote(list.Title))})
 	}

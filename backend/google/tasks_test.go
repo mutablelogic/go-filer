@@ -365,6 +365,9 @@ func (f *fakeTasks) write(w http.ResponseWriter, r *http.Request, parts []string
 }
 
 func (f *fakeTasks) list(id string) *httpclient.TaskList {
+	if id == "@default" && len(f.lists) > 0 {
+		return &f.lists[0]
+	}
 	for i := range f.lists {
 		if f.lists[i].Id == id {
 			return &f.lists[i]
@@ -560,10 +563,11 @@ func Test_TaskObjects(t *testing.T) {
 	assert.Equal(t, "/L1", dir.Path)
 	assert.Equal(t, []schema.Meta{
 		{Namespace: google.TaskNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
+		{Namespace: google.TaskNamespace, Key: "default", Value: json.RawMessage(`true`)},
 		{Namespace: google.DCNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
 		{Namespace: schema.FolderNamespace, Key: "children", Value: json.RawMessage(`true`)},
 		{Namespace: schema.FolderNamespace, Key: "children-count", Value: json.RawMessage(`2`)},
-	}, dir.Meta, "with its tasks, which aren't deleted")
+	}, dir.Meta, "with its tasks, which aren't deleted, and it's the default list, as it's the first")
 
 	// A task is a file, of iCalendar, with its metadata, its entity tag and
 	// when it was updated
@@ -1695,6 +1699,29 @@ func Test_TaskAction(t *testing.T) {
 	require.NotNil(t, got.Due)
 	assert.Equal(t, "2026-11-25", got.Due.Format(time.DateOnly))
 
+	// A task which is created without a path is of the default list, which
+	// is its path, of the list's id
+	defaulted, err := run(`{"op":"create","title":"Default"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "/L1/N4.ics", defaulted.Path)
+	assert.Equal(t, "Default", task("N4").Title)
+
+	// The default list's folder says it's the default, and another's doesn't
+	fake.addList("L2", "Work")
+	isDefault := func(path string) bool {
+		t.Helper()
+		object, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: path}})
+		require.NoError(t, err)
+		for _, m := range object.Meta {
+			if m.Namespace == google.TaskNamespace && m.Key == "default" {
+				return string(m.Value) == "true"
+			}
+		}
+		return false
+	}
+	assert.True(t, isDefault("/L1"))
+	assert.False(t, isDefault("/L2"))
+
 	// It's updated, of the fields which are given, alone
 	_, err = run(`{"op":"update","path":"/L1/N3.ics","completed":true}`)
 	require.NoError(t, err)
@@ -1727,7 +1754,8 @@ func Test_TaskAction(t *testing.T) {
 		`{"op":"create","path":"/L1"}`,
 		`{"op":"create","path":"/L1","title":"  "}`,
 		`{"op":"create","path":"/L1/A.ics","title":"x"}`,
-		`{"op":"create","title":"x"}`,
+		`{"op":"update","title":"x"}`,
+		`{"op":"delete"}`,
 		`{"op":"update","path":"/L1","title":"x"}`,
 		`{"op":"update","path":"/L1/A.ics"}`,
 		`{"op":"update","path":"/L1/A.ics","due":"tomorrow"}`,
