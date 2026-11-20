@@ -19,7 +19,6 @@ import ShowIcon from '@carbon/icons/es/side-panel--open/16.js';
 import type { PageAction } from '@mutablelogic/go-server/page';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import type { FileViewOpened } from '../folder/view.ts';
 import { baseName, objectTitle, volumeLabel, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
@@ -246,7 +245,7 @@ export class VolumeElement extends LitElement {
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
                 <gf-file-view class="gf-volume-view" .controller=${this.folder}
-                    @gf-file-view-opened=${(event: CustomEvent<FileViewOpened>) => this.chosen(event.detail)}></gf-file-view>
+                    empty=${this.collapsed ? 'No objects' : 'Select a folder from the left'}></gf-file-view>
             </div>
         `;
     }
@@ -257,9 +256,8 @@ export class VolumeElement extends LitElement {
         remember(collapsedKey, this.collapsed);
     }
 
-    // chosen chooses the folder which is chosen in the tree, or the file
-    // view, and adds it to the history, as its route, without routing to it
-    // again
+    // chosen chooses the folder which is chosen in the tree, and adds it to
+    // the history, as its route, without routing to it again
     private chosen(selection: TreeSelection) {
         this.path = selection.path;
         const hash = folderHref(selection.volume, selection.path);

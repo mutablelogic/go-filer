@@ -145,10 +145,6 @@
             z-index: 1;
         }
 
-        .gf-file-view-folder {
-            cursor: pointer;
-        }
-
         .gf-file-view-name {
             display: inline-flex;
             align-items: center;
@@ -158,6 +154,25 @@
         .gf-file-view-size {
             text-align: right;
             white-space: nowrap;
+        }
+
+        /* What the file view says, of a folder without objects */
+        .gf-file-view-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 4rem 1rem;
+            color: var(--cds-text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .gf-file-view-empty svg {
+            fill: var(--cds-icon-secondary);
+        }
+
+        .gf-file-view-empty p {
+            margin: 0;
         }
 
         .gf-file-view-end {
