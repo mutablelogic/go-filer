@@ -220,7 +220,11 @@ export class VolumeElement extends LitElement {
         const path = this.path || '/';
         const volume = this.volume;
         const folder = path !== '/' ? this.tree?.folder(name, path) : undefined;
-        const actions: PageAction[] = volume?.mounted ? [{
+        // The tree is only shown when the volume's root has folders, once
+        // they're loaded, or couldn't be, which it says, and can be hidden
+        const roots = this.tree?.folders(name, '/');
+        const hasFolders = roots?.state === 'error' || (roots?.state === 'loaded' && roots.folders.length > 0);
+        const actions: PageAction[] = volume?.mounted && hasFolders ? [{
             label: this.collapsed ? 'Show folders' : 'Hide folders',
             kind: 'ghost',
             icon: this.collapsed ? ShowIcon : HideIcon,
@@ -242,7 +246,7 @@ export class VolumeElement extends LitElement {
             ${header}
             ${volume.error ? html`<p class="gf-volume-error">${volume.error}</p>` : nothing}
             <div class="gf-volume">
-                <gf-file-tree class="gf-volume-tree" ?hidden=${this.collapsed} .controller=${this.tree} .changes=${this.changes} volume=${name}
+                <gf-file-tree class="gf-volume-tree" ?hidden=${this.collapsed || !hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
                 <gf-file-view class="gf-volume-view" .controller=${this.folder}
