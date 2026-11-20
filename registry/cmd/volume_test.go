@@ -478,6 +478,9 @@ func Test_VolumeCreateGCalendarCmd(t *testing.T) {
 	u, err = volume("work", "--credential", "GOOGLE_WORK", "--window", "30d", "--quota", "60", "-o", "index=metadata")
 	require.NoError(t, err)
 	assert.Equal(t, "gcalendar://work?credential=GOOGLE_WORK&index=metadata&quota=60&window=30d", u)
+	u, err = volume("writable", "--writable")
+	require.NoError(t, err)
+	assert.Equal(t, "gcalendar://writable?readonly=false", u)
 
 	// A name which isn't an identifier, or a credential which isn't a key
 	_, err = volume("not-a-name!")

@@ -57,7 +57,7 @@ type TaskFiler struct {
 	// defaultList is the id of the user's default list, which is got when
 	// the filer is created, or empty when it can't be
 	defaultList string
-	tasks *cache[[]httpclient.Task]
+	tasks       *cache[[]httpclient.Task]
 }
 
 // taskOpt are the options of a task filer, of its parameters
