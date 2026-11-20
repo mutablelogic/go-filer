@@ -53,6 +53,10 @@ type TaskFiler struct {
 	// the tasks of each list, of its id, which a task is read from, rather
 	// than got again
 	lists *cache[[]httpclient.TaskList]
+
+	// defaultList is the id of the user's default list, which is got when
+	// the filer is created, or empty when it can't be
+	defaultList string
 	tasks *cache[[]httpclient.Task]
 }
 
@@ -166,6 +170,11 @@ func NewTaskFiler(ctx context.Context, name string, params url.Values, opts gofi
 	// What the volume is, when it isn't set, is of the user who signed in
 	if self.description == "" {
 		self.description = describe(ctx, "Google Tasks", self.tokens, opts.ClientOpts)
+	}
+
+	// The user's default list, whose folder says it is, when it can be got
+	if list, err := self.client.TaskList(ctx, "@default"); err == nil {
+		self.defaultList = list.Id
 	}
 	return self, nil
 }
