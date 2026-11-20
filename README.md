@@ -246,10 +246,12 @@ A `store.CacheStore` keeps what a volume's backend gets from a service, by key, 
   * An entry that's replaced or deleted while it's read stays readable until it's closed, and is deleted then.
   * When it's opened, entries left half-written, or expired, are deleted, and their space reclaimed.
 * **The registry** keeps each volume's cache in its cache directory (`registry.WithCacheDir`), or a temporary one that's removed when it closes.
-  * A cache's file is `<volume>.<hash of its URL>.sqlite`. So it's kept when a volume is mounted again or the server restarts, and starts again when its URL changes.
+  * A cache's file is `<volume>.<hash of its identity>.sqlite`. So it's kept when a volume is mounted again or the server restarts, and starts again when its URL changes.
   * A cache is deleted once its backends are closed, unless it's of the volume as it's stored: the old one when its URL changes, and all of them when it's deleted. A restart deletes those left of volumes, or URLs, that aren't stored.
   * A backend made to check a volume's URL, when it's created or updated, gets a cache in memory.
-  * The `filer` server's directory is `cache`, beside its credentials, in its folder of the user's cache.
+  * The `filer` server's directory is its folder of the user's cache (`ctx.CacheDir()`), such as `~/Library/Caches/filer`.
+  * The directory is made readable only by its owner, and locked while the registry is open (on Unix), so two servers can't share it and delete each other's caches. Only files named as caches are deleted.
+  * A cache's identity is its volume's stored URL and when it was created, so a volume that's deleted and created again with the same URL starts again.
 
 ## Indexer
 

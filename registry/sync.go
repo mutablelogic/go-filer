@@ -135,11 +135,11 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 
 	// Its cache is of its stored URL, and those of its others, or of a
 	// volume which is deleted, are deleted, once they aren't used
-	storedURL := ""
+	id := ""
 	if stored != nil {
-		storedURL = stored.URL
+		id = cacheID(stored.URL, stored.Created)
 	}
-	if err := self.caches.stored(name, storedURL); err != nil {
+	if err := self.caches.stored(name, id); err != nil {
 		logger.WarnContext(ctx, "a volume's old caches can't be deleted", "volume", name, "error", err.Error())
 	}
 
@@ -179,7 +179,7 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 
 	// Otherwise it's opened, from its URL, and mounted, in place of the one
 	// which is mounted
-	b, err := self.open(ctx, name, stored.URL)
+	b, err := self.open(ctx, name, stored.URL, stored.Created)
 	if err != nil {
 		// It's logged as a warning when it's why it can't be mounted, for the
 		// first time, rather than of each attempt, as it's retried
@@ -209,22 +209,25 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 }
 
 // open creates the backend of a volume, from its stored URL, which must be
-// the volume's, or of the opener, in tests
-func (self *Registry) open(ctx context.Context, name, volumeURL string) (gofiler.Filer, error) {
+// the volume's, and when it was created, or of the opener, in tests
+func (self *Registry) open(ctx context.Context, name, volumeURL string, created time.Time) (gofiler.Filer, error) {
 	if self.opener != nil {
 		return self.opener(ctx, name, volumeURL)
 	}
-	return self.openURL(ctx, name, volumeURL)
+	return self.openURL(ctx, name, volumeURL, created)
 }
 
 // openURL creates the backend of a volume, from its URL, which must be the
-// volume's
-func (self *Registry) openURL(ctx context.Context, name, volumeURL string) (gofiler.Filer, error) {
+// volume's, which is checked before its cache is opened, and when it was
+// created, which its cache is of
+func (self *Registry) openURL(ctx context.Context, name, volumeURL string, created time.Time) (gofiler.Filer, error) {
 	u, err := url.Parse(volumeURL)
 	if err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("invalid url of volume %q", name)
+	} else if VolumeName(u) != name {
+		return nil, gofiler.ErrBadParameter.Withf("url %q is not for volume %q", volumeURL, name)
 	}
-	b, err := self.new(ctx, u, true)
+	b, err := self.new(ctx, u, cacheID(volumeURL, created))
 	if err != nil {
 		return nil, err
 	} else if VolumeName(b.URL()) != name {

@@ -89,9 +89,9 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	}
 	defer closeStore()
 
-	// The volumes' caches, beside the credentials, in the command's folder
-	// of the user's cache, so they're kept after a restart
-	cacheDir, err := cacheDir(ctx)
+	// The volumes' caches, in the command's folder of the user's cache,
+	// which can be cleared, so they're kept after a restart, unless it is
+	cacheDir, err := ctx.CacheDir()
 	if err != nil {
 		return err
 	}

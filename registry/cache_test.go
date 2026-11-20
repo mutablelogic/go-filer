@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -62,9 +63,9 @@ func Test_Caches(t *testing.T) {
 	// A volume's cache, of its stored URL, is shared by its backends, and
 	// kept, once they're closed
 	require.NoError(t, c.stored("media", "file://media/a"))
-	a, releaseA, err := c.acquire(ctx, "media", "file://media/a", true)
+	a, releaseA, _, err := c.acquire(ctx, "media", "file://media/a")
 	require.NoError(t, err)
-	b, releaseB, err := c.acquire(ctx, "media", "file://media/a", true)
+	b, releaseB, _, err := c.acquire(ctx, "media", "file://media/a")
 	require.NoError(t, err)
 	assert.Same(t, a, b)
 	putCache(t, a, "k", "v")
@@ -79,7 +80,7 @@ func Test_Caches(t *testing.T) {
 	assert.True(t, strings.HasPrefix(files[0], "media."))
 
 	// And opened again, of the same URL, with what it had
-	a, releaseA, err = c.acquire(ctx, "media", "file://media/a", true)
+	a, releaseA, _, err = c.acquire(ctx, "media", "file://media/a")
 	require.NoError(t, err)
 	v, err = getCache(t, a, "k")
 	require.NoError(t, err)
@@ -88,7 +89,7 @@ func Test_Caches(t *testing.T) {
 	// The volume's URL changes, so its cache, which is open, is deleted once
 	// it's released, and the new URL's is another
 	require.NoError(t, c.stored("media", "file://media/b"))
-	b, releaseB, err = c.acquire(ctx, "media", "file://media/b", true)
+	b, releaseB, _, err = c.acquire(ctx, "media", "file://media/b")
 	require.NoError(t, err)
 	_, err = getCache(t, b, "k")
 	assert.ErrorIs(t, err, gofiler.ErrNotFound, "it starts again")
@@ -103,7 +104,7 @@ func Test_Caches(t *testing.T) {
 	assert.Empty(t, cacheFiles(t, dir))
 
 	// A cache which isn't persistent is in memory
-	m, release, err := c.acquire(ctx, "check", "file://check/x", false)
+	m, release, _, err := c.acquire(ctx, "check", "")
 	require.NoError(t, err)
 	putCache(t, m, "k", "v")
 	require.NoError(t, release())
@@ -111,7 +112,7 @@ func Test_Caches(t *testing.T) {
 
 	// A restart deletes the caches of volumes which aren't stored, or of
 	// their URLs which aren't, but not the others, nor what isn't a cache
-	for _, name := range []string{"gone.000000000000.sqlite", "gone.000000000000.sqlite-wal", "kept.000000000000.sqlite", "notes.txt"} {
+	for _, name := range []string{"gone.000000000000.sqlite", "gone.000000000000.sqlite-wal", "kept.000000000000.sqlite", "notes.txt", "notes.sqlite", "notes.sqlite.backup", "kept.backup.sqlite"} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
 	}
 	kept := filepath.Base(c.path("kept", "file://kept/x"))
@@ -124,7 +125,56 @@ func Test_Caches(t *testing.T) {
 		names = append(names, entry.Name())
 	}
 	slices.Sort(names)
-	assert.Equal(t, []string{kept, "notes.txt"}, names)
+	assert.Equal(t, []string{".lock", kept, "kept.backup.sqlite", "notes.sqlite", "notes.sqlite.backup", "notes.txt"}, names, "only caches, of their names, are deleted")
+}
+
+func Test_CachesPrivate(t *testing.T) {
+	ctx := t.Context()
+	dir := filepath.Join(t.TempDir(), "cache")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o755))
+
+	// A directory which is there is made only its owner's
+	c, err := newCaches(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { c.close() })
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+
+		// And is the registry's alone, while it's open
+		_, err = newCaches(dir)
+		assert.ErrorIs(t, err, gofiler.ErrConflict)
+	}
+
+	// A volume's name, which its cache's path is of, is an identifier
+	for _, name := range []string{"../other", "a/b", ""} {
+		_, _, _, err := c.acquire(ctx, name, "id")
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, name)
+	}
+
+	// A clone retains the cache, which is kept open, until both are released
+	cache, release, retain, err := c.acquire(ctx, "media", "id")
+	require.NoError(t, err)
+	releaseClone := retain()
+	require.NoError(t, release())
+	putCache(t, cache, "k", "v")
+	require.NoError(t, releaseClone())
+	_, err = getCache(t, cache, "k")
+	assert.Error(t, err, "it's closed, once both are released")
+
+	// A volume which is created again, of the same URL, has another cache,
+	// so it starts again
+	created := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	assert.NotEqual(t, c.path("media", cacheID("file://media/a", created)), c.path("media", cacheID("file://media/a", created.Add(time.Second))))
+	assert.Equal(t, c.path("media", cacheID("file://media/a", created)), c.path("media", cacheID("file://media/a", created.In(time.FixedZone("x", 3600)))), "of its time, in any zone")
+
+	// Once it's closed, another can lock it
+	require.NoError(t, c.close())
+	c2, err := newCaches(dir)
+	require.NoError(t, err)
+	require.NoError(t, c2.close())
 }
 
 func Test_CachesTemporary(t *testing.T) {
@@ -197,7 +247,12 @@ func Test_Registry_Cache(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "after", v)
 
-	// It's deleted with its volume
+	// It's deleted with its volume, and one which is created again, of the
+	// same URL, starts again
 	require.NoError(t, del(t, r, "notes"))
 	require.Eventually(t, func() bool { return len(cacheFiles(t, cacheDir)) == 0 }, 5*time.Second, 10*time.Millisecond)
+	_, err = add(t, r, "notes", u)
+	require.NoError(t, err)
+	_, err = getCache(t, last(), "k")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 }

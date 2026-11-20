@@ -38,10 +38,6 @@ const (
 	// --passphrase
 	credentialsDir     = "credentials"
 	credentialsKeyFile = "credentials.key"
-
-	// cachesDir is the directory of the volumes' caches, beside the
-	// credentials
-	cachesDir = "cache"
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -70,16 +66,6 @@ func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, 
 		opts = append(opts, filecredential.WithPassphrase(uint64(i+1), passphrase))
 	}
 	return filecredential.New(filepath.Join(dir, credentialsDir), opts...)
-}
-
-// cacheDir returns the directory of the volumes' caches, in the command's
-// folder of the user's cache, beside the credentials
-func cacheDir(ctx server.Cmd) (string, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(cache, ctx.Name(), cachesDir), nil
 }
 
 // credentialsKey returns the passphrase in the file, or makes one, of 32

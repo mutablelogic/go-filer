@@ -77,11 +77,11 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 	if volumes, err := self.store.ListVolumes(ctx); err != nil {
 		logger.WarnContext(ctx, "the volumes' caches can't be checked", "error", err.Error())
 	} else {
-		urls := make(map[string]string, len(volumes))
+		ids := make(map[string]string, len(volumes))
 		for _, volume := range volumes {
-			urls[volume.Name] = volume.URL
+			ids[volume.Name] = cacheID(volume.URL, volume.Created)
 		}
-		if err := self.caches.sweep(urls); err != nil {
+		if err := self.caches.sweep(ids); err != nil {
 			logger.WarnContext(ctx, "the volumes' old caches can't be deleted", "error", err.Error())
 		}
 	}
