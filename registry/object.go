@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"net/url"
@@ -105,7 +106,7 @@ func (self *Registry) ReadObject(ctx context.Context, req schema.GetObjectReques
 // volume's backend isn't closed until the iterator is closed, or the volume
 // is removed, when the iterator is closed, and returns fs.ErrClosed.
 func (self *Registry) ListObjects(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
-	e, err := self.use(req.Name)
+	e, err := self.use(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -149,17 +150,38 @@ func (self *Registry) DeleteObjects(ctx context.Context, req schema.DeleteObject
 // PRIVATE METHODS
 
 // use returns the backend of the volume, which isn't closed until e.wg.Done
-// is called, or ErrNotFound when the volume isn't registered, or is being
-// added or removed
-func (self *Registry) use(volume string) (*entry, error) {
+// is called, or, when it isn't mounted, why (see unmounted)
+func (self *Registry) use(ctx context.Context, volume string) (*entry, error) {
 	self.RLock()
-	defer self.RUnlock()
 	e, exists := self.backend[volume]
-	if !exists || e.state != stateReady {
-		return nil, gofiler.ErrNotFound.Withf("volume %q is not mounted", volume)
+	if exists && e.state == stateReady {
+		e.wg.Add(1)
+		self.RUnlock()
+		return e, nil
 	}
-	e.wg.Add(1)
-	return e, nil
+	failed := self.failed[volume]
+	self.RUnlock()
+	return nil, self.unmounted(ctx, volume, failed)
+}
+
+// unmounted returns why a volume isn't mounted: ErrNotFound when it isn't
+// stored, and otherwise ErrServiceUnavailable, as it's offline, with why it
+// can't be mounted, which is tried again, or it isn't enabled, or is being
+// mounted, or unmounted
+func (self *Registry) unmounted(ctx context.Context, volume string, failed error) error {
+	stored, err := self.store.GetVolume(ctx, volume)
+	switch {
+	case errors.Is(err, gofiler.ErrNotFound):
+		return gofiler.ErrNotFound.Withf("volume %q doesn't exist", volume)
+	case err != nil:
+		return err
+	case !stored.Enabled:
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is unmounted", volume)
+	case failed != nil:
+		return gofiler.ErrServiceUnavailable.Withf("volume %q is offline: %v", volume, failed)
+	default:
+		return gofiler.ErrServiceUnavailable.Withf("volume %q isn't mounted yet", volume)
+	}
 }
 
 // Next returns the next object, with the name of its volume, or io.EOF when

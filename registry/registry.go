@@ -279,7 +279,7 @@ func (self *Registry) forget(ctx context.Context, volume string) {
 // as they'd wait for fn to return.
 func (self *Registry) With(ctx context.Context, volume string, fn func(context.Context, gofiler.Filer) error) error {
 	// Find the backend, and record that it is in use
-	e, err := self.use(volume)
+	e, err := self.use(ctx, volume)
 	if err != nil {
 		return err
 	}

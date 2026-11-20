@@ -59,13 +59,15 @@ func (self *Registry) UpdateVolume(ctx context.Context, volume schema.VolumeMeta
 	if from, to := schemeOf(current.URL), schemeOf(volume.URL); from != to {
 		return nil, gofiler.ErrBadParameter.Withf("volume %q is of %s, so it can't be updated to %s", volume.Name, from, to)
 	}
-	// A volume which is disabled, of its URL as it's stored, isn't created,
-	// so one which can't be, such as one which is offline, or whose backend
-	// isn't registered, can be unmounted
+	// A volume which is unmounted, or mounted, of its URL as it's stored,
+	// isn't created, so one which can't be, such as one which is offline, or
+	// whose backend isn't registered, can be, and is offline, once it's
+	// mounted, until it can be, which is tried again. An update of one which
+	// is mounted is checked, so it's opened again, such as to sign in.
 	var meta schema.VolumeMeta
-	if !volume.Enabled && sameURL(current.URL, volume.URL) {
+	if sameURL(current.URL, volume.URL) && (!volume.Enabled || !current.Enabled) {
 		meta = current.VolumeMeta
-		meta.Enabled = false
+		meta.Enabled = volume.Enabled
 	} else if meta, err = self.validate(ctx, volume); err != nil {
 		return nil, err
 	}

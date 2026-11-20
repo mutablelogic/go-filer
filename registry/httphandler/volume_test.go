@@ -240,7 +240,7 @@ func TestVolumeUpdate(t *testing.T) {
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media?enabled=false", `{}`, &volume))
 	assert.False(t, volume.Enabled)
 	assert.Equal(t, with("readonly", "true"), options(volume))
-	require.Eventually(t, func() bool { return get(t, server, "object/media", nil) == http.StatusNotFound }, 10*time.Second, 5*time.Millisecond, "it's unmounted")
+	require.Eventually(t, func() bool { return get(t, server, "object/media", nil) == http.StatusServiceUnavailable }, 10*time.Second, 5*time.Millisecond, "it's unmounted")
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media", `{"skip": null}`, &volume))
 	assert.False(t, volume.Enabled, "it's kept disabled, when it's updated")
 	require.Equal(t, http.StatusOK, patch(t, server, "volume/media?enabled=true", `{}`, &volume))
