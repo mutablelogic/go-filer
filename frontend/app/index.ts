@@ -1,7 +1,7 @@
 // The filer server's web UI, which is composed of modules, each of which
-// owns an item in the menu bar, and the sidebar while it's active: Files,
-// of the volumes and their objects. Another app includes a module the same
-// way, from @mutablelogic/go-filer/files/view.
+// owns an item in the menu bar, and the sidebar while it's active: Volumes,
+// of the volumes and their folders. Another app includes a module the same
+// way, from @mutablelogic/go-filer/volumes/view.
 
 import '@carbon/styles/css/styles.min.css';
 import './fonts.css';
@@ -17,7 +17,7 @@ import '@mutablelogic/go-server/notification/view';
 import { Router } from '@mutablelogic/go-server/router';
 
 // go-filer's modules
-import { filesModule } from '../src/files/view.ts';
+import { navPage, volumesModule } from '../src/volumes/view.ts';
 
 // Errors, and the server's status, are shown as toasts
 const notifications = new NotificationController();
@@ -49,16 +49,16 @@ if (header && sideNav) {
     header.controller = nav;
     sideNav.controller = nav;
 }
-const router = new Router('files');
+const router = new Router('volumes');
 const root = document.querySelector('main')!;
 
 // The modules
 const app = { nav, router, client, root, notifications, changes };
-filesModule(app);
+volumesModule(app);
 
 // Show the page of the location's hash, and follow the server
 router.onRoute((route) => {
     window.scrollTo(0, 0);
-    nav.setActive(route.page);
+    nav.setActive(navPage(route));
 }).start();
 changes.start();
