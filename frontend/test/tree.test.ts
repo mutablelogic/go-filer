@@ -1,0 +1,198 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import type { Client } from '@mutablelogic/go-server/api';
+import { TreeController } from '../src/tree/controller.ts';
+import { listObjects } from '../src/filer/httpclient.ts';
+import { baseName, objectTitle, parentPath, subfolderCount, type FilerObject } from '../src/filer/schema.ts';
+
+// fakeServer is a filer of volumes, and their folders, by their paths,
+// whose listings are paged, which records each listing's folder
+function fakeServer(volumes: Record<string, Record<string, string[]>>, mounted = Object.keys(volumes)) {
+    const listed: string[] = [];
+    const client: Client = {
+        base: 'http://localhost/api',
+        fetch: (async (input: RequestInfo | URL) => {
+            const url = new URL(String(input));
+            const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+            if (url.pathname === '/api/volume') {
+                return json({ body: Object.keys(volumes).map((name) => ({ name, url: `file://${name}`, enabled: true, mounted: mounted.includes(name) })), backends: [] });
+            }
+            const name = decodeURIComponent(url.pathname.replace('/api/object/', ''));
+            const path = (url.searchParams.get('path') ?? '/').replace(/(.)\/$/, '$1');
+            listed.push(`${name}:${path}`);
+            assert.equal(url.searchParams.get('type'), 'inode/directory');
+            const children = volumes[name]?.[path];
+            if (!children) {
+                return json({ code: 404, reason: 'not found' }, 404);
+            }
+            const limit = Number(url.searchParams.get('limit') ?? 100);
+            const after = url.searchParams.get('start_after') ?? '';
+            const page = children.filter((p) => p > after).slice(0, limit);
+            const more = children.filter((p) => p > after).length > page.length;
+            return json({
+                name, count: children.length,
+                next: more ? page[page.length - 1] : undefined,
+                body: page.map((p) => ({ name, path: p, dir: true, type: 'inode/directory', meta: [{ namespace: 'folder', key: 'subfolder-count', value: volumes[name][p]?.length ?? 0 }] })),
+            });
+        }) as typeof fetch,
+    };
+    return { client, listed, volumes };
+}
+
+test('schema', async (t) => {
+    await t.test('paths', () => {
+        assert.equal(baseName('/a/b'), 'b');
+        assert.equal(baseName('/'), '');
+        assert.equal(parentPath('/a/b'), '/a');
+        assert.equal(parentPath('/a'), '/');
+        assert.equal(parentPath('/'), '/');
+    });
+
+    await t.test("a folder's title, and subfolders", () => {
+        const folder: FilerObject = { name: 'tasks', path: '/MTA3', meta: [{ namespace: 'dc', key: 'title', value: 'Shopping' }, { namespace: 'folder', key: 'subfolder-count', value: 0 }] };
+        assert.equal(objectTitle(folder), 'Shopping');
+        assert.equal(objectTitle({ name: 'media', path: '/a/b' }), 'b');
+        assert.equal(subfolderCount(folder), 0);
+        assert.equal(subfolderCount({ name: 'media', path: '/a' }), undefined);
+    });
+
+    await t.test('a folder is listed with a "/" after it', async () => {
+        const { client, listed } = fakeServer({ media: { '/a': [] } });
+        await listObjects(client, 'media', { path: '/a', type: 'inode/directory' });
+        assert.deepEqual(listed, ['media:/a']);
+    });
+});
+
+test('TreeController', async (t) => {
+    await t.test('volumes, and folders, a page at a time', async () => {
+        const { client } = fakeServer({ media: { '/': ['/a', '/b', '/c'], '/a': [] }, down: {} }, ['media']);
+        const tree = new TreeController(client, { pageLimit: 2 });
+        await tree.loadVolumes();
+        assert.deepEqual(tree.volumes?.map((v) => [v.name, v.mounted]), [['media', true], ['down', false]]);
+        await tree.expand('media', '/');
+        const folders = tree.folders('media', '/');
+        assert.equal(folders?.state, 'loaded');
+        assert.deepEqual(folders?.state === 'loaded' && folders.folders.map((f) => f.path), ['/a', '/b', '/c']);
+        assert.equal(folders?.state === 'loaded' && folders.more, false);
+        assert.ok(tree.isExpanded('media', '/'));
+        assert.equal(tree.folder('media', '/b')?.path, '/b');
+    });
+
+    await t.test('at most the most folders are loaded', async () => {
+        const { client } = fakeServer({ media: { '/': ['/a', '/b', '/c', '/d', '/e'] } });
+        const tree = new TreeController(client, { pageLimit: 2, maxFolders: 3 });
+        await tree.expand('media', '/');
+        const folders = tree.folders('media', '/');
+        assert.deepEqual(folders?.state === 'loaded' && folders.folders.map((f) => f.path), ['/a', '/b', '/c', '/d']);
+        assert.equal(folders?.state === 'loaded' && folders.more, true);
+    });
+
+    await t.test("a folder which can't be loaded is an error", async () => {
+        const { client } = fakeServer({ media: {} });
+        const errors: string[] = [];
+        const tree = new TreeController(client).onError((title) => errors.push(title));
+        await tree.expand('media', '/x');
+        assert.equal(tree.folders('media', '/x')?.state, 'error');
+        assert.equal(errors.length, 1);
+    });
+
+    await t.test('a folder which is expanded again is loaded once', async () => {
+        const { client, listed } = fakeServer({ media: { '/': ['/a'] } });
+        const tree = new TreeController(client);
+        await tree.expand('media', '/');
+        tree.collapse('media', '/');
+        assert.ok(!tree.isExpanded('media', '/'));
+        await tree.expand('media', '/');
+        assert.deepEqual(listed, ['media:/']);
+    });
+
+    await t.test("a folder's change loads its folder, and its folder's, again", async () => {
+        const { client, listed, volumes } = fakeServer({ media: { '/': ['/a', '/b'], '/a': ['/a/x'], '/a/x': [], '/b': [] } });
+        const tree = new TreeController(client);
+        await tree.expand('media', '/');
+        await tree.expand('media', '/a');
+        await tree.expand('media', '/b');
+        listed.length = 0;
+
+        // A folder which is created in /a/x changes /a/x's, and /a's count of
+        // it, but not /b's, nor of another volume, nor of a file
+        volumes.media['/a/x'] = ['/a/x/new'];
+        tree.change({ action: 'create', schema: 'filer', table: 'media', row: '/a/x/new', data: { folder: true } });
+        tree.change({ action: 'create', schema: 'filer', table: 'other', row: '/a/x/new', data: { folder: true } });
+        tree.change({ action: 'create', schema: 'filer', table: 'media', row: '/a/file.txt' });
+        await settle();
+        assert.deepEqual(listed.sort(), ['media:/a'], "/a/x isn't loaded, so it's loaded when it's expanded");
+
+        // A folder which is deleted is forgotten, with what's beneath it
+        await tree.expand('media', '/a/x');
+        listed.length = 0;
+        volumes.media['/a'] = [];
+        tree.change({ action: 'delete', schema: 'filer', table: 'media', row: '/a/x', data: { folder: true } });
+        await settle();
+        assert.deepEqual(listed.sort(), ['media:/', 'media:/a']);
+        assert.equal(tree.folders('media', '/a/x'), undefined);
+        assert.ok(!tree.isExpanded('media', '/a/x'));
+    });
+
+    await t.test('a rescan loads what it is of again, and those which are collapsed are forgotten', async () => {
+        const { client, listed } = fakeServer({ media: { '/': ['/a', '/b'], '/a': [], '/b': [] } });
+        const tree = new TreeController(client);
+        await tree.expand('media', '/');
+        await tree.expand('media', '/a');
+        await tree.expand('media', '/b');
+        tree.collapse('media', '/b');
+        listed.length = 0;
+
+        // Of a folder, and its folder
+        tree.change({ action: 'update', schema: 'filer', table: 'media', row: '/a/' });
+        await settle();
+        assert.deepEqual(listed.sort(), ['media:/', 'media:/a']);
+
+        // Of the volume
+        listed.length = 0;
+        tree.change({ action: 'update', schema: 'filer', table: 'media' });
+        await settle();
+        assert.deepEqual(listed.sort(), ['media:/', 'media:/a']);
+        assert.equal(tree.folders('media', '/b'), undefined);
+    });
+
+    await t.test("a volume which isn't mounted any more is forgotten", async () => {
+        const { client } = fakeServer({ media: { '/': ['/a'] } });
+        const tree = new TreeController(client);
+        await tree.expand('media', '/');
+        const unmounted = fakeServer({ media: {} }, []);
+        (tree as unknown as { client: Client }).client.fetch = unmounted.client.fetch;
+        tree.change({ action: 'update', schema: 'registry', table: 'volume', row: 'media' });
+        await settle();
+        assert.equal(tree.volumes?.[0].mounted, false);
+        assert.equal(tree.folders('media', '/'), undefined);
+        assert.ok(!tree.isExpanded('media', '/'));
+    });
+
+    await t.test("an older load doesn't replace a newer one", async () => {
+        const { client, volumes } = fakeServer({ media: { '/': ['/old'] } });
+        const tree = new TreeController(client);
+        const first = tree.expand('media', '/');
+        volumes.media['/'] = ['/new'];
+        const second = tree.load('media', '/');
+        await Promise.all([first, second]);
+        const folders = tree.folders('media', '/');
+        assert.deepEqual(folders?.state === 'loaded' && folders.folders.map((f) => f.path), ['/new']);
+    });
+});
+
+// settle waits for the loads which a change starts
+async function settle() {
+    for (let i = 0; i < 10; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+}
+
+test('TreeController.reveal', async () => {
+    const { client, listed } = fakeServer({ media: { '/': ['/a'], '/a': ['/a/b'], '/a/b': [] } });
+    const tree = new TreeController(client);
+    await tree.reveal('media', '/a/b');
+    assert.deepEqual(listed, ['media:/', 'media:/a']);
+    assert.ok(tree.isExpanded('media', '/') && tree.isExpanded('media', '/a'));
+    assert.ok(!tree.isExpanded('media', '/a/b'), "it's shown, not expanded");
+});

@@ -33,3 +33,91 @@ export const StoreChangeSchema = 'store';
 export const RegistryChangeSchema = 'registry';
 export const VolumeChangeTable = 'volume';
 export const ObjectChangeSchema = 'filer';
+
+// Meta is an object's metadata, of a namespace and key, whose value is JSON
+export interface Meta {
+    namespace?: string;
+    key?: string;
+    value?: unknown;
+}
+
+// FilerObject is a file or a folder in a volume, of its path, which is
+// "/" for the root, and a folder's has no "/" after it
+export interface FilerObject {
+    name: string;
+    path: string;
+    type?: string;
+    meta?: Meta[];
+    size?: number;
+    etag?: string;
+    mtime?: string;
+    dir?: boolean;
+}
+
+// ObjectListQuery is the query of a listing: the folder, which is the root
+// by default, whether it's of everything beneath it, the key it starts
+// after, how many objects it has, at most, and the type of its objects
+export interface ObjectListQuery {
+    path?: string;
+    recursive?: boolean;
+    start_after?: string;
+    limit?: number;
+    type?: string;
+}
+
+// ObjectList is a page of a listing, and the key the next page starts
+// after, when there's one, and how many objects the listing has, of every
+// page, or null, when its volume can't count them
+export interface ObjectList extends ObjectListQuery {
+    name: string;
+    next?: string;
+    count: number | null;
+    body: FilerObject[];
+}
+
+// DirectoryType is the type of a folder
+export const DirectoryType = 'inode/directory';
+
+// The namespace of a folder's metadata, and its keys: how many objects
+// which aren't folders, and how many subfolders, it lists
+export const FolderNamespace = 'folder';
+export const FolderObjectCount = 'object-count';
+export const FolderSubfolderCount = 'subfolder-count';
+
+// metaValue returns the value of an object's metadata, of its namespace and
+// key, or undefined, when it has none
+export function metaValue(object: FilerObject, namespace: string, key: string): unknown {
+    return object.meta?.find((m) => m.namespace === namespace && m.key === key)?.value;
+}
+
+// subfolderCount returns how many subfolders a folder lists, or undefined,
+// when it isn't known
+export function subfolderCount(object: FilerObject): number | undefined {
+    const value = metaValue(object, FolderNamespace, FolderSubfolderCount);
+    return typeof value === 'number' ? value : undefined;
+}
+
+// objectTitle returns the title of an object: its dc:title, such as a task
+// list's, whose path is its id, or else the last element of its path, or
+// its volume's name, of the root
+export function objectTitle(object: FilerObject): string {
+    const title = metaValue(object, 'dc', 'title');
+    if (typeof title === 'string' && title) {
+        return title;
+    }
+    return baseName(object.path) || object.name;
+}
+
+// baseName returns the last element of a path, or "" of the root
+export function baseName(path: string): string {
+    const trimmed = path.replace(/\/+$/, '');
+    return trimmed.slice(trimmed.lastIndexOf('/') + 1);
+}
+
+// parentPath returns the path of the folder of a path, which is "/" of the
+// root, and of what's in it
+export function parentPath(path: string): string {
+    const trimmed = path.replace(/\/+$/, '');
+    const i = trimmed.lastIndexOf('/');
+    return i <= 0 ? '/' : trimmed.slice(0, i);
+}

@@ -1,22 +1,26 @@
-// The Files module: a page of the volumes, which is where the file tree,
-// and the file view, of a volume's objects, will be
+// The Files module: a page of a tree of the volumes, and their folders, and
+// the folder which is chosen, which is in the location, as
+// #files/<volume>/<path>, where its file view will be
 
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import type { Client } from '@mutablelogic/go-server/api';
 import type { ChangesController } from '@mutablelogic/go-server/broadcaster';
 import type { NavController } from '@mutablelogic/go-server/nav';
 import type { NotificationController } from '@mutablelogic/go-server/notification';
-import type { Router } from '@mutablelogic/go-server/router';
-import Folder32 from '@carbon/icons/es/folder/32.js';
-import { listVolumes } from '../filer/httpclient.ts';
-import { RegistryChangeSchema, StoreChangeSchema, VolumeChangeTable, type Volume } from '../filer/schema.ts';
+import type { Route, Router } from '@mutablelogic/go-server/router';
+import FolderIcon from '@carbon/icons/es/folder/32.js';
+import { baseName, objectTitle } from '../filer/schema.ts';
+import { TreeController } from '../tree/controller.ts';
+import type { TreeSelection } from '../tree/view.ts';
 import '@mutablelogic/go-server/page/view';
+import '../tree/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
-// FilesTag is the tag of the Files page
+// FilesTag is the tag of the Files page, and FilesRoute its route
 export const FilesTag = 'gf-files';
+export const FilesRoute = 'files';
 
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
@@ -26,77 +30,77 @@ export class FilesElement extends LitElement {
         client: { attribute: false },
         notifications: { attribute: false },
         changes: { attribute: false },
-        volumes: { state: true },
+        selected: { attribute: false },
     };
 
     // client is the filer API's client, notifications show its errors, and
-    // changes are followed, so the volumes are loaded again when they, or
-    // what the registry knows of them, such as whether they're mounted,
-    // change
+    // changes are followed, so what's shown is loaded again when it changes
     declare client?: Client;
     declare notifications?: NotificationController;
     declare changes?: ChangesController;
 
-    // volumes are the volumes, once they're loaded
-    declare private volumes?: Volume[];
+    // selected is the folder which is chosen
+    declare selected?: TreeSelection;
 
+    private tree?: TreeController;
     private unsubscribe?: () => void;
-    private abort?: AbortController;
 
     // The page is in the light DOM, so the app's styles apply
     protected override createRenderRoot() {
         return this;
     }
 
-    // The volumes are loaded at once, rather than once the changes are
-    // watched, so they're shown when they can't be
-    override connectedCallback() {
-        super.connectedCallback();
-        this.load();
-        this.unsubscribe = this.changes?.subscribe([
-            { schema: StoreChangeSchema, table: VolumeChangeTable },
-            { schema: RegistryChangeSchema, table: VolumeChangeTable },
-        ], () => this.load());
-    }
-
-    override disconnectedCallback() {
-        super.disconnectedCallback();
-        this.unsubscribe?.();
-        this.abort?.abort();
-    }
-
-    // load loads the volumes, aborting a load which is pending
-    async load() {
-        if (!this.client) {
-            return;
+    // The tree is the client's, and the page is rendered again when it
+    // changes, as the title of the folder which is chosen is the tree's
+    protected override willUpdate(changed: PropertyValues<this>) {
+        if (changed.has('client') || changed.has('notifications')) {
+            this.unsubscribe?.();
+            this.tree = this.client ? new TreeController(this.client).onError((title, error) => this.notifications?.error(title, error)) : undefined;
+            this.unsubscribe = this.tree?.subscribe(() => this.requestUpdate());
+            if (this.selected) {
+                void this.tree?.reveal(this.selected.volume, this.selected.path);
+            }
         }
-        this.abort?.abort();
-        const abort = this.abort = new AbortController();
-        try {
-            this.volumes = (await listVolumes(this.client, abort.signal)).body;
-        } catch (error) {
-            if (!abort.signal.aborted) {
-                this.notifications?.error("The volumes couldn't be loaded", error);
+    }
+
+    // route selects the folder of a route's parameters, its volume, and the
+    // elements of its path
+    route(route: Route) {
+        const [volume, ...elements] = route.params;
+        const selected = volume ? { volume, path: '/' + elements.filter((e) => e).join('/') } : undefined;
+        if (selected?.volume !== this.selected?.volume || selected?.path !== this.selected?.path) {
+            this.selected = selected;
+            if (selected) {
+                void this.tree?.reveal(selected.volume, selected.path);
             }
         }
     }
 
     override render() {
-        const volumes = this.volumes;
+        const selected = this.selected;
+        const folder = selected && selected.path !== '/' ? this.tree?.folder(selected.volume, selected.path) : undefined;
         return html`
             <gs-page-header
-                heading="Files"
-                subtitle=${volumes ? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` : 'Loading…'}
-                .icon=${Folder32}
+                heading=${selected ? (folder ? objectTitle(folder) : baseName(selected.path) || selected.volume) : 'Files'}
+                subtitle=${selected ? `${selected.volume}${selected.path === '/' ? '' : selected.path}` : 'Choose a folder'}
+                .icon=${FolderIcon}
             ></gs-page-header>
-            ${volumes ? html`<ul class="gf-volumes">${volumes.map((volume) => html`
-                <li>
-                    <strong>${volume.name}</strong>
-                    <span>${volume.url}</span>
-                    ${volume.error ? html`<em>${volume.error}</em>` : volume.mounted ? nothing : html`<em>Not mounted</em>`}
-                </li>
-            `)}</ul>` : nothing}
+            <div class="gf-files">
+                <gf-file-tree class="gf-files-tree" .controller=${this.tree} .changes=${this.changes} .selected=${selected}
+                    @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
+                <div class="gf-files-view">${selected ? nothing : html`<p class="gf-files-empty">Choose a volume, or a folder, in the tree</p>`}</div>
+            </div>
         `;
+    }
+
+    // chosen selects the folder which is chosen in the tree, and adds it to
+    // the history, as its route, without routing to it again
+    private chosen(selection: TreeSelection) {
+        this.selected = selection;
+        const hash = '#' + [FilesRoute, selection.volume, ...selection.path.split('/').filter((e) => e)].map(encodeURIComponent).join('/');
+        if (location.hash !== hash) {
+            history.pushState(null, '', hash);
+        }
     }
 }
 
@@ -127,8 +131,9 @@ export interface FilesApp {
 
 // filesModule adds the Files module to the app: its section, which owns the
 // menu bar's Files item, and the sidebar while it's active, of its page,
-// which it adds to the root, and routes to. The page's id is page-files, not
-// the hash it's routed to, so the browser doesn't scroll to it.
+// which it adds to the root, and routes to, with the folder which is chosen.
+// The page's id is page-files, not the hash it's routed to, so the browser
+// doesn't scroll to it.
 export function filesModule(app: FilesApp, section = 'Files'): FilesElement {
     const page = document.createElement('section');
     page.id = 'page-files';
@@ -142,7 +147,7 @@ export function filesModule(app: FilesApp, section = 'Files'): FilesElement {
     page.append(element);
     app.root.append(page);
 
-    app.nav.setSection(section, [{ id: 'files', label: 'Files', href: '#files' }]);
-    app.router.add('files', page);
+    app.nav.setSection(section, [{ id: FilesRoute, label: 'Files', href: '#' + FilesRoute }]);
+    app.router.add(FilesRoute, page, (route) => element.route(route));
     return element;
 }
