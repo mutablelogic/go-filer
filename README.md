@@ -18,7 +18,7 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 | `github.com/mutablelogic/go-filer/backend/rss` | The backend of an RSS feed, read with go-rss. It isn't built into the registry; the `filer` server adds it with `registry.WithBackend` |
 | `github.com/mutablelogic/go-filer/backend/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 | `github.com/mutablelogic/go-filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
-| `github.com/mutablelogic/go-filer/store/sqlite` | A store in a SQLite database, in a file, or in memory |
+| `github.com/mutablelogic/go-filer/store/sqlite` | A store in a SQLite database, in a file, or in memory, and the `CacheStore` of a volume |
 | `github.com/mutablelogic/go-filer/store/test` | The conformance tests every store runs |
 | `github.com/mutablelogic/go-filer/indexer` | A filer which wraps a backend, and keeps an index of it in a `Store`, which follows its changes |
 | `github.com/mutablelogic/go-filer/registry` | The registry of the volumes' backends, which are created from URLs, such as `file://media/mnt/media`, and watched |
@@ -230,6 +230,21 @@ An action is something a volume's backend can do beyond reading and writing its 
   * Watches are sent the change as it's made, not at the next sync.
 * **Google Tasks** also has `task`: `{"op":"create","title":"Call"}` creates a task in the default list, or in a list with `"path":"/<list>"`. `update` changes the fields given (`title`, `notes`, `due`, `completed`, `parent`) of `/<list>/<id>.ics`, and `delete` deletes it.
 * **Google Contacts** has `contact` on a writable volume: `{"op":"create","given_name":"Grace","emails":["grace@example.com"]}`, `update` of `/<id>.vcf` with the fields to change (`given_name`, `family_name`, `emails`, `phones`, `organization`, `job_title`, `birthday`, `notes`, `addresses`), or `delete`. A list replaces the contact's.
+
+## Cache
+
+A `store.CacheStore` keeps what a volume's backend gets from a service, by key, on disk, so it isn't held in memory or fetched again after a restart. Each volume has its own, and the registry will pass it to the backend's New function (#170). Using it is up to the backend, which must work without any of its entries.
+
+* **`Get(ctx, key)`** returns an entry, or `ErrNotFound` if there's none or it expired.
+* **`Put(ctx, key, ttl, meta, r)`** stores the content as it's read, with its metadata, for the TTL (zero keeps it until it's replaced or deleted). The old entry is replaced only once all the new content is read, and kept if it can't be.
+* **`GetOrCreate(ctx, key, version, ttl, valuefn)`** returns the entry if it's of the version, or else calls `valuefn`, which writes the content to an `io.Writer` and returns its metadata, and stores it as it's written. Concurrent calls for a key create it once.
+* **`Delete(ctx, key)`** deletes a key, or every key under a prefix ending `/`.
+* **Entries** can seek and `ReadAt`, have their `Meta()` (a version and small values), `Size()`, `Stored()` and `Expires()`, and are closed by the caller.
+* **JSON:** `store.GetCacheJSON` and `store.PutCacheJSON` store a value.
+* **SQLite:** `sqlite.NewCacheStore(ctx, path)` opens one volume's cache, of a file, or `sqlite.Memory`.
+  * Content is stored in 256 KiB chunks, so only one chunk is in memory as it's written or read.
+  * An entry that's replaced or deleted while it's read stays readable until it's closed, and is deleted then.
+  * When it's opened, entries left half-written, or expired, are deleted, and their space reclaimed.
 
 ## Indexer
 
