@@ -59,8 +59,16 @@ func (self *Registry) UpdateVolume(ctx context.Context, volume schema.VolumeMeta
 	if from, to := schemeOf(current.URL), schemeOf(volume.URL); from != to {
 		return nil, gofiler.ErrBadParameter.Withf("volume %q is of %s, so it can't be updated to %s", volume.Name, from, to)
 	}
-	meta, err := self.validate(ctx, volume)
-	if err != nil {
+	// A volume which is unmounted, or mounted, of its URL as it's stored,
+	// isn't created, so one which can't be, such as one which is offline, or
+	// whose backend isn't registered, can be, and is offline, once it's
+	// mounted, until it can be, which is tried again. An update of one which
+	// is mounted is checked, so it's opened again, such as to sign in.
+	var meta schema.VolumeMeta
+	if sameURL(current.URL, volume.URL) && (!volume.Enabled || !current.Enabled) {
+		meta = current.VolumeMeta
+		meta.Enabled = volume.Enabled
+	} else if meta, err = self.validate(ctx, volume); err != nil {
 		return nil, err
 	}
 	stored, err := self.store.UpdateVolume(ctx, meta)
@@ -245,4 +253,18 @@ func (self *Registry) view(ctx context.Context, stored *schema.Volume) *schema.V
 		}
 	}
 	return &volume
+}
+
+// sameURL returns true when two URLs of a volume are the same, of their
+// scheme, host, path and options, whatever the order of their options
+func sameURL(a, b string) bool {
+	ua, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	ub, err := url.Parse(b)
+	if err != nil {
+		return false
+	}
+	return ua.Scheme == ub.Scheme && ua.Host == ub.Host && ua.Path == ub.Path && ua.Query().Encode() == ub.Query().Encode()
 }

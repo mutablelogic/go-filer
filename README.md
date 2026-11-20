@@ -182,9 +182,14 @@ In the registry, its URL is `gcalendar://<name>`, and the `filer` command create
 
 * **The store is the source of truth.** `CreateVolume`, `UpdateVolume` and `DeleteVolume` validate a volume, by creating its backend and closing it, and write the store. They return before it's mounted.
 * **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
+* **Backends are pluggable.** `registry.WithBackend(scheme, open)` adds a backend for a URL scheme, such as one in another package or program.
+  * `open(ctx, url, opts)` creates the volume's backend. The URL has the volume's options except `index`, which the registry handles. `opts` are the options every backend gets: the tracer, the credentials provider, and the client options.
+  * The built-in backends (`file`, `s3`, `gtasks`, `gcontacts`, `gcalendar`) are registered the same way. A scheme is lower case, of two characters or more, as one letter is a Windows drive. A scheme that's taken, or isn't valid, is an error.
+  * **A stored volume whose backend isn't registered,** such as after a server is built without it, is offline, with why: `enabled: false` and an `unsupported scheme` error. Its URL and index are kept, and it's mounted once its backend is registered again.
+  * `Schemes()`, which is `filer volume-schemes`, lists them all. `filer volume-create <url>` creates a volume of any of them.
 * **A volume's scheme isn't changed** by an update, which is `ErrBadParameter`, so a directory stays a directory. Its path, or a bucket's prefix, can be.
 * **Creating and updating are atomic in the store:** a volume is created once, of the servers which create it at once, and an update of one which is deleted meanwhile is `ErrNotFound`.
-* **Enabled:** a volume which isn't enabled is stored, with its index, but isn't mounted. `filer volume-unmount NAME` disables one, `filer volume-mount NAME` enables it, and `filer volume-update NAME --[no-]enabled` does either, with its options. Over HTTP, it's `PATCH /volume/{name}?enabled=false`.
+* **Enabled:** a volume which isn't enabled is stored, with its index, but isn't mounted. Mounting or unmounting one, without changing its URL, doesn't create its backend. So a volume that's offline, or whose backend isn't registered, can be unmounted, or mounted, when it's offline until it can be. Updating a mounted volume still opens it again, such as to sign in. `filer volume-unmount NAME` disables one, `filer volume-mount NAME` enables it, and `filer volume-update NAME --[no-]enabled` does either, with its options. Over HTTP, it's `PATCH /volume/{name}?enabled=false`.
 * **`GetVolume` and `ListVolumes`** return the stored volumes, which includes those which aren't enabled. A volume which is enabled, but offline, or can't be mounted, is `enabled: false`, with its `error`.
 * **Offline volumes** are opened again, after a while, which doubles, up to a minute. One whose user needs to sign in again isn't, until it's updated, such as with `volume-update`, which opens it again even when nothing changed.
 * **Descriptions:** every backend's URL has a `description` option, of what the volume is, which the backend sets, when it isn't set: `Folder /mnt/media`, `S3 bucket photos/2026 in eu-west-1`, or `Google Tasks for ada@example.com`. `Volume.Description()` returns it, and the CLI's create commands, and `volume-update`, set it with `--description`.
@@ -317,6 +322,14 @@ The S3 backend converts S3 errors in the same way:
 | `AccessDenied` | `filer.ErrForbidden` | 403 |
 | `SlowDown`, `ServiceUnavailable` | `filer.ErrServiceUnavailable` | 503 |
 | `PreconditionFailed` | `filer.ErrPreconditionFailed` | 412 |
+
+The registry's object calls of a volume which isn't mounted return:
+
+* `filer.ErrNotFound` (404) when the volume doesn't exist.
+* `filer.ErrServiceUnavailable` (503) when it exists but isn't mounted:
+  * it's offline, with why it can't be mounted, which is tried again with backoff;
+  * it's unmounted (disabled);
+  * it's still being mounted.
 
 ## Development
 

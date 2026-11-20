@@ -5,9 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/url"
-	"path/filepath"
-	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -15,12 +14,8 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	fs "github.com/mutablelogic/go-filer/backend/fs"
-	google "github.com/mutablelogic/go-filer/backend/google"
-	s3 "github.com/mutablelogic/go-filer/backend/s3"
 	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
-	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -122,9 +117,6 @@ var _ gofiler.Filer = (*Registry)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
-
-// schemes are the schemes of the URLs which backends are created from
-var schemes = []string{schema.SchemeFile, schema.SchemeS3, google.TasksScheme, google.ContactsScheme, google.CalendarScheme}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -261,11 +253,10 @@ func (self *Registry) setOffline(e *entry, err error) {
 }
 
 // Schemes returns the schemes of the URLs which backends can be created from,
-// in order, such as "file"
+// in order, such as "file", of those which are built in, and those of
+// WithBackend
 func (self *Registry) Schemes() []string {
-	result := slices.Clone(schemes)
-	slices.Sort(result)
-	return result
+	return slices.Sorted(maps.Keys(self.backends))
 }
 
 // forget removes a volume's index, and its state, from the registry's store,
@@ -288,7 +279,7 @@ func (self *Registry) forget(ctx context.Context, volume string) {
 // as they'd wait for fn to return.
 func (self *Registry) With(ctx context.Context, volume string, fn func(context.Context, gofiler.Filer) error) error {
 	// Find the backend, and record that it is in use
-	e, err := self.use(volume)
+	e, err := self.use(ctx, volume)
 	if err != nil {
 		return err
 	}
@@ -356,7 +347,8 @@ func (self *Registry) indexed(volume string, b gofiler.Filer, mode indexer.Mode)
 	return i, nil
 }
 
-// newBackend creates a backend from a URL, without the registry's options
+// newBackend creates a backend from a URL, without the registry's options,
+// of the backend of its scheme (see WithBackend)
 func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -365,76 +357,15 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL) (gofiler.Filer
 	}
 
 	// The options, which are rejected when they can't be parsed, rather than
-	// those which can't being left out
-	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
+	// those which can't being left out, so a backend can read them of the URL
+	if _, err := url.ParseQuery(u.RawQuery); err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("invalid options: %v", err)
 	}
-	switch u.Scheme {
-	case schema.SchemeFile:
-		if types.IsIdentifier(u.Host) == false {
-			return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", u.Host)
-		}
-
-		// The path is absolute, so a URL without one isn't the directory the
-		// registry is running in. On Windows, it's /C:/media, which is
-		// converted to C:/media.
-		path := u.Path
-		if runtime.GOOS == "windows" {
-			path = types.FilePath(&url.URL{Scheme: schema.SchemeFile, Path: u.Path})
-		}
-		if path == "" || !filepath.IsAbs(filepath.FromSlash(path)) {
-			return nil, gofiler.ErrBadParameter.Withf("path of volume %q isn't absolute: %q", u.Host, path)
-		}
-		if b, err := fs.New(u.Host, path, query, self.backendOpts); err != nil {
-			return nil, err
-		} else {
-			return b, nil
-		}
-	case schema.SchemeS3:
-		if b, err := s3.New(ctx, u, self.backendOpts); err != nil {
-			return nil, err
-		} else {
-			return b, nil
-		}
-	case google.TasksScheme:
-		// The tasks of a Google account, of its sign-in, of the provider of
-		// credentials, which is a SignInError, with how to sign in, when
-		// it's needed
-		if u.Path != "" && u.Path != "/" {
-			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Tasks has no path: %q", u.Path)
-		}
-		// The registry's options of its backends: its credentials, of the
-		// sign-in, and its client options, as they are
-		if b, err := google.NewTaskFiler(ctx, u.Host, query, self.backendOpts); err != nil {
-			return nil, err
-		} else {
-			return b, nil
-		}
-	case google.ContactsScheme:
-		// The contacts of a Google account, of its sign-in, as for tasks
-		if u.Path != "" && u.Path != "/" {
-			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Contacts has no path: %q", u.Path)
-		}
-		if b, err := google.NewContactFiler(ctx, u.Host, query, self.backendOpts); err != nil {
-			return nil, err
-		} else {
-			return b, nil
-		}
-	case google.CalendarScheme:
-		// The events of a Google account's calendars, of its sign-in, as for
-		// tasks, whose sync tokens are stored with its credentials
-		if u.Path != "" && u.Path != "/" {
-			return nil, gofiler.ErrBadParameter.Withf("a volume of Google Calendar has no path: %q", u.Path)
-		}
-		if b, err := google.NewCalendarFiler(ctx, u.Host, query, self.backendOpts); err != nil {
-			return nil, err
-		} else {
-			return b, nil
-		}
-	default:
+	open, exists := self.backends[u.Scheme]
+	if !exists {
 		return nil, gofiler.ErrBadParameter.Withf("unsupported scheme: %q", u.Scheme)
 	}
+	return open(ctx, u, self.backendOpts)
 }
 
 // register registers the backend with the entry of the volume, unless the

@@ -25,11 +25,12 @@ type Opt func(*opt) error
 type opt struct {
 	broadcaster *broadcaster.Broadcaster
 	meter       metric.Meter
-	backendOpts gofiler.Opts  // the options every backend is created with: its tracer, credentials, and client options
-	store       store.Store   // where the volumes, and their indexes, are kept, which is required
-	worker      string        // the name of the worker, which is in the metrics
-	debounce    time.Duration // how long a change is held, until its object is quiet
-	metadata    indexer.Task  // the task which enriches the files of volumes with index=metadata, or nil
+	backendOpts gofiler.Opts       // the options every backend is created with: its tracer, credentials, and client options
+	store       store.Store        // where the volumes, and their indexes, are kept, which is required
+	worker      string             // the name of the worker, which is in the metrics
+	debounce    time.Duration      // how long a change is held, until its object is quiet
+	metadata    indexer.Task       // the task which enriches the files of volumes with index=metadata, or nil
+	backends    map[string]Backend // the backends of the volumes, of their URLs' schemes, which are built in, and of WithBackend
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -57,6 +58,7 @@ func (o *opt) apply(opt []Opt) error {
 func (o *opt) defaults() {
 	o.worker = defaultWorker()
 	o.debounce = debounceDelay
+	o.backends = builtin()
 }
 
 ////////////////////////////////////////////////////////////////////////////////

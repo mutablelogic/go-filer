@@ -138,7 +138,7 @@ func TestVolumes(t *testing.T) {
 	assert.False(t, got.Enabled)
 	time.Sleep(100 * time.Millisecond)
 	_, err = client.HeadObject(ctx, "disabled", "/")
-	assert.ErrorIs(t, err, gofiler.ErrNotFound, "it isn't mounted")
+	assert.ErrorIs(t, err, gofiler.ErrServiceUnavailable, "it isn't mounted")
 }
 
 func TestListObjects(t *testing.T) {
