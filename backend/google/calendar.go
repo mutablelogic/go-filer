@@ -68,6 +68,13 @@ type CalendarFiler struct {
 	// the watches, which are sent them
 	written map[string]string
 	watches map[*calendarWatch]struct{}
+
+	// writing is held by a write, until it's sent to the watches, and by a
+	// watch's sync, so a sync doesn't find a write before it's sent, which
+	// it would send again, as it isn't known to be the filer's. It's a
+	// channel of one, rather than a mutex, so waiting for it stops when the
+	// context is cancelled (see lockWrites).
+	writing chan struct{}
 }
 
 // calendarOpt are the options of a calendar filer, of its parameters
@@ -180,7 +187,7 @@ func NewCalendarFiler(ctx context.Context, name string, params url.Values, opts 
 		return nil, err
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
-	self := &CalendarFiler{calendarOpt: opt, name: name, opts: opts, now: time.Now}
+	self := &CalendarFiler{calendarOpt: opt, name: name, opts: opts, now: time.Now, writing: make(chan struct{}, 1)}
 	ttl := func() time.Duration { return self.refreshInterval }
 	self.calendarList = newCache[[]httpclient.Calendar](func() time.Time { return self.now() }, ttl)
 	self.listings = newCache[[]calendarEvent](func() time.Time { return self.now() }, ttl)
