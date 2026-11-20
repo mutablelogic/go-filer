@@ -1637,6 +1637,8 @@ func Test_TaskListAction(t *testing.T) {
 		`{"op":"delete","path":"/L1","title":"x"}`,
 		`{"op":"create","title":"x","colour":"red"}`,
 		`not json`,
+		`{"op":"delete","path":"/L1"} garbage`,
+		`{"op":"delete","path":"/L1"}{}`,
 	} {
 		_, err := run(input)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, input)
@@ -1734,10 +1736,46 @@ func Test_TaskAction(t *testing.T) {
 		`{"op":"delete","path":"/L1/A.ics","title":"x"}`,
 		`{"op":"delete","path":"/L1/A.ics","completed":true}`,
 		`{"op":"create","path":"/L1","title":"x","colour":"red"}`,
+		`{"op":"delete","path":"/L1/A.ics"} garbage`,
 	} {
 		_, err := run(input)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, input)
 	}
 	_, err = run(`{"op":"update","path":"/L1/Q.ics","title":"x"}`)
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+// A list which the action creates, or renames, is sent to the volume's
+// watches once, and isn't sent again when it's polled, as its tag is the
+// watch's
+func Test_TaskListActionWatched(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"20ms"}})
+	watchCtx, cancel := context.WithCancel(ctx)
+	events, done := make(chan schema.Event, 16), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(watchCtx, events) }()
+	t.Cleanup(func() { cancel(); <-done })
+	require.Equal(t, schema.Rescan("tasks"), <-events)
+	action := filer.Actions()[0]
+	quiet := func() {
+		t.Helper()
+		select {
+		case event := <-events:
+			t.Fatalf("unexpected %s %s", event.EventType.String(), event.Path)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	_, err := action.Run(ctx, json.RawMessage(`{"op":"create","title":"Work"}`))
+	require.NoError(t, err)
+	event := <-events
+	assert.Equal(t, "created /L2", event.EventType.String()+" "+event.Path)
+	quiet()
+	_, err = action.Run(ctx, json.RawMessage(`{"op":"update","path":"/L2","title":"Office"}`))
+	require.NoError(t, err)
+	event = <-events
+	assert.Equal(t, "updated /L2", event.EventType.String()+" "+event.Path)
+	quiet()
 }

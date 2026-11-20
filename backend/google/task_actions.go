@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +16,6 @@ import (
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
-	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -80,10 +81,8 @@ func (self taskListAction) Run(ctx context.Context, data json.RawMessage) (*sche
 		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
 	}
 	var input taskListInput
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&input); err != nil {
-		return nil, gofiler.ErrBadParameter.Withf("task_list: %v", err)
+	if err := decodeInput("task_list", data, &input); err != nil {
+		return nil, err
 	}
 	input.Title = strings.TrimSpace(input.Title)
 	switch {
@@ -109,7 +108,7 @@ func (self taskListAction) Run(ctx context.Context, data json.RawMessage) (*sche
 			return nil, self.apiError("task_list", "/", err)
 		}
 		object := self.listObject(list, nil)
-		self.changed(taskChange{eventType: schema.EventTypeCreated, path: object.Path, etag: types.Value(object.ETag)})
+		self.changed(taskChange{eventType: schema.EventTypeCreated, path: object.Path, etag: self.listTag(list, nil)})
 		return object, nil
 	}
 
@@ -128,16 +127,18 @@ func (self taskListAction) Run(ctx context.Context, data json.RawMessage) (*sche
 		}
 		return deleted.Body[len(deleted.Body)-1], nil
 	}
-	list, err := self.client.PatchTaskList(ctx, path.list, input.Title)
-	if err != nil {
-		return nil, self.apiError("task_list", input.Path, err)
-	}
+	// Its tasks are read first, so a read which fails doesn't leave a
+	// rename which isn't sent
 	tasks, err := self.client.Tasks(ctx, path.list)
 	if err != nil {
 		return nil, self.apiError("task_list", input.Path, err)
 	}
+	list, err := self.client.PatchTaskList(ctx, path.list, input.Title)
+	if err != nil {
+		return nil, self.apiError("task_list", input.Path, err)
+	}
 	object := self.listObject(list, tasks)
-	self.changed(taskChange{eventType: schema.EventTypeUpdated, path: object.Path, etag: types.Value(object.ETag)})
+	self.changed(taskChange{eventType: schema.EventTypeUpdated, path: object.Path, etag: self.listTag(list, tasks)})
 	return object, nil
 }
 
@@ -187,10 +188,8 @@ func (self taskAction) Run(ctx context.Context, data json.RawMessage) (*schema.O
 		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
 	}
 	var input taskInput
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&input); err != nil {
-		return nil, gofiler.ErrBadParameter.Withf("task: %v", err)
+	if err := decodeInput("task", data, &input); err != nil {
+		return nil, err
 	}
 	path, fields, err := input.check()
 	if err != nil {
@@ -348,4 +347,26 @@ func (input taskInput) check() (taskPath, httpclient.TaskFields, error) {
 		}
 	}
 	return path, fields, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE FUNCTIONS
+
+// decodeInput decodes the input of an action, which must be one JSON object,
+// without fields it doesn't have, or anything after it
+func decodeInput(action string, data json.RawMessage, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return gofiler.ErrBadParameter.Withf("%s: %v", action, err)
+	} else if _, err := dec.Token(); err != io.EOF {
+		return gofiler.ErrBadParameter.Withf("%s: the input is one JSON object, without anything after it", action)
+	}
+	return nil
+}
+
+// listTag returns a list's tag of the watch's snapshot, of its entity tag,
+// and the count of its tasks, so a change which is sent isn't sent again
+func (self *TaskFiler) listTag(list *httpclient.TaskList, tasks []httpclient.Task) string {
+	return list.ETag + "/" + strconv.Itoa(self.countTasks(tasks))
 }
