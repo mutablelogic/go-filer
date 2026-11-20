@@ -159,6 +159,10 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 // changed, or true when the root is rescanned instead (see WatchObjects).
 // The tokens are stored when they change.
 func (self *CalendarFiler) poll(ctx context.Context, state *calendarSync) (bool, []schema.Event, error) {
+	// A write isn't synced until it's sent to the watches, as the filer's
+	self.writing.Lock()
+	defer self.writing.Unlock()
+
 	// The calendars are got from Google, rather than the cache, as what
 	// changed of them is found of them
 	calendars, err := self.client.Calendars(ctx)

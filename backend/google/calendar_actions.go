@@ -91,6 +91,9 @@ func (self eventAction) Run(ctx context.Context, data json.RawMessage) (*schema.
 	} else if err := input.check(); err != nil {
 		return nil, err
 	}
+	// A write, until it's sent to the watches, isn't synced
+	self.writing.Lock()
+	defer self.writing.Unlock()
 	calendars, err := self.calendars(ctx)
 	if err != nil {
 		return nil, self.apiError("event", "/", err)

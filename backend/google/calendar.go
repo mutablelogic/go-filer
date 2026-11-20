@@ -68,6 +68,11 @@ type CalendarFiler struct {
 	// the watches, which are sent them
 	written map[string]string
 	watches map[*calendarWatch]struct{}
+
+	// writing is held by a write, until it's sent to the watches, and by a
+	// watch's sync, so a sync doesn't find a write before it's sent, which
+	// it would send again, as it isn't known to be the filer's
+	writing sync.Mutex
 }
 
 // calendarOpt are the options of a calendar filer, of its parameters
