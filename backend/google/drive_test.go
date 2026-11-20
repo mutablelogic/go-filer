@@ -1205,11 +1205,30 @@ func Test_DriveExportCache(t *testing.T) {
 	require.NoError(t, err, "it's kept")
 	entry.Close()
 	fake.remove("d1")
-	require.Eventually(t, func() bool {
-		entry, err := cache.Get(t.Context(), "export/d1")
-		if err == nil {
-			entry.Close()
+	gone := func(id string) func() bool {
+		return func() bool {
+			entry, err := cache.Get(t.Context(), "export/"+id)
+			if err == nil {
+				entry.Close()
+			}
+			return errors.Is(err, gofiler.ErrNotFound)
 		}
-		return errors.Is(err, gofiler.ErrNotFound)
-	}, 5*time.Second, 5*time.Millisecond)
+	}
+	require.Eventually(t, gone("d1"), 5*time.Second, 5*time.Millisecond)
+
+	// As is one which is gone, when the files are listed again, as the
+	// token isn't accepted
+	fake.Lock()
+	fake.content["d2:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] = "xlsx"
+	fake.Unlock()
+	assert.Equal(t, "xlsx", read(t, filer, "/Work/Budget.xlsx"))
+	require.False(t, gone("d2")(), "it's kept")
+	fake.Lock()
+	fake.expired = true
+	fake.drop("d2")
+	fake.Unlock()
+	require.Eventually(t, gone("d2"), 5*time.Second, 5*time.Millisecond)
+	fake.Lock()
+	fake.expired = false
+	fake.Unlock()
 }
