@@ -10,6 +10,7 @@ import FileIcon from '@carbon/icons/es/document/16.js';
 import EmptyIcon from '@carbon/icons/es/folders/32.js';
 import { objectTitle, objectType } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
+import '@carbon/web-components/es/components/button/index.js';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
@@ -75,7 +76,7 @@ export class FileViewElement extends LitElement {
     protected override updated() {
         const end = this.querySelector('.gf-file-view-end');
         this.observer?.disconnect();
-        if (end && this.state?.more) {
+        if (end && this.state?.more && !this.state.failed) {
             this.observer = new IntersectionObserver((entries) => {
                 if (entries.some((entry) => entry.isIntersecting)) {
                     void this.controller?.loadMore();
@@ -91,6 +92,8 @@ export class FileViewElement extends LitElement {
             return nothing;
         } else if (!state.objects) {
             return html`<p class="gf-empty">Loading…</p>`;
+        } else if (state.objects.length === 0 && state.failed) {
+            return this.failedView();
         } else if (state.objects.length === 0) {
             return html`
                 <div class="gf-file-view-empty">
@@ -126,8 +129,19 @@ export class FileViewElement extends LitElement {
                     `)}
                 </tbody>
             </table>
-            ${state.more ? html`<p class="gf-file-view-end gf-empty">${state.loading ? 'Loading…' : ''}</p>` : nothing}
+            ${state.failed ? this.failedView() : state.more ? html`<p class="gf-file-view-end gf-empty">${state.loading ? 'Loading…' : ''}</p>` : nothing}
             ${count !== null ? html`<p class="gf-file-view-count">${countText(count)}</p>` : nothing}
+        `;
+    }
+
+    // failedView says the objects couldn't be loaded, and loads them again,
+    // from where they couldn't be, when it's asked to
+    private failedView() {
+        return html`
+            <div class="gf-file-view-failed">
+                <span>${this.state?.objects?.length ? "More objects couldn't be loaded" : "The objects couldn't be loaded"}</span>
+                <cds-button kind="ghost" size="sm" @click=${() => void this.controller?.loadMore()}>Try again</cds-button>
+            </div>
         `;
     }
 }
