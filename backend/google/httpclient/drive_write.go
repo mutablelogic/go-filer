@@ -1,9 +1,7 @@
 package httpclient
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +13,6 @@ import (
 
 	// Packages
 	client "github.com/mutablelogic/go-client"
-	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -58,10 +55,10 @@ func (c *DriveClient) File(ctx context.Context, id string) (*DriveFile, error) {
 	return &file, nil
 }
 
-// CreateFolder creates a folder, of its name, in the folder of the parent's
-// id, and returns it
-func (c *DriveClient) CreateFolder(ctx context.Context, name, parent string) (*DriveFile, error) {
-	req, err := client.NewJSONRequestEx(http.MethodPost, DriveWrite{Name: name, Parents: []string{parent}, MimeType: DriveFolderType}, types.ContentTypeJSON)
+// CreateFile creates a file, without content, or a folder, of its type, of
+// its metadata, which has its name, and the folder it's in, and returns it
+func (c *DriveClient) CreateFile(ctx context.Context, meta DriveWrite) (*DriveFile, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPost, meta, types.ContentTypeJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -145,13 +142,10 @@ func (c *DriveClient) Upload(ctx context.Context, id string, meta DriveWrite, r 
 // PRIVATE METHODS
 
 // uploadSession starts an upload, of a new file, or of a new revision of
-// the file of the id, and returns the URL its chunks are uploaded to
+// the file of the id, and returns the URL its chunks are uploaded to, which
+// must be of the API, as its requests have the token
 func (c *DriveClient) uploadSession(ctx context.Context, id string, meta DriveWrite) (string, error) {
 	endpoint, err := c.uploadEndpoint(id)
-	if err != nil {
-		return "", err
-	}
-	data, err := json.Marshal(meta)
 	if err != nil {
 		return "", err
 	}
@@ -159,28 +153,27 @@ func (c *DriveClient) uploadSession(ctx context.Context, id string, meta DriveWr
 	if id != "" {
 		method = http.MethodPatch
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(data))
+	req, err := client.NewJSONRequestEx(method, meta, types.ContentTypeAny)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", types.ContentTypeJSON+"; charset=UTF-8")
+	opts := []client.RequestOpt{client.OptReqEndpoint(endpoint)}
 	if meta.MimeType != "" {
-		req.Header.Set("X-Upload-Content-Type", meta.MimeType)
+		opts = append(opts, client.OptReqHeader("X-Upload-Content-Type", meta.MimeType))
 	}
-	response, err := c.raw().Do(req)
-	if err != nil {
+	var session string
+	opts = append(opts, client.OptResponse(func(response *http.Response) error {
+		if response.StatusCode == http.StatusOK {
+			session = response.Header.Get("Location")
+			return client.ErrResponseHandled
+		}
+		return nil
+	}))
+	if err := c.DoAuthWithContext(ctx, req, nil, opts...); err != nil {
 		return "", err
-	}
-	defer response.Body.Close()
-	if err := statusError(response); err != nil {
-		return "", err
-	}
-	session := response.Header.Get("Location")
-	if session == "" {
+	} else if session == "" {
 		return "", errors.New("upload: no session was returned")
 	}
-
-	// The session must be of the API, as its requests have the token
 	if u, err := url.Parse(session); err != nil {
 		return "", err
 	} else if api, err := url.Parse(endpoint); err != nil {
@@ -193,32 +186,30 @@ func (c *DriveClient) uploadSession(ctx context.Context, id string, meta DriveWr
 
 // uploadChunk uploads a chunk of a file, of its range, and returns the file,
 // once it's uploaded, or nil, when Google has all of it until the end of
-// the chunk, which isn't the last
+// the chunk, which isn't the last, which it says of a 308, Resume
+// Incomplete, of its Range
 func (c *DriveClient) uploadChunk(ctx context.Context, session string, chunk []byte, contentRange string, end int64) (*DriveFile, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, session, bytes.NewReader(chunk))
-	if err != nil {
-		return nil, err
-	}
-	req.ContentLength = int64(len(chunk))
-	req.Header.Set("Content-Range", contentRange)
-	response, err := c.raw().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusPermanentRedirect {
-		// Resume Incomplete, of what Google has, which is all of it, so far,
-		// as a chunk which is short isn't resent
-		if got := response.Header.Get("Range"); got != fmt.Sprintf("bytes=0-%d", end-1) {
-			return nil, fmt.Errorf("upload: Google has %q of the file, not its first %d bytes", got, end)
-		}
-		return nil, nil
-	} else if err := statusError(response); err != nil {
-		return nil, err
-	}
 	var file DriveFile
-	if err := json.NewDecoder(response.Body).Decode(&file); err != nil {
+	incomplete := false
+	if err := c.DoAuthWithContext(ctx, client.NewBytesRequest(http.MethodPut, chunk, "", types.ContentTypeAny), &file,
+		client.OptReqEndpoint(session),
+		client.OptReqHeader("Content-Range", contentRange),
+		client.OptNoTimeout(),
+		client.OptResponse(func(response *http.Response) error {
+			if response.StatusCode != http.StatusPermanentRedirect {
+				return nil
+			} else if got := response.Header.Get("Range"); got != fmt.Sprintf("bytes=0-%d", end-1) {
+				// What Google has isn't all of it, so far, as a chunk which is
+				// short isn't resent
+				return fmt.Errorf("upload: Google has %q of the file, not its first %d bytes", got, end)
+			}
+			incomplete = true
+			return client.ErrResponseHandled
+		}),
+	); err != nil {
 		return nil, err
+	} else if incomplete {
+		return nil, nil
 	}
 	return &file, nil
 }
@@ -241,32 +232,6 @@ func (c *DriveClient) uploadEndpoint(id string) (string, error) {
 	return u.String(), nil
 }
 
-// raw returns the client of requests which go-client can't make, such as
-// an upload's, which has its transport, of its token, quota, and tracing,
-// without its timeout, and which doesn't follow redirects, as Google's
-// Resume Incomplete is a 308
-func (c *DriveClient) raw() *http.Client {
-	return &http.Client{
-		Transport: c.Client.Client.Client.Transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-}
-
-// statusError returns nil of a response which succeeded, or the error of
-// its status, as go-client's, with what its body says
-func statusError(response *http.Response) error {
-	if response.StatusCode >= 200 && response.StatusCode <= 299 {
-		return nil
-	}
-	data, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-	if text := strings.TrimSpace(string(data)); text != "" {
-		return httpresponse.Err(response.StatusCode).With(text)
-	}
-	return httpresponse.Err(response.StatusCode).With(response.Status)
-}
-
 // parseVersion returns a file's version, as a number, or -1 when it has
 // none, or it isn't one
 func parseVersion(version string) int64 {
@@ -274,6 +239,12 @@ func parseVersion(version string) int64 {
 		return v
 	}
 	return -1
+}
+
+// VersionNumber returns a file's version, as a number, or -1 when it has
+// none, or it isn't one
+func (f *DriveFile) VersionNumber() int64 {
+	return parseVersion(f.Version)
 }
 
 // NotOlder returns true when a file's version is the same as another's, or after it, or it can't

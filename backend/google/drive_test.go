@@ -50,6 +50,7 @@ type fakeDrive struct {
 	// Uploads, by their sessions, and the bytes of each request of them
 	uploads map[string]*fakeUpload
 	chunks  []int
+	denied  bool // An upload's token isn't accepted
 }
 
 // fakeUpload is an upload, of a new file, or of the file of its id
@@ -138,16 +139,20 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(parts) >= 2 && parts[0] == "upload":
 		f.upload(w, r, parts[1:])
 	case r.Method == http.MethodPost && len(parts) == 1 && parts[0] == "files":
-		// A folder is created
+		// A folder, or a file without content, is created
 		var meta httpclient.DriveWrite
-		if err := json.NewDecoder(r.Body).Decode(&meta); err != nil || meta.MimeType != httpclient.DriveFolderType || len(meta.Parents) != 1 {
+		if err := json.NewDecoder(r.Body).Decode(&meta); err != nil || meta.Name == "" || meta.MimeType == "" || len(meta.Parents) != 1 {
 			writeError(w, http.StatusBadRequest)
 			return
 		}
-		folder := httpclient.DriveFile{Id: "g" + strconv.Itoa(len(f.files)), Name: meta.Name, MimeType: meta.MimeType, Parents: meta.Parents, Version: "1", OwnedByMe: true}
-		f.files = append(f.files, folder)
-		f.log = append(f.log, httpclient.DriveChange{FileId: folder.Id, File: folder})
-		writeJSON(w, folder)
+		file := httpclient.DriveFile{Id: "g" + strconv.Itoa(len(f.files)), Name: meta.Name, MimeType: meta.MimeType, Parents: meta.Parents, Version: "1", OwnedByMe: true}
+		if meta.MimeType != httpclient.DriveFolderType {
+			file.Size, file.MD5Checksum, file.HeadRevision = "0", fmt.Sprintf("%x", md5.Sum(nil)), "rev1"
+			f.content[file.Id+"@rev1"] = ""
+		}
+		f.files = append(f.files, file)
+		f.log = append(f.log, httpclient.DriveChange{FileId: file.Id, File: file})
+		writeJSON(w, file)
 	case r.Method == http.MethodPatch && len(parts) == 2 && parts[0] == "files":
 		// A file is binned
 		var patch map[string]bool
@@ -793,6 +798,11 @@ func Test_DriveReadRanges(t *testing.T) {
 // file of its id, or a chunk of it, of its range, which is the last, when
 // it says how many bytes the file is, when the file is written
 func (f *fakeDrive) upload(w http.ResponseWriter, r *http.Request, parts []string) {
+	if f.denied {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="https://accounts.google.com/", error="invalid_token"`)
+		writeError(w, http.StatusUnauthorized)
+		return
+	}
 	switch {
 	case parts[0] == "files" && r.URL.Query().Get("uploadType") == "resumable":
 		var meta httpclient.DriveWrite
@@ -935,14 +945,17 @@ func Test_DriveWrite(t *testing.T) {
 
 	// What can't be written
 	for p, want := range map[string]error{
-		"/Work":           gofiler.ErrConflict,             // a folder
-		"/Work/Plan.docx": gofiler.ErrForbidden,            // a Doc
-		"/.secret":        gofiler.ErrUnprocessableContent, // hidden
-		"/.hidden/x.txt":  gofiler.ErrUnprocessableContent, // in a hidden folder
-		"/Work/PHOTO.jpg": gofiler.ErrConflict,             // another's name, ignoring case
-		"/notes.txt/x":    gofiler.ErrConflict,             // in a file
-		"/":               fs.ErrInvalid,
-		"/Work/new/":      fs.ErrInvalid,
+		"/Work":                             gofiler.ErrConflict,             // a folder
+		"/Work/Plan.docx":                   gofiler.ErrForbidden,            // a Doc
+		"/.secret":                          gofiler.ErrUnprocessableContent, // hidden
+		"/.hidden/x.txt":                    gofiler.ErrUnprocessableContent, // in a hidden folder
+		"/Work/PHOTO.jpg":                   gofiler.ErrConflict,             // another's name, ignoring case
+		"/Work/Reports/REPORT (r1abcd).pdf": gofiler.ErrConflict,             // another's path, ignoring case
+		"/Work/ new.txt":                    gofiler.ErrBadParameter,         // a space before
+		"/Work /new.txt":                    gofiler.ErrBadParameter,         // a space after, of a folder
+		"/notes.txt/x":                      gofiler.ErrConflict,             // in a file
+		"/":                                 fs.ErrInvalid,
+		"/Work/new/":                        fs.ErrInvalid,
 	} {
 		_, err := create(filer, p, "x")
 		assert.ErrorIs(t, err, want, p)
@@ -951,6 +964,40 @@ func Test_DriveWrite(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 	_, err = create(filer, "/missing.txt", "x", func(req *schema.CreateObjectRequest) { req.IfExists = true })
 	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+
+	// An upload whose token isn't accepted is a sign-in, as other requests'
+	// are, and the new file, without its content, isn't kept
+	fake.Lock()
+	fake.denied = true
+	fake.Unlock()
+	_, err = create(filer, "/denied.txt", "x")
+	assert.Equal(t, http.StatusUnauthorized, status(err), "%v", err)
+	fake.Lock()
+	fake.denied = false
+	fake.Unlock()
+	assert.NotContains(t, listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}), "/denied.txt")
+
+	// A file which is written over, without a type, is of its extension's
+	fake.Lock()
+	fake.files = append(fake.files, httpclient.DriveFile{Id: "b1", Name: "page.html", MimeType: "application/octet-stream", Parents: []string{driveRoot}, Version: "1", OwnedByMe: true})
+	fake.Unlock()
+	object, err = create(filer, "/page.html", "<p>")
+	require.NoError(t, err)
+	assert.Equal(t, "text/html; charset=utf-8", object.ContentType)
+
+	// Two creates of a new path don't both create it, so one of them, of
+	// IfNotExists, is a conflict
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := create(filer, "/Work/Twice/once.txt", "x", func(req *schema.CreateObjectRequest) { req.IfNotExists = true })
+			errs <- err
+		}()
+	}
+	results := []error{<-errs, <-errs}
+	assert.Equal(t, 1, slices.IndexFunc(results, func(err error) bool { return err == nil })+slices.IndexFunc(results, func(err error) bool { return errors.Is(err, gofiler.ErrConflict) }), "one, and the other: %v", results)
+	assert.Contains(t, listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/Work/Twice"}}), "/Work/Twice/once.txt")
+	assert.Len(t, listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/Work/Twice"}}), 1)
 
 	// A file is deleted, to the bin, and a folder, when it's recursive, of
 	// the files in it, but not the root
@@ -966,14 +1013,14 @@ func Test_DriveWrite(t *testing.T) {
 	assert.Len(t, deleted.Body, 3)
 	assert.NotContains(t, listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true}), "/Work/Reports/a_b.txt")
 	fake.Lock()
-	trashed := 0
+	trashed := map[string]bool{}
 	for _, file := range fake.files {
-		if file.Trashed {
-			trashed++
-		}
+		trashed[file.Id] = file.Trashed
 	}
 	fake.Unlock()
-	assert.Equal(t, 2, trashed, "the file, and the folder, but not what's in it")
+	assert.True(t, trashed["a2"], "the file")
+	assert.True(t, trashed["f2"], "the folder")
+	assert.False(t, trashed["s1"], "but not what's in it, which the folder's bin has")
 	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	_, err = filer.DeleteObjects(ctx, schema.DeleteObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/missing.txt"}})
@@ -1010,7 +1057,7 @@ func Test_DriveWriteWatch(t *testing.T) {
 			assert.Equal(t, []string{"rescan /"}, events())
 			_, err := filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/Work/Notes/new.txt"}, Body: strings.NewReader("new")})
 			require.NoError(t, err)
-			assert.Equal(t, []string{"created /Work/Notes", "created /Work/Notes/new.txt"}, events())
+			assert.Equal(t, []string{"created /Work/Notes", "created /Work/Notes/new.txt", "updated /Work/Notes/new.txt"}, events(), "the file is created, without content, and then uploaded")
 			_, err = filer.CreateObject(t.Context(), schema.CreateObjectRequest{ObjectKey: schema.ObjectKey{Path: "/notes.txt"}, Body: strings.NewReader("updated")})
 			require.NoError(t, err)
 			assert.Equal(t, []string{"updated /notes.txt"}, events())

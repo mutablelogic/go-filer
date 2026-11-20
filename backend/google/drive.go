@@ -44,6 +44,10 @@ type DriveFiler struct {
 	tree *cache[*driveTree]
 	mu   sync.Mutex
 	live *driveWatch
+
+	// naming is held by a create, as it checks the names of a new file, and
+	// its folders, and creates them, so two don't both create them
+	naming sync.Mutex
 }
 
 // driveOpt are the options of a drive filer, of its parameters

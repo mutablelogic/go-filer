@@ -22,16 +22,22 @@ import (
 // knows, and whether it isn't accepted, which only the watch uses, and,
 // which the filer is locked for, as its writes change them too, the root's
 // id, the files, and folders, by their ids, as a change doesn't say where a
-// file was, their tree, by their paths, and the events of the filer's
-// writes, which the watch hasn't sent, and the signal that there are some
+// file was, their tree, by their paths, the versions of those which are
+// removed, so an older change doesn't restore them, the events of the
+// filer's writes, which the watch hasn't sent, and the signal that there are
+// some, and, while the files are listed again, what the filer writes, which
+// is applied to them, once they are
 type driveWatch struct {
-	token   string
-	stale   bool
-	root    string
-	files   map[string]httpclient.DriveFile
-	tree    *driveTree
-	pending []schema.Event
-	signal  chan struct{}
+	token     string
+	stale     bool
+	root      string
+	files     map[string]httpclient.DriveFile
+	tree      *driveTree
+	gone      map[string]int64
+	pending   []schema.Event
+	signal    chan struct{}
+	relisting bool
+	during    []httpclient.DriveChange
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -130,29 +136,48 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 // PRIVATE METHODS
 
 // relist gets the token of the changes from now, and then the files, so a
-// change as they're listed is applied again, and the filer lists them. The
-// watch isn't changed when they can't be got.
+// change as they're listed is applied again, and the filer lists them. What
+// the filer writes as they're listed, which they may not have, is applied to
+// them, once they are. The watch isn't changed when they can't be got.
 func (self *DriveFiler) relist(ctx context.Context, w *driveWatch) error {
-	token, err := self.client.StartPageToken(ctx)
+	self.mu.Lock()
+	w.relisting, w.during = true, nil
+	self.mu.Unlock()
+	token, root, files, err := self.list(ctx)
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	during := w.during
+	w.relisting, w.during = false, nil
 	if err != nil {
-		return self.apiError("watch", "/", err)
-	}
-	root, err := self.client.Root(ctx)
-	if err != nil {
-		return self.apiError("watch", "/", err)
-	}
-	files, err := self.client.Files(ctx)
-	if err != nil {
-		return self.apiError("watch", "/", err)
+		return err
 	}
 	byId := make(map[string]httpclient.DriveFile, len(files))
 	for _, file := range files {
 		byId[file.Id] = file
 	}
-	self.mu.Lock()
-	defer self.mu.Unlock()
-	w.token, w.root, w.files, w.tree, w.pending = token, root, byId, newDriveTree(root, files), nil
+	gone := make(map[string]int64)
+	applyChanges(byId, gone, during)
+	w.token, w.root, w.files, w.gone = token, root, byId, gone
+	w.tree = newDriveTree(root, slices.Collect(maps.Values(byId)))
 	return nil
+}
+
+// list gets the token of the changes from now, and then the root's id, and
+// the files
+func (self *DriveFiler) list(ctx context.Context) (string, string, []httpclient.DriveFile, error) {
+	token, err := self.client.StartPageToken(ctx)
+	if err != nil {
+		return "", "", nil, self.apiError("watch", "/", err)
+	}
+	root, err := self.client.Root(ctx)
+	if err != nil {
+		return "", "", nil, self.apiError("watch", "/", err)
+	}
+	files, err := self.client.Files(ctx)
+	if err != nil {
+		return "", "", nil, self.apiError("watch", "/", err)
+	}
+	return token, root, files, nil
 }
 
 // changes gets the changes since the token, and applies them to the files,
@@ -163,32 +188,23 @@ func (self *DriveFiler) changes(ctx context.Context, w *driveWatch) ([]schema.Ev
 		return nil, self.apiError("watch", "/", err)
 	}
 	w.token = next
-	if len(changes) == 0 {
-		return nil, nil
-	}
+	// What the filer wrote, which was applied first, is sent first
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	return self.apply(w, changes), nil
+	events := append(w.pending, self.apply(w, changes)...)
+	w.pending = nil
+	return events, nil
 }
 
 // apply applies changes to the files of a watch, which the filer must be
 // locked for, and returns the changes to the objects, of the tree before
-// them, and after them, which the filer then lists. A file which is binned,
-// or isn't the person's, is removed, as it isn't listed, and a change which
-// is older than the file, such as one a poll got before the filer wrote
-// it, isn't applied, so what's changed, by the filer, or a poll, isn't
-// changed, nor sent, again by the other.
+// them, and after them, which the filer then lists (see applyChanges)
 func (self *DriveFiler) apply(w *driveWatch, changes []httpclient.DriveChange) []schema.Event {
-	files := maps.Clone(w.files)
-	for _, change := range changes {
-		if current, exists := files[change.FileId]; exists && change.File.Id != "" && !change.File.NotOlder(&current) {
-			continue
-		} else if change.Removed || change.File.Trashed || !change.File.OwnedByMe || change.File.Id == "" {
-			delete(files, change.FileId)
-		} else {
-			files[change.File.Id] = change.File
-		}
+	if len(changes) == 0 {
+		return nil
 	}
+	files := maps.Clone(w.files)
+	applyChanges(files, w.gone, changes)
 	before, after := w.tree, newDriveTree(w.root, slices.Collect(maps.Values(files)))
 	w.files, w.tree = files, after
 	return self.diff(before, after)
@@ -197,19 +213,28 @@ func (self *DriveFiler) apply(w *driveWatch, changes []httpclient.DriveChange) [
 // wrote applies what the filer wrote, the files, and folders, as they are
 // now, which are binned, of those it deletes, to the files of the watch,
 // when it's watched, and sends it the events, as they're written, so it
-// doesn't send them again, when they're polled, or, when it isn't watched,
-// clears the files which are kept, so they're got again
+// doesn't send them again, when they're polled, and, while the files are
+// listed again, applies them to those which are listed, once they are, as
+// they may not have them, or, when it isn't watched, clears the files which
+// are kept, so they're got again
 func (self *DriveFiler) wrote(files ...*httpclient.DriveFile) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	w := self.live
-	if w == nil || w.tree == nil {
+	if w == nil {
 		self.tree.clear()
 		return
 	}
 	changes := make([]httpclient.DriveChange, 0, len(files))
 	for _, file := range files {
 		changes = append(changes, httpclient.DriveChange{FileId: file.Id, File: *file})
+	}
+	if w.relisting {
+		w.during = append(w.during, changes...)
+	}
+	if w.tree == nil {
+		self.tree.clear()
+		return
 	}
 	if events := self.apply(w, changes); len(events) > 0 {
 		w.pending = append(w.pending, events...)
@@ -301,4 +326,34 @@ func (self *DriveFiler) diff(before, after *driveTree) []schema.Event {
 	slices.SortFunc(deleted, byPath)
 	slices.SortFunc(changed, byPath)
 	return append(deleted, changed...)
+}
+
+// applyChanges applies changes to files, by their ids. A file which is
+// binned, or isn't the person's, is removed, as it isn't listed, and its
+// version is kept, in gone, so a change which is older, such as one a poll
+// got before the filer deleted it, doesn't restore it, nor does a change
+// which is older than the file, such as one a poll got before the filer
+// wrote it, change it, so what's changed, by the filer, or a poll, isn't
+// changed, nor sent, again by the other.
+func applyChanges(files map[string]httpclient.DriveFile, gone map[string]int64, changes []httpclient.DriveChange) {
+	for _, change := range changes {
+		id, file := change.FileId, change.File
+		if file.Id != "" {
+			version := file.VersionNumber()
+			if current, exists := files[id]; exists && !file.NotOlder(&current) {
+				continue
+			} else if removed, exists := gone[id]; exists && version >= 0 && version <= removed {
+				continue
+			}
+		}
+		if change.Removed || file.Trashed || !file.OwnedByMe || file.Id == "" {
+			delete(files, id)
+			if version := file.VersionNumber(); file.Id != "" && version >= 0 {
+				gone[id] = version
+			}
+		} else {
+			files[id] = file
+			delete(gone, id)
+		}
+	}
 }

@@ -191,8 +191,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/mutablelogic/go-auth v0.0.21 h1:iW8vGOJqj2DFy5B3CBmNtGr4rib0VvSXHZ0RSysLz0g=
 github.com/mutablelogic/go-auth v0.0.21/go.mod h1:ZVcyqfotNrhNp3VzN8v+P/mlaAf3qz7nNgV2O6SqRdw=
-github.com/mutablelogic/go-client v1.5.0 h1:KrStsbW2QZPDlO0zbWy9rlPht27XPYeRraNc241MAGI=
-github.com/mutablelogic/go-client v1.5.0/go.mod h1:yH8PMeZHB5wS36b/VsaXTBPeFB+cuzXaDh4tiyENYSM=
+github.com/mutablelogic/go-client v1.5.1 h1:1jjCaAc7EvT0QCe4HF10LTOhaeC2m67rmZd5k1vDlFc=
+github.com/mutablelogic/go-client v1.5.1/go.mod h1:yH8PMeZHB5wS36b/VsaXTBPeFB+cuzXaDh4tiyENYSM=
 github.com/mutablelogic/go-media v1.11.5 h1:NRAaQhq4i6/DmNErkhkK0ZGha8aFPsWBIJpQ5OaOpnk=
 github.com/mutablelogic/go-media v1.11.5/go.mod h1:OekVyfht4ys1KkodWDxYin9VMyYoLpSoI2g2SRm8xCk=
 github.com/mutablelogic/go-metadata v1.1.7 h1:vsajo8aW+s1eX3nh6mkgk0y++npWG5FtWdPrH7puf3s=

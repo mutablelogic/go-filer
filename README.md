@@ -174,9 +174,9 @@ A volume of the files a Google account owns in My Drive, read-only unless it's w
 * **Options:** `quota`, `credential` and `description`, as Google Tasks has, and `refresh_interval`, how often changes are polled for, which is a minute, or `0` not to watch it. When it isn't watched, it's how long the list of files is kept. It asks for the `drive.readonly` scope, or `drive` with `readonly=false` (`volume-create-gdrive --writable`).
 * **Writing**, of a writable volume:
   * `CreateObject` uploads a file as it's read, in 8 MiB requests, with Google's resumable upload, so only one chunk is in memory.
-  * A file that's there gets a new revision, keeping its id, link and sharing. Otherwise a new file is created, along with any missing folders in its path.
-  * Its type is the request's, or its extension's. Its modified time is the request's.
-  * It isn't written over a folder, a hidden name, or a name that's another's in its folder ignoring case, which would rename both.
+  * A file that's there gets a new revision, keeping its id, link and sharing. Otherwise a new file is created, along with any missing folders in its path. A new file is created empty first, under a lock only creates share, so two creates of a path don't both make it. Its content is then uploaded as a new revision, alongside other uploads. If the upload fails, the empty file is binned.
+  * Its type is the request's, or its extension's, for a new file or one that's there. Its modified time is the request's.
+  * It isn't written over a folder, a hidden name, a name that starts or ends with a space, or a name that's another's in its folder ignoring case (its name in Drive, or its path), which would rename both.
   * Docs, Sheets and Slides aren't written (`ErrForbidden`), as their content is an export.
   * `DeleteObjects` moves a file, or a folder with `Recursive`, to the bin, from which it can be restored. Folders left empty stay.
   * While it's watched, a write is sent to the watch as it's made, and isn't sent again when it's polled.

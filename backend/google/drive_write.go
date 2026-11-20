@@ -23,11 +23,17 @@ import (
 // its extension's, and its modification time the request's, when it's set.
 // A file isn't written over a folder, nor over a Google Doc, Sheet or
 // Slides, which is ErrForbidden, as their content is an export, nor of a
-// name which is hidden, which isn't listed, nor of a name which is another's
-// in its folder, ignoring case, which would rename both, and, of
+// name which is hidden, which isn't listed, or which starts, or ends, with
+// a space, which a name isn't listed with, nor of a name which is
+// another's in its folder, ignoring case, which would rename both, and, of
 // IfNotExists, over a file, nor, of IfExists, where there's none. Its
-// metadata isn't written, so far. A folder which is created stays, when the
-// upload fails.
+// metadata isn't written, so far.
+//
+// A new file's folders, and the file, without content, are created first,
+// with its name, which only one create does at a time, so two creates of a
+// path don't both create it, and its content is then uploaded, as a new
+// revision of it, at the same time as others'. A folder which is created
+// stays, when the upload fails, but a new file is binned.
 func (self *DriveFiler) CreateObject(ctx context.Context, req schema.CreateObjectRequest) (*schema.Object, error) {
 	if self.readonly {
 		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
@@ -41,64 +47,24 @@ func (self *DriveFiler) CreateObject(ctx context.Context, req schema.CreateObjec
 		return nil, &fs.PathError{Op: "create", Path: req.Path, Err: fs.ErrInvalid}
 	}
 	for _, name := range strings.Split(strings.TrimPrefix(key, "/"), "/") {
-		if strings.HasPrefix(strings.TrimSpace(name), ".") {
+		if name != strings.TrimSpace(name) {
+			return nil, gofiler.ErrBadParameter.Withf("%q has a name which starts, or ends, with a space", req.Path)
+		} else if strings.HasPrefix(name, ".") {
 			return nil, gofiler.ErrUnprocessableContent.Withf("%q is skipped, as its name is hidden", req.Path)
 		}
 	}
-	tree, err := self.files(ctx, "create", req.Path)
+
+	// Its type is the request's, or its extension's, or, of a new file,
+	// binary, or else a file's is kept
+	write := httpclient.DriveWrite{ModifiedTime: req.ModTime.UTC(), MimeType: req.ContentType}
+	if write.MimeType == "" {
+		write.MimeType = mime.TypeByExtension(path.Ext(key))
+	}
+
+	// The file, which is there, or is created, with its folders
+	file, created, err := self.reserve(ctx, req, key, write.MimeType)
 	if err != nil {
 		return nil, err
-	}
-
-	// A file which is there is written over, of a new revision
-	file, exists := tree.files[key]
-	switch {
-	case exists && file.MimeType == httpclient.DriveFolderType:
-		return nil, gofiler.ErrConflict.Withf("Cannot write object over directory: %q", req.Path)
-	case exists && isExport(file):
-		return nil, gofiler.ErrForbidden.Withf("%q is a Google Doc, Sheet or Slides, whose content is an export, which isn't written", req.Path)
-	case exists && req.IfNotExists:
-		return nil, gofiler.ErrConflict.Withf("Object already exists: %q", req.Path)
-	case !exists && req.IfExists:
-		return nil, gofiler.ErrPreconditionFailed.Withf("Object doesn't exist: %q", req.Path)
-	}
-
-	// Of a new file, its folders, which are created, when they aren't there,
-	// whose names, and its own, aren't another's, ignoring case
-	var folders []*httpclient.DriveFile
-	parent, write := tree.root, httpclient.DriveWrite{ModifiedTime: req.ModTime.UTC(), MimeType: req.ContentType}
-	if write.MimeType == "" && !exists {
-		if write.MimeType = mime.TypeByExtension(path.Ext(key)); write.MimeType == "" {
-			write.MimeType = "application/octet-stream"
-		}
-	}
-	if !exists {
-		dir := "/"
-		for _, name := range strings.Split(strings.TrimPrefix(path.Dir(key), "/"), "/") {
-			if name == "" {
-				continue
-			}
-			p := path.Join(dir, name)
-			if folder, exists := tree.files[p]; exists && folder.MimeType != httpclient.DriveFolderType {
-				return nil, gofiler.ErrConflict.Withf("%q is a file, not a directory", p)
-			} else if exists {
-				parent, dir = folder.Id, p
-				continue
-			} else if taken := tree.taken(dir, name); taken != "" {
-				return nil, gofiler.ErrConflict.Withf("%q is the name of %q, ignoring case", p, taken)
-			}
-			folder, err := self.client.CreateFolder(ctx, name, parent)
-			if err != nil {
-				return nil, self.writeError("create", p, folders, err)
-			}
-			folders = append(folders, folder)
-			parent, dir = folder.Id, p
-			tree = &driveTree{root: tree.root, files: map[string]*httpclient.DriveFile{}, children: map[string][]string{}}
-		}
-		if taken := tree.taken(dir, path.Base(key)); taken != "" {
-			return nil, gofiler.ErrConflict.Withf("%q is the name of %q, ignoring case", key, taken)
-		}
-		write.Name, write.Parents = path.Base(key), []string{parent}
 	}
 
 	// The content, as it's read, which is empty, without a body
@@ -106,16 +72,18 @@ func (self *DriveFiler) CreateObject(ctx context.Context, req schema.CreateObjec
 	if body == nil {
 		body = strings.NewReader("")
 	}
-	var id string
-	if exists {
-		id = file.Id
-	}
-	uploaded, err := self.client.Upload(ctx, id, write, body, self.upload)
+	uploaded, err := self.client.Upload(ctx, file.Id, write, body, self.upload)
 	if err != nil {
-		return nil, self.writeError("create", req.Path, folders, err)
+		if created {
+			// The new file, without its content, isn't kept
+			if trashed, terr := self.client.Trash(context.WithoutCancel(ctx), file.Id); terr == nil {
+				self.wrote(trashed)
+			}
+		}
+		return nil, self.apiError("create", req.Path, err)
 	}
-	self.wrote(append(folders, uploaded)...)
-	return self.object(&driveTree{root: tree.root, files: map[string]*httpclient.DriveFile{key: uploaded}}, key), nil
+	self.wrote(uploaded)
+	return self.object(&driveTree{files: map[string]*httpclient.DriveFile{key: uploaded}}, key), nil
 }
 
 // DeleteObjects moves a file, or, when it's recursive, a folder, with what's
@@ -170,22 +138,84 @@ func (self *DriveFiler) DeleteObjects(ctx context.Context, req schema.DeleteObje
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// writeError returns the error of a write, after the folders it created,
-// which stay, are applied, so they're listed
-func (self *DriveFiler) writeError(op, p string, folders []*httpclient.DriveFile, err error) error {
-	if len(folders) > 0 {
-		self.wrote(folders...)
+// reserve returns the file at the path, which is written over, or, when
+// there isn't one, creates it, without content, and its folders, when they
+// aren't there, of names which aren't another's, ignoring case, and returns
+// true, which one create does at a time, so two don't both create it
+func (self *DriveFiler) reserve(ctx context.Context, req schema.CreateObjectRequest, key, mimeType string) (*httpclient.DriveFile, bool, error) {
+	self.naming.Lock()
+	defer self.naming.Unlock()
+	tree, err := self.files(ctx, "create", req.Path)
+	if err != nil {
+		return nil, false, err
 	}
-	return self.apiError(op, p, err)
+	file, exists := tree.files[key]
+	switch {
+	case exists && file.MimeType == httpclient.DriveFolderType:
+		return nil, false, gofiler.ErrConflict.Withf("Cannot write object over directory: %q", req.Path)
+	case exists && isExport(file):
+		return nil, false, gofiler.ErrForbidden.Withf("%q is a Google Doc, Sheet or Slides, whose content is an export, which isn't written", req.Path)
+	case exists && req.IfNotExists:
+		return nil, false, gofiler.ErrConflict.Withf("Object already exists: %q", req.Path)
+	case exists:
+		return file, false, nil
+	case req.IfExists:
+		return nil, false, gofiler.ErrPreconditionFailed.Withf("Object doesn't exist: %q", req.Path)
+	}
+
+	// Its folders, which are created, when they aren't there
+	var folders []*httpclient.DriveFile
+	defer func() {
+		if len(folders) > 0 {
+			self.wrote(folders...)
+		}
+	}()
+	parent, dir := tree.root, "/"
+	for _, name := range strings.Split(strings.TrimPrefix(path.Dir(key), "/"), "/") {
+		if name == "" {
+			continue
+		}
+		p := path.Join(dir, name)
+		if folder, exists := tree.files[p]; exists && folder.MimeType != httpclient.DriveFolderType {
+			return nil, false, gofiler.ErrConflict.Withf("%q is a file, not a directory", p)
+		} else if exists {
+			parent, dir = folder.Id, p
+			continue
+		} else if taken := tree.taken(dir, name); taken != "" {
+			return nil, false, gofiler.ErrConflict.Withf("%q is the name of %q, ignoring case", p, taken)
+		}
+		folder, err := self.client.CreateFile(ctx, httpclient.DriveWrite{Name: name, Parents: []string{parent}, MimeType: httpclient.DriveFolderType})
+		if err != nil {
+			return nil, false, self.apiError("create", p, err)
+		}
+		folders = append(folders, folder)
+		parent, dir = folder.Id, p
+		tree = &driveTree{root: tree.root, files: map[string]*httpclient.DriveFile{}, children: map[string][]string{}}
+	}
+
+	// The file, without content
+	if taken := tree.taken(dir, path.Base(key)); taken != "" {
+		return nil, false, gofiler.ErrConflict.Withf("%q is the name of %q, ignoring case", key, taken)
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	file, err = self.client.CreateFile(ctx, httpclient.DriveWrite{Name: path.Base(key), Parents: []string{parent}, MimeType: mimeType})
+	if err != nil {
+		return nil, false, self.apiError("create", req.Path, err)
+	}
+	folders = append(folders, file)
+	return file, true, nil
 }
 
 // taken returns the path of a file, or folder, in a directory, whose name
-// in Drive is the name, ignoring case, or empty, when there's none, as a
-// name which is another's, ignoring case, has the start of its id, so a new
-// file of it wouldn't be at its path
+// in Drive, or in its path, such as one with the start of its id, is the
+// name, ignoring case, or empty, when there's none, as a name which is
+// another's, ignoring case, has the start of its id, so a new file of it
+// wouldn't be at its path, and would change the other's
 func (tree *driveTree) taken(dir, name string) string {
 	for _, p := range tree.children[dir] {
-		if file := tree.files[p]; file != nil && strings.EqualFold(driveName(file), name) {
+		if file := tree.files[p]; file != nil && (strings.EqualFold(driveName(file), name) || strings.EqualFold(path.Base(p), name)) {
 			return p
 		}
 	}
