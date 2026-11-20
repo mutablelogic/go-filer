@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { Client } from '@mutablelogic/go-server/api';
 import { FolderController } from '../src/folder/controller.ts';
 import { formatSize, formatTime } from '../src/folder/view.ts';
+import { objectType } from '../src/filer/schema.ts';
 
 // fakeServer is a volume's folders, of their objects' paths, whose listings
 // are paged, and counted, which records each listing's folder and start
@@ -147,3 +148,10 @@ async function settle() {
         await new Promise((resolve) => setTimeout(resolve, 0));
     }
 }
+
+test('objectType', () => {
+    assert.equal(objectType({ name: 'media', path: '/a.epub', type: 'application/epub+zip', meta: [{ namespace: 'metadata', key: 'kind', value: 'book' }] }), 'Book');
+    assert.equal(objectType({ name: 'media', path: '/a.mp3', type: 'audio/mpeg' }), 'mpeg');
+    assert.equal(objectType({ name: 'media', path: '/a.txt', type: 'text/plain; charset=utf-8' }), 'plain');
+    assert.equal(objectType({ name: 'media', path: '/a' }), '');
+});
