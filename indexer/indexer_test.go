@@ -1174,6 +1174,10 @@ type sizer struct {
 	fail  map[string]bool
 	bad   map[string]bool // The files which can't be read, as they aren't valid
 	gone  map[string]bool // The files which are gone, once they're read
+
+	// The files whose backend is unavailable, how many times, before
+	// they're read
+	unavailable map[string]int
 }
 
 func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataStore, object *schema.Object) error {
@@ -1183,8 +1187,11 @@ func (z *sizer) task(ctx context.Context, _ gofiler.Filer, s indexer.MetadataSto
 	}
 	z.calls[object.Path]++
 	fail, bad, gone := z.fail[object.Path], z.bad[object.Path], z.gone[object.Path]
+	unavailable := z.calls[object.Path] <= z.unavailable[object.Path]
 	z.mu.Unlock()
-	if bad {
+	if unavailable {
+		return gofiler.ErrServiceUnavailable.With("read: the server is busy")
+	} else if bad {
 		return gofiler.ErrBadParameter.With("not a valid file")
 	} else if fail {
 		return errors.New("it can't be read")
@@ -1307,6 +1314,59 @@ func Test_MetadataTaskUnreadable(t *testing.T) {
 	assert.Contains(t, logs.String(), "volume=media")
 	assert.Contains(t, logs.String(), "key=/a/y.txt")
 	assert.Contains(t, logs.String(), "not a valid file")
+}
+
+// A file whose backend is unavailable, for a while, isn't given up, as
+// it's tried again, until it's read
+func Test_MetadataTaskUnavailable(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	z := &sizer{unavailable: map[string]int{"/a/y.txt": 8}}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	require.Eventually(t, func() bool {
+		state, err := i.Metadata(context.Background())
+		return err == nil && state != nil && state.Queued == 0 && state.Indexed == 2
+	}, 30*time.Second, 5*time.Millisecond, "it's enriched, once it's read")
+	assert.Equal(t, 9, z.count("/a/y.txt"))
+	state, err := i.Metadata(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, state.Failed)
+}
+
+// Outages of a file's backend aren't attempts, so a file which fails
+// otherwise, after them, is tried taskAttempts times, before it's given up,
+// even when the indexer is restarted between them
+func Test_MetadataTaskOutagesThenFailures(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := newStore(t)
+	z := &sizer{unavailable: map[string]int{"/a/y.txt": 6}, fail: map[string]bool{"/a/y.txt": true}}
+	start := func() func() {
+		i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- i.Run(ctx, slog.New(slog.DiscardHandler)) }()
+		return func() {
+			cancel()
+			require.NoError(t, <-done)
+		}
+	}
+
+	// Some outages, then a restart
+	stop := start()
+	require.Eventually(t, func() bool { return z.count("/a/y.txt") >= 3 }, 10*time.Second, time.Millisecond)
+	stop()
+
+	// The rest of the outages, and then 5 attempts, which fail, before it's
+	// given up
+	defer start()()
+	require.Eventually(t, func() bool {
+		state, err := s.Tasks(context.Background(), "media", store.KindMetadata)
+		return err == nil && state.Queued == 0 && state.Failed == 1
+	}, time.Minute, 5*time.Millisecond, "it's given up")
+	assert.Equal(t, 6+5, z.count("/a/y.txt"))
 }
 
 func Test_MetadataTaskUpgrade(t *testing.T) {

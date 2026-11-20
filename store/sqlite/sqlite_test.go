@@ -3,6 +3,7 @@ package sqlite_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -297,4 +298,52 @@ func Test_PutRollback(t *testing.T) {
 		_, err := s.GetObject(ctx, "media", path)
 		assert.ErrorIs(t, err, gofiler.ErrNotFound, path)
 	}
+}
+
+func Test_MigrateOutages(t *testing.T) {
+	// A database of version 15, whose queue doesn't count outages, gets
+	// them, as none, and its work is counted of outages and attempts apart
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "index.db")
+	s, err := sqlite.New(ctx, path)
+	require.NoError(t, err)
+	_, err = s.CreateVolume(ctx, schema.VolumeMeta{Name: "media", URL: "file://media/tmp?index=metadata", Enabled: true})
+	require.NoError(t, err)
+	require.NoError(t, s.PutObject(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}, &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.txt"}}))
+	require.NoError(t, s.Push(ctx, "media", store.Work{Key: "/a.txt", Kind: store.KindMetadata}))
+	claimed, err := s.Claim(ctx, "media", []store.Kind{store.KindMetadata}, 1, time.Minute)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, s.Failed(ctx, "media", claimed[0], errors.New("it failed"), 0))
+	require.NoError(t, s.Close())
+
+	db, err := ncruces.Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(ctx, `ALTER TABLE object_state DROP COLUMN outages; PRAGMA user_version = 15;`))
+	require.NoError(t, db.Close())
+
+	s, err = sqlite.New(ctx, path)
+	require.NoError(t, err)
+	defer s.Close()
+	claim := func() store.Work {
+		t.Helper()
+		claimed, err := s.Claim(ctx, "media", []store.Kind{store.KindMetadata}, 1, time.Minute)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		return claimed[0]
+	}
+	w := claim()
+	assert.Equal(t, uint(1), w.Attempts, "its attempts are kept")
+	assert.Zero(t, w.Outages)
+
+	// An outage isn't an attempt, and an attempt isn't an outage
+	require.NoError(t, s.Failed(ctx, "media", w, gofiler.ErrServiceUnavailable.With("busy"), 0))
+	w = claim()
+	assert.Equal(t, uint(1), w.Attempts)
+	assert.Equal(t, uint(1), w.Outages)
+	assert.Equal(t, "service unavailable: busy", w.Error)
+	require.NoError(t, s.Failed(ctx, "media", w, errors.New("again"), 0))
+	w = claim()
+	assert.Equal(t, uint(2), w.Attempts)
+	assert.Equal(t, uint(1), w.Outages)
 }

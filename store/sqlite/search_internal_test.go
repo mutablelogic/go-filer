@@ -104,7 +104,7 @@ func Test_SearchMigrate(t *testing.T) {
 
 	db, err := ncruces.Open(ctx, path, schema.Functions()...)
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(ctx, `DROP TABLE object_search; DROP TRIGGER object_search_deleted; PRAGMA user_version = 14;`))
+	require.NoError(t, db.Exec(ctx, `DROP TABLE object_search; DROP TRIGGER object_search_deleted; ALTER TABLE object_state DROP COLUMN outages; PRAGMA user_version = 14;`))
 	require.NoError(t, db.Close())
 
 	s, err = New(ctx, path)

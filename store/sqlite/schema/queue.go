@@ -40,6 +40,7 @@ type QueueLease time.Time
 // QueueFailure is why work failed, and when it's due again
 type QueueFailure struct {
 	Error  string
+	Outage bool      // It failed as its backend was unavailable, which isn't an attempt
 	Failed time.Time // When it failed
 	After  time.Time // When it's due again
 }
@@ -101,6 +102,11 @@ func (failure QueueFailure) Insert(*sqlite.Bind) (string, error) {
 // Update binds why the work failed, and when it's due again
 func (failure QueueFailure) Update(bind *sqlite.Bind) error {
 	bind.Set("error", failure.Error)
+	outage := 0
+	if failure.Outage {
+		outage = 1
+	}
+	bind.Set("outage", outage)
 	bind.Set("failed", failure.Failed.UTC())
 	bind.Set("after", failure.After.UTC())
 	return nil
@@ -169,7 +175,7 @@ func (pending *Pending) Scan(row sqlite.Row) error {
 func (list *WorkList) Scan(row sqlite.Row) error {
 	var work store.Work
 	var kind string
-	if err := row.Scan(&work.Key, &kind, &work.After, &work.Attempts, &work.Error, &work.Leased, &work.Revision); err != nil {
+	if err := row.Scan(&work.Key, &kind, &work.After, &work.Attempts, &work.Outages, &work.Error, &work.Leased, &work.Revision); err != nil {
 		return err
 	}
 	work.Kind = store.Kind(kind)
