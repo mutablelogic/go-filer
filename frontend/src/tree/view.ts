@@ -1,15 +1,14 @@
-// The gf-file-tree element is a tree of a volume's folders, from its root,
-// which are loaded as they're expanded, and kept up to date with the
-// changes. A folder which is chosen is selected, and the element fires
-// gf-file-tree-selected, with its volume and path, which is "/" of the
-// volume's root.
+// The gf-file-tree element is a tree of a volume's folders, whose roots are
+// the folders of the volume's root, which are loaded as they're expanded,
+// and kept up to date with the changes. A folder which is chosen is
+// selected, and the element fires gf-file-tree-selected, with its volume
+// and path. A volume without folders has no tree.
 
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import type { ChangesController } from '@mutablelogic/go-server/broadcaster';
 import FolderIcon from '@carbon/icons/es/folder/16.js';
-import VolumeIcon from '@carbon/icons/es/data--base/16.js';
 import { ObjectChangeSchema, objectTitle, subfolderCount, type FilerObject } from '../filer/schema.ts';
 import type { TreeController } from './controller.ts';
 import '@carbon/web-components/es/components/tree-view/index.js';
@@ -33,7 +32,6 @@ export const FileTreeTag = 'gf-file-tree';
 export const FileTreeSelectedEvent = 'gf-file-tree-selected';
 
 const Icons = {
-    volume: iconLoader(VolumeIcon, { slot: 'icon' }),
     folder: iconLoader(FolderIcon, { slot: 'icon' }),
 };
 
@@ -45,8 +43,6 @@ export class FileTreeElement extends LitElement {
         controller: { attribute: false },
         changes: { attribute: false },
         volume: { type: String },
-        label: { type: String },
-        labelTitle: { attribute: false },
         selected: { attribute: false },
         version: { state: true },
     };
@@ -56,12 +52,8 @@ export class FileTreeElement extends LitElement {
     declare controller?: TreeController;
     declare changes?: ChangesController;
 
-    // volume is the name of the volume whose folders are shown, label its
-    // root's label, which is its name, by default, and labelTitle what's
-    // shown when it's pointed at
+    // volume is the name of the volume whose folders are shown
     declare volume?: string;
-    declare label?: string;
-    declare labelTitle?: string;
 
     // selected is the folder which is selected
     declare selected?: TreeSelection;
@@ -124,14 +116,20 @@ export class FileTreeElement extends LitElement {
     // links
     protected override render() {
         const volume = this.volume;
-        if (!volume || !this.controller) {
+        const roots = volume ? this.controller?.folders(volume, '/') : undefined;
+        if (!volume || !roots) {
+            return nothing;
+        } else if (roots.state !== 'loaded') {
+            return html`<p class="gf-empty">${roots.state === 'error' ? "The folders couldn't be loaded" : 'Loading…'}</p>`;
+        } else if (roots.folders.length === 0) {
             return nothing;
         }
         return html`
             <cds-tree-view label=${`Folders of ${volume}`} hide-label size="sm"
                 @cds-tree-node-toggled=${(event: CustomEvent<{ expanded: boolean }>) => this.toggled(event)}
                 @cds-tree-node-selected=${(event: Event) => this.chosen(event)}>
-                ${this.nodeView(volume, '/', this.label || volume, Icons.volume, undefined, this.labelTitle)}
+                ${repeat(roots.folders, (folder) => folder.path, (folder) => this.nodeView(volume, folder.path, objectTitle(folder), Icons.folder, folder))}
+                ${roots.more ? html`<cds-tree-node label="More folders aren't shown" disabled></cds-tree-node>` : nothing}
             </cds-tree-view>
         `;
     }
@@ -140,14 +138,14 @@ export class FileTreeElement extends LitElement {
     // One which may have subfolders, but whose aren't loaded, has a node
     // which says they're loading, so it can be expanded; one which has none
     // has no caret.
-    private nodeView(volume: string, path: string, label: string, icon: unknown, folder?: FilerObject, title?: string): TemplateResult {
+    private nodeView(volume: string, path: string, label: string, icon: unknown, folder?: FilerObject): TemplateResult {
         const controller = this.controller!;
         const folders = controller.folders(volume, path);
         const loaded = folders?.state === 'loaded' ? folders : undefined;
         const leaf = (folder !== undefined && subfolderCount(folder) === 0) || loaded?.folders.length === 0;
         const selected = this.selected?.volume === volume && this.selected.path === path;
         return html`
-            <cds-tree-node label=${label} title=${title ?? nothing} data-volume=${volume} data-path=${path} .isExpanded=${!leaf && controller.isExpanded(volume, path)} .selected=${selected}>
+            <cds-tree-node label=${label} data-volume=${volume} data-path=${path} .isExpanded=${!leaf && controller.isExpanded(volume, path)} .selected=${selected}>
                 ${icon}
                 ${leaf ? nothing : loaded ? html`
                     ${repeat(loaded.folders, (child) => child.path, (child) => this.nodeView(volume, child.path, objectTitle(child), Icons.folder, child))}

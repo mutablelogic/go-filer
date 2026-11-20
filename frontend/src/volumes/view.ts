@@ -199,7 +199,6 @@ export class VolumeElement extends LitElement {
             ${volume.error ? html`<p class="gf-volume-error">${volume.error}</p>` : nothing}
             <div class="gf-volume">
                 <gf-file-tree class="gf-volume-tree" .controller=${this.tree} .changes=${this.changes} volume=${name}
-                    label=${volumeLabel(volume)} .labelTitle=${volumeTitle(volume, this.controller?.backends)}
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
                 <div class="gf-volume-view"></div>
