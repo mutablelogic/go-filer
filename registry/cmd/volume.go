@@ -40,7 +40,7 @@ type VolumeCommands struct {
 	VolumeCreateGTasks    VolumeCreateGTasksCmd    `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGContacts VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts" help:"Create a volume of a Google account's contacts, as vCards, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGCalendar VolumeCreateGCalendarCmd `cmd:"" name:"volume-create-gcalendar" help:"Create a volume of a Google account's calendars' events, as iCalendars, of the days before today and after it, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
-	VolumeCreateGDrive    VolumeCreateGDriveCmd    `cmd:"" name:"volume-create-gdrive" help:"Create a volume of the files a Google account owns in My Drive, read-only, whose Docs, Sheets and Slides are Word, Excel and PowerPoint documents, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
+	VolumeCreateGDrive    VolumeCreateGDriveCmd    `cmd:"" name:"volume-create-gdrive" help:"Create a volume of the files a Google account owns in My Drive, read-only unless it's --writable, whose Docs, Sheets and Slides are Word, Excel and PowerPoint documents, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateRSS       VolumeCreateRSSCmd       `cmd:"" name:"volume-create-rss" help:"Create a volume of an RSS feed's items, read-only, of its URL." group:"VOLUME"`
 	VolumeUpdate          VolumeUpdateCmd          `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, and whether it's enabled, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
 	VolumeMount           VolumeMountCmd           `cmd:"" name:"volume-mount" help:"Enable a volume by its name, so the server mounts it, and does when it starts, signing in when its user needs to." group:"VOLUME"`
@@ -129,6 +129,7 @@ type VolumeCreateGContactsCmd struct {
 
 type VolumeCreateGDriveCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Writable        bool           `name:"writable" help:"Files can be uploaded, and deleted to the bin, which needs Google's drive scope, rather than drive.readonly."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How long the list of files is kept, once it's got, or 0 not to keep it, which is a minute, unless it's set."`
@@ -694,6 +695,9 @@ func (cmd *VolumeCreateGDriveCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
 	query := url.Values{}
+	if cmd.Writable {
+		query.Set("readonly", "false")
+	}
 	if cmd.Credential != "" {
 		if !credentialName.MatchString(cmd.Credential) {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid key of a credential: %q", cmd.Credential)

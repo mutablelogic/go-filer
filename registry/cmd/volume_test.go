@@ -565,6 +565,9 @@ func Test_VolumeCreateGDriveCmd(t *testing.T) {
 	u, err = volume("work", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "-o", "index=metadata")
 	require.NoError(t, err)
 	assert.Equal(t, "gdrive://work?credential=GOOGLE_WORK&index=metadata&quota=60&refresh_interval=5m0s", u)
+	u, err = volume("writable", "--writable")
+	require.NoError(t, err)
+	assert.Equal(t, "gdrive://writable?readonly=false", u)
 
 	// A name which isn't an identifier, or a credential which isn't a key
 	_, err = volume("not-a-name!")

@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.115.0
 	github.com/aws/smithy-go v1.28.9
 	github.com/mutablelogic/go-auth v0.0.21
-	github.com/mutablelogic/go-client v1.5.0
+	github.com/mutablelogic/go-client v1.5.1
 	github.com/mutablelogic/go-metadata v1.1.7
 	github.com/mutablelogic/go-pg v1.5.1
 	github.com/mutablelogic/go-rss v1.0.0

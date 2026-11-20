@@ -162,7 +162,7 @@ In the registry, its URL is `gcalendar://<name>`, and the `filer` command create
 
 ### Google Drive
 
-A volume of the files a Google account owns in My Drive, read-only.
+A volume of the files a Google account owns in My Drive, read-only unless it's writable.
 
 * **Layout:** the folders are directories, and each file is at its path, such as `/Work/Reports/report.pdf`.
 * **Names:** a `/` in a name is `_`. Drive lets two files in a folder have the same name, so each then gets the start of its id, such as `report (1a2b3c).pdf`. Names are compared ignoring case.
@@ -171,7 +171,16 @@ A volume of the files a Google account owns in My Drive, read-only.
 * **Content** of a file is read from the revision it was listed with, so it always matches its size and entity tag. It can seek and `ReadAt`, as S3's can, so enrichment reads the ranges it needs, such as a video's headers, rather than all of it. A Doc is exported into memory, and its version is checked before and after. If it changed since it was listed, the read is `ErrPreconditionFailed`, and the list of files is got again.
 * **Entity tags:** a file's MD5 checksum, or a Doc's id and version, as each file counts its own versions.
 * **Metadata:** `drive:id`, `drive:url` (its link in Drive), `drive:owner`, and `drive:type` of a Doc, Sheet or Slides, such as `document`.
-* **Options:** `quota`, `credential` and `description`, as Google Tasks has, and `refresh_interval`, how often changes are polled for, which is a minute, or `0` not to watch it. When it isn't watched, it's how long the list of files is kept. It asks for the `drive.readonly` scope.
+* **Options:** `quota`, `credential` and `description`, as Google Tasks has, and `refresh_interval`, how often changes are polled for, which is a minute, or `0` not to watch it. When it isn't watched, it's how long the list of files is kept. It asks for the `drive.readonly` scope, or `drive` with `readonly=false` (`volume-create-gdrive --writable`).
+* **Writing**, of a writable volume:
+  * `CreateObject` uploads a file as it's read, in 8 MiB requests, with Google's resumable upload, so only one chunk is in memory.
+  * A file that's there gets a new revision, keeping its id, link and sharing. Otherwise a new file is created, along with any missing folders in its path. A new file is created empty first, under a lock only creates share, so two creates of a path don't both make it. Its content is then uploaded as a new revision, alongside other uploads. If the upload fails, the empty file is binned.
+  * Its type is the request's, or its extension's, for a new file or one that's there. Its modified time is the request's.
+  * It isn't written over a folder, a hidden name, a name that starts or ends with a space, or a name that's another's in its folder ignoring case (its name in Drive, or its path), which would rename both.
+  * Docs, Sheets and Slides aren't written (`ErrForbidden`), as their content is an export.
+  * `DeleteObjects` moves a file, or a folder with `Recursive`, to the bin, from which it can be restored. Folders left empty stay.
+  * While it's watched, a write is sent to the watch as it's made, and isn't sent again when it's polled.
+  * Renaming and moving aren't supported yet; they'll be an action.
 * **Watching** polls Drive's changes feed, applies the changes to the files it knows, and sends what changed: created, updated, or deleted (such as a file that's moved, renamed, binned or given away, and everything in a folder that's renamed or moved). While it's watched, the filer lists and reads the files the watch knows, rather than listing them again. The first change is a rescan. A token Google doesn't accept lists the files again, with a rescan. When Google is unavailable, it polls again at the next interval. The token isn't stored, so a restart lists the files again (#170 will keep them).
 
 In the registry, its URL is `gdrive://<name>`, and the `filer` command creates one with `volume-create-gdrive`, signing in with Google, in the browser, when it needs to.

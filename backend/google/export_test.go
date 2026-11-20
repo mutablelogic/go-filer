@@ -48,6 +48,12 @@ func SetDriveEndpoint(t testing.TB, endpoint string) {
 	SetUserinfoEndpoint(t, endpoint+"/userinfo")
 }
 
+// SetDriveUploadChunk sets the bytes of each request of a drive filer's
+// uploads, which is a multiple of 256 KiB
+func SetDriveUploadChunk(filer *DriveFiler, chunk int) {
+	filer.upload = chunk
+}
+
 // SetCalendarNow sets the time of a calendar filer, which the months it
 // lists are of
 func SetCalendarNow(filer *CalendarFiler, now func() time.Time) {
