@@ -175,6 +175,11 @@ END;
 -- schema.object_state_due
 CREATE INDEX IF NOT EXISTS object_state_due ON object_state (volume, kind, after);
 
+-- schema.object_state_failed
+-- The work which failed, by when, so a task's state counts what was given
+-- up, and finds why it last failed, without reading each row of its work
+CREATE INDEX IF NOT EXISTS object_state_failed ON object_state (volume, kind, failed) WHERE error IS NOT NULL;
+
 -- schema.object_search
 -- The search of the objects, of their names, the main fields of their
 -- metadata, which are its title, creator, identifier, description and
