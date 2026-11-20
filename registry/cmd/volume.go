@@ -64,6 +64,7 @@ type VolumeUpdateCmd struct {
 	Unset       []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
 	Enabled     *bool    `name:"enabled" negatable:"" help:"Enable the volume, so it's mounted, or disable it, with --no-enabled, so it's unmounted, which is kept as it is without either."`
 	Description *string  `name:"description" help:"What the volume is, such as \"Family photos\", which is a shortcut of -o description=..., or the backend's, when it's empty."`
+	Writable    *bool    `name:"writable" negatable:"" help:"Objects can be created and deleted, with --writable, or only read, with --no-writable, which is a shortcut of -o readonly=..., and is kept as it is without either."`
 }
 
 type VolumeMountCmd struct {
@@ -88,12 +89,13 @@ type VolumeCreateCmd struct {
 	Name        string   `name:"name" help:"Volume name, which is an identifier. For a file URL it's the host, and otherwise the name option, or the host, which it defaults to, and sets the option when it isn't the host."`
 	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option of the volume, such as readonly=true, skip=^\\. or package=\\.bundle$, which can be repeated, and is added to those of the URL. An option without a value, such as readonly, is empty, which for readonly is true."`
 	Description string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
+	Writable    *bool    `name:"writable" negatable:"" help:"Objects can be created and deleted, with --writable, or only read, with --no-writable, which is the default, unless the URL, or an option, sets readonly."`
 }
 
 type VolumeCreateFSCmd struct {
 	Name        string   `arg:"" name:"name" help:"Volume name, which is an identifier."`
 	Path        string   `arg:"" name:"path" help:"Absolute path of the directory, on the server, such as /mnt/media."`
-	Readonly    bool     `name:"readonly" help:"Files can only be read, and not created or deleted."`
+	Writable    bool     `name:"writable" negatable:"" default:"false" help:"Files can be created and deleted, with --writable, or only read, with --no-writable, which is the default."`
 	Skip        []string `name:"skip" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of files and directories which aren't listed, such as '^\\.', which can be repeated, and replaces the defaults. An empty one, --skip '', lists every name."`
 	Package     []string `name:"package" sep:"none" placeholder:"REGEXP" help:"Regular expression of the names of directories which are packages, listed as files, such as '\\.bundle$', which can be repeated, and replaces the defaults. An empty one, --package '', has no packages."`
 	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
@@ -110,7 +112,7 @@ type VolumeCreateS3Cmd struct {
 	SecretKey    string   `name:"secret-key-credential" placeholder:"NAME" help:"Name of the server's credential of the secret access key, such as S3_SECRET, which it looks up, so the secret isn't sent, or stored."`
 	SessionToken string   `name:"session-token-credential" placeholder:"NAME" help:"Name of the server's credential of the session token, such as S3_TOKEN, which it looks up."`
 	Anonymous    bool     `name:"anonymous" help:"Requests aren't signed, so they're without credentials, and the volume is read-only."`
-	Readonly     bool     `name:"readonly" help:"Objects can only be read, and not created or deleted."`
+	Writable     bool     `name:"writable" negatable:"" default:"false" help:"Objects can be created and deleted, with --writable, or only read, with --no-writable, which is the default. An anonymous bucket is read-only either way."`
 	SeaweedFS    string   `name:"seaweedfs-filer-grpc" placeholder:"HOST:PORT" help:"gRPC service of the SeaweedFS filer whose S3 gateway the endpoint is, such as 192.168.86.21:18888, so the bucket's objects are watched."`
 	Opt          []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
 	Description  string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
@@ -118,7 +120,7 @@ type VolumeCreateS3Cmd struct {
 
 type VolumeCreateGContactsCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Writable        bool           `name:"writable" help:"Contacts can be created, updated and deleted, of the contact action, which needs Google's contacts scope, rather than contacts.readonly."`
+	Writable        bool           `name:"writable" negatable:"" default:"false" help:"Contacts can be created, updated and deleted, of the contact action, with --writable, which needs Google's contacts scope, rather than contacts.readonly, or only read, with --no-writable, which is the default."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
@@ -129,7 +131,7 @@ type VolumeCreateGContactsCmd struct {
 
 type VolumeCreateGDriveCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Writable        bool           `name:"writable" help:"Files can be uploaded, and deleted to the bin, which needs Google's drive scope, rather than drive.readonly."`
+	Writable        bool           `name:"writable" negatable:"" default:"false" help:"Files can be uploaded, and deleted to the bin, with --writable, which needs Google's drive scope, rather than drive.readonly, or only read, with --no-writable, which is the default."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How long the list of files is kept, once it's got, or 0 not to keep it, which is a minute, unless it's set."`
@@ -140,7 +142,7 @@ type VolumeCreateGDriveCmd struct {
 
 type VolumeCreateGCalendarCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Writable        bool           `name:"writable" help:"Events can be created, updated and deleted, of the event action, which needs Google's calendar scope, rather than calendar.readonly."`
+	Writable        bool           `name:"writable" negatable:"" default:"false" help:"Events can be created, updated and deleted, of the event action, with --writable, which needs Google's calendar scope, rather than calendar.readonly, or only read, with --no-writable, which is the default."`
 	Window          string         `name:"window" placeholder:"DURATION" help:"The time of events before today, and after it, such as 30d, 52w or 720h, which is 365d, unless it's set."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
@@ -160,7 +162,7 @@ type VolumeCreateRSSCmd struct {
 
 type VolumeCreateGTasksCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
-	Writable        bool           `name:"writable" help:"Tasks can be created, updated and deleted, which needs Google's tasks scope, rather than tasks.readonly."`
+	Writable        bool           `name:"writable" negatable:"" default:"false" help:"Tasks can be created, updated and deleted, with --writable, which needs Google's tasks scope, rather than tasks.readonly, or only read, with --no-writable, which is the default."`
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
@@ -460,6 +462,12 @@ func (cmd *VolumeUpdateCmd) patch() (schema.VolumePatch, error) {
 		}
 		values[schema.OptDescription] = []string{*cmd.Description}
 	}
+	if cmd.Writable != nil {
+		if _, exists := values["readonly"]; exists {
+			return nil, gofiler.ErrBadParameter.With("readonly is set with --writable, or --no-writable, and an option")
+		}
+		values["readonly"] = []string{strconv.FormatBool(!*cmd.Writable)}
+	}
 	patch := make(schema.VolumePatch, len(values)+len(cmd.Unset))
 	for key, values := range values {
 		data, err := json.Marshal(values)
@@ -543,6 +551,15 @@ func (cmd *VolumeCreateCmd) volume() (schema.Volume, error) {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("the name %q isn't the name option of the url: %q", name, cmd.URL)
 		}
 	}
+	// It's read-only, unless it's writable, or the URL, or an option, says
+	if cmd.Writable != nil {
+		if opts.Has("readonly") {
+			return schema.Volume{}, gofiler.ErrBadParameter.With("readonly is set with --writable, or --no-writable, and an option")
+		}
+		query.Set("readonly", strconv.FormatBool(!*cmd.Writable))
+	} else if !query.Has("readonly") {
+		query.Set("readonly", "true")
+	}
 	if len(query) > 0 {
 		u.RawQuery = query.Encode()
 	}
@@ -570,9 +587,7 @@ func (cmd *VolumeCreateFSCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("the path of the directory, on the server, must be absolute: %q", cmd.Path)
 	}
 	query := url.Values{}
-	if cmd.Readonly {
-		query.Set("readonly", "true")
-	}
+	query.Set("readonly", strconv.FormatBool(!cmd.Writable))
 	for _, skip := range cmd.Skip {
 		query.Add("skip", skip)
 	}
@@ -632,9 +647,7 @@ func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 	if cmd.Anonymous {
 		query.Set("anonymous", "true")
 	}
-	if cmd.Readonly {
-		query.Set("readonly", "true")
-	}
+	query.Set("readonly", strconv.FormatBool(!cmd.Writable))
 	if cmd.Description != "" {
 		query.Set(schema.OptDescription, cmd.Description)
 	}
@@ -663,9 +676,7 @@ func (cmd *VolumeCreateGContactsCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
 	query := url.Values{}
-	if cmd.Writable {
-		query.Set("readonly", "false")
-	}
+	query.Set("readonly", strconv.FormatBool(!cmd.Writable))
 	if cmd.Credential != "" {
 		if !credentialName.MatchString(cmd.Credential) {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid key of a credential: %q", cmd.Credential)
@@ -695,9 +706,7 @@ func (cmd *VolumeCreateGDriveCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
 	query := url.Values{}
-	if cmd.Writable {
-		query.Set("readonly", "false")
-	}
+	query.Set("readonly", strconv.FormatBool(!cmd.Writable))
 	if cmd.Credential != "" {
 		if !credentialName.MatchString(cmd.Credential) {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid key of a credential: %q", cmd.Credential)
@@ -727,9 +736,7 @@ func (cmd *VolumeCreateGCalendarCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
 	query := url.Values{}
-	if cmd.Writable {
-		query.Set("readonly", "false")
-	}
+	query.Set("readonly", strconv.FormatBool(!cmd.Writable))
 	if cmd.Window != "" {
 		query.Set("window", cmd.Window)
 	}
@@ -788,9 +795,7 @@ func (cmd *VolumeCreateGTasksCmd) volume() (schema.Volume, error) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
 	}
 	query := url.Values{}
-	if cmd.Writable {
-		query.Set("readonly", "false")
-	}
+	query.Set("readonly", strconv.FormatBool(!cmd.Writable))
 	if cmd.Credential != "" {
 		if !credentialName.MatchString(cmd.Credential) {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid key of a credential: %q", cmd.Credential)

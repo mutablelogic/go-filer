@@ -59,7 +59,7 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{[]string{"file://media/mnt/media", "--name", "media"}, "media", "file://media/mnt/media"},
 		{[]string{"file:///mnt/media", "--name", "media"}, "media", "file://media/mnt/media"},
 		{[]string{"/mnt/media", "--name", "media"}, "media", "file://media" + abs(filepath.FromSlash("/mnt/media"))},
-		{[]string{"/mnt/media?readonly=true", "--name", "media"}, "media", "file://media" + abs(filepath.FromSlash("/mnt/media")) + "?readonly=true"},
+		{[]string{"/mnt/media?readonly=true", "--name", "media"}, "media", "file://media" + abs(filepath.FromSlash("/mnt/media"))},
 		{[]string{"music", "--name", "media"}, "media", "file://media" + abs(filepath.Join(wd, "music"))},
 		{[]string{"s3://bucket/photos?name=media"}, "media", "s3://bucket/photos?name=media"},
 		{[]string{"s3://bucket/photos"}, "bucket", "s3://bucket/photos"},
@@ -68,10 +68,10 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{[]string{"s3://bucket/photos?name=media", "--name", "media"}, "media", "s3://bucket/photos?name=media"},
 		{[]string{"s3://bucket/photos", "-o", "name=media", "-o", "region=eu-west-1"}, "media", "s3://bucket/photos?name=media&region=eu-west-1"},
 	} {
-		name, url, err := volume(test.args...)
+		name, got, err := volume(test.args...)
 		require.NoError(t, err, test.args)
 		assert.Equal(t, test.name, name, test.args)
-		assert.Equal(t, test.want, url, test.args)
+		assert.Equal(t, test.want, withoutReadonly(t, got, "true"), test.args)
 	}
 
 	// Options are added to those of the URL, and can be repeated, and an
@@ -83,7 +83,14 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{[]string{"file://media/mnt/media", "--opt", "readonly=true"}, "readonly=true"},
 		{[]string{"file://media/mnt/media?readonly=true", "-o", "package="}, "package=&readonly=true"},
 		{[]string{"file://media/mnt/media", "--opt", "readonly"}, "readonly="},
-		{[]string{"file://media/mnt/media", "--opt", `skip=^\.`, "--opt", `skip=\.tmp$`}, "skip=%5E%5C.&skip=%5C.tmp%24"},
+		{[]string{"file://media/mnt/media", "--opt", `skip=^\.`, "--opt", `skip=\.tmp$`}, "readonly=true&skip=%5E%5C.&skip=%5C.tmp%24"},
+
+		// It's read-only, unless it's writable, or the URL, or an option, says
+		{[]string{"file://media/mnt/media"}, "readonly=true"},
+		{[]string{"file://media/mnt/media", "--writable"}, "readonly=false"},
+		{[]string{"file://media/mnt/media", "--no-writable"}, "readonly=true"},
+		{[]string{"file://media/mnt/media?readonly=false"}, "readonly=false"},
+		{[]string{"file://media/mnt/media?readonly=true", "--writable"}, "readonly=false"},
 	} {
 		_, url, err := volume(test.args...)
 		require.NoError(t, err, test.args)
@@ -97,6 +104,7 @@ func Test_VolumeCreateCmd(t *testing.T) {
 		{"file:///mnt/media"},
 		{"/mnt/media"},
 		{"file://media/mnt/media", "--name", "other"},
+		{"file://media/mnt/media", "--writable", "-o", "readonly=true"},
 		{"s3:///photos"},
 		{"s3://bucket/photos?name=media", "--name", "other"},
 		{"file://media/mnt/media", "--opt", "=true"},
@@ -180,6 +188,17 @@ func Test_VolumeUpdateCmd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 
+	// --writable, and --no-writable, set readonly, which is kept as it is
+	// without either, and can't be set by an option too
+	got, err = patch("--writable")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"readonly": `["false"]`}, got)
+	got, err = patch("--no-writable")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"readonly": `["true"]`}, got)
+	_, err = patch("--writable", "-o", "readonly=true")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+
 	// An option without a key, or one which is set and removed, isn't a
 	// patch
 	for _, args := range [][]string{{"-o", "=true"}, {"--unset", ""}, {"-o", "readonly=true", "--unset", "readonly"}} {
@@ -224,13 +243,16 @@ func Test_VolumeCreateFSCmd(t *testing.T) {
 	// a regular expression, with a comma, which isn't split, or empty
 	u, err := volume("media", "/mnt/media")
 	require.NoError(t, err)
-	assert.Equal(t, "file://media/mnt/media", u)
-	u, err = volume("media", "/mnt/media", "--readonly", "--skip", `^(a,b)$`, "--skip", `^\.`, "--package", "")
+	assert.Equal(t, "file://media/mnt/media?readonly=true", u, "read-only, by default")
+	u, err = volume("media", "/mnt/media", "--writable")
+	require.NoError(t, err)
+	assert.Equal(t, "file://media/mnt/media?readonly=false", u)
+	u, err = volume("media", "/mnt/media", "--no-writable", "--skip", `^(a,b)$`, "--skip", `^\.`, "--package", "")
 	require.NoError(t, err)
 	assert.Equal(t, "file://media/mnt/media?package=&readonly=true&skip=%5E%28a%2Cb%29%24&skip=%5E%5C.", u)
 
 	// Another option, which no flag sets, and one which replaces a flag's
-	u, err = volume("media", "/mnt/media", "--readonly", "-o", "index=folders", "-o", "readonly=false")
+	u, err = volume("media", "/mnt/media", "-o", "index=folders", "-o", "readonly=false")
 	require.NoError(t, err)
 	assert.Equal(t, "file://media/mnt/media?index=folders&readonly=false", u)
 
@@ -238,10 +260,10 @@ func Test_VolumeCreateFSCmd(t *testing.T) {
 	// a backslash, and a space, which are kept
 	u, err = volume("media", `C:\media`)
 	require.NoError(t, err)
-	assert.Equal(t, "file://media/C:/media", u)
+	assert.Equal(t, "file://media/C:/media?readonly=true", u)
 	u, err = volume("media", `/mnt/a\b `)
 	require.NoError(t, err)
-	assert.Equal(t, "file://media/mnt/a%5Cb%20", u)
+	assert.Equal(t, "file://media/mnt/a%5Cb%20?readonly=true", u)
 
 	// A relative path, which can't be the server's, and a name which isn't
 	// an identifier
@@ -274,33 +296,33 @@ func Test_VolumeCreateS3Cmd(t *testing.T) {
 	// prefix, which is the name option
 	u, err := volume("photos", "photos")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://photos", u)
+	assert.Equal(t, "s3://photos?readonly=true", u)
 	u, err = volume("photos", "photos", "-o", "index=folders")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://photos?index=folders", u)
+	assert.Equal(t, "s3://photos?index=folders&readonly=true", u)
 	u, err = volume("photos", "my.bucket/photos/2026/")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://my.bucket/photos/2026?name=photos", u)
+	assert.Equal(t, "s3://my.bucket/photos/2026?name=photos&readonly=true", u)
 
 	// A prefix which ends with a space, which is kept
 	u, err = volume("photos", "my.bucket/photos ")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://my.bucket/photos%20?name=photos", u)
+	assert.Equal(t, "s3://my.bucket/photos%20?name=photos&readonly=true", u)
 
 	// Its options, and the names of the server's credentials, which are
 	// placeholders, which it looks up
 	u, err = volume("media", "media", "--endpoint", "http://localhost:9000", "--region", "eu-west-1",
-		"--access-key-credential", "S3_KEY", "--secret-key-credential", "S3_SECRET", "--readonly",
+		"--access-key-credential", "S3_KEY", "--secret-key-credential", "S3_SECRET", "--writable",
 		"--seaweedfs-filer-grpc", "192.168.86.21:18888")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://media?access-key-id=%24%7BS3_KEY%7D&endpoint=http%3A%2F%2Flocalhost%3A9000&readonly=true&region=eu-west-1&seaweedfs-filer-grpc=192.168.86.21%3A18888&secret-access-key=%24%7BS3_SECRET%7D", u)
+	assert.Equal(t, "s3://media?access-key-id=%24%7BS3_KEY%7D&endpoint=http%3A%2F%2Flocalhost%3A9000&readonly=false&region=eu-west-1&seaweedfs-filer-grpc=192.168.86.21%3A18888&secret-access-key=%24%7BS3_SECRET%7D", u)
 
 	// A name of a credential which isn't one, such as a secret
 	_, err = volume("media", "media", "--secret-key-credential", "not/a-name")
 	assert.Error(t, err)
 	u, err = volume("public", "public", "--anonymous", "--profile", "work")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://public?anonymous=true&profile=work", u)
+	assert.Equal(t, "s3://public?anonymous=true&profile=work&readonly=true", u)
 
 	// A bucket which is empty, and a name which isn't an identifier
 	_, err = volume("media", "/")
@@ -331,7 +353,7 @@ func Test_VolumeCreateGTasksCmd(t *testing.T) {
 	// isn't, of another, with a quota and refresh interval
 	u, err := volume("tasks")
 	require.NoError(t, err)
-	assert.Equal(t, "gtasks://tasks", u)
+	assert.Equal(t, "gtasks://tasks?readonly=true", u)
 	u, err = volume("work", "--writable", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "--hidden")
 	require.NoError(t, err)
 	assert.Equal(t, "gtasks://work?credential=GOOGLE_WORK&hidden=true&quota=60&readonly=false&refresh_interval=5m0s", u)
@@ -340,7 +362,7 @@ func Test_VolumeCreateGTasksCmd(t *testing.T) {
 	// replaces a flag's, and an option without a key isn't one
 	u, err = volume("tasks", "--quota", "60", "--opt", "index=folders", "-o", "quota=30")
 	require.NoError(t, err)
-	assert.Equal(t, "gtasks://tasks?index=folders&quota=30", u)
+	assert.Equal(t, "gtasks://tasks?index=folders&quota=30&readonly=true", u)
 	_, err = volume("tasks", "-o", "=folders")
 	assert.Error(t, err)
 
@@ -370,10 +392,10 @@ func Test_VolumeCreateGContactsCmd(t *testing.T) {
 	// interval, and another option
 	u, err := volume("contacts")
 	require.NoError(t, err)
-	assert.Equal(t, "gcontacts://contacts", u)
+	assert.Equal(t, "gcontacts://contacts?readonly=true", u)
 	u, err = volume("work", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "-o", "index=folders")
 	require.NoError(t, err)
-	assert.Equal(t, "gcontacts://work?credential=GOOGLE_WORK&index=folders&quota=60&refresh_interval=5m0s", u)
+	assert.Equal(t, "gcontacts://work?credential=GOOGLE_WORK&index=folders&quota=60&readonly=true&refresh_interval=5m0s", u)
 	u, err = volume("writable", "--writable")
 	require.NoError(t, err)
 	assert.Equal(t, "gcontacts://writable?readonly=false", u)
@@ -477,10 +499,10 @@ func Test_VolumeCreateGCalendarCmd(t *testing.T) {
 	// and another option
 	u, err := volume("calendar")
 	require.NoError(t, err)
-	assert.Equal(t, "gcalendar://calendar", u)
+	assert.Equal(t, "gcalendar://calendar?readonly=true", u)
 	u, err = volume("work", "--credential", "GOOGLE_WORK", "--window", "30d", "--quota", "60", "-o", "index=metadata")
 	require.NoError(t, err)
-	assert.Equal(t, "gcalendar://work?credential=GOOGLE_WORK&index=metadata&quota=60&window=30d", u)
+	assert.Equal(t, "gcalendar://work?credential=GOOGLE_WORK&index=metadata&quota=60&readonly=true&window=30d", u)
 	u, err = volume("writable", "--writable")
 	require.NoError(t, err)
 	assert.Equal(t, "gcalendar://writable?readonly=false", u)
@@ -561,10 +583,10 @@ func Test_VolumeCreateGDriveCmd(t *testing.T) {
 	// interval, and another option
 	u, err := volume("drive")
 	require.NoError(t, err)
-	assert.Equal(t, "gdrive://drive", u)
+	assert.Equal(t, "gdrive://drive?readonly=true", u)
 	u, err = volume("work", "--credential", "GOOGLE_WORK", "--quota", "60", "--refresh-interval", "5m", "-o", "index=metadata")
 	require.NoError(t, err)
-	assert.Equal(t, "gdrive://work?credential=GOOGLE_WORK&index=metadata&quota=60&refresh_interval=5m0s", u)
+	assert.Equal(t, "gdrive://work?credential=GOOGLE_WORK&index=metadata&quota=60&readonly=true&refresh_interval=5m0s", u)
 	u, err = volume("writable", "--writable")
 	require.NoError(t, err)
 	assert.Equal(t, "gdrive://writable?readonly=false", u)
@@ -574,4 +596,17 @@ func Test_VolumeCreateGDriveCmd(t *testing.T) {
 	assert.Error(t, err)
 	_, err = volume("drive", "--credential", "not a key")
 	assert.Error(t, err)
+}
+
+// withoutReadonly returns a URL without its readonly option, which must be
+// the value
+func withoutReadonly(t *testing.T, raw, value string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	query := u.Query()
+	assert.Equal(t, value, query.Get("readonly"), raw)
+	query.Del("readonly")
+	u.RawQuery = query.Encode()
+	return u.String()
 }
