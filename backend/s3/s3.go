@@ -155,6 +155,11 @@ func (self *S3) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
+// Actions returns nil, as a bucket's objects are all it has
+func (self *S3) Actions() []gofiler.Action {
+	return nil
+}
+
 // Description returns what the bucket is, such as "S3 bucket photos in eu-west-1"
 func (self *S3) Description() string {
 	return self.description

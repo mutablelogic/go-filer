@@ -34,6 +34,11 @@ type Filer interface {
 	// option, when it's set, and is otherwise the backend's of it
 	Description() string
 
+	// Actions returns what the backend can do, beyond reading and writing
+	// its objects, such as creating a calendar event, or nil, such as for a
+	// filesystem, whose objects are all it has
+	Actions() []Action
+
 	// Clone returns a new filer of the same storage, with the options of the
 	// filer, changed by the patch (see PatchValues), which is nil to keep
 	// them, from what the filer has, rather than its URL, which doesn't have

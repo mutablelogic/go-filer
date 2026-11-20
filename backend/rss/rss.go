@@ -175,6 +175,11 @@ func New(ctx context.Context, name string, feed *url.URL, params url.Values, opt
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
+// Actions returns nil, as a feed is read-only
+func (self *Filer) Actions() []gofiler.Action {
+	return nil
+}
+
 // Description returns what the feed is, such as "RSS feed The Example Podcast"
 func (self *Filer) Description() string {
 	return self.description
