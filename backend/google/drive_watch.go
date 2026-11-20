@@ -26,6 +26,7 @@ type driveWatch struct {
 	root  string
 	files map[string]httpclient.DriveFile
 	tree  *driveTree
+	stale bool // The token isn't accepted, so the files are listed again
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -45,9 +46,11 @@ type driveWatch struct {
 // accept the token, such as one which has expired, the files are listed
 // again, of another, and the root is rescanned. When Google is unavailable,
 // it's polled again at the next interval, rather than listing the files
-// again. Returns ErrNotImplemented when the refresh interval is zero, and
-// the error of listing them, such as a SignInError, when a sign-in is
-// needed.
+// again, nor when the files are to be listed again, when they're listed at
+// the next interval, and the files it knows are kept until then. One watch
+// of a filer is at a time, and another is ErrConflict. Returns
+// ErrNotImplemented when the refresh interval is zero, and the error of
+// listing them, such as a SignInError, when a sign-in is needed.
 // Reference: https://developers.google.com/drive/api/guides/manage-changes
 func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
 	if self.refreshInterval == 0 {
@@ -62,6 +65,9 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 		}
 	}
 	w := &driveWatch{}
+	if err := self.watch(w); err != nil {
+		return err
+	}
 	defer self.unwatch(w)
 	if err := self.relist(ctx, w); err != nil {
 		return err
@@ -76,16 +82,25 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 			return ctx.Err()
 		case <-ticker.C:
 		}
-		events, err := self.changes(ctx, w)
-		switch {
-		case errors.Is(err, fs.ErrNotExist), errors.Is(err, gofiler.ErrBadParameter):
-			// The token isn't accepted, so what changed since isn't known
-			if err := self.relist(ctx, w); err != nil {
-				return err
+		var events []schema.Event
+		var err error
+		if !w.stale {
+			events, err = self.changes(ctx, w)
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, gofiler.ErrBadParameter) {
+				// The token isn't accepted, so what changed since isn't known,
+				// and the files are listed again
+				w.stale, err = true, nil
 			}
-			events = []schema.Event{schema.Rescan(self.name)}
+		}
+		if w.stale && err == nil {
+			if err = self.relist(ctx, w); err == nil {
+				w.stale, events = false, []schema.Event{schema.Rescan(self.name)}
+			}
+		}
+		switch {
 		case errors.Is(err, gofiler.ErrServiceUnavailable):
-			// It's polled again at the next interval
+			// It's polled, or listed, again at the next interval, with the
+			// files it knows kept until then
 			continue
 		case err != nil:
 			return err
@@ -102,7 +117,8 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 // PRIVATE METHODS
 
 // relist gets the token of the changes from now, and then the files, so a
-// change as they're listed is applied again, and the filer lists them
+// change as they're listed is applied again, and the filer lists them. The
+// watch isn't changed when they can't be got.
 func (self *DriveFiler) relist(ctx context.Context, w *driveWatch) error {
 	token, err := self.client.StartPageToken(ctx)
 	if err != nil {
@@ -150,25 +166,40 @@ func (self *DriveFiler) changes(ctx context.Context, w *driveWatch) ([]schema.Ev
 	return self.diff(before, after), nil
 }
 
-// watched keeps the tree of a watch, which the filer lists, and reads, the
+// watch starts a watch, or returns ErrConflict, when the filer is watched
+// already, as one watch keeps the files the filer lists
+func (self *DriveFiler) watch(w *driveWatch) error {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	if self.live != nil {
+		return gofiler.ErrConflict.Withf("volume %q is already watched", self.name)
+	}
+	self.live = w
+	return nil
+}
+
+// watched keeps the tree of the watch, which the filer lists, and reads, the
 // files of, while it's watched
 func (self *DriveFiler) watched(w *driveWatch, tree *driveTree) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	w.tree, self.live = tree, w
+	w.tree = tree
 }
 
 // unwatch stops the filer listing the files of a watch, which has stopped,
-// so they're got again
+// and clears those which were got before it, which may be older, so
+// they're got again
 func (self *DriveFiler) unwatch(w *driveWatch) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	if self.live == w {
 		self.live = nil
 	}
+	self.tree.clear()
 }
 
-// liveTree returns the tree of the watch, or nil, when it isn't watched
+// liveTree returns the tree of the watch, or nil, when it isn't watched, or
+// hasn't listed the files yet
 func (self *DriveFiler) liveTree() *driveTree {
 	self.mu.Lock()
 	defer self.mu.Unlock()
@@ -181,7 +212,9 @@ func (self *DriveFiler) liveTree() *driveTree {
 // diff returns the changes from the tree before to the one after: a path
 // which is gone is deleted, one which is new is created, and a file's whose
 // id, version, content or type changed, which a change of its metadata, such
-// as who it's shared with, changes the version of, is updated. A path which
+// as who it's shared with, changes the version of, is updated, as is a
+// folder which is another, of the same name, but not one whose version
+// changed, as it does with what's in it. A path which
 // is a folder, and then a file, or a file, and then a folder, is deleted,
 // and created. Those deleted are first, in the order of their paths, and
 // then those created, or updated, so a folder is created before what's in
@@ -202,7 +235,8 @@ func (self *DriveFiler) diff(before, after *driveTree) []schema.Event {
 		switch {
 		case !exists, isDir(old) != isDir(now):
 			changed = append(changed, event(schema.EventTypeCreated, p))
-		case isDir(now):
+		case isDir(now) && old.Id == now.Id:
+			// A folder's version changes with what's in it, which is sent
 		case old.Id != now.Id, old.Version != now.Version, old.MD5Checksum != now.MD5Checksum, old.HeadRevision != now.HeadRevision, old.MimeType != now.MimeType, !old.ModifiedTime.Equal(now.ModifiedTime):
 			changed = append(changed, event(schema.EventTypeUpdated, p))
 		}

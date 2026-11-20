@@ -40,6 +40,7 @@ type fakeDrive struct {
 	log         []httpclient.DriveChange
 	expired     bool
 	unavailable bool
+	unlistable  bool // Listing the files, or the token from now, is unavailable
 }
 
 const (
@@ -94,6 +95,8 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	query := r.URL.Query()
 	switch {
+	case f.unlistable && ((len(parts) == 2 && parts[1] == "startPageToken") || (len(parts) == 1 && parts[0] == "files")):
+		writeError(w, http.StatusServiceUnavailable)
 	case len(parts) == 2 && parts[0] == "changes" && parts[1] == "startPageToken":
 		writeJSON(w, map[string]string{"startPageToken": strconv.Itoa(len(f.log))})
 	case len(parts) == 1 && parts[0] == "changes":
@@ -358,6 +361,11 @@ func (f *fakeDrive) add(file httpclient.DriveFile) {
 func (f *fakeDrive) remove(id string) {
 	f.Lock()
 	defer f.Unlock()
+	f.drop(id)
+}
+
+// drop deletes a file, as remove does, which the fake must be locked for
+func (f *fakeDrive) drop(id string) {
 	f.files = slices.DeleteFunc(f.files, func(file httpclient.DriveFile) bool { return file.Id == id })
 	f.log = append(f.log, httpclient.DriveChange{FileId: id, Removed: true})
 }
@@ -413,9 +421,11 @@ func Test_DriveWatch(t *testing.T) {
 
 	// Its content changes, which updates it, and so does a Doc's version,
 	// but not a folder's
-	fake.update("n1", func(f *httpclient.DriveFile) { f.MD5Checksum = "md5-n1b" })
-	fake.update("d1", func(f *httpclient.DriveFile) { f.Version = "8" })
-	fake.update("f2", func(f *httpclient.DriveFile) { f.Version = "8" })
+	fake.Lock()
+	fake.change("n1", func(f *httpclient.DriveFile) { f.MD5Checksum = "md5-n1b" })
+	fake.change("d1", func(f *httpclient.DriveFile) { f.Version = "8" })
+	fake.change("f2", func(f *httpclient.DriveFile) { f.Version = "8" })
+	fake.Unlock()
 	assert.Equal(t, []string{"updated /Work/Plan.docx", "updated /Work/new.txt"}, events())
 
 	// A folder which is renamed is deleted, with what's in it, and created
@@ -434,10 +444,12 @@ func Test_DriveWatch(t *testing.T) {
 
 	// A file which is binned, removed, or given to another is deleted, and
 	// one which becomes hidden too
-	fake.update("a2", func(f *httpclient.DriveFile) { f.Trashed = true })
-	fake.remove("n1")
-	fake.update("d2", func(f *httpclient.DriveFile) { f.OwnedByMe = false })
-	fake.update("a1", func(f *httpclient.DriveFile) { f.Name = ".notes.txt" })
+	fake.Lock()
+	fake.change("a2", func(f *httpclient.DriveFile) { f.Trashed = true })
+	fake.drop("n1")
+	fake.change("d2", func(f *httpclient.DriveFile) { f.OwnedByMe = false })
+	fake.change("a1", func(f *httpclient.DriveFile) { f.Name = ".notes.txt" })
+	fake.Unlock()
 	assert.Equal(t, []string{"deleted /Work/Budget.xlsx", "deleted /Work/new.txt", "deleted /Work/photo.jpg", "deleted /notes.txt"}, events())
 	_, err = filer.GetObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/notes.txt"}})
 	assert.ErrorIs(t, err, fs.ErrNotExist)
@@ -467,6 +479,78 @@ func Test_DriveWatch(t *testing.T) {
 	// And then follows the changes again
 	fake.add(httpclient.DriveFile{Id: "n3", Name: "after.txt", MimeType: "text/plain", Parents: []string{driveRoot}})
 	assert.Equal(t, []string{"created /after.txt"}, events())
+
+	// A token which isn't accepted, when the files can't be listed again, as
+	// Google is unavailable, keeps the files it knows, and lists them at the
+	// next interval, when it's available
+	fake.Lock()
+	fake.expired, fake.unlistable = true, true
+	fake.Unlock()
+	assert.Empty(t, events())
+	select {
+	case err := <-done:
+		t.Fatalf("the watch stopped: %v", err)
+	default:
+	}
+	assert.Contains(t, (listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}})), "/after.txt", "it's listed of the files it knows")
+	fake.Lock()
+	fake.expired, fake.unlistable = false, false
+	fake.Unlock()
+	assert.Equal(t, []string{"rescan /"}, events())
+
+	// A folder which is another, of the same name, is updated, of its id
+	fake.add(httpclient.DriveFile{Id: "e1", Name: "Empty", MimeType: httpclient.DriveFolderType, Parents: []string{driveRoot}})
+	assert.Equal(t, []string{"created /Empty"}, events())
+	fake.Lock()
+	fake.drop("e1")
+	fake.files = append(fake.files, httpclient.DriveFile{Id: "e2", Name: "Empty", MimeType: httpclient.DriveFolderType, Parents: []string{driveRoot}, OwnedByMe: true})
+	fake.log = append(fake.log, httpclient.DriveChange{FileId: "e2", File: fake.files[len(fake.files)-1]})
+	fake.Unlock()
+	assert.Equal(t, []string{"updated /Empty"}, events())
+
+	// Another watch, at the same time, is a conflict
+	assert.ErrorIs(t, filer.WatchObjects(t.Context(), make(chan schema.Event)), gofiler.ErrConflict)
+}
+
+func Test_DriveWatchStops(t *testing.T) {
+	fake, endpoint := newFakeDrive(t)
+	filer := newDriveFiler(t, endpoint, url.Values{"refresh_interval": {"10ms"}})
+
+	// The files are got, and kept, before it's watched
+	assert.Contains(t, listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}), "/notes.txt")
+	ch, done := make(chan schema.Event, 16), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	next := func() string {
+		select {
+		case event := <-ch:
+			return event.EventType.String() + " " + event.Path
+		case <-time.After(2 * time.Second):
+			return ""
+		}
+	}
+	assert.Equal(t, "rescan /", next())
+	fake.remove("a1")
+	assert.Equal(t, "deleted /notes.txt", next())
+
+	// Once it stops, the files kept from before it aren't listed, as they're
+	// older, but are got again
+	cancel()
+	assert.ErrorIs(t, <-done, context.Canceled)
+	assert.NotContains(t, listed(t, filer, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}}), "/notes.txt")
+
+	// And it can be watched again
+	ch2, done2 := make(chan schema.Event, 16), make(chan error, 1)
+	ctx2, cancel2 := context.WithCancel(t.Context())
+	go func() { done2 <- filer.WatchObjects(ctx2, ch2) }()
+	select {
+	case event := <-ch2:
+		assert.Equal(t, schema.EventTypeRescan, event.EventType)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no rescan")
+	}
+	cancel2()
+	assert.ErrorIs(t, <-done2, context.Canceled)
 }
 
 func Test_DriveReadRevision(t *testing.T) {
