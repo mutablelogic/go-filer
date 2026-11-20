@@ -33,12 +33,15 @@ type CacheStore interface {
 	// the key is kept.
 	Put(ctx context.Context, key string, ttl time.Duration, meta CacheMeta, r io.Reader) (CacheEntry, error)
 
-	// GetOrCreate returns the entry of the key when there's one of the
-	// version, or else calls valuefn, which writes the content to w, and
-	// stores it, with the metadata valuefn returns, whose
-	// version is the version, when it hasn't one, for the TTL, and returns
-	// it, which the caller closes. A key is created once, however many ask for
-	// it at once, which wait for it.
+	// GetOrCreate is how a backend caches something it fetches, such as a
+	// Google Doc it exports: it returns the cached entry of the key when
+	// that's of the version the backend wants, so it isn't fetched again,
+	// and otherwise fetches it, by calling valuefn, which writes the content
+	// to w, as it's fetched, and stores it, for the TTL. The entry's
+	// metadata is what valuefn returns, with the version, unless valuefn
+	// sets another. When several callers ask for a key at once, valuefn is
+	// called once, and the others wait for it, so a key is fetched once.
+	// The caller closes the entry which is returned.
 	GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (CacheMeta, error)) (CacheEntry, error)
 
 	// Delete deletes the entry of the key, or every entry beneath it, when it
