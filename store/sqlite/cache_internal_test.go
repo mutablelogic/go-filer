@@ -208,25 +208,25 @@ func Test_CacheDelete(t *testing.T) {
 	assert.ErrorIs(t, cache.Delete(ctx, ""), gofiler.ErrBadParameter)
 }
 
-func Test_CacheFill(t *testing.T) {
+func Test_CacheGetOrCreate(t *testing.T) {
 	ctx := t.Context()
 	cache, _ := newCache(t)
-	var fills atomic.Int32
-	fill := func(content string) func(io.Writer) (store.CacheMeta, error) {
+	var creates atomic.Int32
+	create := func(content string) func(io.Writer) (store.CacheMeta, error) {
 		return func(w io.Writer) (store.CacheMeta, error) {
-			fills.Add(1)
+			creates.Add(1)
 			time.Sleep(20 * time.Millisecond)
 			_, err := io.WriteString(w, content)
 			return store.CacheMeta{Values: map[string]string{"type": "docx"}}, err
 		}
 	}
 
-	// It's filled once, however many fill it at once, of the version
+	// It's created once, however many ask for it at once, of the version
 	var wg sync.WaitGroup
 	results := make([]string, 4)
 	for i := range results {
 		wg.Go(func() {
-			entry, err := cache.Fill(ctx, "export/d1", "7", time.Hour, fill("seven"))
+			entry, err := cache.GetOrCreate(ctx, "export/d1", "7", time.Hour, create("seven"))
 			require.NoError(t, err)
 			assert.Equal(t, "7", entry.Meta().Version)
 			assert.Equal(t, "docx", entry.Meta().Values["type"])
@@ -235,20 +235,20 @@ func Test_CacheFill(t *testing.T) {
 	}
 	wg.Wait()
 	assert.Equal(t, []string{"seven", "seven", "seven", "seven"}, results)
-	assert.Equal(t, int32(1), fills.Load())
+	assert.Equal(t, int32(1), creates.Load())
 
-	// It isn't filled again, of the version, but is of another
-	entry, err := cache.Fill(ctx, "export/d1", "7", time.Hour, fill("again"))
+	// It isn't created again, of the version, but is of another
+	entry, err := cache.GetOrCreate(ctx, "export/d1", "7", time.Hour, create("again"))
 	require.NoError(t, err)
 	assert.Equal(t, "seven", readAll(t, entry))
-	assert.Equal(t, int32(1), fills.Load())
-	entry, err = cache.Fill(ctx, "export/d1", "8", time.Hour, fill("eight"))
+	assert.Equal(t, int32(1), creates.Load())
+	entry, err = cache.GetOrCreate(ctx, "export/d1", "8", time.Hour, create("eight"))
 	require.NoError(t, err)
 	assert.Equal(t, "eight", readAll(t, entry))
-	assert.Equal(t, int32(2), fills.Load())
+	assert.Equal(t, int32(2), creates.Load())
 
-	// A fill which fails returns its error, and keeps the entry
-	_, err = cache.Fill(ctx, "export/d1", "9", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
+	// A creation which fails returns its error, and keeps the entry
+	_, err = cache.GetOrCreate(ctx, "export/d1", "9", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
 		io.WriteString(w, "partial")
 		return store.CacheMeta{}, errBroken
 	})
@@ -259,7 +259,7 @@ func Test_CacheFill(t *testing.T) {
 	entry.Close()
 
 	// As does one which panics
-	_, err = cache.Fill(ctx, "export/d1", "10", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
+	_, err = cache.GetOrCreate(ctx, "export/d1", "10", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
 		panic("oops")
 	})
 	assert.ErrorIs(t, err, gofiler.ErrInternalServerError)

@@ -31,16 +31,16 @@ type CacheStore struct {
 
 	// The entries which are read, by their ids, and how many times, those
 	// which have lost their keys, which are deleted once they aren't read,
-	// and the keys which are filled
+	// and the keys which are being created
 	mu       sync.Mutex
 	readers  map[int64]int
 	released map[int64]bool
-	filling  map[string]*cacheFill
+	creating map[string]*cacheCreate
 }
 
-// cacheFill is a fill of a key, which is closed once it's filled, or
-// failed, which those which wait for it fill again
-type cacheFill struct {
+// cacheCreate is a creation of a key's entry, which is closed once it's
+// created, or failed, when those which wait for it get it, or create it
+type cacheCreate struct {
 	done chan struct{}
 }
 
@@ -94,7 +94,7 @@ func NewCacheStore(ctx context.Context, path string) (*CacheStore, error) {
 		now:      time.Now,
 		readers:  make(map[int64]int),
 		released: make(map[int64]bool),
-		filling:  make(map[string]*cacheFill),
+		creating: make(map[string]*cacheCreate),
 	}
 	if err := self.sweep(ctx); err != nil {
 		return nil, errors.Join(err, self.Close())
@@ -182,10 +182,10 @@ func (self *CacheStore) put(ctx context.Context, key string, ttl time.Duration, 
 	return self.open(entry), nil
 }
 
-// Fill returns the entry of the key, when there's one of the version, or
-// else, once another which fills it is done, when there's one, or else
-// stores what fill writes, as it's written
-func (self *CacheStore) Fill(ctx context.Context, key, version string, ttl time.Duration, fill func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
+// GetOrCreate returns the entry of the key, when there's one of the
+// version, or else, once another which creates it is done, when there's
+// one, or else stores what create writes, as it's written
+func (self *CacheStore) GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, create func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
 	for {
 		entry, err := self.Get(ctx, key)
 		if err == nil && entry.Meta().Version == version {
@@ -196,9 +196,9 @@ func (self *CacheStore) Fill(ctx context.Context, key, version string, ttl time.
 			return nil, err
 		}
 
-		// Another fill of the key is waited for, and then it's got again
+		// Another creation of the key is waited for, and then it's got again
 		self.mu.Lock()
-		if f, exists := self.filling[key]; exists {
+		if f, exists := self.creating[key]; exists {
 			self.mu.Unlock()
 			select {
 			case <-f.done:
@@ -207,16 +207,16 @@ func (self *CacheStore) Fill(ctx context.Context, key, version string, ttl time.
 				return nil, ctx.Err()
 			}
 		}
-		f := &cacheFill{done: make(chan struct{})}
-		self.filling[key] = f
+		f := &cacheCreate{done: make(chan struct{})}
+		self.creating[key] = f
 		self.mu.Unlock()
 		defer func() {
 			self.mu.Lock()
-			delete(self.filling, key)
+			delete(self.creating, key)
 			self.mu.Unlock()
 			close(f.done)
 		}()
-		return self.fill(ctx, key, version, ttl, fill)
+		return self.create(ctx, key, version, ttl, create)
 	}
 }
 
@@ -234,25 +234,25 @@ func (self *CacheStore) Delete(ctx context.Context, key string) error {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// fill stores what fill writes, as it's written, through a pipe, with the
+// create stores what create writes, as it's written, through a pipe, with the
 // metadata it returns, whose version is the version, when it hasn't one
-func (self *CacheStore) fill(ctx context.Context, key, version string, ttl time.Duration, fill func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
+func (self *CacheStore) create(ctx context.Context, key, version string, ttl time.Duration, create func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
 	pr, pw := io.Pipe()
 	var meta store.CacheMeta
-	filled := make(chan error, 1)
+	created := make(chan error, 1)
 	go func() {
 		var err error
 		defer func() {
 			if r := recover(); r != nil {
-				err = gofiler.ErrInternalServerError.Withf("cache %q: fill panicked: %v", key, r)
+				err = gofiler.ErrInternalServerError.Withf("cache %q: create panicked: %v", key, r)
 			}
 			pw.CloseWithError(err)
-			filled <- err
+			created <- err
 		}()
-		meta, err = fill(pw)
+		meta, err = create(pw)
 	}()
 
-	// The metadata is read once the content is, as fill returns it then,
+	// The metadata is read once the content is, as create returns it then,
 	// which put commits after it's read all of it
 	entry, err := self.put(ctx, key, ttl, func() store.CacheMeta {
 		if meta.Version == "" {
@@ -261,10 +261,10 @@ func (self *CacheStore) fill(ctx context.Context, key, version string, ttl time.
 		return meta
 	}, pr)
 
-	// When it isn't stored, fill's writes fail, so it returns, and its error
+	// When it isn't stored, create's writes fail, so it returns, and its error
 	// is returned, which is why the content couldn't be read, when it is
 	pr.CloseWithError(err)
-	ferr := <-filled
+	ferr := <-created
 	switch {
 	case ferr != nil && entry != nil:
 		entry.Close()
