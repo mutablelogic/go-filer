@@ -201,6 +201,37 @@ func (c *TasksClient) DeleteTask(ctx context.Context, list, id string) error {
 	)
 }
 
+// InsertTaskList creates a task list, of its title, and returns it, with the
+// id Google gives it
+func (c *TasksClient) InsertTaskList(ctx context.Context, title string) (*TaskList, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPost, TaskList{Title: title}, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result TaskList
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("users", "@me", "lists"),
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// PatchTaskList changes the title of a task list, by its id, and returns it
+func (c *TasksClient) PatchTaskList(ctx context.Context, id, title string) (*TaskList, error) {
+	req, err := client.NewJSONRequestEx(http.MethodPatch, map[string]string{"title": title}, types.ContentTypeJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result TaskList
+	if err := c.DoAuthWithContext(ctx, req, &result,
+		client.OptPath("users", "@me", "lists", id),
+	); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // DeleteTaskList deletes a task list, and its tasks, by its id
 func (c *TasksClient) DeleteTaskList(ctx context.Context, id string) error {
 	return c.DoAuthWithContext(ctx, client.MethodDelete, nil,

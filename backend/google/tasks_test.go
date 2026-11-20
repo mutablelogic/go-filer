@@ -261,6 +261,32 @@ var written = time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC)
 // a bad request.
 func (f *fakeTasks) write(w http.ResponseWriter, r *http.Request, parts []string) {
 	f.writes = append(f.writes, r.Method+" /"+strings.Join(parts, "/"))
+	// A list which is created, or renamed, of its title
+	if len(parts) >= 3 && parts[0] == "users" && parts[2] == "lists" {
+		var body httpclient.TaskList
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Title == "" {
+			writeError(w, http.StatusBadRequest)
+			return
+		}
+		updated := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+		switch {
+		case r.Method == http.MethodPost && len(parts) == 3:
+			id := "L" + strconv.Itoa(len(f.lists)+1)
+			f.lists = append(f.lists, httpclient.TaskList{Id: id, ETag: id + "-1", Title: body.Title, Updated: updated})
+			writeJSON(w, f.lists[len(f.lists)-1])
+		case r.Method == http.MethodPatch && len(parts) == 4:
+			list := f.list(parts[3])
+			if list == nil {
+				writeError(w, http.StatusNotFound)
+				return
+			}
+			list.Title, list.ETag, list.Updated = body.Title, list.Id+"-2", updated
+			writeJSON(w, *list)
+		default:
+			writeError(w, http.StatusNotFound)
+		}
+		return
+	}
 	if len(parts) < 3 || parts[0] != "lists" || parts[2] != "tasks" || f.list(parts[1]) == nil {
 		writeError(w, http.StatusNotFound)
 		return
@@ -1522,4 +1548,99 @@ func Test_TaskCache(t *testing.T) {
 	require.NoError(t, err)
 	_, err = filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1/A.ics"}})
 	assert.ErrorIs(t, err, fs.ErrNotExist, "the filer cleared it, when it deleted it")
+}
+
+// A writable volume's task_list action creates, renames and deletes lists,
+// which are sent to its watches straight away, and a read-only volume has
+// no actions
+func Test_TaskListAction(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Shopping", Status: "needsAction"})
+	assert.Nil(t, newFiler(t, endpoint, nil).Actions(), "a read-only volume has none")
+
+	watchEvents := func(t *testing.T, filer *google.TaskFiler) <-chan schema.Event {
+		t.Helper()
+		ctx, cancel := context.WithCancel(t.Context())
+		events, done := make(chan schema.Event, 16), make(chan error, 1)
+		go func() { done <- filer.WatchObjects(ctx, events) }()
+		t.Cleanup(func() { cancel(); <-done })
+		select {
+		case event := <-events:
+			require.Equal(t, schema.Rescan("tasks"), event)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no rescan")
+		}
+		return events
+	}
+	next := func(t *testing.T, events <-chan schema.Event) string {
+		t.Helper()
+		select {
+		case event := <-events:
+			return event.EventType.String() + " " + event.Path
+		case <-time.After(5 * time.Second):
+			t.Fatal("no event")
+			return ""
+		}
+	}
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	actions := filer.Actions()
+	require.Len(t, actions, 1)
+	action := actions[0]
+	listed := gofiler.ActionOf(action)
+	assert.Equal(t, "task_list", listed.Name)
+	data, err := json.Marshal(listed.Input)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"create"`, "its op is an enum")
+	events := watchEvents(t, filer)
+	title := func(object *schema.Object) string {
+		for _, m := range object.Meta {
+			if m.Namespace == google.DCNamespace && m.Key == "title" {
+				var v string
+				require.NoError(t, json.Unmarshal(m.Value, &v))
+				return v
+			}
+		}
+		return ""
+	}
+	run := func(input string) (*schema.Object, error) {
+		return action.Run(ctx, json.RawMessage(input))
+	}
+
+	// A list is created, renamed, and deleted
+	created, err := run(`{"op":"create","title":"Work"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "/L2", created.Path)
+	assert.True(t, created.IsDir)
+	assert.Equal(t, "Work", title(created))
+	assert.Equal(t, "created /L2", next(t, events))
+	renamed, err := run(`{"op":"update","path":"/L2","title":" Office "}`)
+	require.NoError(t, err)
+	assert.Equal(t, "Office", title(renamed))
+	assert.Equal(t, "updated /L2", next(t, events))
+	deleted, err := run(`{"op":"delete","path":"/L2"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "/L2", deleted.Path)
+	assert.Equal(t, "Office", title(deleted), "it's returned as it was")
+	assert.Equal(t, "deleted /L2", next(t, events))
+	assert.Nil(t, fake.list("L2"))
+
+	// Input which isn't valid, and a path which isn't a list's
+	for _, input := range []string{
+		`{"op":"rename","path":"/L1","title":"x"}`,
+		`{"op":"create"}`,
+		`{"op":"create","title":"x","path":"/L1"}`,
+		`{"op":"update","title":"x"}`,
+		`{"op":"delete"}`,
+		`{"op":"create","title":"x","colour":"red"}`,
+		`not json`,
+	} {
+		_, err := run(input)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, input)
+	}
+	for _, path := range []string{"/", "/L1/A.ics", "/L9"} {
+		_, err := run(`{"op":"update","path":"` + path + `","title":"x"}`)
+		assert.ErrorIs(t, err, fs.ErrNotExist, path)
+	}
 }
