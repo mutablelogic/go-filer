@@ -1633,6 +1633,7 @@ func Test_TaskListAction(t *testing.T) {
 		`{"op":"create","title":"x","path":"/L1"}`,
 		`{"op":"update","title":"x"}`,
 		`{"op":"delete"}`,
+		`{"op":"delete","path":"/L1","title":"x"}`,
 		`{"op":"create","title":"x","colour":"red"}`,
 		`not json`,
 	} {
