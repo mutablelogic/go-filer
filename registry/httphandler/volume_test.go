@@ -39,11 +39,11 @@ func TestVolumeList(t *testing.T) {
 		assert.Equal(t, filepath.Base(dir), filepath.Base(filepath.FromSlash(u.Path)))
 	}
 	assert.Equal(t, []schema.Backend{
-		{Scheme: "file", Description: "Folders of the server"},
-		{Scheme: "gcalendar", Description: "Google Calendar events of a Google account"},
-		{Scheme: "gcontacts", Description: "Google Contacts of a Google account"},
-		{Scheme: "gtasks", Description: "Google Tasks of a Google account"},
-		{Scheme: "s3", Description: "S3 buckets, or those which are compatible, such as MinIO and SeaweedFS"},
+		{Scheme: "file", Description: "Server filesystem"},
+		{Scheme: "gcalendar", Description: "Google Calendar"},
+		{Scheme: "gcontacts", Description: "Google Contacts"},
+		{Scheme: "gtasks", Description: "Google Tasks"},
+		{Scheme: "s3", Description: "S3 bucket"},
 	}, list.Backends)
 }
 

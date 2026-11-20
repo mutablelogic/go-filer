@@ -167,7 +167,7 @@ type VolumeList struct {
 // file, and what it is
 type Backend struct {
 	Scheme      string `json:"scheme" help:"Scheme of the URLs of its volumes, such as file"`
-	Description string `json:"description,omitempty" help:"What it is, such as Folders of the server"`
+	Description string `json:"description,omitempty" help:"What it is, such as Server filesystem"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -1323,7 +1323,7 @@ func Test_Registry_Backends(t *testing.T) {
 	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithBackend("example", "Examples", open), WithSchemes("example", "file"))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
-	assert.Equal(t, []schema.Backend{{Scheme: "example", Description: "Examples"}, {Scheme: "file", Description: "Folders of the server"}}, r.Backends())
+	assert.Equal(t, []schema.Backend{{Scheme: "example", Description: "Examples"}, {Scheme: "file", Description: "Server filesystem"}}, r.Backends())
 
 	var logs logBuffer
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1336,5 +1336,5 @@ func Test_Registry_Backends(t *testing.T) {
 	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
 	require.Eventually(t, func() bool { return logs.count("added backend") == 2 }, 5*time.Second, time.Millisecond)
 	assert.Equal(t, 1, logs.count("level=INFO", "added backend", "scheme=example", "description=Examples"))
-	assert.Equal(t, 1, logs.count("added backend", "scheme=file", `description="Folders of the server"`))
+	assert.Equal(t, 1, logs.count("added backend", "scheme=file", `description="Server filesystem"`))
 }

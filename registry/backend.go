@@ -49,11 +49,11 @@ var scheme = regexp.MustCompile(`^[a-z][a-z0-9+.-]+$`)
 // builtin returns the backends which are built in, of their schemes
 func builtin() map[string]plugin {
 	return map[string]plugin{
-		schema.SchemeFile:     {"Folders of the server", openFile},
-		schema.SchemeS3:       {"S3 buckets, or those which are compatible, such as MinIO and SeaweedFS", openS3},
-		google.TasksScheme:    {"Google Tasks of a Google account", openGTasks},
-		google.ContactsScheme: {"Google Contacts of a Google account", openGContacts},
-		google.CalendarScheme: {"Google Calendar events of a Google account", openGCalendar},
+		schema.SchemeFile:     {"Server filesystem", openFile},
+		schema.SchemeS3:       {"S3 bucket", openS3},
+		google.TasksScheme:    {"Google Tasks", openGTasks},
+		google.ContactsScheme: {"Google Contacts", openGContacts},
+		google.CalendarScheme: {"Google Calendar", openGCalendar},
 	}
 }
 

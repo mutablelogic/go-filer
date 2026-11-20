@@ -58,7 +58,7 @@ const (
 	Scheme = "rss"
 
 	// Description is what the backend is
-	Description = "RSS feeds, of their items"
+	Description = "RSS feed"
 
 	paramURL      = "url"
 	paramRefresh  = "refresh-interval"
