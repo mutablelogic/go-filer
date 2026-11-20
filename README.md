@@ -164,14 +164,27 @@ In the registry, its URL is `gcalendar://<name>`, and the `filer` command create
 
 A volume of an RSS feed's items, read-only. It's an example of a pluggable backend: it isn't built into the registry, and the `filer` server adds it with `registry.WithBackend(rss.Scheme, rss.Open)`.
 
-* **URL:** `rss://<name>?url=<feed>`, such as `filer volume-create 'rss://news?url=https%3A%2F%2Fexample.com%2Ffeed.xml&index=metadata'`.
+* **URL:** `rss://<name>/<host>/<path>`, of the feed `https://<host>/<path>`, such as `filer volume-create 'rss://news/feeds.example.com/news.xml?index=metadata'`.
+  * `insecure=true` fetches it over http instead.
+  * Query parameters that aren't the volume's options belong to the feed's URL, such as `?format=rss`.
 * **Layout:** a folder of each year and month, of the day each item was published, in UTC: `/2026/2026-11/20-<title>.html`. Items without a date are in `/undated/`. Items of the same title and day are numbered, in the order of their guids.
 * **Content:** each item is an HTML page of its title, author, date, link, description and enclosure.
-* **Metadata:** `dc:title`, `dc:creator`, `dc:date` and `dc:identifier` (its guid, or its link when it has none), and `rss:link` and `rss:feed`. A podcast's item also has `rss:enclosure` (its URL, type and length), `rss:episode`, `rss:season` and `rss:duration` in seconds.
+* **Metadata:**
+  * `dc:title`, `dc:creator`, `dc:date`, `dc:identifier` (its guid, or its link when it has none), `dc:subject` (its categories), and the feed's `dc:language` and `dc:rights`.
+  * `rss:url` (its link), `rss:comments`, `rss:feed` (the feed's title) and `rss:image` (the episode's image, or the feed's).
+  * A podcast's item also has `rss:enclosure` (its URL, type and length), `rss:episode`, `rss:season`, `rss:episode_type` and `rss:duration` in seconds.
 * **Options:**
-  * `refresh-interval`: how long a fetched feed is kept, `5m` by default.
+  * `refresh_interval`: how long a fetched feed is kept, and how often it's polled. It's never less than the feed's `<ttl>`. Without it, it's the TTL, or `5m` when the feed has none. It's only in the volume's URL when it's set.
   * `description`: by default, the feed's title.
-* **Watching:** feeds aren't watched, so an indexed volume is rescanned at the indexer's interval.
+* **Watching:**
+  * The feed is polled at that interval.
+  * Each poll sends the feed's last ETag and Last-Modified, so an unchanged feed is a 304, not downloaded again.
+  * Changes are sent by the items' guids, or their links when they have none:
+    * a new item is created;
+    * a gone item is deleted;
+    * a changed item is updated;
+    * an item whose title or date changed is deleted where it was, and created where it is.
+  * Folders are created and deleted as items appear in, and leave, their months.
 * **Errors:** a feed that isn't found, or isn't RSS, is `ErrBadParameter`. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.
 
 ## Indexer
