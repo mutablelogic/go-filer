@@ -40,9 +40,11 @@ type driveWatch struct {
 	during    []httpclient.DriveChange
 
 	// Whether the files have changed since they were saved in the volume's
-	// cache, and when they were
-	dirty bool
-	saved time.Time
+	// cache, and when they were, and the ids of the Docs, Sheets and Slides
+	// which were removed, whose exports in the cache are deleted
+	dirty   bool
+	saved   time.Time
+	exports []string
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -135,6 +137,7 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 				}
 			}
 			self.save(ctx, w, false)
+			self.dropExports(ctx, w)
 			continue
 		case <-ticker.C:
 		}
@@ -167,6 +170,20 @@ func (self *DriveFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event
 			}
 		}
 		self.save(ctx, w, false)
+		self.dropExports(ctx, w)
+	}
+}
+
+// dropExports deletes the exports, in the volume's cache, of the Docs,
+// Sheets and Slides which were removed, which isn't an error when they
+// can't be, as they expire
+func (self *DriveFiler) dropExports(ctx context.Context, w *driveWatch) {
+	self.mu.Lock()
+	ids := w.exports
+	w.exports = nil
+	self.mu.Unlock()
+	for _, id := range ids {
+		_ = self.cache.Delete(ctx, driveExportKey+id)
 	}
 }
 
@@ -263,6 +280,11 @@ func (self *DriveFiler) apply(w *driveWatch, changes []httpclient.DriveChange) [
 	}
 	files := maps.Clone(w.files)
 	applyChanges(files, w.gone, changes)
+	for id, file := range w.files {
+		if _, exists := files[id]; !exists && isExport(&file) {
+			w.exports = append(w.exports, id)
+		}
+	}
 	before, after := w.tree, newDriveTree(w.root, slices.Collect(maps.Values(files)))
 	w.files, w.tree, w.dirty = files, after, true
 	return self.diff(before, after)

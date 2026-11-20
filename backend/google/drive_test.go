@@ -1153,3 +1153,63 @@ func Test_DriveWatchRestart(t *testing.T) {
 	cancel()
 	assert.ErrorIs(t, <-done, context.Canceled)
 }
+
+// Test_DriveExportCache tests a Doc's export is kept in the volume's
+// cache, so it isn't exported again, until its version changes, and can be
+// read at an offset, and is deleted, when the watch finds it's removed
+func Test_DriveExportCache(t *testing.T) {
+	fake, endpoint := newFakeDrive(t)
+	cache := testCache()
+	filer, err := google.NewDriveFiler(t.Context(), "drive", url.Values{"quota": {"0"}, "refresh_interval": {"10ms"}}, cache, gofiler.Opts{Credentials: driveCredentials(t, endpoint)})
+	require.NoError(t, err)
+	exports := func() int {
+		fake.Lock()
+		defer fake.Unlock()
+		return len(fake.exported)
+	}
+
+	// It's exported once, and then read of the cache, at an offset, too
+	assert.Equal(t, "docx", read(t, filer, "/Work/Plan.docx"))
+	assert.Equal(t, "docx", read(t, filer, "/Work/Plan.docx"))
+	assert.Equal(t, 1, exports())
+	readFn, _, err := filer.ReadObject(t.Context(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/Work/Plan.docx"}})
+	require.NoError(t, err)
+	require.NoError(t, readFn(t.Context(), func(r io.Reader) error {
+		ra, ok := r.(io.ReaderAt)
+		require.True(t, ok, "it can be read at an offset")
+		buf := make([]byte, 2)
+		_, err := ra.ReadAt(buf, 2)
+		assert.Equal(t, "cx", string(buf))
+		return err
+	}))
+	assert.Equal(t, 1, exports())
+
+	// Once its version changes, it's exported again
+	fake.Lock()
+	fake.change("d1", func(f *httpclient.DriveFile) { f.Version = "8" })
+	fake.Unlock()
+	google.ClearDriveCache(filer)
+	assert.Equal(t, "docx", read(t, filer, "/Work/Plan.docx"))
+	assert.Equal(t, 2, exports())
+
+	// And, when it's watched, and it's removed, its export is deleted
+	ch, done := make(chan schema.Event, 64), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		assert.ErrorIs(t, <-done, context.Canceled)
+	}()
+	require.Equal(t, schema.EventTypeRescan, (<-ch).EventType)
+	entry, err := cache.Get(t.Context(), "export/d1")
+	require.NoError(t, err, "it's kept")
+	entry.Close()
+	fake.remove("d1")
+	require.Eventually(t, func() bool {
+		entry, err := cache.Get(t.Context(), "export/d1")
+		if err == nil {
+			entry.Close()
+		}
+		return errors.Is(err, gofiler.ErrNotFound)
+	}, 5*time.Second, 5*time.Millisecond)
+}
