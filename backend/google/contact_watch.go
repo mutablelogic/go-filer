@@ -216,6 +216,11 @@ func (self *ContactFiler) livePerson(id string) (*httpclient.Person, bool) {
 // them, which the watch then knows. The watch isn't changed when they can't
 // be got.
 func (self *ContactFiler) resyncContacts(ctx context.Context, w *contactWatch) error {
+	unlock, err := self.lockSync(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	people, token, err := self.client.SyncConnections(ctx, httpclient.PersonFields, "")
 	if err != nil {
 		return self.apiError("watch", "/", err)
@@ -237,18 +242,40 @@ func (self *ContactFiler) resyncContacts(ctx context.Context, w *contactWatch) e
 // are sent first, and returns the events of what changed. Returns
 // ErrSyncTokenGone when Google doesn't accept the token.
 func (self *ContactFiler) syncContacts(ctx context.Context, w *contactWatch) ([]schema.Event, error) {
+	unlock, err := self.lockSync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	changed, token, err := self.client.SyncConnections(ctx, httpclient.PersonFields, w.token)
 	if errors.Is(err, httpclient.ErrSyncTokenGone) {
 		return nil, err
 	} else if err != nil {
 		return nil, self.apiError("watch", "/", err)
 	}
-	w.token = token
 	self.mu.Lock()
 	defer self.mu.Unlock()
+
+	// A new token is saved, though nothing changed, so a restart syncs from
+	// it, rather than from an older one
+	if token != w.token {
+		w.token, w.dirty = token, true
+	}
 	events := append(w.pending, self.applyContacts(w, changed)...)
 	w.pending = nil
 	return events, nil
+}
+
+// lockSync waits for a sync, or a write, to finish, and returns the
+// function which lets the next one start, or the context's error, when
+// it's cancelled first
+func (self *ContactFiler) lockSync(ctx context.Context) (func(), error) {
+	select {
+	case self.syncing <- struct{}{}:
+		return func() { <-self.syncing }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // applyContacts applies contacts which changed to those the watch knows,

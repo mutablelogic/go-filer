@@ -87,6 +87,14 @@ func (self contactAction) Run(ctx context.Context, data json.RawMessage) (*schem
 		return nil, err
 	}
 
+	// A write, until it's applied to the contacts the watch knows, isn't
+	// synced, so a sync of before it doesn't undo it
+	unlock, err := self.lockSync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	// A contact which is created is of its fields alone
 	if input.Op == opCreate {
 		person, updated, err := input.person(nil)

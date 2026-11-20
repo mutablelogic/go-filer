@@ -10,6 +10,7 @@ package rss
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -46,6 +47,7 @@ type Filer struct {
 	etag         string        // the entity tag of the feed, which it's fetched again of, if it changed
 	lastModified string        // when the feed was last modified, which it's fetched again of, too
 	restored     bool          // the feed was got from the volume's cache, or there was none
+	baseline     *items        // the items which were got from the volume's cache, which a watch compares with, first
 	now          func() time.Time
 }
 
@@ -70,6 +72,10 @@ const (
 	// modified
 	feedKey           = "feed"
 	lastModifiedValue = "last-modified"
+
+	// checkedKey is the key of when the feed was last fetched, or found not
+	// to be modified, in the volume's cache
+	checkedKey = "feed-checked"
 
 	// Scheme is the scheme of a feed's URL, rss://<name>/<host>/<path>
 	Scheme = "rss"
@@ -293,6 +299,15 @@ func (self *Filer) WatchObjects(ctx context.Context, ch chan<- schema.Event) err
 	if err != nil {
 		return err
 	}
+
+	// The items which were got from the volume's cache, such as before a
+	// restart, which the feed may have been fetched again since, are
+	// compared with, first, so what changed meanwhile is sent, after the
+	// rescan
+	self.mu.Lock()
+	baseline := self.baseline
+	self.baseline = nil
+	self.mu.Unlock()
 	send := func(event schema.Event) error {
 		select {
 		case ch <- event:
@@ -303,6 +318,12 @@ func (self *Filer) WatchObjects(ctx context.Context, ch chan<- schema.Event) err
 	}
 	if err := send(schema.Rescan(self.name)); err != nil {
 		return err
+	} else if baseline != nil && baseline != before {
+		for _, event := range changes(baseline, before) {
+			if err := send(event); err != nil {
+				return err
+			}
+		}
 	}
 	for {
 		timer := time.NewTimer(self.interval())
@@ -414,6 +435,20 @@ func (self *Filer) restoreLocked(ctx context.Context) {
 	self.channelLocked(parsed.Channel)
 	self.etag, self.lastModified = meta.Version, meta.Values[lastModifiedValue]
 	self.items, self.fetched = newItems(parsed.Channel), entry.Stored()
+	self.baseline = self.items
+
+	// It was last checked when it was saved, or, of a 304, after
+	var checked time.Time
+	if _, err := store.GetCacheJSON(ctx, self.cache, checkedKey, &checked); err == nil && checked.After(self.fetched) {
+		self.fetched = checked
+	}
+}
+
+// checkedLocked saves when the feed was last fetched, or found not to be
+// modified, in the volume's cache, so a restart fetches it again when it
+// would have been, which isn't an error when it can't
+func (self *Filer) checkedLocked(ctx context.Context) {
+	_ = store.PutCacheJSON(ctx, self.cache, checkedKey, 0, store.CacheMeta{}, self.fetched)
 }
 
 // channelLocked sets the feed's ttl, of its channel, which must be locked
@@ -440,6 +475,7 @@ func (self *Filer) fetchLocked(ctx context.Context, op, path string) (*items, bo
 	response := feed{ctx: ctx, cache: self.cache}
 	if err := self.client.DoWithContext(ctx, client.NewRequestEx(http.MethodGet, accept), &response, opts...); self.items != nil && isStatus(err, http.StatusNotModified) {
 		self.fetched = self.now()
+		self.checkedLocked(ctx)
 		return self.items, false, nil
 	} else if err != nil {
 		return nil, false, fetchError(op, path, self.feed.String(), err)
@@ -449,6 +485,7 @@ func (self *Filer) fetchLocked(ctx context.Context, op, path string) (*items, bo
 	self.channelLocked(response.Channel)
 	self.etag, self.lastModified = response.etag, response.lastModified
 	self.items, self.fetched = newItems(response.Channel), self.now()
+	self.checkedLocked(ctx)
 	return self.items, true, nil
 }
 
@@ -484,7 +521,10 @@ func (f *feed) Unmarshal(header http.Header, r io.Reader) error {
 		_, err = io.Copy(w, r)
 	}
 	if err != nil {
-		pw.CloseWithError(err)
+		// Wrapped, so an error which is io.EOF, such as of an empty response,
+		// isn't the end of what's saved, which would replace the feed which
+		// was saved with it
+		pw.CloseWithError(fmt.Errorf("the feed can't be read: %w", err))
 		<-saved
 		return gofiler.ErrBadParameter.Withf("the feed can't be read: %v", err)
 	}
