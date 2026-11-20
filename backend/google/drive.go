@@ -1,7 +1,6 @@
 package google
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -102,9 +101,17 @@ var driveExports = map[string]driveExport{
 	httpclient.DriveAppsPrefix + "presentation": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"},
 }
 
-// driveExportMax is the most of a Google Doc, Sheet or Slides which is
-// exported, which Google's limit is, so it's read into memory
-const driveExportMax = 10 << 20
+const (
+	// driveExportMax is the most of a Google Doc, Sheet or Slides which is
+	// exported, which Google's limit is
+	driveExportMax = 10 << 20
+
+	// driveExportKey is the prefix of the keys of the exports, in the
+	// volume's cache, of their files' ids, and driveExportTTL how long
+	// they're kept, once they're exported
+	driveExportKey = "export/"
+	driveExportTTL = 7 * 24 * time.Hour
+)
 
 // driveEndpoint is the endpoint of the Drive API, which is Google's, unless
 // a test sets another. It isn't a parameter, as a volume's URL could send
@@ -436,11 +443,14 @@ func (self *DriveFiler) lookup(tree *driveTree, op, p string) (*schema.Object, *
 	return self.object(tree, key), file, nil
 }
 
-// export reads a Google Doc, Sheet or Slides, as it's exported, of the
-// version it was listed with, which is checked before, and after, it's
-// exported, as an export can't be of a version, into memory, of at most
-// driveExportMax, so its content is the object's, or ErrPreconditionFailed,
-// when it's changed, and the files are got again
+// export reads a Google Doc, Sheet or Slides, of the version it was listed
+// with, from the volume's cache, where it's kept for driveExportTTL, so one
+// which hasn't changed isn't exported again, or, when it isn't there, as
+// it's exported into the cache, of at most driveExportMax, whose version is
+// checked before, and after, as an export can't be of a version, so its
+// content is the object's, or ErrPreconditionFailed, when it's changed, and
+// the files are got again, when it isn't kept. It's read of the cache, so
+// it can seek, and be read at an offset, without all of it in memory.
 func (self *DriveFiler) export(ctx context.Context, p string, file *httpclient.DriveFile, export driveExport, fn func(io.Reader) error) error {
 	check := func() error {
 		version, err := self.client.Version(ctx, file.Id)
@@ -452,22 +462,29 @@ func (self *DriveFiler) export(ctx context.Context, p string, file *httpclient.D
 		}
 		return nil
 	}
-	if err := check(); err != nil {
+	entry, err := self.cache.GetOrCreate(ctx, driveExportKey+file.Id, versionTag(file), driveExportTTL, func(w io.Writer) (store.CacheMeta, error) {
+		if err := check(); err != nil {
+			return store.CacheMeta{}, err
+		}
+		var n int64
+		if err := self.client.Export(ctx, file.Id, export.contentType, func(r io.Reader) error {
+			var err error
+			n, err = io.Copy(w, io.LimitReader(r, driveExportMax+1))
+			return err
+		}); err != nil {
+			return store.CacheMeta{}, self.apiError("read", p, err)
+		} else if n > driveExportMax {
+			return store.CacheMeta{}, gofiler.ErrForbidden.Withf("%q is exported as more than Google exports", p)
+		} else if err := check(); err != nil {
+			return store.CacheMeta{}, err
+		}
+		return store.CacheMeta{}, nil
+	})
+	if err != nil {
 		return err
 	}
-	var data []byte
-	if err := self.client.Export(ctx, file.Id, export.contentType, func(r io.Reader) error {
-		var err error
-		data, err = io.ReadAll(io.LimitReader(r, driveExportMax+1))
-		return err
-	}); err != nil {
-		return self.apiError("read", p, err)
-	} else if len(data) > driveExportMax {
-		return gofiler.ErrForbidden.Withf("%q is exported as more than Google exports", p)
-	} else if err := check(); err != nil {
-		return err
-	}
-	return fn(&contentReader{ctx: ctx, r: bytes.NewReader(data)})
+	defer entry.Close()
+	return fn(&cachedReader{ctx: ctx, entry: entry})
 }
 
 // object returns the root, a folder, which is a directory, of how many
@@ -660,4 +677,36 @@ func (s *streamReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return s.r.Read(p)
+}
+
+// cachedReader reads an entry of the volume's cache, which can seek, and be
+// read at an offset, until the context is cancelled, when it returns the
+// context's error
+type cachedReader struct {
+	ctx   context.Context
+	entry store.CacheEntry
+}
+
+var _ io.ReadSeeker = (*cachedReader)(nil)
+var _ io.ReaderAt = (*cachedReader)(nil)
+
+func (c *cachedReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.entry.Read(p)
+}
+
+func (c *cachedReader) Seek(offset int64, whence int) (int64, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.entry.Seek(offset, whence)
+}
+
+func (c *cachedReader) ReadAt(p []byte, off int64) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.entry.ReadAt(p, off)
 }

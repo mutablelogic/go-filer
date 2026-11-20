@@ -93,3 +93,9 @@ func SetContactSaveInterval(t testing.TB, interval time.Duration) {
 	contactSaveInterval = interval
 	t.Cleanup(func() { contactSaveInterval = previous })
 }
+
+// ClearDriveCache clears the files a drive filer got from Google, so
+// they're got again
+func ClearDriveCache(filer *DriveFiler) {
+	filer.tree.clear()
+}
