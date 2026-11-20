@@ -265,8 +265,9 @@ func (self *DriveFiler) GetObject(ctx context.Context, req schema.GetObjectReque
 }
 
 // ReadObject returns the function which reads a file, and the file. A file
-// is read as it's downloaded, of its revision when it was listed, so its
-// content is the file's, though it's changed since. A Google Doc, Sheet or
+// is read of its revision when it was listed, so its content is the file's,
+// though it's changed since, and can seek, and be read at an offset, so
+// it's read in place, of the ranges which are read (see driveReader). A Google Doc, Sheet or
 // Slides is exported, which can't be of a version, so it's read into memory,
 // and its version is checked before, and after, which is
 // ErrPreconditionFailed, when it's changed since it was listed. An error of
@@ -288,8 +289,21 @@ func (self *DriveFiler) ReadObject(ctx context.Context, req schema.GetObjectRequ
 		if export, exists := driveExports[file.MimeType]; exists {
 			return self.export(ctx, object.Path, file, export, fn)
 		}
+		if size, err := strconv.ParseInt(file.Size, 10, 64); err == nil && size > 0 && file.HeadRevision != "" {
+			// It's read in place, of the ranges which are read, and requested
+			// before it's read, so a request which fails is known first
+			r := &driveReader{DriveFiler: self, ctx: ctx, path: object.Path, file: file, size: size}
+			defer r.Close()
+			if err := r.open(0); err != nil {
+				return err
+			}
+			return fn(r)
+		}
+
+		// Without a size, or a revision, or of no bytes, it's read as it's
+		// downloaded, so a download which fails is known first
 		var fnErr error
-		if err := self.client.Download(ctx, file.Id, file.HeadRevision, func(r io.Reader) error {
+		if err := self.client.Download(ctx, file.Id, file.HeadRevision, 0, 0, func(r io.Reader) error {
 			fnErr = fn(&streamReader{ctx: ctx, r: r})
 			return fnErr
 		}); fnErr != nil {
