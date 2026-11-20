@@ -131,7 +131,7 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 			return
 		case err != nil && retry(err, w.Attempts+1):
 			self.log().DebugContext(ctx, "a task failed of a file, which is tried again", "task", string(kind), "key", w.Key, "attempt", w.Attempts+1, "error", err.Error())
-			_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts+w.Outages, 16), maxRetry))
+			_ = self.store.Failed(context.WithoutCancel(ctx), self.name, w, err, min(self.retry<<min(w.Attempts+w.Outages, 16), maxRetry))
 		default:
 			// It's done, or given up, until the file changes, with why, as
 			// it failed too often, or can't be read, which won't change

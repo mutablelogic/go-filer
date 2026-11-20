@@ -184,7 +184,7 @@ func (self *Indexer) work(ctx context.Context) {
 				break
 			} else if err != nil {
 				self.failed(ctx, err)
-				_ = self.store.Failed(ctx, self.name, w, err, min(self.retry<<min(w.Attempts+w.Outages, 16), maxRetry))
+				_ = self.store.Failed(context.WithoutCancel(ctx), self.name, w, err, min(self.retry<<min(w.Attempts+w.Outages, 16), maxRetry))
 			} else {
 				done = append(done, w)
 			}

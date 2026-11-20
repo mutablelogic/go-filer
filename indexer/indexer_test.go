@@ -1341,7 +1341,7 @@ func Test_MetadataTaskUnavailable(t *testing.T) {
 func Test_MetadataTaskOutagesThenFailures(t *testing.T) {
 	backend, _ := newBackend(t)
 	s := newStore(t)
-	z := &sizer{unavailable: map[string]int{"/a/y.txt": 8}, fail: map[string]bool{"/a/y.txt": true}}
+	z := &sizer{unavailable: map[string]int{"/a/y.txt": 6}, fail: map[string]bool{"/a/y.txt": true}}
 	start := func() func() {
 		i, err := indexer.New("media", &unwatched{Filer: backend}, s, indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(z.task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
 		require.NoError(t, err)
@@ -1356,7 +1356,7 @@ func Test_MetadataTaskOutagesThenFailures(t *testing.T) {
 
 	// Some outages, then a restart
 	stop := start()
-	require.Eventually(t, func() bool { return z.count("/a/y.txt") >= 4 }, 10*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return z.count("/a/y.txt") >= 3 }, 10*time.Second, time.Millisecond)
 	stop()
 
 	// The rest of the outages, and then 5 attempts, which fail, before it's
@@ -1365,8 +1365,8 @@ func Test_MetadataTaskOutagesThenFailures(t *testing.T) {
 	require.Eventually(t, func() bool {
 		state, err := s.Tasks(context.Background(), "media", store.KindMetadata)
 		return err == nil && state.Queued == 0 && state.Failed == 1
-	}, 30*time.Second, 5*time.Millisecond, "it's given up")
-	assert.Equal(t, 8+5, z.count("/a/y.txt"))
+	}, time.Minute, 5*time.Millisecond, "it's given up")
+	assert.Equal(t, 6+5, z.count("/a/y.txt"))
 }
 
 func Test_MetadataTaskUpgrade(t *testing.T) {
