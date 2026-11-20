@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	// Packages
-	tui "github.com/mutablelogic/go-server/pkg/tui"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -27,32 +26,6 @@ type Action struct {
 // and their own
 type ActionList struct {
 	Body []Action `json:"body" help:"Actions, in order of their volumes, and their names"`
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// TABLE
-
-func (a Action) Header() []string {
-	return []string{"Volume", "Name", "Title", "Description"}
-}
-
-func (a Action) Width(col int) int {
-	return 0
-}
-
-func (a Action) Cell(col int) tui.CellText {
-	switch col {
-	case 0:
-		return a.Volume
-	case 1:
-		return a.Name
-	case 2:
-		return a.Title
-	case 3:
-		return a.Description
-	default:
-		return ""
-	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////

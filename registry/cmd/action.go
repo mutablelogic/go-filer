@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -47,8 +49,8 @@ func (cmd *ActionListCmd) Run(ctx server.Cmd) error {
 			fmt.Println(list)
 			return nil
 		}
-		table := tui.TableFor[schema.Action](tui.SetWidth(width))
-		_, err = table.Write(os.Stdout, list.Body...)
+		table := tui.TableFor[actionRow](tui.SetWidth(width))
+		_, err = table.Write(os.Stdout, actionRows(list.Body)...)
 		return err
 	})
 }
@@ -90,4 +92,58 @@ func (cmd *ActionCallCmd) input(r io.Reader) (json.RawMessage, error) {
 		return nil, gofiler.ErrBadParameter.Withf("the input of action %q isn't JSON", cmd.Action)
 	}
 	return json.RawMessage(data), nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// TABLE
+
+// actionRow is an action of one or more volumes, which have the same
+// action, of its name, title and description, so it's listed once
+type actionRow struct {
+	schema.Action
+	volumes []string
+}
+
+// actionRows returns the rows of the actions, in order of their names, of
+// those which are the same, of their volumes, in order
+func actionRows(actions []schema.Action) []actionRow {
+	var rows []actionRow
+	index := make(map[[3]string]int)
+	for _, action := range actions {
+		key := [3]string{action.Name, action.Title, action.Description}
+		if i, exists := index[key]; exists {
+			rows[i].volumes = append(rows[i].volumes, action.Volume)
+			continue
+		}
+		index[key] = len(rows)
+		rows = append(rows, actionRow{Action: action, volumes: []string{action.Volume}})
+	}
+	slices.SortStableFunc(rows, func(a, b actionRow) int { return strings.Compare(a.Name, b.Name) })
+	for i := range rows {
+		slices.Sort(rows[i].volumes)
+	}
+	return rows
+}
+
+func (r actionRow) Header() []string {
+	return []string{"Name", "Title", "Description", "Volumes"}
+}
+
+func (r actionRow) Width(col int) int {
+	return 0
+}
+
+func (r actionRow) Cell(col int) tui.CellText {
+	switch col {
+	case 0:
+		return r.Name
+	case 1:
+		return r.Title
+	case 2:
+		return r.Description
+	case 3:
+		return strings.Join(r.volumes, ", ")
+	default:
+		return ""
+	}
 }

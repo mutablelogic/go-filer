@@ -6,6 +6,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -32,4 +33,18 @@ func Test_ActionInput(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	_, err = input(ActionCallCmd{Action: "task list", Input: "{}"}, "")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+}
+
+// The same action of more than one volume is one row, of its volumes
+func Test_ActionRows(t *testing.T) {
+	rows := actionRows([]schema.Action{
+		{Volume: "work", Name: "task_list", Title: "T", Description: "D"},
+		{Volume: "home", Name: "task_list", Title: "T", Description: "D"},
+		{Volume: "notes", Name: "note", Title: "N"},
+	})
+	require.Len(t, rows, 2)
+	assert.Equal(t, "note", rows[0].Name)
+	assert.Equal(t, "notes", rows[0].Cell(3))
+	assert.Equal(t, "task_list", rows[1].Name)
+	assert.Equal(t, "home, work", rows[1].Cell(3))
 }
