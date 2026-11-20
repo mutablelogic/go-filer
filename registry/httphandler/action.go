@@ -1,0 +1,107 @@
+package httphandler
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+
+	// Packages
+	authclient "github.com/mutablelogic/go-auth/auth/httpclient"
+	gofiler "github.com/mutablelogic/go-filer"
+	registry "github.com/mutablelogic/go-filer/registry"
+	schema "github.com/mutablelogic/go-filer/schema"
+	httprequest "github.com/mutablelogic/go-server/pkg/httprequest"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
+	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
+	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
+	openapi "github.com/mutablelogic/go-server/pkg/openapi"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// actionKey is the name of an action of a volume
+type actionKey struct {
+	Name   string `json:"name" help:"Volume name"`
+	Action string `json:"action" help:"Action name, such as task_list"`
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE FUNCTIONS
+
+// actionHandlers registers the handlers of the actions of volumes, which
+// are a resource of their own: /action of every volume which is mounted,
+// and online, /action/{name} of a volume, and /action/{name}/{action}, which
+// calls one
+func actionHandlers(reg *registry.Registry, router *httprouter.Router, documentation *openapi.MarkdownDoc) error {
+	list := func() func(w http.ResponseWriter, r *http.Request) {
+		return func(w http.ResponseWriter, r *http.Request) {
+			name := r.PathValue("name")
+			if list, err := reg.ListActions(r.Context(), name); err != nil {
+				httpresponse.Error(w, gofiler.HTTPErr(err), name)
+			} else {
+				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), list)
+			}
+		}
+	}
+	if err := router.Register("action", nil, func(path httprequest.PathItem) {
+		path.Tag("Actions")
+		path.Get(list(), func(op httprequest.PathOperation) {
+			op.Summary("List Actions")
+			op.Description(documentation.Section(3, "GET /action").Body)
+			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.ActionList](), "Actions of the volumes, in order of their volumes, and their names")
+		})
+	}); err != nil {
+		return err
+	}
+	if err := router.Register("action/{name}", jsonschema.MustFor[objectName](), func(path httprequest.PathItem) {
+		path.Tag("Actions")
+		path.Get(list(), func(op httprequest.PathOperation) {
+			op.Summary("List Volume Actions")
+			op.Description(documentation.Section(3, "GET /action/{name}").Body)
+			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.ActionList](), "Actions of the volume, in order of their names")
+			op.ErrorResponse(http.StatusNotFound, "Volume doesn't exist")
+			op.ErrorResponse(http.StatusServiceUnavailable, "Volume is unmounted, or offline")
+		})
+	}); err != nil {
+		return err
+	}
+	return router.Register("action/{name}/{action}", jsonschema.MustFor[actionKey](), func(path httprequest.PathItem) {
+		path.Tag("Actions")
+
+		// POST
+		path.Post(func(w http.ResponseWriter, r *http.Request) {
+			name, action := r.PathValue("name"), r.PathValue("action")
+			input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, schema.ActionInputMax))
+			if err != nil {
+				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("input: %v", err), name)
+				return
+			} else if len(input) == 0 {
+				input = []byte("{}")
+			} else if !json.Valid(input) {
+				httpresponse.Error(w, httpresponse.ErrBadRequest.With("input isn't JSON"), name)
+				return
+			}
+			if object, err := reg.CallAction(r.Context(), name, action, input); err != nil {
+				// A backend whose user needs to sign in again is 401, with
+				// how they sign in
+				if signIn := authclient.SignInOf(err); signIn != nil {
+					httpresponse.Error(w, gofiler.HTTPErr(err), signIn)
+				} else {
+					httpresponse.Error(w, gofiler.HTTPErr(err), name)
+				}
+			} else {
+				httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), object)
+			}
+		}, func(op httprequest.PathOperation) {
+			op.Summary("Call Action")
+			op.Description(documentation.Section(3, "POST /action/{name}/{action}").Body)
+			op.RequestBody(jsonschema.MustFor[map[string]any]())
+			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.Object](), "Object the action created or changed")
+			op.ErrorResponse(http.StatusBadRequest, "Input isn't JSON, or isn't valid for the action")
+			op.ErrorResponse(http.StatusUnauthorized, "The volume's user needs to sign in, with how they sign in")
+			op.ErrorResponse(http.StatusNotFound, "Volume, or action, doesn't exist")
+			op.ErrorResponse(http.StatusServiceUnavailable, "Volume is unmounted, or offline")
+		})
+	})
+}

@@ -95,6 +95,22 @@ Returns the objects of the mounted volumes which match the `query`, best first, 
 
 The query is words, any of which match an object's name, its folders, or its metadata, such as its title: `arvo beethoven`. A quoted phrase is one term, `"spiegel im spiegel"`, a word which ends with `*` matches the start of a word, `beethov*`, and a word which starts with `-` excludes what matches it, `-symphony`. A quote which doesn't end is a bad request.
 
+## Actions
+
+An action is something a volume's backend can do, beyond reading and writing its objects, such as creating a task list. Each has a name, a title, a description, and a JSON schema of its input, and returns the object it created or changed. A filesystem has none. Actions aren't available while a volume is unmounted, or offline.
+
+### GET /action
+
+List the actions of every volume which is mounted, and online, in order of their volumes, and their names, each with its `volume`, and the schema of its input.
+
+### GET /action/{name}
+
+List the actions of the volume `name`, in order of their names. Returns 404 if the volume doesn't exist, and 503 when it's unmounted, or offline.
+
+### POST /action/{name}/{action}
+
+Call the action `action` of the volume `name`, with its input as the body, which is JSON of its schema, or `{}` when it's empty, and return the object it created or changed. Returns 400 when the input isn't valid, 404 when the volume, or the action, doesn't exist, 503 when the volume is unmounted, or offline, and 401, with how to sign in, when the volume's user needs to sign in again.
+
 ## Signing In
 
 A volume whose backend needs its user to sign in, such as one of Google Tasks, which they haven't, or whose sign-in is revoked, is 401 on `POST /volume`, with how to sign in as its `detail`: the authorization `server`, the `client_id`, the `scopes`, and the `credential` which is stored once they've signed in. A client, such as the `filer` command, authorizes at a loopback address with PKCE, and sends the code to go-auth's `POST /credential/{key}/signin`, which exchanges it with the secret of the `GOOGLE_CLIENT` credential, and stores the sign-in as the `GOOGLE_*` credential.
