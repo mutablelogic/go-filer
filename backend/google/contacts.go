@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -25,6 +23,7 @@ import (
 	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	vcard "github.com/mutablelogic/go-metadata/pkg/vcard"
+	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -33,7 +32,8 @@ import (
 
 // ContactFiler is a filer of a person's Google Contacts: each contact is a
 // file at the root, of its id, as a vCard, with its metadata, such as its
-// name. It's read, and watched, but not written, so far.
+// name. It's read, and watched, and written, when it's writable, of the
+// contact action.
 type ContactFiler struct {
 	contactOpt
 	name   string
@@ -43,9 +43,17 @@ type ContactFiler struct {
 	client *httpclient.PeopleClient
 
 	// The contacts, with their fields, got from Google, for the refresh
-	// interval, which a watch clears when it finds what changed, which a
-	// contact is read from, rather than got again
+	// interval, which a contact is read from, rather than got again, or,
+	// while it's watched, those the watch knows, which it keeps up to date
 	people *cache[[]httpclient.Person]
+	mu     sync.Mutex
+	live   *contactWatch
+
+	// syncing is held by a sync, and by a write, from its request until
+	// what it got is applied, so a sync whose response is older doesn't
+	// undo a write, nor a write a sync. It's a channel of one, so waiting
+	// for it stops when the context is cancelled.
+	syncing chan struct{}
 }
 
 // contactOpt are the options of a contact filer, of its parameters
@@ -116,7 +124,7 @@ func NewContactFiler(ctx context.Context, name string, params url.Values, cache 
 		return nil, err
 	}
 	opts.ClientOpts = slices.Clone(opts.ClientOpts)
-	self := &ContactFiler{contactOpt: opt, name: name, opts: opts, cache: cache}
+	self := &ContactFiler{contactOpt: opt, name: name, opts: opts, cache: cache, syncing: make(chan struct{}, 1)}
 	self.people = newCache[[]httpclient.Person](time.Now, func() time.Duration { return self.refreshInterval })
 
 	// The user's sign-in, which has the access the volume needs: to read
@@ -314,71 +322,6 @@ func (self *ContactFiler) DeleteObjects(context.Context, schema.DeleteObjectsReq
 	return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
 }
 
-// WatchObjects polls the contacts, at the refresh interval, and sends the
-// changes, until the context is cancelled: a contact which is created, or
-// whose entity tag changes, or which is deleted. The first change is a
-// rescan of the root, once they're read. Returns ErrNotImplemented when
-// the refresh interval is zero, and the error of reading them, such as a
-// SignInError, when a sign-in is needed.
-func (self *ContactFiler) WatchObjects(ctx context.Context, ch chan<- schema.Event) error {
-	if self.refreshInterval == 0 {
-		return gofiler.ErrNotImplemented.Withf("volume %q isn't watched, as its %s is zero", self.name, paramRefreshInterval)
-	}
-	last, err := self.snapshot(ctx)
-	if err != nil {
-		return err
-	}
-
-	// What was got before it's watched may be out of date, of the snapshot,
-	// which isn't sent, so it's got again, of the rescan
-	self.people.clear()
-	select {
-	case ch <- schema.Rescan(self.name):
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	ticker := time.NewTicker(self.refreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-		next, err := self.snapshot(ctx)
-		if err != nil {
-			return err
-		}
-		var events []schema.Event
-		for p, etag := range next {
-			if old, exists := last[p]; !exists {
-				events = append(events, schema.Event{EventType: schema.EventTypeCreated, ObjectKey: schema.ObjectKey{Name: self.name, Path: p}})
-			} else if old != etag {
-				events = append(events, schema.Event{EventType: schema.EventTypeUpdated, ObjectKey: schema.ObjectKey{Name: self.name, Path: p}})
-			}
-		}
-		for p := range last {
-			if _, exists := next[p]; !exists {
-				events = append(events, schema.Event{EventType: schema.EventTypeDeleted, ObjectKey: schema.ObjectKey{Name: self.name, Path: p}})
-			}
-		}
-		slices.SortFunc(events, func(a, b schema.Event) int { return strings.Compare(a.Path, b.Path) })
-		if len(events) > 0 {
-			// What was got from Google is out of date, so it's got again,
-			// before what changed is sent, and read
-			self.people.clear()
-		}
-		for _, event := range events {
-			select {
-			case ch <- event:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		last = next
-	}
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
@@ -434,9 +377,12 @@ func (self *ContactFiler) stat(ctx context.Context, op, p string) (*schema.Objec
 	return object, content, nil
 }
 
-// connections returns the contacts, with their fields, or those which were
-// got, for the refresh interval
+// connections returns the contacts, with their fields, of the watch, while
+// it's watched, or those which were got, for the refresh interval
 func (self *ContactFiler) connections(ctx context.Context) ([]httpclient.Person, error) {
+	if people, ok := self.livePeople(); ok {
+		return people, nil
+	}
 	return self.people.get(ctx, "", func() ([]httpclient.Person, error) {
 		return self.client.Connections(ctx, httpclient.PersonFields)
 	})
@@ -445,6 +391,13 @@ func (self *ContactFiler) connections(ctx context.Context) ([]httpclient.Person,
 // person returns a contact, of its id, of the contacts which were got,
 // when they were, or else of Google
 func (self *ContactFiler) person(ctx context.Context, id string) (*httpclient.Person, error) {
+	// The watch knows whether it's there, which is so, rather than what was
+	// got before, which may have it still
+	if person, ok := self.livePerson(id); ok && person != nil {
+		return person, nil
+	} else if ok {
+		return nil, httpresponse.Err(http.StatusNotFound).Withf("contact %q", id)
+	}
 	if people, ok := self.people.peek(""); ok {
 		for i := range people {
 			if contactId(&people[i]) == id {
@@ -454,21 +407,6 @@ func (self *ContactFiler) person(ctx context.Context, id string) (*httpclient.Pe
 		}
 	}
 	return self.client.Person(ctx, "people/"+id, httpclient.PersonFields)
-}
-
-// snapshot returns the entity tags of the contacts, by their paths
-func (self *ContactFiler) snapshot(ctx context.Context) (map[string]string, error) {
-	people, err := self.client.Connections(ctx, "metadata")
-	if err != nil {
-		return nil, self.apiError("watch", "/", err)
-	}
-	result := make(map[string]string, len(people))
-	for i := range people {
-		if id := contactId(&people[i]); !people[i].Metadata.Deleted && googleId(id) {
-			result["/"+id+contactExt] = people[i].ETag
-		}
-	}
-	return result, nil
 }
 
 // contactObject returns a contact, which is a file, of its vCard, with its
@@ -674,34 +612,6 @@ func primaryFirst[T any](in []T, primary func(T) bool) []T {
 		}
 	})
 	return result
-}
-
-// photo returns a contact's photo, of its link, at photoSize, which is got
-// without the sign-in's token, which isn't needed, nor of the quota, as it
-// isn't the API's, or nil when it can't be got, which isn't an error, so
-// the contact is read with its link
-func (self *ContactFiler) photo(ctx context.Context, link string) *vcard.Photo {
-	ctx, cancel := context.WithTimeout(ctx, photoTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rePhotoSize.ReplaceAllString(link, fmt.Sprintf("=s%d", photoSize)), nil)
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("Accept", "image/*")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if resp.StatusCode != http.StatusOK || err != nil || !strings.HasPrefix(mediaType, "image/") {
-		return nil
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPhotoSize+1))
-	if err != nil || len(data) == 0 || len(data) > maxPhotoSize {
-		return nil
-	}
-	return &vcard.Photo{MediaType: mediaType, Data: data}
 }
 
 // objectList is an iterator of objects
