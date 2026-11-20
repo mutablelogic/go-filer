@@ -12,6 +12,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	rss "github.com/mutablelogic/go-rss"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -53,4 +54,44 @@ func Test_Interval(t *testing.T) {
 		assert.Equal(t, test.want, f.interval(), "ttl %v, refresh %q", test.host == withTTL, test.refresh)
 		assert.Equal(t, test.refresh != "", f.URL().Query().Has(paramRefresh))
 	}
+}
+
+// Items of the same title, and day, are numbered, of the first number which
+// isn't another item's path, such as one whose title ends with a number
+func Test_ItemsNumbered(t *testing.T) {
+	channel := mustChannel(t, `<rss version="2.0"><channel><title>T</title>
+<item><title>Episode</title><guid>a</guid><pubDate>Fri, 20 Nov 2026 09:00:00 GMT</pubDate></item>
+<item><title>Episode</title><guid>b</guid><pubDate>Fri, 20 Nov 2026 10:00:00 GMT</pubDate></item>
+<item><title>Episode 2</title><guid>c</guid><pubDate>Fri, 20 Nov 2026 11:00:00 GMT</pubDate></item>
+</channel></rss>`)
+	items := newItems(channel)
+	assert.Len(t, items.keys, 3)
+	paths := map[string]bool{}
+	for _, p := range items.keys {
+		paths[p] = true
+		assert.NotNil(t, items.objects[p], p)
+	}
+	assert.Len(t, paths, 3, "each item has its own path: %v", items.keys)
+}
+
+// An item's entity tag is of its metadata, too, so a change of it alone,
+// such as of a podcast's episode, is a change of the file
+func Test_ItemsETag(t *testing.T) {
+	feed := func(episode string) string {
+		return `<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>T</title>
+<item><title>Episode</title><guid>a</guid><pubDate>Fri, 20 Nov 2026 09:00:00 GMT</pubDate><itunes:episode>` + episode + `</itunes:episode></item>
+</channel></rss>`
+	}
+	before, after := newItems(mustChannel(t, feed("1"))), newItems(mustChannel(t, feed("2")))
+	p := before.keys["a"]
+	require.Equal(t, p, after.keys["a"])
+	assert.Equal(t, before.content[p], after.content[p], "the page is the same")
+	assert.NotEqual(t, *before.objects[p].ETag, *after.objects[p].ETag)
+}
+
+func mustChannel(t *testing.T, xml string) *rss.Channel {
+	t.Helper()
+	f, err := rss.Read(strings.NewReader(xml))
+	require.NoError(t, err)
+	return f.Channel
 }

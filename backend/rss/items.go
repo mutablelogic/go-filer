@@ -98,23 +98,22 @@ func newItems(channel *rss.Channel) *items {
 	slices.SortStableFunc(list, func(a, b item) int { return strings.Compare(a.key, b.key) })
 
 	// The paths of the items, of their folders, and those of the same name
-	// are numbered
-	taken := make(map[string]int)
+	// are numbered, of the first number which no other item's path is, such
+	// as of another's title which ends with a number
+	taken := make(map[string]bool)
 	for _, it := range list {
 		folder, base := "/"+undated+"/", slug(it.title, it.key)
 		if !it.date.IsZero() {
 			folder = fmt.Sprintf("/%04d/%04d-%02d/", it.date.Year(), it.date.Year(), it.date.Month())
 			base = fmt.Sprintf("%02d-%s", it.date.Day(), base)
 		}
-		name := folder + base
-		if n := taken[name]; n > 0 {
-			taken[name]++
-			name = fmt.Sprintf("%s-%d", name, n+1)
-		} else {
-			taken[name] = 1
+		name := folder + base + ".html"
+		for n := 2; taken[name]; n++ {
+			name = fmt.Sprintf("%s%s-%d.html", folder, base, n)
 		}
-		self.file(name+".html", it, channel)
-		self.keys[it.key] = name + ".html"
+		taken[name] = true
+		self.file(name, it, channel)
+		self.keys[it.key] = name
 	}
 	self.paths = slices.Sorted(func(yield func(string) bool) {
 		for p := range self.objects {
@@ -149,12 +148,20 @@ func (self *items) dir(p string) {
 // file adds an item, as the page of it, at the path, with its folders
 func (self *items) file(p string, it item, channel *rss.Channel) {
 	self.dir(path.Dir(p) + "/")
-	content := page(it, channel)
-	sum := sha256.Sum256([]byte(content))
+	content, metadata := page(it, channel), meta(it, channel)
+
+	// Its entity tag is of its page, and its metadata, which the page
+	// doesn't have, such as a podcast's episode, so a change of either is a
+	// change of the file
+	hash := sha256.New()
+	hash.Write([]byte(content))
+	if data, err := json.Marshal(metadata); err == nil {
+		hash.Write(data)
+	}
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Path: p},
-		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ETag: types.Ptr(hex.EncodeToString(sum[:16])), ModTime: it.date},
-		ObjectMeta: schema.ObjectMeta{ContentType: contentType, Meta: meta(it, channel)},
+		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ETag: types.Ptr(hex.EncodeToString(hash.Sum(nil)[:16])), ModTime: it.date},
+		ObjectMeta: schema.ObjectMeta{ContentType: contentType, Meta: metadata},
 	}
 	self.objects[p], self.content[p] = object, content
 }
@@ -396,10 +403,11 @@ func firstOf(values ...string) string {
 	return ""
 }
 
-// notModified returns ErrNotModified when an object's entity tag is one of
-// those of the request
+// notModified returns ErrNotModified when the request's conditions say an
+// object hasn't changed, of its entity tag, "*", or when it was modified
+// (see schema.Object.NotModified)
 func notModified(object *schema.Object, req schema.GetObjectRequest) error {
-	if object.ETag != nil && slices.Contains(req.IfNoneMatch, *object.ETag) {
+	if object.NotModified(req) {
 		return gofiler.ErrNotModified.Withf("%s isn't modified", req.Path)
 	}
 	return nil
