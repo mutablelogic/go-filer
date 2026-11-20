@@ -8,11 +8,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.19
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.115.0
 	github.com/aws/smithy-go v1.28.9
-	github.com/mutablelogic/go-auth v0.0.20
-	github.com/mutablelogic/go-client v1.4.14
+	github.com/mutablelogic/go-auth v0.0.21
+	github.com/mutablelogic/go-client v1.5.0
 	github.com/mutablelogic/go-metadata v1.1.7
 	github.com/mutablelogic/go-pg v1.5.1
-	github.com/mutablelogic/go-server v1.8.21
+	github.com/mutablelogic/go-server v1.8.22
 	github.com/mutablelogic/go-sqlite v1.1.3
 	github.com/mutablelogic/go-tokenizer v0.0.3
 	github.com/stretchr/testify v1.12.1
@@ -116,7 +116,7 @@ require (
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20261116203732-fd2c7689a808 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261116203732-fd2c7689a808 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261118221215-c8830f628b3f // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
