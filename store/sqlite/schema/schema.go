@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 16
+const Version = 17
 
 var (
 	//go:embed objects.sql
@@ -142,6 +142,8 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 				return err
 			}
 		}
+		// Version 17 has an index of the work which failed, which is created,
+		// as a schema's of every version is
 		// Version 13 has the shapes of where objects are, and 14 the times of
 		// their events, whose tables are created, as a schema's of every
 		// version is

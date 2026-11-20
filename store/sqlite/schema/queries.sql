@@ -242,9 +242,19 @@ SELECT
   (SELECT count(*) FROM object_state WHERE volume = @volume AND kind = @did),
   (SELECT count(*) FROM object_state WHERE volume = @volume AND kind = @did AND error IS NOT NULL),
   coalesce((
-    SELECT error FROM object_state
-    WHERE volume = @volume AND kind IN (@kind, @did) AND error IS NOT NULL
-    ORDER BY failed DESC LIMIT 1
+    SELECT error FROM (
+      SELECT * FROM (
+        SELECT error, failed FROM object_state
+        WHERE volume = @volume AND kind = @kind AND error IS NOT NULL
+        ORDER BY failed DESC LIMIT 1
+      )
+      UNION ALL
+      SELECT * FROM (
+        SELECT error, failed FROM object_state
+        WHERE volume = @volume AND kind = @did AND error IS NOT NULL
+        ORDER BY failed DESC LIMIT 1
+      )
+    ) ORDER BY failed DESC LIMIT 1
   ), '');
 
 -- queue.push_stale

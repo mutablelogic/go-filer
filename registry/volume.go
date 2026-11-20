@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"sync"
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
@@ -89,18 +90,30 @@ func (self *Registry) GetVolume(ctx context.Context, name string) (*schema.Volum
 }
 
 // ListVolumes returns the volumes of the store, in order of their names, as
-// GetVolume returns them, which includes those which aren't enabled
+// GetVolume returns them, which includes those which aren't enabled. Their
+// indexes' states are read at once, a few at a time, as each is a query of
+// the store.
 func (self *Registry) ListVolumes(ctx context.Context) ([]schema.Volume, error) {
 	stored, err := self.store.ListVolumes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]schema.Volume, 0, len(stored))
-	for _, volume := range stored {
-		result = append(result, *self.view(ctx, volume))
+	result := make([]schema.Volume, len(stored))
+	var wg sync.WaitGroup
+	limit := make(chan struct{}, viewConcurrency)
+	for i, volume := range stored {
+		wg.Go(func() {
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			result[i] = *self.view(ctx, volume)
+		})
 	}
+	wg.Wait()
 	return result, nil
 }
+
+// viewConcurrency is how many volumes' indexes' states are read at once
+const viewConcurrency = 8
 
 // DeleteVolume removes a volume from the store, with its index, which Run
 // unmounts, and returns it, as it was, before it's unmounted. Returns
