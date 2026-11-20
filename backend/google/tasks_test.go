@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1586,7 +1587,7 @@ func Test_TaskListAction(t *testing.T) {
 	}
 	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
 	actions := filer.Actions()
-	require.Len(t, actions, 1)
+	require.Len(t, actions, 2, "task_list, and task")
 	action := actions[0]
 	listed := gofiler.ActionOf(action)
 	assert.Equal(t, "task_list", listed.Name)
@@ -1636,6 +1637,8 @@ func Test_TaskListAction(t *testing.T) {
 		`{"op":"delete","path":"/L1","title":"x"}`,
 		`{"op":"create","title":"x","colour":"red"}`,
 		`not json`,
+		`{"op":"delete","path":"/L1"} garbage`,
+		`{"op":"delete","path":"/L1"}{}`,
 	} {
 		_, err := run(input)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, input)
@@ -1644,4 +1647,135 @@ func Test_TaskListAction(t *testing.T) {
 		_, err := run(`{"op":"update","path":"` + path + `","title":"x"}`)
 		assert.ErrorIs(t, err, fs.ErrNotExist, path)
 	}
+}
+
+// A writable volume's task action creates a task in a list, updates the
+// fields of one which are given, and deletes one
+func Test_TaskAction(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	fake.addTask("L1", httpclient.Task{Id: "A", Title: "Shopping", Status: "needsAction"})
+	fake.addTask("L1", httpclient.Task{Id: "B", Title: "Cooking", Status: "needsAction"})
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"1h"}})
+	var action gofiler.Action
+	for _, a := range filer.Actions() {
+		if a.Name() == "task" {
+			action = a
+		}
+	}
+	require.NotNil(t, action)
+	run := func(input string) (*schema.Object, error) {
+		return action.Run(ctx, json.RawMessage(input))
+	}
+	task := func(id string) httpclient.Task {
+		fake.Lock()
+		defer fake.Unlock()
+		for _, task := range fake.tasks["L1"] {
+			if task.Id == id {
+				return task
+			}
+		}
+		t.Fatalf("no task %q", id)
+		return httpclient.Task{}
+	}
+	lastFields := func() map[string]json.RawMessage {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.fields[len(fake.fields)-1]
+	}
+
+	// A task is created, in a list, of its title, and its other fields
+	created, err := run(`{"op":"create","path":"/L1","title":"  Call   the plumber ","notes":"Leak","due":"2026-11-25"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "/L1/N3.ics", created.Path)
+	got := task("N3")
+	assert.Equal(t, "Call the plumber", got.Title)
+	assert.Equal(t, "Leak", got.Notes)
+	require.NotNil(t, got.Due)
+	assert.Equal(t, "2026-11-25", got.Due.Format(time.DateOnly))
+
+	// It's updated, of the fields which are given, alone
+	_, err = run(`{"op":"update","path":"/L1/N3.ics","completed":true}`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"status"}, slices.Sorted(maps.Keys(lastFields())))
+	assert.Equal(t, "completed", task("N3").Status)
+	assert.Equal(t, "Call the plumber", task("N3").Title, "its title is kept")
+	_, err = run(`{"op":"update","path":"/L1/N3.ics","notes":"","due":"","completed":false}`)
+	require.NoError(t, err)
+	assert.Empty(t, task("N3").Notes)
+	assert.Nil(t, task("N3").Due)
+	assert.Equal(t, "needsAction", task("N3").Status)
+
+	// It's moved beneath a parent, and back to the top
+	_, err = run(`{"op":"update","path":"/L1/N3.ics","parent":"A"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "A", task("N3").Parent)
+	_, err = run(`{"op":"update","path":"/L1/N3.ics","parent":""}`)
+	require.NoError(t, err)
+	assert.Empty(t, task("N3").Parent)
+
+	// And deleted
+	deleted, err := run(`{"op":"delete","path":"/L1/N3.ics"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "/L1/N3.ics", deleted.Path)
+	assert.True(t, task("N3").Deleted)
+
+	// Input which isn't valid for its op
+	for _, input := range []string{
+		`{"op":"move","path":"/L1/A.ics"}`,
+		`{"op":"create","path":"/L1"}`,
+		`{"op":"create","path":"/L1","title":"  "}`,
+		`{"op":"create","path":"/L1/A.ics","title":"x"}`,
+		`{"op":"create","title":"x"}`,
+		`{"op":"update","path":"/L1","title":"x"}`,
+		`{"op":"update","path":"/L1/A.ics"}`,
+		`{"op":"update","path":"/L1/A.ics","due":"tomorrow"}`,
+		`{"op":"update","path":"/L1/A.ics","parent":"A"}`,
+		`{"op":"update","path":"/L1/A.ics","parent":"Z"}`,
+		`{"op":"delete","path":"/L1/A.ics","title":"x"}`,
+		`{"op":"delete","path":"/L1/A.ics","completed":true}`,
+		`{"op":"create","path":"/L1","title":"x","colour":"red"}`,
+		`{"op":"delete","path":"/L1/A.ics"} garbage`,
+	} {
+		_, err := run(input)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, input)
+	}
+	_, err = run(`{"op":"update","path":"/L1/Q.ics","title":"x"}`)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+// A list which the action creates, or renames, is sent to the volume's
+// watches once, and isn't sent again when it's polled, as its tag is the
+// watch's
+func Test_TaskListActionWatched(t *testing.T) {
+	ctx := t.Context()
+	fake, endpoint := newFake(t)
+	fake.addList("L1", "Home")
+	filer := newFiler(t, endpoint, url.Values{"readonly": {"false"}, "refresh_interval": {"20ms"}})
+	watchCtx, cancel := context.WithCancel(ctx)
+	events, done := make(chan schema.Event, 16), make(chan error, 1)
+	go func() { done <- filer.WatchObjects(watchCtx, events) }()
+	t.Cleanup(func() { cancel(); <-done })
+	require.Equal(t, schema.Rescan("tasks"), <-events)
+	action := filer.Actions()[0]
+	quiet := func() {
+		t.Helper()
+		select {
+		case event := <-events:
+			t.Fatalf("unexpected %s %s", event.EventType.String(), event.Path)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	_, err := action.Run(ctx, json.RawMessage(`{"op":"create","title":"Work"}`))
+	require.NoError(t, err)
+	event := <-events
+	assert.Equal(t, "created /L2", event.EventType.String()+" "+event.Path)
+	quiet()
+	_, err = action.Run(ctx, json.RawMessage(`{"op":"update","path":"/L2","title":"Office"}`))
+	require.NoError(t, err)
+	event = <-events
+	assert.Equal(t, "updated /L2", event.EventType.String()+" "+event.Path)
+	quiet()
 }
