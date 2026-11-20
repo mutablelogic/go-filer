@@ -2,7 +2,7 @@ package google
 
 import (
 	"context"
-	"maps"
+	"errors"
 	"path"
 	"slices"
 	"strings"
@@ -32,12 +32,25 @@ const (
 	// list:/#, isn't a prefix of the others'
 	listingKeys = "list:/"
 
-	// calendarTagsKey is the key of the entity tags of the calendars, by
-	// their ids, which the listings which are saved are of, so a calendar
-	// which is added, removed, or changed, such as renamed, while it isn't
-	// watched, is known, when it's watched again
-	calendarTagsKey = "calendars"
+	// checkpointKey is the key of the sync tokens, and the entity tags, of
+	// the calendars, by their ids, which the listings which are saved are
+	// up to date of, which a watch which starts again uses them of, when
+	// they're the tokens it starts of, and nothing changed since. It's
+	// deleted before the listings are, and saved after, so they aren't
+	// used, when they couldn't be deleted.
+	checkpointKey = "checkpoint"
+
+	// The values of a listing: the days it's of
+	listingFrom = "from"
+	listingTo   = "to"
 )
+
+// checkpoint is the sync tokens, and the entity tags, of the calendars, by
+// their ids, which the listings which are saved are up to date of
+type checkpoint struct {
+	Tokens map[string]string `json:"tokens"`
+	Tags   map[string]string `json:"tags"`
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
@@ -58,22 +71,21 @@ func (self *CalendarFiler) setPersisting(persist bool) {
 	self.persist = persist
 }
 
-// loadCalendarTags returns the entity tags of the calendars, by their ids,
-// which were saved in the volume's cache, or none, when there are none
-func (self *CalendarFiler) loadCalendarTags(ctx context.Context) map[string]string {
-	tags := make(map[string]string)
-	if _, err := store.GetCacheJSON(ctx, self.cache, calendarTagsKey, &tags); err != nil {
-		return make(map[string]string)
+// loadCheckpoint returns the checkpoint of the listings which are saved,
+// or false, when there's none
+func (self *CalendarFiler) loadCheckpoint(ctx context.Context) (checkpoint, bool) {
+	var result checkpoint
+	if _, err := store.GetCacheJSON(ctx, self.cache, checkpointKey, &result); err != nil {
+		return checkpoint{}, false
 	}
-	return tags
+	return result, true
 }
 
-// saveCalendarTags saves the entity tags of the calendars of a sync, in the
-// volume's cache, when they aren't those before it
-func (self *CalendarFiler) saveCalendarTags(ctx context.Context, state *calendarSync, before map[string]string) {
-	if !maps.Equal(state.calendars, before) {
-		_ = store.PutCacheJSON(ctx, self.cache, calendarTagsKey, 0, store.CacheMeta{}, state.calendars)
-	}
+// saveCheckpoint saves the checkpoint of the listings which are saved, of
+// the sync tokens, and the calendars' entity tags, of a sync, once the
+// listings it changed are deleted
+func (self *CalendarFiler) saveCheckpoint(ctx context.Context, state *calendarSync) error {
+	return store.PutCacheJSON(ctx, self.cache, checkpointKey, 0, store.CacheMeta{}, checkpoint{Tokens: state.tokens, Tags: state.calendars})
 }
 
 // loadListing returns the events of a directory, of the days, which were
@@ -82,7 +94,10 @@ func (self *CalendarFiler) saveCalendarTags(ctx context.Context, state *calendar
 // or one of its calendars isn't one any more
 func (self *CalendarFiler) loadListing(ctx context.Context, dir string, from, to time.Time) ([]calendarEvent, bool) {
 	var saved []savedEvent
-	if _, err := store.GetCacheJSON(ctx, self.cache, listingKey(dir), &saved); err != nil {
+	if meta, err := store.GetCacheJSON(ctx, self.cache, listingKey(dir), &saved); err != nil {
+		return nil, false
+	} else if meta.Values[listingFrom] != from.UTC().Format(time.RFC3339) || meta.Values[listingTo] != to.UTC().Format(time.RFC3339) {
+		// It's of other days, such as of the day before a restart
 		return nil, false
 	}
 	calendars, err := self.calendars(ctx)
@@ -107,24 +122,46 @@ func (self *CalendarFiler) loadListing(ctx context.Context, dir string, from, to
 	return result, true
 }
 
-// saveListing saves the events of a directory in the volume's cache, until
-// what they're of changes, which isn't an error when it can't, as they're
-// got again
-func (self *CalendarFiler) saveListing(ctx context.Context, dir string, events []calendarEvent) {
+// listingGeneration returns the generation of the listings, which changes
+// each time they're deleted, so a listing which was got before isn't saved
+func (self *CalendarFiler) listingGeneration() uint64 {
+	self.listMu.Lock()
+	defer self.listMu.Unlock()
+	return self.listGen
+}
+
+// saveListing saves the events of a directory, of the days, in the volume's
+// cache, until what they're of changes, unless listings were deleted since
+// the generation, when it was got, so it may be out of date, which isn't
+// an error when it can't, as they're got again
+func (self *CalendarFiler) saveListing(ctx context.Context, dir string, from, to time.Time, events []calendarEvent, generation uint64) {
 	saved := make([]savedEvent, 0, len(events))
 	for _, e := range events {
 		saved = append(saved, savedEvent{Calendar: e.calendar.Id, Event: *e.event})
 	}
-	_ = store.PutCacheJSON(ctx, self.cache, listingKey(dir), 0, store.CacheMeta{}, saved)
+	self.listMu.Lock()
+	defer self.listMu.Unlock()
+	if self.listGen != generation {
+		return
+	}
+	meta := store.CacheMeta{Values: map[string]string{listingFrom: from.UTC().Format(time.RFC3339), listingTo: to.UTC().Format(time.RFC3339)}}
+	_ = store.PutCacheJSON(ctx, self.cache, listingKey(dir), 0, meta, saved)
 }
 
-// dropListings deletes the listings which are saved, of the events of the
-// paths: of their months, their years, and the root's, so they're got
-// again, or, without any, every listing
-func (self *CalendarFiler) dropListings(ctx context.Context, paths ...string) {
-	if len(paths) == 0 {
-		_ = self.cache.Delete(ctx, listingKeys)
-		return
+// dropListings deletes the checkpoint, and then the listings which are
+// saved, of the events of the paths: of their months, their years, and the
+// root's, so they're got again, or, without any, every listing, and changes
+// their generation, so a listing which is being got isn't saved. Returns
+// the error of deleting them, when the checkpoint is deleted, so they
+// aren't used.
+func (self *CalendarFiler) dropListings(ctx context.Context, paths ...string) error {
+	self.listMu.Lock()
+	defer self.listMu.Unlock()
+	self.listGen++
+	if err := self.cache.Delete(ctx, checkpointKey); err != nil {
+		return err
+	} else if len(paths) == 0 {
+		return self.cache.Delete(ctx, listingKeys)
 	}
 	dirs := map[string]bool{"/": true}
 	for _, p := range paths {
@@ -134,9 +171,11 @@ func (self *CalendarFiler) dropListings(ctx context.Context, paths ...string) {
 		month := path.Dir(p)
 		dirs[month], dirs[path.Dir(month)] = true, true
 	}
+	var result error
 	for dir := range dirs {
-		_ = self.cache.Delete(ctx, listingKey(dir))
+		result = errors.Join(result, self.cache.Delete(ctx, listingKey(dir)))
 	}
+	return result
 }
 
 ////////////////////////////////////////////////////////////////////////////////

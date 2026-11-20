@@ -72,8 +72,12 @@ type CalendarFiler struct {
 	watches map[*calendarWatch]struct{}
 
 	// persist is true while a watch keeps the listings which are saved in
-	// the volume's cache up to date, when they're used
+	// the volume's cache up to date, when they're used, and their
+	// generation, which changes when they're deleted, so one which was got
+	// before isn't saved, which is changed, and checked, of listMu
 	persist bool
+	listMu  sync.Mutex
+	listGen uint64
 
 	// writing is held by a write, until it's sent to the watches, and by a
 	// watch's sync, so a sync doesn't find a write before it's sent, which
@@ -605,7 +609,7 @@ func (self *CalendarFiler) events(ctx context.Context, op, p, dir string, from, 
 		// While it's watched, a listing which was saved in the volume's
 		// cache, such as before a restart, is used, and one which is got is
 		// saved, as the watch deletes them, when what they're of changes
-		persist := self.persisting()
+		persist, generation := self.persisting(), self.listingGeneration()
 		if persist {
 			if events, ok := self.loadListing(ctx, dir, from, to); ok {
 				return events, nil
@@ -613,7 +617,7 @@ func (self *CalendarFiler) events(ctx context.Context, op, p, dir string, from, 
 		}
 		events, err := self.listEvents(ctx, op, p, from, to)
 		if err == nil && persist {
-			self.saveListing(ctx, dir, events)
+			self.saveListing(ctx, dir, from, to, events, generation)
 		}
 		return events, err
 	})
