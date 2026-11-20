@@ -1,6 +1,6 @@
 // The gf-file-view element is the objects of a folder, which aren't folders,
-// as the tree has those, as a table of their names, sizes and when they
-// were changed, which loads more as it's scrolled, in the element it's in,
+// as the tree has those, as a table of their names, types, sizes and when
+// they were changed, which loads more as it's scrolled, in the element it's in,
 // which scrolls.
 
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
@@ -8,7 +8,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
 import EmptyIcon from '@carbon/icons/es/folders/32.js';
-import { objectTitle } from '../filer/schema.ts';
+import { objectTitle, objectType } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -108,6 +108,7 @@ export class FileViewElement extends LitElement {
                 <thead>
                     <tr>
                         <th><div class="cds--table-header-label">Name</div></th>
+                        <th class="gf-file-view-type"><div class="cds--table-header-label">Type</div></th>
                         <th class="gf-file-view-size"><div class="cds--table-header-label">Size</div></th>
                         <th><div class="cds--table-header-label">Modified</div></th>
                     </tr>
@@ -118,6 +119,7 @@ export class FileViewElement extends LitElement {
                             <td>
                                 <span class="gf-file-view-name" title=${object.path}>${fileIcon}<span>${objectTitle(object)}</span></span>
                             </td>
+                            <td class="gf-file-view-type" title=${object.type ?? ''}>${objectType(object)}</td>
                             <td class="gf-file-view-size">${formatSize(object.size)}</td>
                             <td>${formatTime(object.mtime)}</td>
                         </tr>

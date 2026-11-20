@@ -155,3 +155,20 @@ export function volumeTitle(volume: Volume, backends: readonly Backend[] = []): 
     const backend = volumeBackend(volume, backends);
     return `${volumeLabel(volume)}\n${volume.name}${backend ? ` · ${backend}` : ''}`;
 }
+
+// The namespace of the metadata about an object itself, of go-metadata, and
+// the key of its kind, such as book
+export const MetadataNamespace = 'metadata';
+export const MetadataKind = 'kind';
+
+// objectType returns what an object is: its kind, of its metadata, such as
+// Book, or else the subtype of its type, such as mpeg of audio/mpeg, or ""
+export function objectType(object: FilerObject): string {
+    const kind = metaValue(object, MetadataNamespace, MetadataKind);
+    if (typeof kind === 'string' && kind) {
+        return kind.charAt(0).toUpperCase() + kind.slice(1);
+    }
+    const type = (object.type ?? '').split(';')[0].trim();
+    const slash = type.indexOf('/');
+    return slash < 0 ? type : type.slice(slash + 1);
+}
