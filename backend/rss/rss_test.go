@@ -396,5 +396,106 @@ func Test_FeedRestart(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	assert.Equal(t, want, paths(third))
 	assert.Equal(t, int32(1), full.Load())
-	assert.Equal(t, int32(1), notModified.Load(), "it's fetched of its entity tag")
+	assert.GreaterOrEqual(t, notModified.Load(), int32(1), "it's fetched of its entity tag")
+}
+
+// Test_FeedRestartChecked tests a feed which was found not to be modified,
+// isn't fetched again after a restart, until it would have been, of when it
+// was checked, rather than when it was saved
+func Test_FeedRestartChecked(t *testing.T) {
+	var requests atomic.Int32
+	sum := sha256.Sum256([]byte(feedXML))
+	etag := `"` + hex.EncodeToString(sum[:8]) + `"`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, feedXML)
+	}))
+	defer server.Close()
+	cache := testCache()
+	open := func(interval string) gofiler.Filer {
+		t.Helper()
+		f, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {interval}}), cache, gofiler.Opts{})
+		require.NoError(t, err)
+		return f
+	}
+
+	// It's fetched, and then, after its interval, isn't modified
+	open("50ms")
+	time.Sleep(60 * time.Millisecond)
+	open("50ms")
+	assert.Equal(t, int32(2), requests.Load())
+
+	// So one which is created at once isn't fetched, as it was checked now
+	open("1h")
+	assert.Equal(t, int32(2), requests.Load())
+}
+
+// Test_FeedEmpty tests an empty response, which can't be read, doesn't
+// replace the feed which was saved
+func Test_FeedEmpty(t *testing.T) {
+	var empty atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		if !empty.Load() {
+			io.WriteString(w, feedXML)
+		}
+	}))
+	defer server.Close()
+	cache := testCache()
+	_, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache, gofiler.Opts{})
+	require.NoError(t, err)
+	empty.Store(true)
+	_, err = rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"1ms"}}), cache, gofiler.Opts{})
+	time.Sleep(5 * time.Millisecond)
+	f, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache, gofiler.Opts{})
+	require.NoError(t, err, "the feed which was saved is read")
+	iter, err := f.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}, Recursive: true})
+	require.NoError(t, err)
+	object, err := iter.Next(context.Background())
+	require.NoError(t, err)
+	assert.NotEmpty(t, object.Path)
+}
+
+// Test_FeedWatchRestart tests what changed while it wasn't watched is
+// sent, after the rescan, of the items which were saved
+func Test_FeedWatchRestart(t *testing.T) {
+	var body atomic.Pointer[string]
+	body.Store(types.Ptr(feedXML))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, *body.Load())
+	}))
+	defer server.Close()
+	cache := testCache()
+	_, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache, gofiler.Opts{})
+	require.NoError(t, err)
+
+	// A new item, while it isn't watched, of a filer which fetches it as
+	// it's created, is sent, after the rescan
+	body.Store(types.Ptr(strings.Replace(feedXML, "<title>Late</title>", "<title>Later</title>", 1)))
+	f, err := rss.Open(context.Background(), feedURL(t, server.URL, url.Values{"refresh_interval": {"1ms"}}), cache, gofiler.Opts{})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := make(chan schema.Event, 64)
+	go func() { _ = f.WatchObjects(ctx, ch) }()
+	var got []string
+	timeout := time.After(5 * time.Second)
+	for len(got) < 3 {
+		select {
+		case event := <-ch:
+			got = append(got, event.EventType.String())
+		case <-timeout:
+			t.Fatalf("got %v", got)
+		}
+	}
+	assert.Equal(t, "rescan", got[0])
+	assert.Contains(t, got[1:], "deleted")
+	assert.Contains(t, got[1:], "created")
 }

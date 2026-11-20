@@ -1,12 +1,18 @@
 package google
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	// Packages
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
+	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
+	gosqlite "github.com/mutablelogic/go-sqlite"
 	assert "github.com/stretchr/testify/assert"
+	require "github.com/stretchr/testify/require"
 )
 
 // Test_ApplyChanges tests a change older than a file, or than its removal,
@@ -58,4 +64,45 @@ func Test_WroteWhileRelisting(t *testing.T) {
 	listed := map[string]httpclient.DriveFile{}
 	applyChanges(listed, map[string]int64{}, w.during)
 	assert.Contains(t, newDriveTree(root, []httpclient.DriveFile{listed["n"]}).files, "/new.txt")
+}
+
+// Test_DriveRestore tests the files a watch saved, with the versions of
+// those which were removed, are restored, of the account's My Drive, but
+// not of another's, and what the filer wrote as it started is applied
+func Test_DriveRestore(t *testing.T) {
+	root := "root0"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":%q}`, root)
+	}))
+	defer server.Close()
+	client, err := httpclient.NewDriveClient(server.URL)
+	require.NoError(t, err)
+	cache, err := sqlite.NewCacheStore(t.Context(), gosqlite.Memory)
+	require.NoError(t, err)
+	defer cache.Close()
+	filer := &DriveFiler{name: "drive", client: client, cache: cache}
+
+	// The files, and those which were removed, are saved
+	file := httpclient.DriveFile{Id: "a", Name: "a.txt", Version: "3", OwnedByMe: true, Parents: []string{root}}
+	saved := &driveWatch{token: "t1", root: root, files: map[string]httpclient.DriveFile{"a": file}, gone: map[string]int64{"b": 9}, dirty: true}
+	saved.tree = newDriveTree(root, []httpclient.DriveFile{file})
+	filer.save(t.Context(), saved, true)
+
+	// And restored, of the same account
+	w := &driveWatch{}
+	require.True(t, filer.restore(t.Context(), w))
+	assert.Equal(t, "t1", w.token)
+	assert.Equal(t, map[string]int64{"b": 9}, w.gone, "so an older change doesn't restore what was removed")
+	assert.Contains(t, w.tree.files, "/a.txt")
+
+	// What the filer wrote as it started is applied, once they're known
+	w.relisting, w.during = true, []httpclient.DriveChange{{FileId: "c", File: httpclient.DriveFile{Id: "c", Name: "c.txt", Version: "1", OwnedByMe: true, Parents: []string{root}}}}
+	filer.applyDuring(w)
+	assert.Contains(t, w.tree.files, "/c.txt")
+	assert.False(t, w.relisting)
+
+	// But not of another account's
+	root = "root1"
+	assert.False(t, filer.restore(t.Context(), &driveWatch{}))
 }
