@@ -554,10 +554,10 @@ func (self *CalendarFiler) stat(ctx context.Context, op, p string) (*schema.Obje
 	switch {
 	case path.year == 0:
 		// The root, of its years
-		return dirObject(self.name, "/", len(years), time.Time{}), nil, nil
+		return dirObject(self.name, "/", 0, len(years), time.Time{}), nil, nil
 	case path.month == 0:
 		// A year, of its months which are listed
-		return dirObject(self.name, pathOfDir(path), len(months[path.year]), time.Time{}), nil, nil
+		return dirObject(self.name, pathOfDir(path), 0, len(months[path.year]), time.Time{}), nil, nil
 	case path.event == "":
 		// A month, of its events, and when they were last changed
 		from, to := self.span(path)
@@ -569,7 +569,7 @@ func (self *CalendarFiler) stat(ctx context.Context, op, p string) (*schema.Obje
 		for _, e := range events {
 			modtime = maxTime(modtime, e.event.Updated)
 		}
-		return dirObject(self.name, pathOfDir(path), len(events), modtime), nil, nil
+		return dirObject(self.name, pathOfDir(path), len(events), 0, modtime), nil, nil
 	}
 
 	// An event, of a listing which has it, or else of its calendar, of its
@@ -819,7 +819,7 @@ func (self *CalendarFiler) tree(p calendarPath, events []calendarEvent, recursiv
 			depth = 0
 		}
 		if depth == 1 {
-			add(dirObject(self.name, yearPath, len(months[year]), time.Time{}), 1)
+			add(dirObject(self.name, yearPath, 0, len(months[year]), time.Time{}), 1)
 		}
 		for _, month := range months[year] {
 			monthPath := fmt.Sprintf("%s/%04d-%02d", yearPath, year, month)
@@ -836,7 +836,7 @@ func (self *CalendarFiler) tree(p calendarPath, events []calendarEvent, recursiv
 				for _, e := range byMonth[monthPath] {
 					modtime = maxTime(modtime, e.event.Updated)
 				}
-				add(dirObject(self.name, monthPath, len(byMonth[monthPath]), modtime), monthDepth)
+				add(dirObject(self.name, monthPath, len(byMonth[monthPath]), 0, modtime), monthDepth)
 			}
 			for _, e := range byMonth[monthPath] {
 				object, _ := self.eventObject(e.calendar, e.event)
@@ -1028,15 +1028,15 @@ func pathOfEvent(p string) string {
 	return path.Clean("/" + p)
 }
 
-// dirObject returns a directory, of how many objects are in it, and when
-// what's in it was last changed
-func dirObject(name, p string, count int, modtime time.Time) *schema.Object {
+// dirObject returns a directory, of how many files, and subfolders, are in
+// it, and when what's in it was last changed
+func dirObject(name, p string, files, subfolders int, modtime time.Time) *schema.Object {
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Name: name, Path: p},
 		ObjectMeta: schema.ObjectMeta{ContentType: schema.DirectoryType},
 		ObjectAttr: schema.ObjectAttr{IsDir: true, ModTime: modtime},
 	}
-	object.Meta = append(object.Meta, schema.FolderMeta(count)...)
+	object.Meta = append(object.Meta, schema.FolderMeta(files, subfolders)...)
 	return object
 }
 

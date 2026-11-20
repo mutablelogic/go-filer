@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>filer</title>
+    <link rel="stylesheet" href="index.css">
+    <script type="module" src="index.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: var(--cds-background);
+            color: var(--cds-text-primary);
+            font-family: 'IBM Plex Sans', sans-serif;
+        }
+
+        /* The header is 3rem high, and the side navigation 16rem wide, when
+           it's fixed open, on large screens */
+        main {
+            padding: calc(3rem + 2rem) 2rem 2rem;
+        }
+
+        /* A page's header is across the page, beneath the menu bar */
+        main gs-page-header {
+            --gs-page-header-margin: -2rem -2rem 1.5rem;
+        }
+
+        /* The router hides the pages which aren't shown, which Carbon's
+           styles would show */
+        main > section[hidden] {
+            display: none;
+        }
+
+        /* The server's status is at the bottom of the side navigation, and
+           its items scroll above it */
+        cds-side-nav-items {
+            margin-bottom: calc(3rem + 1px);
+        }
+
+
+
+
+        gs-server-status {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            border-top: 1px solid var(--cds-border-subtle);
+        }
+
+        /* The volumes, on the Files page */
+        .gf-volumes {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .gf-volumes li {
+            display: flex;
+            gap: 1rem;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--cds-border-subtle);
+            font-size: 0.875rem;
+        }
+
+        .gf-volumes span {
+            color: var(--cds-text-secondary);
+            overflow-wrap: anywhere;
+        }
+
+        @media (min-width: 66rem) {
+            main {
+                margin-left: 16rem;
+            }
+        }
+    </style>
+</head>
+
+<body class="cds--white">
+    <!-- The menu bar, and the sidebar, of the navigation controller, with
+         the server's status at its bottom. Each module owns an item in the
+         menu bar, and the sidebar while it's active. -->
+    <div class="cds--g100">
+        <gs-header></gs-header>
+        <gs-side-nav>
+            <gs-server-status></gs-server-status>
+        </gs-side-nav>
+    </div>
+
+    <!-- The modules' pages, which they add -->
+    <main></main>
+
+    <gs-notifications></gs-notifications>
+</body>
+
+</html>

@@ -568,8 +568,8 @@ func Test_TaskObjects(t *testing.T) {
 		{Namespace: google.TaskNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
 		{Namespace: google.TaskNamespace, Key: "default", Value: json.RawMessage(`true`)},
 		{Namespace: google.DCNamespace, Key: "title", Value: json.RawMessage(`"Shopping"`)},
-		{Namespace: schema.FolderNamespace, Key: "children", Value: json.RawMessage(`true`)},
-		{Namespace: schema.FolderNamespace, Key: "children-count", Value: json.RawMessage(`2`)},
+		{Namespace: schema.FolderNamespace, Key: schema.FolderObjectCount, Value: json.RawMessage(`2`)},
+		{Namespace: schema.FolderNamespace, Key: schema.FolderSubfolderCount, Value: json.RawMessage(`0`)},
 	}, dir.Meta, "with its tasks, which aren't deleted, and it's the default list, as it's the first")
 
 	// A task is a file, of iCalendar, with its metadata, its entity tag and
@@ -709,9 +709,9 @@ func Test_TaskList(t *testing.T) {
 	}
 	require.NoError(t, iter.Close())
 	assert.Equal(t, map[string]string{
-		"/L1 children": "true", "/L1 children-count": "2",
-		"/L2 children": "true", "/L2 children-count": "1",
-		"/L3 children": "false", "/L3 children-count": "0",
+		"/L1 object-count": "2", "/L1 subfolder-count": "0",
+		"/L2 object-count": "1", "/L2 subfolder-count": "0",
+		"/L3 object-count": "0", "/L3 subfolder-count": "0",
 	}, counts)
 	fake.Lock()
 	fake.lists = fake.lists[:2]
@@ -1402,7 +1402,7 @@ func Test_TaskHidden(t *testing.T) {
 		dir, err := filer.GetObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/L1"}})
 		require.NoError(t, err)
 		for _, m := range dir.Meta {
-			if m.Key == "children-count" {
+			if m.Key == schema.FolderObjectCount {
 				return string(m.Value)
 			}
 		}

@@ -621,8 +621,13 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 type listing struct {
 	root    *schema.Object
 	folders map[string]*schema.Object
-	counts  map[string]int
+	counts  map[string]*folderCount
 	files   int
+}
+
+// folderCount is how many files, and subfolders, a folder lists
+type folderCount struct {
+	files, subfolders int
 }
 
 // objects returns the folder, and the folders beneath it, with how many
@@ -630,9 +635,9 @@ type listing struct {
 func (l *listing) objects(root string) []*schema.Object {
 	objects := make([]*schema.Object, 0, len(l.folders)+1)
 	l.root.Path, _ = store.PathOf(root)
-	objects = append(objects, withCount(l.root, l.counts[root]))
+	objects = append(objects, withCount(l.root, *l.counts[root]))
 	for key, folder := range l.folders {
-		objects = append(objects, withCount(folder, l.counts[key]))
+		objects = append(objects, withCount(folder, *l.counts[key]))
 	}
 	return objects
 }
@@ -648,7 +653,7 @@ func (self *Indexer) list(ctx context.Context, root string, progress func(int)) 
 	} else if !object.IsDir {
 		return nil, &fs.PathError{Op: "index", Path: root, Err: fs.ErrNotExist}
 	}
-	l := &listing{root: object, folders: make(map[string]*schema.Object), counts: map[string]int{root: 0}}
+	l := &listing{root: object, folders: make(map[string]*schema.Object), counts: map[string]*folderCount{root: {}}}
 	iter, err := self.Filer.ListObjects(ctx, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: root}, Recursive: true})
 	if err != nil {
 		return nil, err
@@ -671,16 +676,21 @@ func (self *Indexer) list(ctx context.Context, root string, progress func(int)) 
 			return nil, err
 		}
 		key := store.Key(child)
-		l.counts[store.ParentKey(key)]++
+		parent := l.counts[store.ParentKey(key)]
+		if parent == nil {
+			parent = &folderCount{}
+			l.counts[store.ParentKey(key)] = parent
+		}
 		if child.IsDir {
+			parent.subfolders++
 			l.folders[key], seen[key] = child, ""
 			if _, exists := l.counts[key]; !exists {
-				l.counts[key] = 0
+				l.counts[key] = &folderCount{}
 			}
 			if progress != nil && len(l.folders)%progressEvery == 0 {
 				progress(len(l.folders))
 			}
-		} else if self.mode.Files() {
+		} else if parent.files++; self.mode.Files() {
 			l.files, seen[key] = l.files+1, store.Revision(child)
 		}
 		if len(seen) >= seenPage {
@@ -797,7 +807,7 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		return err
 	}
 	defer iter.Close()
-	count := 0
+	var count folderCount
 	t := tree{folders: make(map[string]*schema.Object), files: make(map[string]*schema.Object)}
 	for {
 		child, err := iter.Next(ctx)
@@ -806,10 +816,10 @@ func (self *Indexer) index(ctx context.Context, folder string) error {
 		} else if err != nil {
 			return err
 		}
-		count++
 		if child.IsDir {
+			count.subfolders++
 			t.folders[store.Key(child)] = child
-		} else if self.mode.Files() {
+		} else if count.files++; self.mode.Files() {
 			t.files[store.Key(child)] = child
 		}
 	}
@@ -1021,30 +1031,44 @@ func folderPath(p string) string {
 	return p
 }
 
-// withCount returns a folder with the count of its objects, as the
-// metadata of the folder namespace, unless the backend has it
-func withCount(object *schema.Object, count int) *schema.Object {
-	for _, m := range object.Meta {
-		if m.Namespace == schema.FolderNamespace && m.Key == "children-count" {
-			return object
-		}
+// withCount returns a folder with how many files, and subfolders, it lists,
+// as the metadata of the folder namespace, unless the backend has them
+func withCount(object *schema.Object, count folderCount) *schema.Object {
+	if hasCount(object.Meta) {
+		return object
 	}
-	object.Meta = append(object.Meta, schema.FolderMeta(count)...)
+	object.Meta = append(object.Meta, schema.FolderMeta(count.files, count.subfolders)...)
 	return object
 }
 
-// mergeCount returns a folder's metadata, from a listing, with the count of
-// its objects which the index has, until it's indexed again
+// mergeCount returns a folder's metadata, from a listing, with the counts
+// the index has, until it's indexed again, unless the listing has them. Any
+// of the index's metadata of the folder namespace is kept, so those of an
+// earlier version, folder:children and folder:children-count, aren't lost
+// before it's indexed, which replaces them.
 func mergeCount(meta, indexed []schema.Meta) []schema.Meta {
-	for _, m := range meta {
-		if m.Namespace == schema.FolderNamespace && m.Key == "children-count" {
-			return meta
-		}
+	if hasCount(meta) {
+		return meta
 	}
 	for _, m := range indexed {
-		if m.Namespace == schema.FolderNamespace && (m.Key == "children" || m.Key == "children-count") {
+		if m.Namespace == schema.FolderNamespace {
 			meta = append(meta, m)
 		}
 	}
 	return meta
+}
+
+// hasCount returns true when a folder's metadata has its counts
+func hasCount(meta []schema.Meta) bool {
+	for _, m := range meta {
+		if isCount(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// isCount returns true for the metadata of a folder's counts
+func isCount(m schema.Meta) bool {
+	return m.Namespace == schema.FolderNamespace && (m.Key == schema.FolderObjectCount || m.Key == schema.FolderSubfolderCount)
 }
