@@ -1,9 +1,12 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -162,4 +165,79 @@ func Test_Registry_OfflineRetry(t *testing.T) {
 	opens := g.opens.Load()
 	time.Sleep(100 * time.Millisecond)
 	assert.Equal(t, opens, g.opens.Load(), "it stops opening it again")
+}
+
+// logBuffer is a buffer of logs, which is written from more than one
+// goroutine
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// count returns how many lines have all the strings
+func (b *logBuffer) count(strs ...string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := 0
+	for _, line := range strings.Split(b.buf.String(), "\n") {
+		matches := line != ""
+		for _, s := range strs {
+			matches = matches && strings.Contains(line, s)
+		}
+		if matches {
+			n++
+		}
+	}
+	return n
+}
+
+func Test_Registry_OfflineLogs(t *testing.T) {
+	retry := watchRetry
+	watchRetry = 10 * time.Millisecond
+	t.Cleanup(func() { watchRetry = retry })
+
+	// A volume which is offline, and can't be opened again, of the same
+	// reason, is logged as a warning once, rather than of each attempt,
+	// which is logged for debugging, until it's mounted again
+	// The directory is made first, so it's removed after the registry is
+	// closed, as cleanups run in reverse
+	dir := t.TempDir()
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	var logs logBuffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Run(ctx, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
+
+	f := addFailing(t, r, dir, "down", gofiler.ErrServiceUnavailable.With("server is down"))
+	require.Eventually(t, func() bool { return f.opens.Load() > 4 }, 5*time.Second, time.Millisecond)
+	assert.Equal(t, 1, logs.count("level=WARN", "watching a volume failed"))
+	assert.Zero(t, logs.count("level=WARN", "can't be mounted"), "it's of the reason it's offline")
+	assert.GreaterOrEqual(t, logs.count("level=DEBUG", "can't be mounted, again"), 3)
+
+	// A reason which is new is a warning, once
+	f.failWith(gofiler.ErrServiceUnavailable.With("server is still down"))
+	require.Eventually(t, func() bool { return logs.count("level=WARN", "can't be mounted", "still down") == 1 }, 5*time.Second, time.Millisecond)
+	opens := f.opens.Load()
+	require.Eventually(t, func() bool { return f.opens.Load() > opens+2 }, 5*time.Second, time.Millisecond)
+	assert.Equal(t, 1, logs.count("level=WARN", "can't be mounted", "still down"))
+
+	// And it's mounted again, which is logged
+	f.failWith(nil)
+	require.Eventually(t, func() bool { return online(r, "down") }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return logs.count("level=INFO", "mounted volume", "volume=down") >= 2 }, 5*time.Second, time.Millisecond)
 }

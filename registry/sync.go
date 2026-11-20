@@ -171,12 +171,18 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 	// which is mounted
 	b, err := self.open(ctx, name, stored.URL)
 	if err != nil {
+		// It's logged as a warning when it's why it can't be mounted, for the
+		// first time, rather than of each attempt, as it's retried
+		if previous := self.whyFailed(name, e); previous != nil && previous.Error() == err.Error() {
+			logger.DebugContext(ctx, "a volume can't be mounted, again", "volume", name, "error", err.Error())
+		} else {
+			logger.WarnContext(ctx, "a volume can't be mounted", "volume", name, "error", err.Error())
+		}
 		if e != nil {
 			self.setOffline(e, err)
 		} else {
 			self.setFailed(name, err)
 		}
-		logger.WarnContext(ctx, "a volume can't be mounted", "volume", name, "error", err.Error())
 		self.retry(ctx, logger, name, err)
 		return
 	}
@@ -297,6 +303,17 @@ func (self *Registry) retry(ctx context.Context, logger *slog.Logger, name strin
 			self.sync(name, true)
 		}
 	})
+}
+
+// whyFailed returns why the volume of the entry is offline, or, without
+// one, why it can't be mounted, or nil
+func (self *Registry) whyFailed(name string, e *entry) error {
+	self.RLock()
+	defer self.RUnlock()
+	if e != nil {
+		return e.offline
+	}
+	return self.failed[name]
 }
 
 // setFailed records why the volume can't be mounted, or that it can, with
