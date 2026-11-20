@@ -267,6 +267,9 @@ func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
 // signs in with Google, in the browser, and creates it again, and prints it
 func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInClient *credentialclient.Client, noBrowser bool) error {
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
+		if err := checkBackend(ctx, client, volume.URL); err != nil {
+			return err
+		}
 		req := schema.VolumeCreateRequest{Name: volume.Name, URL: volume.URL}
 		created, err := client.CreateVolume(ctx, req)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
@@ -286,6 +289,9 @@ func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInCli
 // createVolume creates the volume, and prints it
 func createVolume(ctx server.Cmd, span string, volume schema.Volume) error {
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
+		if err := checkBackend(ctx, client, volume.URL); err != nil {
+			return err
+		}
 		volume, err := client.CreateVolume(ctx, schema.VolumeCreateRequest{Name: volume.Name, URL: volume.URL})
 		if err != nil {
 			return err
@@ -722,6 +728,23 @@ func setOpts(query url.Values, opts []string) error {
 	}
 	for key, v := range values {
 		query[key] = v
+	}
+	return nil
+}
+
+// checkBackend returns ErrBadParameter when the server doesn't run the
+// backend of a volume's URL, of its scheme, with those it does run, before
+// the volume is created, such as before signing in
+func checkBackend(ctx context.Context, client *httpclient.Client, volumeURL string) error {
+	u, err := url.Parse(volumeURL)
+	if err != nil {
+		return gofiler.ErrBadParameter.Withf("invalid url: %v", err)
+	}
+	list, err := client.ListVolumes(ctx)
+	if err != nil {
+		return err
+	} else if !slices.Contains(list.Schemes, u.Scheme) {
+		return gofiler.ErrBadParameter.Withf("the server doesn't run the %q backend, but %s", u.Scheme, strings.Join(list.Schemes, ", "))
 	}
 	return nil
 }

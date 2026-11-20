@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -9,6 +13,7 @@ import (
 	// Packages
 	kong "github.com/alecthomas/kong"
 	gofiler "github.com/mutablelogic/go-filer"
+	httpclient "github.com/mutablelogic/go-filer/registry/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -479,4 +484,22 @@ func Test_VolumeCreateGCalendarCmd(t *testing.T) {
 	assert.Error(t, err)
 	_, err = volume("work", "--credential", "not a key")
 	assert.Error(t, err)
+}
+
+// A volume of a backend which the server doesn't run isn't created, with
+// those it does run, before it's created, such as before signing in
+func Test_CheckBackend(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/volume", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(schema.VolumeList{Schemes: []string{"file", "s3"}})
+	}))
+	defer server.Close()
+	client, err := httpclient.New(server.URL)
+	require.NoError(t, err)
+	assert.NoError(t, checkBackend(context.Background(), client, "s3://bucket"))
+	err = checkBackend(context.Background(), client, "gtasks://tasks")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.ErrorContains(t, err, `"gtasks"`)
+	assert.ErrorContains(t, err, "file, s3")
 }

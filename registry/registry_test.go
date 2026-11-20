@@ -1276,3 +1276,39 @@ func Test_Registry_BackendGone(t *testing.T) {
 	_, err = r.DeleteVolume(context.Background(), "things")
 	require.NoError(t, err)
 }
+
+// Only the backends of WithSchemes are used, whatever the order of the
+// options, so a volume of another is offline, and a scheme which isn't a
+// backend's is an error, of those which are
+func Test_Registry_WithSchemes(t *testing.T) {
+	dir := t.TempDir()
+	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
+		if err != nil {
+			return nil, err
+		}
+		return example{Filer: b, u: u}, nil
+	}
+	s := newStore(t)
+	_, err := s.CreateVolume(context.Background(), schema.VolumeMeta{Name: "bucket", URL: "s3://bucket", Enabled: true})
+	require.NoError(t, err)
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithSchemes("example", " file", ""), WithBackend("example", open), WithSchemes("file"))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	runRegistry(t, r)
+	assert.Equal(t, []string{"example", "file"}, r.Schemes())
+
+	// A volume of a backend which isn't used is offline
+	require.Eventually(t, func() bool {
+		v, err := r.GetVolume(context.Background(), "bucket")
+		return err == nil && !v.Enabled && strings.Contains(v.Error, "unsupported scheme")
+	}, 5*time.Second, time.Millisecond)
+	_, err = add(t, r, "things", mustURL(t, "example://things"))
+	require.NoError(t, err)
+
+	// A scheme which isn't a backend's is an error, which lists those which are
+	_, err = New(context.Background(), WithStore(newStore(t)), WithSchemes("file", "ftp"))
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	assert.ErrorContains(t, err, `"ftp"`)
+	assert.ErrorContains(t, err, "file, gcalendar, gcontacts, gtasks, s3")
+}
