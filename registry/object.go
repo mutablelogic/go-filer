@@ -41,6 +41,12 @@ func (self *Registry) URL() *url.URL {
 	return &url.URL{Scheme: "filer"}
 }
 
+// Description returns what the registry is, its volumes, as each volume's
+// backend has its own description
+func (self *Registry) Description() string {
+	return "Volumes"
+}
+
 // Clone returns ErrNotImplemented, as a registry can't be cloned: its
 // volumes are cloned to change their options, with Update
 func (self *Registry) Clone(context.Context, url.Values) (gofiler.Filer, error) {

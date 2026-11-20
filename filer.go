@@ -29,6 +29,11 @@ type Filer interface {
 	// parameters carry useful non-credential details: region, endpoint, anonymous, readonly, etc.
 	URL() *url.URL
 
+	// Description returns what the volume is, such as "Folder /mnt/media",
+	// or "S3 bucket photos in eu-west-1", which is its URL's description
+	// option, when it's set, and is otherwise the backend's of it
+	Description() string
+
 	// Clone returns a new filer of the same storage, with the options of the
 	// filer, changed by the patch (see PatchValues), which is nil to keep
 	// them, from what the filer has, rather than its URL, which doesn't have

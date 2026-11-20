@@ -198,6 +198,12 @@ func Test_Description(t *testing.T) {
 	if got := described.URL().Query().Get("description"); got != "My media" {
 		t.Errorf("set: got %q", got)
 	}
+	if got := described.Description(); got != "My media" {
+		t.Errorf("Description: got %q", got)
+	}
+	if got, want := self.Description(), "Folder "+self.path; got != want {
+		t.Errorf("Description default: got %q, want %q", got, want)
+	}
 	clone, err := described.Clone(context.Background(), url.Values{"readonly": {"true"}})
 	if err != nil {
 		t.Fatal(err)

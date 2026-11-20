@@ -16,6 +16,7 @@ import (
 	credentialclient "github.com/mutablelogic/go-auth/credential/httpclient"
 	gofiler "github.com/mutablelogic/go-filer"
 	google "github.com/mutablelogic/go-filer/backend/google"
+	rss "github.com/mutablelogic/go-filer/backend/rss"
 	registry "github.com/mutablelogic/go-filer/registry"
 	httpclient "github.com/mutablelogic/go-filer/registry/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
@@ -32,13 +33,14 @@ import (
 type VolumeCommands struct {
 	VolumeList            VolumeListCmd            `cmd:"" name:"volumes" help:"List volumes, with the URLs of their backends." group:"VOLUME"`
 	VolumeGet             VolumeGetCmd             `cmd:"" name:"volume" help:"Get a volume by its name, with the URL of its backend." group:"VOLUME"`
-	VolumeSchemes         VolumeSchemesCmd         `cmd:"" name:"volume-schemes" help:"List the schemes of the URLs which volumes can be created from." group:"VOLUME"`
+	VolumeBackends        VolumeBackendsCmd        `cmd:"" name:"volume-backends" aliases:"volume-schemes" help:"List the backends the server runs, of their schemes, which volumes can be created of, with what each is." group:"VOLUME"`
 	VolumeCreate          VolumeCreateCmd          `cmd:"" name:"volume-create" help:"Create a volume from the URL of its backend, or a directory." group:"VOLUME"`
 	VolumeCreateFS        VolumeCreateFSCmd        `cmd:"" name:"volume-create-fs" help:"Create a volume of a directory on the server." group:"VOLUME"`
 	VolumeCreateS3        VolumeCreateS3Cmd        `cmd:"" name:"volume-create-s3" help:"Create a volume of an S3 bucket, or one which is compatible, such as MinIO's or SeaweedFS's." group:"VOLUME"`
 	VolumeCreateGTasks    VolumeCreateGTasksCmd    `cmd:"" name:"volume-create-gtasks" help:"Create a volume of a Google account's tasks, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGContacts VolumeCreateGContactsCmd `cmd:"" name:"volume-create-gcontacts" help:"Create a volume of a Google account's contacts, as vCards, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
 	VolumeCreateGCalendar VolumeCreateGCalendarCmd `cmd:"" name:"volume-create-gcalendar" help:"Create a volume of a Google account's calendars' events, as iCalendars, of the days before today and after it, signing in with Google, in the browser, when the server needs it." group:"VOLUME"`
+	VolumeCreateRSS       VolumeCreateRSSCmd       `cmd:"" name:"volume-create-rss" help:"Create a volume of an RSS feed's items, read-only, of its URL." group:"VOLUME"`
 	VolumeUpdate          VolumeUpdateCmd          `cmd:"" name:"volume-update" help:"Change the options of a volume by its name, and whether it's enabled, or open it again, without any, signing in when its user needs to, such as when it's offline." group:"VOLUME"`
 	VolumeMount           VolumeMountCmd           `cmd:"" name:"volume-mount" help:"Enable a volume by its name, so the server mounts it, and does when it starts, signing in when its user needs to." group:"VOLUME"`
 	VolumeUnmount         VolumeUnmountCmd         `cmd:"" name:"volume-unmount" help:"Disable a volume by its name, so the server unmounts it, keeping it, and its index." group:"VOLUME"`
@@ -48,7 +50,7 @@ type VolumeCommands struct {
 
 type VolumeListCmd struct{}
 
-type VolumeSchemesCmd struct{}
+type VolumeBackendsCmd struct{}
 
 type VolumeGetCmd struct {
 	Name string `arg:"" name:"name" help:"Volume name."`
@@ -134,6 +136,14 @@ type VolumeCreateGCalendarCmd struct {
 	Description     string         `name:"description" help:"What the volume is, such as \"Work calendar\", which the server sets, of its backend, when it isn't set."`
 }
 
+type VolumeCreateRSSCmd struct {
+	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
+	Feed            string         `arg:"" name:"url" help:"URL of the feed, which is http or https."`
+	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How long a feed which is fetched is kept, which is 5m, unless it's set."`
+	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=metadata, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description     string         `name:"description" help:"What the volume is, such as \"News\", which the server sets, of the feed's title, when it isn't set."`
+}
+
 type VolumeCreateGTasksCmd struct {
 	Name            string         `arg:"" name:"name" help:"Volume name, which is an identifier."`
 	Writable        bool           `name:"writable" help:"Tasks can be created, updated and deleted, which needs Google's tasks scope, rather than tasks.readonly."`
@@ -182,18 +192,18 @@ func (cmd *VolumeListCmd) Run(ctx server.Cmd) error {
 	})
 }
 
-func (cmd *VolumeSchemesCmd) Run(ctx server.Cmd) error {
-	return withClient(ctx, "filer.VolumeSchemesCmd", func(ctx context.Context, client *httpclient.Client) error {
+func (cmd *VolumeBackendsCmd) Run(ctx server.Cmd) error {
+	width := ctx.IsTerm()
+	return withClient(ctx, "filer.VolumeBackendsCmd", func(ctx context.Context, client *httpclient.Client) error {
 		list, err := client.ListVolumes(ctx)
 		if err != nil {
 			return err
 		}
 
-		// The schemes, one on each line
-		for _, scheme := range list.Schemes {
-			fmt.Println(scheme)
-		}
-		return nil
+		// The backends, of their schemes, and what each is
+		table := tui.TableFor[schema.Backend](tui.SetWidth(width))
+		_, err = table.Write(os.Stdout, list.Backends...)
+		return err
 	})
 }
 
@@ -249,6 +259,14 @@ func (cmd *VolumeCreateGCalendarCmd) Run(ctx server.Cmd) error {
 		return err
 	}
 	return createSignedIn(ctx, "filer.VolumeCreateGCalendarCmd", volume, signInClient, cmd.NoBrowser)
+}
+
+func (cmd *VolumeCreateRSSCmd) Run(ctx server.Cmd) error {
+	volume, err := cmd.volume()
+	if err != nil {
+		return err
+	}
+	return createVolume(ctx, "filer.VolumeCreateRSSCmd", volume)
 }
 
 func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
@@ -673,6 +691,34 @@ func (cmd *VolumeCreateGCalendarCmd) volume() (schema.Volume, error) {
 	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
 }
 
+func (cmd *VolumeCreateRSSCmd) volume() (schema.Volume, error) {
+	if !types.IsIdentifier(cmd.Name) {
+		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
+	}
+	feed, err := url.Parse(cmd.Feed)
+	if err != nil || (feed.Scheme != "http" && feed.Scheme != "https") || feed.Host == "" {
+		return schema.Volume{}, gofiler.ErrBadParameter.Withf("the url of a feed is http or https: %q", cmd.Feed)
+	}
+
+	// The feed is the URL's path, rss://<name>/<host>/<path>, with its own
+	// parameters, and is http, rather than https, with insecure=true
+	query := feed.Query()
+	if feed.Scheme == "http" {
+		query.Set("insecure", "true")
+	}
+	if cmd.RefreshInterval != nil {
+		query.Set("refresh_interval", cmd.RefreshInterval.String())
+	}
+	if cmd.Description != "" {
+		query.Set(schema.OptDescription, cmd.Description)
+	}
+	if err := setOpts(query, cmd.Opt); err != nil {
+		return schema.Volume{}, err
+	}
+	u := url.URL{Scheme: rss.Scheme, Host: cmd.Name, Path: "/" + feed.Host + feed.Path, RawPath: "/" + feed.Host + feed.EscapedPath(), RawQuery: query.Encode()}
+	return schema.Volume{Name: cmd.Name, URL: u.String()}, nil
+}
+
 func (cmd *VolumeCreateGTasksCmd) volume() (schema.Volume, error) {
 	if !types.IsIdentifier(cmd.Name) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
@@ -743,8 +789,13 @@ func checkBackend(ctx context.Context, client *httpclient.Client, volumeURL stri
 	list, err := client.ListVolumes(ctx)
 	if err != nil {
 		return err
-	} else if !slices.Contains(list.Schemes, u.Scheme) {
-		return gofiler.ErrBadParameter.Withf("the server doesn't run the %q backend, but %s", u.Scheme, strings.Join(list.Schemes, ", "))
+	}
+	schemes := make([]string, 0, len(list.Backends))
+	for _, backend := range list.Backends {
+		schemes = append(schemes, backend.Scheme)
+	}
+	if !slices.Contains(schemes, u.Scheme) {
+		return gofiler.ErrBadParameter.Withf("the server doesn't run the %q backend, but %s", u.Scheme, strings.Join(schemes, ", "))
 	}
 	return nil
 }

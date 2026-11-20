@@ -27,13 +27,13 @@ type Opt func(*opt) error
 type opt struct {
 	broadcaster *broadcaster.Broadcaster
 	meter       metric.Meter
-	backendOpts gofiler.Opts       // the options every backend is created with: its tracer, credentials, and client options
-	store       store.Store        // where the volumes, and their indexes, are kept, which is required
-	worker      string             // the name of the worker, which is in the metrics
-	debounce    time.Duration      // how long a change is held, until its object is quiet
-	metadata    indexer.Task       // the task which enriches the files of volumes with index=metadata, or nil
-	backends    map[string]Backend // the backends of the volumes, of their URLs' schemes, which are built in, and of WithBackend
-	schemes     []string           // the schemes of the backends which are used, of WithSchemes, or all of them, when it's empty
+	backendOpts gofiler.Opts      // the options every backend is created with: its tracer, credentials, and client options
+	store       store.Store       // where the volumes, and their indexes, are kept, which is required
+	worker      string            // the name of the worker, which is in the metrics
+	debounce    time.Duration     // how long a change is held, until its object is quiet
+	metadata    indexer.Task      // the task which enriches the files of volumes with index=metadata, or nil
+	backends    map[string]plugin // the backends of the volumes, of their URLs' schemes, which are built in, and of WithBackend
+	schemes     []string          // the schemes of the backends which are used, of WithSchemes, or all of them, when it's empty
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -52,7 +52,7 @@ func (o *opt) apply(opt []Opt) error {
 	// Only the backends of WithSchemes are used, of those which are built
 	// in, or added, whatever the order of the options
 	if len(o.schemes) > 0 {
-		used := make(map[string]Backend, len(o.schemes))
+		used := make(map[string]plugin, len(o.schemes))
 		for _, name := range o.schemes {
 			backend, exists := o.backends[name]
 			if !exists {

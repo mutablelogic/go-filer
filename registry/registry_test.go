@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1172,7 +1173,7 @@ func Test_Registry_WithBackend(t *testing.T) {
 		}
 		return example{Filer: b, u: u}, nil
 	}
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithCredentials(credentials{}), WithBackend("example", open))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithCredentials(credentials{}), WithBackend("example", "Examples", open))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -1194,13 +1195,13 @@ func Test_Registry_WithBackend(t *testing.T) {
 	// A scheme which isn't valid, or of a single letter, which is a Windows
 	// drive, a backend which is nil, and a scheme which is taken, such as
 	// one which is built in, can't be added
-	for _, opt := range []Opt{WithBackend("Example", open), WithBackend("1x", open), WithBackend("x", open), WithBackend("xy", nil)} {
+	for _, opt := range []Opt{WithBackend("Example", "", open), WithBackend("1x", "", open), WithBackend("x", "", open), WithBackend("xy", "", nil)} {
 		_, err := New(context.Background(), WithStore(newStore(t)), opt)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	}
-	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("file", open))
+	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("file", "", open))
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
-	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("example", open), WithBackend("example", open))
+	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("example", "Examples", open), WithBackend("example", "Examples", open))
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 }
 
@@ -1263,7 +1264,7 @@ func Test_Registry_BackendGone(t *testing.T) {
 	}
 	_, err = s.UpdateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: true})
 	require.NoError(t, err)
-	r, err = New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithBackend("example", open))
+	r, err = New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithBackend("example", "Examples", open))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -1292,7 +1293,7 @@ func Test_Registry_WithSchemes(t *testing.T) {
 	s := newStore(t)
 	_, err := s.CreateVolume(context.Background(), schema.VolumeMeta{Name: "bucket", URL: "s3://bucket", Enabled: true})
 	require.NoError(t, err)
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithSchemes("example", " file", ""), WithBackend("example", open), WithSchemes("file"))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithSchemes("example", " file", ""), WithBackend("example", "Examples", open), WithSchemes("file"))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -1311,4 +1312,29 @@ func Test_Registry_WithSchemes(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	assert.ErrorContains(t, err, `"ftp"`)
 	assert.ErrorContains(t, err, "file, gcalendar, gcontacts, gtasks, s3")
+}
+
+// The backends are listed, with what each is, and logged, once the registry
+// runs
+func Test_Registry_Backends(t *testing.T) {
+	open := func(context.Context, *url.URL, gofiler.Opts) (gofiler.Filer, error) {
+		return nil, gofiler.ErrNotImplemented
+	}
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithBackend("example", "Examples", open), WithSchemes("example", "file"))
+	require.NoError(t, err)
+	t.Cleanup(func() { r.close() })
+	assert.Equal(t, []schema.Backend{{Scheme: "example", Description: "Examples"}, {Scheme: "file", Description: "Server filesystem"}}, r.Backends())
+
+	var logs logBuffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx, slog.New(slog.NewTextHandler(&logs, nil))) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	require.Eventually(t, r.Running, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return logs.count("added backend") == 2 }, 5*time.Second, time.Millisecond)
+	assert.Equal(t, 1, logs.count("level=INFO", "added backend", "scheme=example", "description=Examples"))
+	assert.Equal(t, 1, logs.count("added backend", "scheme=file", `description="Server filesystem"`))
 }

@@ -486,13 +486,45 @@ func Test_VolumeCreateGCalendarCmd(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func Test_VolumeCreateRSSCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateRSS VolumeCreateRSSCmd `cmd:"" name:"volume-create-rss"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		_, err := parser.Parse(append([]string{"volume-create-rss"}, args...))
+		if err != nil {
+			return "", err
+		}
+		v, err := cli.VolumeCreateRSS.volume()
+		return v.URL, err
+	}
+
+	// A volume of a feed, of its URL, and its options
+	u, err := volume("news", "https://example.com/feed.xml?format=rss")
+	require.NoError(t, err)
+	assert.Equal(t, "rss://news/example.com/feed.xml?format=rss", u)
+	u, err = volume("podcast", "http://localhost:8080/podcast", "--refresh-interval", "1h", "--description", "A podcast", "-o", "index=metadata")
+	require.NoError(t, err)
+	assert.Equal(t, "rss://podcast/localhost:8080/podcast?description=A+podcast&index=metadata&insecure=true&refresh_interval=1h0m0s", u)
+
+	// A name which isn't an identifier, or a URL which isn't a feed's
+	_, err = volume("not-a-name!", "https://example.com/feed.xml")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	for _, feed := range []string{"ftp://example.com/feed", "example.com/feed", "https://"} {
+		_, err = volume("news", feed)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, feed)
+	}
+}
+
 // A volume of a backend which the server doesn't run isn't created, with
 // those it does run, before it's created, such as before signing in
 func Test_CheckBackend(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/volume", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(schema.VolumeList{Schemes: []string{"file", "s3"}})
+		json.NewEncoder(w).Encode(schema.VolumeList{Backends: []schema.Backend{{Scheme: "file"}, {Scheme: "s3"}}})
 	}))
 	defer server.Close()
 	client, err := httpclient.New(server.URL)

@@ -162,9 +162,9 @@ In the registry, its URL is `gcalendar://<name>`, and the `filer` command create
 
 ## RSS Feeds
 
-A volume of an RSS feed's items, read-only. It's an example of a pluggable backend: it isn't built into the registry, and the `filer` server adds it with `registry.WithBackend(rss.Scheme, rss.Open)`.
+A volume of an RSS feed's items, read-only. It's an example of a pluggable backend: it isn't built into the registry, and the `filer` server adds it with `registry.WithBackend(rss.Scheme, rss.Description, rss.Open)`.
 
-* **URL:** `rss://<name>/<host>/<path>`, of the feed `https://<host>/<path>`, such as `filer volume-create 'rss://news/feeds.example.com/news.xml?index=metadata'`.
+* **URL:** `rss://<name>/<host>/<path>`, of the feed `https://<host>/<path>`. `filer volume-create-rss news https://feeds.example.com/news.xml -o index=metadata` creates one, with `--refresh-interval` and `--description`.
   * `insecure=true` fetches it over http instead.
   * Query parameters that aren't the volume's options belong to the feed's URL, such as `?format=rss`.
 * **Layout:** a folder of each year and month, of the day each item was published, in UTC: `/2026/2026-11/20-<title>.html`. Items without a date are in `/undated/`. Items of the same title and day are numbered, in the order of their guids.
@@ -210,12 +210,14 @@ A volume of an RSS feed's items, read-only. It's an example of a pluggable backe
 
 * **The store is the source of truth.** `CreateVolume`, `UpdateVolume` and `DeleteVolume` validate a volume, by creating its backend and closing it, and write the store. They return before it's mounted.
 * **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
-* **Backends are pluggable.** `registry.WithBackend(scheme, open)` adds a backend for a URL scheme, such as one in another package or program.
+* **Backends are pluggable.** `registry.WithBackend(scheme, description, open)` adds a backend for a URL scheme, such as one in another package or program, with what it is, such as `RSS feeds`.
   * `open(ctx, url, opts)` creates the volume's backend. The URL has the volume's options except `index`, which the registry handles. `opts` are the options every backend gets: the tracer, the credentials provider, and the client options.
   * The built-in backends (`file`, `s3`, `gtasks`, `gcontacts`, `gcalendar`) are registered the same way. A scheme is lower case, of two characters or more, as one letter is a Windows drive. A scheme that's taken, or isn't valid, is an error.
   * **A stored volume whose backend isn't registered,** such as after a server is built without it, is offline, with why: `enabled: false` and an `unsupported scheme` error. Its URL and index are kept, and it's mounted once its backend is registered again.
   * **Choosing backends:** `registry.WithSchemes(schemes...)` uses only those named. `filer run --backend file,s3,rss` (repeatable, or `FILER_BACKEND`) does this, and runs every backend without it. A volume of a backend that isn't run is offline. A name that isn't a backend's is an error that lists those that are.
-  * `Schemes()`, which is `filer volume-schemes`, lists the backends the server runs. `filer volume-create <url>` creates a volume of any of them.
+  * `Backends()` lists the backends the server runs, each with its scheme and description. `GET /volume` returns them as `backends`, and `filer volume-backends` shows them as a table (`volume-schemes` is an alias). The server logs `added backend` for each when it starts.
+  * `filer volume-create <url>` creates a volume of any of them. It and the `volume-create-*` commands check first that the server runs the volume's backend.
+  * **Each volume describes itself:** `Filer.Description()` returns what the volume is, such as `Folder /mnt/media` or `RSS feed The Example Podcast`. It's the URL's `description` option when that's set, or the backend's own description otherwise.
 * **A volume's scheme isn't changed** by an update, which is `ErrBadParameter`, so a directory stays a directory. Its path, or a bucket's prefix, can be.
 * **Creating and updating are atomic in the store:** a volume is created once, of the servers which create it at once, and an update of one which is deleted meanwhile is `ErrNotFound`.
 * **Enabled:** a volume which isn't enabled is stored, with its index, but isn't mounted. Mounting or unmounting one, without changing its URL, doesn't create its backend. So a volume that's offline, or whose backend isn't registered, can be unmounted, or mounted, when it's offline until it can be. Updating a mounted volume still opens it again, such as to sign in. `filer volume-unmount NAME` disables one, `filer volume-mount NAME` enables it, and `filer volume-update NAME --[no-]enabled` does either, with its options. Over HTTP, it's `PATCH /volume/{name}?enabled=false`.

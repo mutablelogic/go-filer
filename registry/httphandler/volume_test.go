@@ -38,7 +38,13 @@ func TestVolumeList(t *testing.T) {
 		assert.Equal(t, "media", u.Host)
 		assert.Equal(t, filepath.Base(dir), filepath.Base(filepath.FromSlash(u.Path)))
 	}
-	assert.Equal(t, []string{"file", "gcalendar", "gcontacts", "gtasks", "s3"}, list.Schemes)
+	assert.Equal(t, []schema.Backend{
+		{Scheme: "file", Description: "Server filesystem"},
+		{Scheme: "gcalendar", Description: "Google Calendar"},
+		{Scheme: "gcontacts", Description: "Google Contacts"},
+		{Scheme: "gtasks", Description: "Google Tasks"},
+		{Scheme: "s3", Description: "S3 bucket"},
+	}, list.Backends)
 }
 
 // post requests the path with the body as JSON, and decodes the response

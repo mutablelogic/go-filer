@@ -5,7 +5,7 @@
 // only, and is polled, at the feed's ttl, or its refresh interval, for the
 // changes to its items, of their guids. It's a backend which isn't built
 // into the registry, which a program adds with
-// registry.WithBackend(rss.Scheme, rss.Open).
+// registry.WithBackend(rss.Scheme, rss.Description, rss.Open).
 package rss
 
 import (

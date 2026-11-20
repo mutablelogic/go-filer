@@ -29,7 +29,7 @@ import (
 type Flags struct {
 	Volume  []string `name:"volume" sep:"none" placeholder:"URL" help:"Volume to add when the server starts, as the URL of its backend, named by its name option, such as s3://my.bucket/photos?name=photos, or its host, such as file://media/mnt/media?readonly=true, or as a directory, named by its name option, or its base name, such as /mnt/media, which can be repeated."`
 	Worker  string   `name:"worker" env:"FILER_WORKER,WORKER" placeholder:"NAME" help:"Name of the worker, which is in the metrics, so those of the servers are told apart. Defaults to the hostname."`
-	Backend []string `name:"backend" env:"FILER_BACKEND" sep:"," placeholder:"SCHEME" help:"Backends to run, of their schemes, such as file,s3,rss, which can be repeated. Defaults to every backend. A volume of another backend is offline. volume-schemes lists those the server runs."`
+	Backend []string `name:"backend" env:"FILER_BACKEND" sep:"," placeholder:"SCHEME" help:"Backends to run, of their schemes, such as file,s3,rss, which can be repeated. Defaults to every backend. A volume of another backend is offline. volume-backends lists those the server runs."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
