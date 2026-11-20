@@ -196,6 +196,7 @@ An action is something a volume's backend can do beyond reading and writing its 
 * **HTTP:** `GET /action` lists every volume's, `GET /action/{name}` one volume's, and `POST /action/{name}/{action}` calls one with its input as the body.
 * **CLI:** `filer actions [VOLUME]` lists them, of every volume without one, and `filer action VOLUME NAME '<json>'` calls one, or `-` reads the input from stdin.
 * **Google Tasks** has `task_list` on a writable volume: `{"op":"create","title":"Work"}`, `{"op":"update","path":"/<id>","title":"Office"}` or `{"op":"delete","path":"/<id>"}`.
+* **Google Tasks** also has `task`: `{"op":"create","title":"Call"}` creates a task in the default list, or in a list with `"path":"/<list>"`. `update` changes the fields given (`title`, `notes`, `due`, `completed`, `parent`) of `/<list>/<id>.ics`, and `delete` deletes it.
 
 ## Indexer
 
