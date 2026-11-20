@@ -55,6 +55,18 @@ Without any options, `{}`, the volume is opened again, as it is. That brings an 
 
 Delete the volume `name`, and its index, from the store, and return it. The server then stops watching it, and closes its backend, once the requests which are using it, which are cancelled, have finished, and releases what it used, such as its directory, whose files aren't deleted. A volume of the same name isn't mounted until it's closed. Returns 404 if the volume isn't stored.
 
+## Actions
+
+An action is something a volume's backend can do, beyond reading and writing its objects, such as creating a task list. Each has a name, a title, a description, and a JSON schema of its input, and returns the object it created or changed. A filesystem has none. Actions aren't available while a volume is unmounted, or offline, which is 503.
+
+### GET /volume/{name}/action
+
+List the actions of the volume `name`, in order of their names, with the schemas of their inputs. Returns 404 if the volume doesn't exist.
+
+### POST /volume/{name}/action/{action}
+
+Call the action `action` of the volume `name`, with its input as the body, which is JSON of its schema, or `{}` when it's empty, and return the object it created or changed. Returns 400 when the input isn't valid, 404 when the volume, or the action, doesn't exist, and 401, with how to sign in, when the volume's user needs to sign in again.
+
 ## Object Operations
 
 An object is a file in a volume, or a directory under which the file is located.

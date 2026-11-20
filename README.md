@@ -187,6 +187,16 @@ A volume of an RSS feed's items, read-only. It's an example of a pluggable backe
   * Folders are created and deleted as items appear in, and leave, their months.
 * **Errors:** a feed that isn't found, or isn't RSS, is `ErrBadParameter`. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.
 
+## Actions
+
+An action is something a volume's backend can do beyond reading and writing its objects, such as creating a task list. It maps onto an LLM tool.
+
+* **`Filer.Actions()`** returns a backend's actions, or nil, such as for a filesystem. Each `gofiler.Action` has a `Name` (a tool name, such as `task_list`), `Title`, `Description`, `Input` (a JSON schema) and `Run(ctx, input)`, which returns the object it created or changed.
+* **The registry:** `ListActions(ctx, volume)` and `CallAction(ctx, volume, name, input)`. Actions aren't available while a volume is unmounted or offline, which is `ErrServiceUnavailable`.
+* **HTTP:** `GET /volume/{name}/action` lists them, and `POST /volume/{name}/action/{action}` calls one with its input as the body.
+* **CLI:** `filer actions VOLUME` lists them, and `filer action VOLUME NAME '<json>'` calls one, or `-` reads the input from stdin.
+* **Google Tasks** has `task_list` on a writable volume: `{"op":"create","title":"Work"}`, `{"op":"update","path":"/<id>","title":"Office"}` or `{"op":"delete","path":"/<id>"}`.
+
 ## Indexer
 
 `indexer.New(name, backend, store)` returns a filer of a backend whose folders are indexed, in a `Store`, so its folder tree is listed from the index rather than the backend, which can be slow, such as a bucket or a network mount.
