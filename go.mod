@@ -13,7 +13,7 @@ require (
 	github.com/mutablelogic/go-metadata v1.1.7
 	github.com/mutablelogic/go-pg v1.5.1
 	github.com/mutablelogic/go-rss v1.0.0
-	github.com/mutablelogic/go-server v1.8.22
+	github.com/mutablelogic/go-server v1.8.23
 	github.com/mutablelogic/go-sqlite v1.1.3
 	github.com/mutablelogic/go-tokenizer v0.0.3
 	github.com/stretchr/testify v1.12.1

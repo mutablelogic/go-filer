@@ -25,7 +25,7 @@ const indexFile = "index.sqlite"
 // which closes it. An index of an earlier version, <name>-index.db, in the
 // user's cache folder, is moved to where it is now, when there's none there.
 func (IndexerFlags) store(ctx server.Cmd, opts ...store.Opt) (store.Store, func(), error) {
-	dir, err := dataDir(ctx)
+	dir, err := ctx.DataDir()
 	if err != nil {
 		return nil, nil, err
 	}

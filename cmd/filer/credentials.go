@@ -50,7 +50,7 @@ const (
 // the user's cache, and their passphrase, are moved there, when there are
 // none there.
 func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, error) {
-	dir, err := dataDir(ctx)
+	dir, err := ctx.DataDir()
 	if err != nil {
 		return nil, err
 	}
