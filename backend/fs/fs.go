@@ -153,15 +153,15 @@ func (self *FS) Readonly() bool {
 	return self.readonly
 }
 
-// URL returns the URL of the filesystem, which a filesystem can be created
-// again from: file://<name>/<path> for a filesystem rooted at a directory,
-// or fs://<name> for one which isn't, with the options which aren't the
-// defaults as its query
 // Description returns what the folder is, such as "Folder /mnt/media"
 func (self *FS) Description() string {
 	return self.description
 }
 
+// URL returns the URL of the filesystem, which a filesystem can be created
+// again from: file://<name>/<path> for a filesystem rooted at a directory,
+// or fs://<name> for one which isn't, with the options which aren't the
+// defaults as its query
 func (self *FS) URL() *url.URL {
 	url := &url.URL{
 		Scheme: schema.SchemeFS,

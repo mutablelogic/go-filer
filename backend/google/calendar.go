@@ -267,13 +267,13 @@ func (self *CalendarFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-// URL returns the URL of the filer, such as gcalendar://calendar, with
-// each of its parameters
 // Description returns what the volume is, such as "Google Calendar for ada@example.com"
 func (self *CalendarFiler) Description() string {
 	return self.description
 }
 
+// URL returns the URL of the filer, such as gcalendar://calendar, with
+// each of its parameters
 func (self *CalendarFiler) URL() *url.URL {
 	return &url.URL{Scheme: CalendarScheme, Host: self.name, RawQuery: self.params().Encode()}
 }

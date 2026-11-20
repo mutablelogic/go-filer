@@ -227,13 +227,13 @@ func (self *TaskFiler) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS - PROPERTIES
 
-// URL returns the URL of the filer, such as gtasks://tasks, with each of
-// its parameters
 // Description returns what the volume is, such as "Google Tasks for ada@example.com"
 func (self *TaskFiler) Description() string {
 	return self.description
 }
 
+// URL returns the URL of the filer, such as gtasks://tasks, with each of
+// its parameters
 func (self *TaskFiler) URL() *url.URL {
 	return &url.URL{Scheme: TasksScheme, Host: self.name, RawQuery: self.params().Encode()}
 }
