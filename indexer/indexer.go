@@ -228,6 +228,17 @@ func (self *Indexer) WatchObjects(ctx context.Context, ch chan<- schema.Event) e
 // a file, and a folder, of a bucket. A request which is conditional is the
 // backend's.
 func (self *Indexer) GetObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
+	// The object has the volume's name, whether it's the index's, or the
+	// backend's, which can leave it out
+	object, err := self.getObject(ctx, req)
+	if err == nil && object != nil {
+		object.Name = self.name
+	}
+	return object, err
+}
+
+// getObject returns an object, of the index, or of the backend
+func (self *Indexer) getObject(ctx context.Context, req schema.GetObjectRequest) (*schema.Object, error) {
 	conditional := len(req.IfNoneMatch) > 0 || !req.IfModifiedSince.IsZero()
 	isFolder := strings.HasSuffix(req.Path, "/") || folderPath(req.Path) == "/"
 	switch {
