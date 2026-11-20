@@ -262,7 +262,7 @@ LEFT JOIN object_state AS listed ON listed.volume = object.volume AND listed.key
 LEFT JOIN object_state AS did ON did.volume = object.volume AND did.key = object.key AND did.kind = @did
 WHERE object.volume = @volume AND object.key > @lower AND object.key < @upper AND object.key NOT GLOB '*/'
   AND (did.key IS NULL OR did.revision IS NOT listed.revision)
-ON CONFLICT (volume, key, kind) DO NOTHING;
+ON CONFLICT (volume, key, kind) DO UPDATE SET trace = coalesce(excluded.trace, trace);
 
 -- queue.failed
 UPDATE object_state SET attempts = attempts + (1 - @outage), outages = outages + @outage, error = @error, failed = @failed, after = @after, leased_until = NULL

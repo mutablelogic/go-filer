@@ -229,7 +229,9 @@ func (self *Indexer) do(ctx context.Context, w store.Work) error {
 // claimed again at once, rather than once its lease has passed
 func (self *Indexer) release(work []store.Work) {
 	for i := range work {
-		work[i].Attempts, work[i].Outages, work[i].Error = 0, 0, ""
+		// Its trace is cleared, so a newer one, of a push while it was done,
+		// is kept, rather than replaced by the one it was claimed with
+		work[i].Attempts, work[i].Outages, work[i].Error, work[i].Trace = 0, 0, "", ""
 	}
 	_ = self.store.Push(context.Background(), self.name, work...)
 }

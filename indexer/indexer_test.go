@@ -1387,9 +1387,16 @@ func Test_WorkTraced(t *testing.T) {
 	run(t, i)
 	require.Eventually(t, func() bool { return z.count("/x.txt") == 1 }, 10*time.Second, 5*time.Millisecond)
 
-	// The spans, by their IDs, once the task's has ended
+	// The spans, by their IDs, once the task's has ended, and those it's
+	// linked to, as the scan which queued it can end after it
 	var spans map[trace.SpanID]sdktrace.ReadOnlySpan
 	var task sdktrace.ReadOnlySpan
+	ended := func(span sdktrace.ReadOnlySpan) sdktrace.ReadOnlySpan {
+		if span == nil || len(span.Links()) == 0 {
+			return nil
+		}
+		return spans[span.Links()[0].SpanContext.SpanID()]
+	}
 	require.Eventually(t, func() bool {
 		spans, task = make(map[trace.SpanID]sdktrace.ReadOnlySpan), nil
 		for _, span := range recorder.Ended() {
@@ -1400,8 +1407,8 @@ func Test_WorkTraced(t *testing.T) {
 				}
 			}
 		}
-		return task != nil
-	}, 10*time.Second, 5*time.Millisecond)
+		return ended(ended(task)) != nil
+	}, 10*time.Second, 5*time.Millisecond, "the task, the scan and the poll have ended")
 	linked := func(span sdktrace.ReadOnlySpan) sdktrace.ReadOnlySpan {
 		t.Helper()
 		require.Len(t, span.Links(), 1, span.Name())

@@ -381,12 +381,15 @@ func Test_WorkTrace(t *testing.T) {
 	assert.Equal(t, span2.SpanContext().TraceID(), link.SpanContext.TraceID())
 	assert.Equal(t, span2.SpanContext().SpanID(), link.SpanContext.SpanID())
 
-	// A task's stale work keeps the trace which queued it too
+	// A task's stale work keeps the trace which queued it too, the newest,
+	// when it's queued again before it's claimed, but not an untraced one
 	require.NoError(t, s.PushStale(first, "media", "/", store.KindMetadata))
+	require.NoError(t, s.PushStale(second, "media", "/", store.KindMetadata))
+	require.NoError(t, s.PushStale(ctx, "media", "/", store.KindMetadata))
 	w = claim(store.KindMetadata)
 	link, ok = store.Link(w.Trace)
 	require.True(t, ok, w.Trace)
-	assert.Equal(t, span1.SpanContext().SpanID(), link.SpanContext.SpanID())
+	assert.Equal(t, span2.SpanContext().SpanID(), link.SpanContext.SpanID())
 
 	// Untraced work has none
 	_, ok = store.Link("")
