@@ -21,6 +21,7 @@ import (
 	google "github.com/mutablelogic/go-filer/backend/google"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -995,4 +996,172 @@ func testEventActionWatch(t *testing.T, interval string) {
 	// Nor is an event outside the days which are listed
 	run(`{"op":"create","title":"Far away","start":"2027-06-01"}`)
 	assert.Empty(t, events())
+}
+
+// Test_CalendarListingCache tests the listings a watch keeps are saved in
+// the volume's cache, so a watch which starts again, such as after a
+// restart, doesn't list them again, when nothing changed, and those of an
+// event which changes are listed again, but not others
+func Test_CalendarListingCache(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	credentials := calendarCredentials(t, endpoint)
+	cache := testCache()
+	filer := func() *google.CalendarFiler {
+		t.Helper()
+		f, err := google.NewCalendarFiler(t.Context(), "calendar", url.Values{"quota": {"0"}, "window": {"40d"}, "refresh_interval": {"10ms"}}, cache, gofiler.Opts{Credentials: credentials})
+		require.NoError(t, err)
+		google.SetCalendarNow(f, func() time.Time { return time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC) })
+		return f
+	}
+	lists := func() int {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.lists
+	}
+	watch := func(f *google.CalendarFiler) (chan schema.Event, func()) {
+		t.Helper()
+		ch, done := make(chan schema.Event, 64), make(chan error, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() { done <- f.WatchObjects(ctx, ch) }()
+		select {
+		case event := <-ch:
+			require.Equal(t, schema.EventTypeRescan, event.EventType)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no rescan")
+		}
+		return ch, func() {
+			cancel()
+			assert.ErrorIs(t, <-done, context.Canceled)
+		}
+	}
+	oct, nov, dec := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-10"}}, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-11"}}, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-12"}}
+
+	// Each month of the window is listed, as an index does, so where each
+	// event is, is known
+
+	// The first watch lists the months, which are saved
+	f := filer()
+	_, stop := watch(f)
+	listed(t, f, oct)
+	want := listed(t, f, nov)
+	listed(t, f, dec)
+	before := lists()
+	stop()
+
+	// A watch which starts again, when nothing changed, uses them
+	f = filer()
+	ch, stop := watch(f)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, oct)
+	assert.Equal(t, want, listed(t, f, nov))
+	listed(t, f, dec)
+	assert.Equal(t, before, lists(), "they aren't listed again")
+
+	// An event which changes, while it's watched, lists its month again,
+	// but not another's
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Changed" })
+	require.Eventually(t, func() bool {
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 5*time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, dec)
+	assert.Equal(t, before, lists(), "December isn't listed again")
+	listed(t, f, nov)
+	assert.Greater(t, lists(), before, "November is")
+	stop()
+
+	// A change while it isn't watched lists them again, as where its event
+	// was isn't known
+	fake.change(work, "e3", func(e *httpclient.Event) { e.Summary = "Away" })
+	before = lists()
+	f = filer()
+	_, stop = watch(f)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, dec)
+	assert.Greater(t, lists(), before)
+	stop()
+}
+
+// Test_CalendarListingCacheStale tests the listings which are saved aren't
+// used, after a restart, of other days, nor when another volume of the
+// sign-in synced the tokens they're of, after a change
+func Test_CalendarListingCacheStale(t *testing.T) {
+	fake, endpoint := newFakeCalendar(t)
+	credentials := calendarCredentials(t, endpoint)
+	cache := testCache()
+	day := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	filer := func(cache store.CacheStore, now time.Time) *google.CalendarFiler {
+		t.Helper()
+		f, err := google.NewCalendarFiler(t.Context(), "calendar", url.Values{"quota": {"0"}, "window": {"40d"}, "refresh_interval": {"10ms"}}, cache, gofiler.Opts{Credentials: credentials})
+		require.NoError(t, err)
+		google.SetCalendarNow(f, func() time.Time { return now })
+		return f
+	}
+	lists := func() int {
+		fake.Lock()
+		defer fake.Unlock()
+		return fake.lists
+	}
+	watch := func(f *google.CalendarFiler) func() {
+		t.Helper()
+		ch, done := make(chan schema.Event, 64), make(chan error, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() { done <- f.WatchObjects(ctx, ch) }()
+		select {
+		case event := <-ch:
+			require.Equal(t, schema.EventTypeRescan, event.EventType)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no rescan")
+		}
+		return func() {
+			cancel()
+			assert.ErrorIs(t, <-done, context.Canceled)
+		}
+	}
+	oct, nov := schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-10"}}, schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/2026/2026-11"}}
+
+	// The first watch lists October, at the start of the window, and
+	// November, which are saved
+	f := filer(cache, day)
+	stop := watch(f)
+	listed(t, f, oct)
+	listed(t, f, nov)
+	stop()
+
+	// A restart, on the next day, lists October again, as the days of the
+	// window it's of moved on, but not November, which they didn't
+	before := lists()
+	f = filer(cache, day.AddDate(0, 0, 1))
+	stop = watch(f)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, nov)
+	assert.Equal(t, before, lists(), "November is of the same days")
+	listed(t, f, oct)
+	assert.Greater(t, lists(), before, "October is of other days")
+	stop()
+
+	// An event which changes, which another volume of the sign-in syncs,
+	// lists it again, though the tokens the watch starts of found nothing
+	// changed
+	f = filer(cache, day)
+	stop = watch(f)
+	listed(t, f, nov)
+	stop()
+	fake.change(work, "e1", func(e *httpclient.Event) { e.Summary = "Elsewhere" })
+	other := filer(testCache(), day)
+	stop = watch(other)
+	time.Sleep(30 * time.Millisecond)
+	stop()
+	before = lists()
+	f = filer(cache, day)
+	stop = watch(f)
+	time.Sleep(30 * time.Millisecond)
+	listed(t, f, nov)
+	assert.Greater(t, lists(), before, "as the tokens aren't those it saved")
+	stop()
 }
