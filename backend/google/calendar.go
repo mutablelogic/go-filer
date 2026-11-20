@@ -35,7 +35,8 @@ import (
 // /2026/2026-11/20-work@example.com-abc123.ics, which is the day it starts,
 // in its own zone, its calendar, and its id. An event which repeats is an
 // event of each time it occurs, so an event is of a day, which it starts
-// on. It's read, and watched, but not written, so far.
+// on. It's read, and watched, and written of the event action, when it's
+// writable.
 type CalendarFiler struct {
 	calendarOpt
 	name   string
@@ -61,6 +62,12 @@ type CalendarFiler struct {
 	mu     sync.Mutex
 	paths  map[string]string
 	months map[string]bool
+
+	// The entity tags of the events the filer wrote, by their keys, which
+	// were sent as they were written, so a sync doesn't send them again, and
+	// the watches, which are sent them
+	written map[string]string
+	watches map[*calendarWatch]struct{}
 }
 
 // calendarOpt are the options of a calendar filer, of its parameters
@@ -465,6 +472,19 @@ func (self *CalendarFiler) span(p calendarPath) (time.Time, time.Time) {
 // is fs.ErrNotExist of another path, or a year, or month, which isn't
 // listed
 func (self *CalendarFiler) parsePath(op, p string) (calendarPath, error) {
+	return self.parsePathOf(op, p, true)
+}
+
+// parseEventPath returns a path, as parsePath does, but of any day, rather
+// than of those which are listed, as an event outside them can still be
+// changed, such as one an action created there
+func (self *CalendarFiler) parseEventPath(op, p string) (calendarPath, error) {
+	return self.parsePathOf(op, p, false)
+}
+
+// parsePathOf returns a path, of the days which are listed, when listed is
+// true, or of any day
+func (self *CalendarFiler) parsePathOf(op, p string, listed bool) (calendarPath, error) {
 	notExist := &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	rel := strings.Trim(path.Clean("/"+p), "/")
 	if rel == "" {
@@ -483,10 +503,10 @@ func (self *CalendarFiler) parsePath(op, p string) (calendarPath, error) {
 			return result, notExist
 		}
 		result.month, _ = strconv.Atoi(m[2])
-		if result.month < 1 || result.month > 12 || !self.listed(result.year, result.month) {
+		if result.month < 1 || result.month > 12 || (listed && !self.listed(result.year, result.month)) {
 			return result, notExist
 		}
-	} else {
+	} else if listed {
 		// A year of a month which is listed
 		from, to := self.days()
 		if result.year < from.Year() || result.year > to.AddDate(0, 0, -1).Year() {
@@ -693,6 +713,14 @@ func (self *CalendarFiler) hinted(calendar *httpclient.Calendar, changed []httpc
 	for i := range changed {
 		e := &changed[i]
 		key := eventKey(calendar.Id, e.Id)
+
+		// What the filer wrote was sent as it was, so isn't sent again
+		if etag, wrote := self.written[key]; wrote {
+			delete(self.written, key)
+			if etag != "" && etag == e.ETag && e.Status != "cancelled" {
+				continue
+			}
+		}
 		old, had := self.paths[key]
 		switch {
 		case e.Status == "cancelled":

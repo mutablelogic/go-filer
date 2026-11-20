@@ -77,8 +77,10 @@ func (eventAction) Input() *jsonschema.Schema {
 
 // Run creates an event, or updates, or deletes, the event of the path, and
 // returns it, as it is, or was, before it's deleted. What's got from Google
-// is got again, so the change is listed, and the watch sends it when it
-// syncs.
+// is got again, so the change is listed, and the watches are sent it, as
+// it's made (see wrote). An event, or its path, can be outside the days
+// which are listed, though it isn't listed. An event which repeats, rather
+// than a time it occurs, isn't changed, as it isn't listed.
 func (self eventAction) Run(ctx context.Context, data json.RawMessage) (*schema.Object, error) {
 	if self.readonly {
 		return nil, gofiler.ErrForbidden.Withf("Volume %q is read-only", self.name)
@@ -93,6 +95,8 @@ func (self eventAction) Run(ctx context.Context, data json.RawMessage) (*schema.
 	if err != nil {
 		return nil, self.apiError("event", "/", err)
 	}
+	// What's got from Google is got again, when it fails, as what it
+	// changed isn't known
 	defer self.clearCache()
 
 	// An event which is created is of a calendar, of its id, or the primary
@@ -115,13 +119,14 @@ func (self eventAction) Run(ctx context.Context, data json.RawMessage) (*schema.
 		if err != nil {
 			return nil, self.apiError("event", "/", err)
 		}
+		self.wrote(calendar, nil, event)
 		object, _ := self.eventObject(calendar, event)
 		return object, nil
 	}
 
 	// An event which is updated, or deleted, is got of its calendar, of its
 	// path, which must be where it is
-	path, err := self.parsePath("event", input.Path)
+	path, err := self.parseEventPath("event", input.Path)
 	if err != nil {
 		return nil, err
 	} else if path.event == "" {
@@ -140,7 +145,7 @@ func (self eventAction) Run(ctx context.Context, data json.RawMessage) (*schema.
 	current, err := self.client.Event(ctx, calendar.Id, path.event)
 	if err != nil {
 		return nil, self.apiError("event", input.Path, err)
-	} else if current.Status == "cancelled" || self.eventPath(calendar, current) != pathOfEvent(input.Path) {
+	} else if current.Status == "cancelled" || len(current.Recurrence) > 0 || self.eventPath(calendar, current) != pathOfEvent(input.Path) {
 		return nil, &fs.PathError{Op: "event", Path: input.Path, Err: fs.ErrNotExist}
 	}
 	if input.Op == opDelete {
@@ -148,6 +153,7 @@ func (self eventAction) Run(ctx context.Context, data json.RawMessage) (*schema.
 		if err := self.client.DeleteEvent(ctx, calendar.Id, current.Id); err != nil {
 			return nil, self.apiError("event", input.Path, err)
 		}
+		self.wrote(calendar, current, nil)
 		return object, nil
 	}
 	fields, err := input.fields(calendar, current)
@@ -158,6 +164,7 @@ func (self eventAction) Run(ctx context.Context, data json.RawMessage) (*schema.
 	if err != nil {
 		return nil, self.apiError("event", input.Path, err)
 	}
+	self.wrote(calendar, current, event)
 	object, _ := self.eventObject(calendar, event)
 	return object, nil
 }
@@ -193,7 +200,10 @@ func (input eventInput) check() error {
 
 // fields returns the fields of the input which are written, of an event
 // which is created, or of the current event, which is updated, whose length
-// is kept when only its start changes
+// is kept when only its start changes. Of an update, its start is written
+// when it's given, and its end when it's given, or its start is, so a
+// change of one doesn't undo another's of the other, and a day, or a time,
+// clears the other, as a patch keeps what isn't written.
 func (input eventInput) fields(calendar *httpclient.Calendar, current *httpclient.Event) (httpclient.EventFields, error) {
 	fields := httpclient.EventFields{}
 	if input.Title != nil {
@@ -268,7 +278,11 @@ func (input eventInput) fields(calendar *httpclient.Calendar, current *httpclien
 	} else if !end.t.After(start.t) {
 		return nil, gofiler.ErrBadParameter.With("event: it ends after it starts")
 	}
-	fields["start"], fields["end"] = start.field(), end.field()
+	clear := current != nil
+	if input.Start != nil || current == nil {
+		fields["start"] = start.field(clear)
+	}
+	fields["end"] = end.field(clear)
 	return fields, nil
 }
 
@@ -309,12 +323,19 @@ func currentWhen(t httpclient.EventTime) (when, error) {
 	return when{t: at, zone: t.TimeZone}, err
 }
 
-// field returns the start, or end, of an event, as the API has it
-func (w when) field() map[string]string {
-	if w.date {
-		return map[string]string{"date": w.t.Format(time.DateOnly)}
+// field returns the start, or end, of an event, as the API has it, with
+// what it isn't of as null, when it's cleared, as a patch keeps what isn't
+// written: the time, and zone, of a day, or the day of a time
+func (w when) field(clear bool) map[string]any {
+	field := map[string]any{}
+	if clear {
+		field["date"], field["dateTime"], field["timeZone"] = nil, nil, nil
 	}
-	field := map[string]string{"dateTime": w.t.Format(time.RFC3339)}
+	if w.date {
+		field["date"] = w.t.Format(time.DateOnly)
+		return field
+	}
+	field["dateTime"] = w.t.Format(time.RFC3339)
 	if w.zone != "" {
 		field["timeZone"] = w.zone
 	}

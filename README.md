@@ -201,6 +201,8 @@ An action is something a volume's backend can do beyond reading and writing its 
   * Without `end`, it lasts a day, or an hour.
   * `update` of an event's path changes the fields given (`title`, `description`, `location`, `start`, `end`, `timezone`, `attendees`). A new `start` alone keeps its length. The path of one time a repeating event occurs changes that time alone.
   * `delete` deletes it.
+  * Those who are invited aren't emailed. A repeating series can't be changed as a whole, only one occurrence at a time.
+  * Watches are sent the change as it's made, not at the next sync.
 * **Google Tasks** also has `task`: `{"op":"create","title":"Call"}` creates a task in the default list, or in a list with `"path":"/<list>"`. `update` changes the fields given (`title`, `notes`, `due`, `completed`, `parent`) of `/<list>/<id>.ics`, and `delete` deletes it.
 * **Google Contacts** has `contact` on a writable volume: `{"op":"create","given_name":"Grace","emails":["grace@example.com"]}`, `update` of `/<id>.vcf` with the fields to change (`given_name`, `family_name`, `emails`, `phones`, `organization`, `job_title`, `birthday`, `notes`, `addresses`), or `delete`. A list replaces the contact's.
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"sync"
 	"time"
 
 	// Packages
@@ -25,6 +26,14 @@ type calendarSync struct {
 	stored    map[string]string
 	rejected  map[string]time.Time
 	calendars map[string]string // The entity tags of the calendars, by their ids, which change when one's renamed
+}
+
+// calendarWatch is a watch's events, of what the filer wrote, which it
+// hasn't sent, and the signal that there are some
+type calendarWatch struct {
+	mu      sync.Mutex
+	pending []schema.Event
+	signal  chan struct{}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,7 +63,9 @@ const (
 // removed, or changed, such as renamed, which its events' content is of, a
 // calendar's token was rejected, so its changes may have been missed, or
 // the days which are listed move on. The first change is a rescan of the
-// root, once the calendars are watched.
+// root, once the calendars are watched. What the filer writes, of the event
+// action, is sent as it's written, rather than when it's synced, and isn't
+// sent again when it is (see wrote).
 //
 // The tokens are stored, with the provider of credentials, of the sign-in
 // (see calendarSyncKey), so after a restart, the changes since they were
@@ -74,13 +85,20 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 	state := &calendarSync{tokens: self.loadTokens(ctx), rejected: make(map[string]time.Time), calendars: make(map[string]string)}
 	state.stored = maps.Clone(state.tokens)
 	from, _ := self.days()
+
+	// What the filer writes, from when it's watching, before the poll, so
+	// it's in the rescan
+	watch := self.watch()
+	defer self.unwatch(watch)
 	if _, _, err := self.poll(ctx, state); err != nil {
 		return err
 	}
 
 	// What was got before it's watched may be out of date, of what the poll
-	// found, which isn't sent, so it's got again, of the rescan
+	// found, which isn't sent, so it's got again, of the rescan, which what
+	// the filer wrote, until then, is of
 	self.clearCache()
+	watch.take()
 	send := func(event schema.Event) error {
 		select {
 		case ch <- event:
@@ -98,6 +116,14 @@ func (self *CalendarFiler) WatchObjects(ctx context.Context, ch chan<- schema.Ev
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-watch.signal:
+			// What the filer wrote, whose cache it cleared
+			for _, event := range watch.take() {
+				if err := send(event); err != nil {
+					return err
+				}
+			}
+			continue
 		case <-ticker.C:
 		}
 		rescan, events, err := self.poll(ctx, state)
@@ -209,6 +235,102 @@ func (self *CalendarFiler) poll(ctx context.Context, state *calendarSync) (bool,
 		state.stored = maps.Clone(state.tokens)
 	}
 	return rescan, events, nil
+}
+
+// watch returns a watch, which is sent what the filer writes, until it's
+// unwatched
+func (self *CalendarFiler) watch() *calendarWatch {
+	watch := &calendarWatch{signal: make(chan struct{}, 1)}
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	if self.watches == nil {
+		self.watches = make(map[*calendarWatch]struct{})
+	}
+	self.watches[watch] = struct{}{}
+	return watch
+}
+
+// unwatch removes a watch
+func (self *CalendarFiler) unwatch(watch *calendarWatch) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	delete(self.watches, watch)
+}
+
+// wrote sends the watches what the filer wrote, as it wrote it, of an event
+// of a calendar, as it was, or nil, when it's created, and as it is, or nil,
+// when it's deleted: deleted where it was, and created where it is, or
+// updated, when it's where it was, of the days which are listed. Where it
+// is, is known, and its entity tag, so a sync doesn't send it again. The
+// cache is cleared first, so it's read as it is.
+func (self *CalendarFiler) wrote(calendar *httpclient.Calendar, before, after *httpclient.Event) {
+	self.clearCache()
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	from, to := self.days()
+	pathOf := func(e *httpclient.Event) string {
+		if e == nil || !reEventId.MatchString(e.Id) || !onDays(e, from, to) {
+			return ""
+		}
+		return self.eventPath(calendar, e)
+	}
+	old, now := pathOf(before), pathOf(after)
+	event := func(t schema.EventType, p string) schema.Event {
+		return schema.Event{EventType: t, ObjectKey: schema.ObjectKey{Name: self.name, Path: p}}
+	}
+	var events []schema.Event
+	if old != "" && old != now {
+		events = append(events, event(schema.EventTypeDeleted, old))
+	}
+	if now != "" && now == old {
+		events = append(events, event(schema.EventTypeUpdated, now))
+	} else if now != "" {
+		events = append(events, event(schema.EventTypeCreated, now))
+	}
+
+	// Where it is, and its entity tag, which a sync is of
+	e := after
+	if e == nil {
+		e = before
+	}
+	key := eventKey(calendar.Id, e.Id)
+	if self.paths != nil {
+		if now != "" {
+			self.paths[key] = now
+		} else {
+			delete(self.paths, key)
+		}
+	}
+	if after != nil {
+		if self.written == nil {
+			self.written = make(map[string]string)
+		}
+		self.written[key] = after.ETag
+	} else {
+		delete(self.written, key)
+	}
+	if len(events) == 0 {
+		return
+	}
+	for watch := range self.watches {
+		watch.mu.Lock()
+		watch.pending = append(watch.pending, events...)
+		watch.mu.Unlock()
+		select {
+		case watch.signal <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// take returns the events of what the filer wrote, which the watch hasn't
+// sent, and empties them
+func (self *calendarWatch) take() []schema.Event {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	events := self.pending
+	self.pending = nil
+	return events
 }
 
 // loadTokens returns the sync tokens which are stored, of the sign-in, or

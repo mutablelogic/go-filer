@@ -33,12 +33,13 @@ type fakeCalendar struct {
 	calendars     []httpclient.Calendar
 	events        map[string][]fakeEvent // By the calendar's id
 	version       map[string]int
-	gone          map[string]bool // Calendars whose tokens are rejected
-	syncs         map[string]int  // How many times each calendar is synced without a token
-	lists         int             // How many times events are listed
-	gets          int             // How many times an event is got
-	calendarLists int             // How many times the calendars are listed
-	endless       bool            // Every listing has another page
+	gone          map[string]bool            // Calendars whose tokens are rejected
+	syncs         map[string]int             // How many times each calendar is synced without a token
+	lists         int                        // How many times events are listed
+	gets          int                        // How many times an event is got
+	calendarLists int                        // How many times the calendars are listed
+	endless       bool                       // Every listing has another page
+	fields        map[string]json.RawMessage // The fields of the last write
 }
 
 type fakeEvent struct {
@@ -167,7 +168,7 @@ func (f *fakeCalendar) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var items []any
 		for _, e := range f.events[calendar] {
 			if e.version > since && since > 0 {
-				items = append(items, httpclient.Event{Id: e.Id, Status: e.Status, Start: e.Start, Recurrence: e.Recurrence, RecurringEventId: e.RecurringEventId})
+				items = append(items, httpclient.Event{Id: e.Id, ETag: e.ETag, Status: e.Status, Start: e.Start, Recurrence: e.Recurrence, RecurringEventId: e.RecurringEventId})
 			} else if e.version > since {
 				items = append(items, map[string]string{"id": e.Id})
 			}
@@ -196,12 +197,17 @@ func (f *fakeCalendar) write(w http.ResponseWriter, r *http.Request, parts []str
 	}
 	calendar := parts[1]
 	var fields map[string]json.RawMessage
-	if r.Method != http.MethodDelete {
+	if r.URL.Query().Get("sendUpdates") != "none" {
+		// Those who are invited aren't sent emails
+		writeError(w, http.StatusBadRequest)
+		return
+	} else if r.Method != http.MethodDelete {
 		if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
 			writeError(w, http.StatusBadRequest)
 			return
 		}
 	}
+	f.fields = fields
 	apply := func(e *httpclient.Event) {
 		for key, raw := range fields {
 			switch key {
@@ -888,4 +894,105 @@ func Test_EventAction(t *testing.T) {
 	}
 	_, err = run(`{"op":"update","path":"` + strings.Replace(e1Path, "-e1.ics", "-zz.ics", 1) + `","title":"x"}`)
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+
+	// An event which repeats, rather than a time it occurs, isn't listed,
+	// so isn't changed, as that would change each time it occurs
+	fake.put(work, httpclient.Event{Id: "series", ETag: `"series-1"`, Status: "confirmed", Recurrence: []string{"RRULE:FREQ=WEEKLY"}, Start: httpclient.EventTime{DateTime: "2026-11-02T09:00:00Z"}, End: httpclient.EventTime{DateTime: "2026-11-02T10:00:00Z"}})
+	for _, input := range []string{
+		`{"op":"update","path":"/2026/2026-11/02-` + work + `-series.ics","title":"x"}`,
+		`{"op":"delete","path":"/2026/2026-11/02-` + work + `-series.ics"}`,
+	} {
+		_, err = run(input)
+		assert.ErrorIs(t, err, fs.ErrNotExist, input)
+	}
+	assert.Empty(t, event(work, "series").Summary, "it isn't changed")
+
+	// Its end alone is written, rather than its start, which isn't changed
+	_, err = run(`{"op":"update","path":"` + e1Path + `","end":"2026-11-20T12:30:00+01:00"}`)
+	require.NoError(t, err)
+	fake.Lock()
+	assert.NotContains(t, fake.fields, "start")
+	assert.Contains(t, fake.fields, "end")
+	fake.Unlock()
+	assert.Equal(t, "2026-11-20T12:30:00+01:00", event(work, "e1").End.DateTime)
+
+	// A time which becomes a day clears its time, and zone, as a patch keeps
+	// what isn't written, and a day which becomes a time clears its day
+	_, err = run(`{"op":"update","path":"` + e1Path + `","start":"2026-11-21","end":"2026-11-22"}`)
+	require.NoError(t, err)
+	fake.Lock()
+	assert.JSONEq(t, `{"date":"2026-11-21","dateTime":null,"timeZone":null}`, string(fake.fields["start"]))
+	assert.JSONEq(t, `{"date":"2026-11-22","dateTime":null,"timeZone":null}`, string(fake.fields["end"]))
+	fake.Unlock()
+	_, err = run(`{"op":"update","path":"` + pathOf("e1") + `","start":"2026-11-21T09:00","end":"2026-11-21T10:00"}`)
+	require.NoError(t, err)
+	fake.Lock()
+	assert.JSONEq(t, `{"date":null,"dateTime":"2026-11-21T09:00:00+01:00","timeZone":"Europe/Berlin"}`, string(fake.fields["start"]))
+	fake.Unlock()
+
+	// An event outside the days which are listed is created, and can be
+	// changed, and deleted, of its path, though it isn't listed
+	far, err := run(`{"op":"create","title":"Far away","start":"2027-06-01"}`)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(far.Path, "/2027/2027-06/01-"), far.Path)
+	_, err = run(`{"op":"update","path":"` + far.Path + `","title":"Further"}`)
+	require.NoError(t, err)
+	_, err = run(`{"op":"delete","path":"` + far.Path + `"}`)
+	require.NoError(t, err)
+}
+
+// Test_EventActionWatch tests what's written is sent as it's written, of a
+// watch which doesn't sync until long after, and isn't sent again, when it's
+// synced, of a watch which syncs often
+func Test_EventActionWatch(t *testing.T) {
+	for _, interval := range []string{"1h", "10ms"} {
+		t.Run(interval, func(t *testing.T) { testEventActionWatch(t, interval) })
+	}
+}
+
+func testEventActionWatch(t *testing.T, interval string) {
+	_, endpoint := newFakeCalendar(t)
+	writer := newCredentials(t, endpoint, func(g *authclient.Grant) { g.Scopes = []string{httpclient.CalendarScope} })
+	filer := newCalendarFiler(t, writer, url.Values{"readonly": {"false"}, "refresh_interval": {interval}})
+	run := func(input string) *schema.Object {
+		t.Helper()
+		object, err := filer.Actions()[0].Run(t.Context(), json.RawMessage(input))
+		require.NoError(t, err)
+		return object
+	}
+	ch, done := make(chan schema.Event, 16), make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { done <- filer.WatchObjects(ctx, ch) }()
+	defer func() {
+		cancel()
+		assert.ErrorIs(t, <-done, context.Canceled)
+	}()
+	events := func() []string {
+		t.Helper()
+		var result []string
+		for {
+			select {
+			case event := <-ch:
+				result = append(result, event.EventType.String()+" "+event.Path)
+			case <-time.After(150 * time.Millisecond):
+				return result
+			}
+		}
+	}
+	assert.Equal(t, []string{"rescan /"}, events())
+	listed(t, filer, schema.ListObjectsRequest{Path: "/", Recursive: true})
+
+	// What's written is sent as it's written, and not again when it's synced
+	created := run(`{"op":"create","title":"Lunch","start":"2026-11-25T12:30"}`)
+	assert.Equal(t, []string{"created " + created.Path}, events())
+	run(`{"op":"update","path":"` + created.Path + `","title":"Late lunch"}`)
+	assert.Equal(t, []string{"updated " + created.Path}, events())
+	moved := run(`{"op":"update","path":"` + created.Path + `","start":"2026-11-26T12:30"}`)
+	assert.Equal(t, []string{"deleted " + created.Path, "created " + moved.Path}, events())
+	run(`{"op":"delete","path":"` + moved.Path + `"}`)
+	assert.Equal(t, []string{"deleted " + moved.Path}, events())
+
+	// Nor is an event outside the days which are listed
+	run(`{"op":"create","title":"Far away","start":"2027-06-01"}`)
+	assert.Empty(t, events())
 }
