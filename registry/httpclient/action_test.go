@@ -19,6 +19,7 @@ import (
 	httpclient "github.com/mutablelogic/go-filer/registry/httpclient"
 	httphandler "github.com/mutablelogic/go-filer/registry/httphandler"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
@@ -59,17 +60,17 @@ func (a noteAction) Run(ctx context.Context, input json.RawMessage) (*schema.Obj
 func TestActions(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	store, err := sqlite.New(ctx, gosqlite.Memory)
+	s, err := sqlite.New(ctx, gosqlite.Memory)
 	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
-	open := func(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+	t.Cleanup(func() { s.Close() })
+	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(registry.VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err
 		}
 		return notes{Filer: b, u: u}, nil
 	}
-	reg, err := registry.New(ctx, registry.WithDebounce(0), registry.WithStore(store), registry.WithBackend("notes", "Notes", open))
+	reg, err := registry.New(ctx, registry.WithDebounce(0), registry.WithStore(s), registry.WithBackend("notes", "Notes", open))
 	require.NoError(t, err)
 	runCtx, cancel := context.WithCancel(ctx)
 	running := make(chan error, 1)

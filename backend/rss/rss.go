@@ -21,6 +21,7 @@ import (
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
+	store "github.com/mutablelogic/go-filer/store"
 	rss "github.com/mutablelogic/go-rss"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -35,6 +36,7 @@ type Filer struct {
 	description string
 	refresh     time.Duration // the refresh interval of the option, or zero, when it isn't set
 	opts        gofiler.Opts
+	cache       store.CacheStore // the volume's cache, which the registry owns
 	client      *client.Client
 
 	mu           sync.Mutex
@@ -94,7 +96,7 @@ var options = map[string]bool{paramName: true, paramRefresh: true, paramReadonly
 // refresh_interval, readonly, insecure and description. The feed is fetched,
 // so one which can't be is an error, and is described of its title, unless
 // it has a description option.
-func Open(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, error) {
+func Open(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	if u == nil || u.Scheme != Scheme {
 		return nil, gofiler.ErrBadParameter.With("not a feed's url")
 	}
@@ -128,19 +130,21 @@ func Open(ctx context.Context, u *url.URL, opts gofiler.Opts) (gofiler.Filer, er
 		return nil, gofiler.ErrBadParameter.Withf("a feed's url is rss://<name>/<host>/<path>: %q", u.String())
 	}
 	feed.RawQuery = query.Encode()
-	return New(ctx, name, feed, params, opts)
+	return New(ctx, name, feed, params, cache, opts)
 }
 
-// New creates the backend of a feed, of its URL, and the volume's options:
-// its refresh_interval, and its description
-func New(ctx context.Context, name string, feed *url.URL, params url.Values, opts gofiler.Opts) (*Filer, error) {
-	if !types.IsIdentifier(name) {
+// New creates the backend of a feed, of its URL, the volume's options, its
+// refresh_interval, and its description, and its cache
+func New(ctx context.Context, name string, feed *url.URL, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*Filer, error) {
+	if cache == nil {
+		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
+	} else if !types.IsIdentifier(name) {
 		return nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", name)
 	} else if feed == nil || (feed.Scheme != "http" && feed.Scheme != "https") || feed.Host == "" {
 		return nil, gofiler.ErrBadParameter.With("the url of a feed is http or https")
 	}
 	f := *feed
-	self := &Filer{name: name, feed: &f, opts: opts, now: time.Now, description: params.Get(schema.OptDescription)}
+	self := &Filer{name: name, feed: &f, opts: opts, cache: cache, now: time.Now, description: params.Get(schema.OptDescription)}
 	if value := params.Get(paramRefresh); value != "" {
 		if d, err := time.ParseDuration(value); err != nil || d < 0 {
 			return nil, gofiler.ErrBadParameter.Withf("%s: %q", paramRefresh, value)
@@ -200,7 +204,7 @@ func (self *Filer) URL() *url.URL {
 func (self *Filer) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
 	u := self.URL()
 	u.RawQuery = gofiler.PatchValues(u.Query(), patch).Encode()
-	return Open(ctx, u, self.opts)
+	return Open(ctx, u, self.cache, self.opts)
 }
 
 // GetObject returns an item, or a folder of its days

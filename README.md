@@ -233,7 +233,7 @@ An action is something a volume's backend can do beyond reading and writing its 
 
 ## Cache
 
-A `store.CacheStore` keeps what a volume's backend gets from a service, by key, on disk, so it isn't held in memory or fetched again after a restart. Each volume has its own, and the registry will pass it to the backend's New function (#170). Using it is up to the backend, which must work without any of its entries.
+A `store.CacheStore` keeps what a volume's backend gets from a service, by key, on disk, so it isn't held in memory or fetched again after a restart. Each volume has its own, which the registry passes to its backend's New function. Using it is up to the backend, which must work without any of its entries.
 
 * **`Get(ctx, key)`** returns an entry, or `ErrNotFound` if there's none or it expired.
 * **`Put(ctx, key, ttl, meta, r)`** stores the content as it's read, with its metadata, for the TTL (zero keeps it until it's replaced or deleted). The old entry is replaced only once all the new content is read, and kept if it can't be.
@@ -245,6 +245,11 @@ A `store.CacheStore` keeps what a volume's backend gets from a service, by key, 
   * Content is stored in 256 KiB chunks, so only one chunk is in memory as it's written or read.
   * An entry that's replaced or deleted while it's read stays readable until it's closed, and is deleted then.
   * When it's opened, entries left half-written, or expired, are deleted, and their space reclaimed.
+* **The registry** keeps each volume's cache in its cache directory (`registry.WithCacheDir`), or a temporary one that's removed when it closes.
+  * A cache's file is `<volume>.<hash of its URL>.sqlite`. So it's kept when a volume is mounted again or the server restarts, and starts again when its URL changes.
+  * A cache is deleted once its backends are closed, unless it's of the volume as it's stored: the old one when its URL changes, and all of them when it's deleted. A restart deletes those left of volumes, or URLs, that aren't stored.
+  * A backend made to check a volume's URL, when it's created or updated, gets a cache in memory.
+  * The `filer` server's directory is `cache`, beside its credentials, in its folder of the user's cache.
 
 ## Indexer
 
@@ -270,7 +275,7 @@ A `store.CacheStore` keeps what a volume's backend gets from a service, by key, 
 * **The store is the source of truth.** `CreateVolume`, `UpdateVolume` and `DeleteVolume` validate a volume, by creating its backend and closing it, and write the store. They return before it's mounted.
 * **`Run` mounts what's stored.** It mounts the enabled volumes when it starts, and then follows the store: those created, updated, disabled or deleted, of the registry's calls, and the broadcaster's `store` changes. A store of one process, such as SQLite, publishes its own changes, and Postgres will publish those of other processes too (#72). When the store can't be listed, it's listed again, after a while. A volume is mounted again in place, keeping its name until its old backend is closed, and one which is deleted, and created again, is mounted again.
 * **Backends are pluggable.** `registry.WithBackend(scheme, description, open)` adds a backend for a URL scheme, such as one in another package or program, with what it is, such as `RSS feeds`.
-  * `open(ctx, url, opts)` creates the volume's backend. The URL has the volume's options except `index`, which the registry handles. `opts` are the options every backend gets: the tracer, the credentials provider, and the client options.
+  * `open(ctx, url, cache, opts)` creates the volume's backend. The URL has the volume's options except `index`, which the registry handles. `cache` is the volume's `store.CacheStore`, which the registry owns. `opts` are the options every backend gets: the tracer, the credentials provider, and the client options.
   * The built-in backends (`file`, `s3`, `gtasks`, `gcontacts`, `gcalendar`, `gdrive`) are registered the same way. A scheme is lower case, of two characters or more, as one letter is a Windows drive. A scheme that's taken, or isn't valid, is an error.
   * **A stored volume whose backend isn't registered,** such as after a server is built without it, is offline, with why: `enabled: false` and an `unsupported scheme` error. Its URL and index are kept, and it's mounted once its backend is registered again.
   * **Choosing backends:** `registry.WithSchemes(schemes...)` uses only those named. `filer run --backend file,s3,rss` (repeatable, or `FILER_BACKEND`) does this, and runs every backend without it. A volume of a backend that isn't run is offline. A name that isn't a backend's is an error that lists those that are.

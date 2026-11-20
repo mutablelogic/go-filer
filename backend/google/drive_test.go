@@ -258,7 +258,7 @@ func newDriveFiler(t *testing.T, endpoint string, params url.Values) *google.Dri
 		params = url.Values{}
 	}
 	params.Set("quota", "0")
-	filer, err := google.NewDriveFiler(t.Context(), "drive", params, gofiler.Opts{Credentials: driveCredentials(t, endpoint)})
+	filer, err := google.NewDriveFiler(t.Context(), "drive", params, testCache(), gofiler.Opts{Credentials: driveCredentials(t, endpoint)})
 	require.NoError(t, err)
 	return filer
 }
@@ -269,26 +269,26 @@ func Test_NewDriveFiler(t *testing.T) {
 
 	// A sign-in without the drive's scope signs in again, asking for it,
 	// and keeping those it has, such as of tasks
-	_, err := google.NewDriveFiler(ctx, "drive", url.Values{"quota": {"0"}}, gofiler.Opts{Credentials: newCredentials(t, endpoint, nil)})
+	_, err := google.NewDriveFiler(ctx, "drive", url.Values{"quota": {"0"}}, testCache(), gofiler.Opts{Credentials: newCredentials(t, endpoint, nil)})
 	require.Equal(t, http.StatusUnauthorized, status(err))
 	signIn := authclient.SignInOf(err)
 	require.NotNil(t, signIn)
 	assert.Equal(t, []string{httpclient.DriveReadonlyScope, httpclient.EmailScope, httpclient.TasksScope}, signIn.Scopes)
 
 	// A sign-in which can write files can read them
-	_, err = google.NewDriveFiler(ctx, "drive", url.Values{"quota": {"0"}}, gofiler.Opts{Credentials: newCredentials(t, endpoint, func(g *authclient.Grant) {
+	_, err = google.NewDriveFiler(ctx, "drive", url.Values{"quota": {"0"}}, testCache(), gofiler.Opts{Credentials: newCredentials(t, endpoint, func(g *authclient.Grant) {
 		g.Scopes = []string{httpclient.DriveScope}
 	})})
 	require.NoError(t, err)
 
 	// Parameters which aren't known, or can't be parsed, are bad
 	for _, params := range []url.Values{{"hidden": {"true"}}, {"quota": {"-1"}}, {"refresh_interval": {"soon"}}, {"credential": {"S3_SECRET"}}, {"readonly": {"maybe"}}} {
-		_, err := google.NewDriveFiler(ctx, "drive", params, gofiler.Opts{Credentials: driveCredentials(t, endpoint)})
+		_, err := google.NewDriveFiler(ctx, "drive", params, testCache(), gofiler.Opts{Credentials: driveCredentials(t, endpoint)})
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
 	// A writable volume of a sign-in which can only read files signs in
 	// again, asking for the scope of writing them
-	_, err = google.NewDriveFiler(ctx, "drive", url.Values{"readonly": {"false"}}, gofiler.Opts{Credentials: driveCredentials(t, endpoint)})
+	_, err = google.NewDriveFiler(ctx, "drive", url.Values{"readonly": {"false"}}, testCache(), gofiler.Opts{Credentials: driveCredentials(t, endpoint)})
 	require.Equal(t, http.StatusUnauthorized, status(err))
 	signIn = authclient.SignInOf(err)
 	require.NotNil(t, signIn)
@@ -887,7 +887,7 @@ func writableDriveFiler(t *testing.T, endpoint string, params url.Values) *googl
 	}
 	params.Set("quota", "0")
 	params.Set("readonly", "false")
-	filer, err := google.NewDriveFiler(t.Context(), "drive", params, gofiler.Opts{Credentials: newCredentials(t, endpoint, func(g *authclient.Grant) {
+	filer, err := google.NewDriveFiler(t.Context(), "drive", params, testCache(), gofiler.Opts{Credentials: newCredentials(t, endpoint, func(g *authclient.Grant) {
 		g.Scopes = []string{httpclient.DriveScope}
 	})})
 	require.NoError(t, err)

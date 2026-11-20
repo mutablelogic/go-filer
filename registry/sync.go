@@ -133,6 +133,16 @@ func (self *Registry) syncVolume(ctx context.Context, logger *slog.Logger, name 
 		return
 	}
 
+	// Its cache is of its stored URL, and those of its others, or of a
+	// volume which is deleted, are deleted, once they aren't used
+	storedURL := ""
+	if stored != nil {
+		storedURL = stored.URL
+	}
+	if err := self.caches.stored(name, storedURL); err != nil {
+		logger.WarnContext(ctx, "a volume's old caches can't be deleted", "volume", name, "error", err.Error())
+	}
+
 	// The volume's entry, which is mounted, or nil
 	self.RLock()
 	e := self.backend[name]
@@ -214,7 +224,7 @@ func (self *Registry) openURL(ctx context.Context, name, volumeURL string) (gofi
 	if err != nil {
 		return nil, gofiler.ErrBadParameter.Withf("invalid url of volume %q", name)
 	}
-	b, err := self.new(ctx, u)
+	b, err := self.new(ctx, u, true)
 	if err != nil {
 		return nil, err
 	} else if VolumeName(b.URL()) != name {

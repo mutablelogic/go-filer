@@ -288,7 +288,7 @@ func newCalendarFiler(t *testing.T, credentials *credentials, params url.Values)
 	if !params.Has("window") {
 		params.Set("window", "40d")
 	}
-	filer, err := google.NewCalendarFiler(t.Context(), "calendar", params, gofiler.Opts{Credentials: credentials})
+	filer, err := google.NewCalendarFiler(t.Context(), "calendar", params, testCache(), gofiler.Opts{Credentials: credentials})
 	require.NoError(t, err)
 	google.SetCalendarNow(filer, func() time.Time { return time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC) })
 	return filer
@@ -317,7 +317,7 @@ func Test_NewCalendarFiler(t *testing.T) {
 
 	// A sign-in without the calendar's scope signs in again, asking for it,
 	// and keeping those it has, such as of tasks
-	_, err := google.NewCalendarFiler(ctx, "calendar", url.Values{"quota": {"0"}}, gofiler.Opts{Credentials: newCredentials(t, endpoint, nil)})
+	_, err := google.NewCalendarFiler(ctx, "calendar", url.Values{"quota": {"0"}}, testCache(), gofiler.Opts{Credentials: newCredentials(t, endpoint, nil)})
 	require.Equal(t, http.StatusUnauthorized, status(err))
 	signIn := authclient.SignInOf(err)
 	require.NotNil(t, signIn)
@@ -325,7 +325,7 @@ func Test_NewCalendarFiler(t *testing.T) {
 
 	// A writable volume of a sign-in which can only read calendars signs in
 	// again, asking for the scope of writing their events
-	_, err = google.NewCalendarFiler(ctx, "calendar", url.Values{"readonly": {"false"}, "quota": {"0"}}, gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
+	_, err = google.NewCalendarFiler(ctx, "calendar", url.Values{"readonly": {"false"}, "quota": {"0"}}, testCache(), gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
 	require.Equal(t, http.StatusUnauthorized, status(err))
 	signIn = authclient.SignInOf(err)
 	require.NotNil(t, signIn)
@@ -333,7 +333,7 @@ func Test_NewCalendarFiler(t *testing.T) {
 
 	// Parameters which aren't known, or can't be parsed, are bad
 	for _, params := range []url.Values{{"readonly": {"maybe"}}, {"hidden": {"true"}}, {"window": {"-1d"}}, {"window": {"3651d"}}, {"window": {"a year"}}, {"credential": {"S3_SECRET"}}, {"credential": {"GOOGLE_TOKEN_CALENDAR_SYNC"}}} {
-		_, err := google.NewCalendarFiler(ctx, "calendar", params, gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
+		_, err := google.NewCalendarFiler(ctx, "calendar", params, testCache(), gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, params)
 	}
 
@@ -793,7 +793,7 @@ func Test_EventAction(t *testing.T) {
 	ctx := t.Context()
 	fake, endpoint := newFakeCalendar(t)
 	assert.Nil(t, newCalendarFiler(t, calendarCredentials(t, endpoint), nil).Actions(), "a read-only volume has none")
-	_, err := google.NewCalendarFiler(ctx, "calendar", url.Values{"readonly": {"false"}, "quota": {"0"}}, gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
+	_, err := google.NewCalendarFiler(ctx, "calendar", url.Values{"readonly": {"false"}, "quota": {"0"}}, testCache(), gofiler.Opts{Credentials: calendarCredentials(t, endpoint)})
 	assert.Error(t, err, "a sign-in which can only read calendars can't write events")
 
 	writer := newCredentials(t, endpoint, func(g *authclient.Grant) { g.Scopes = []string{httpclient.CalendarScope} })

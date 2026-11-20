@@ -71,6 +71,21 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 		logger.InfoContext(ctx, "added backend", "scheme", backend.Scheme, "description", backend.Description)
 	}
 
+	// The caches of volumes which aren't stored, or of their URLs which
+	// aren't, such as of a volume which was deleted, or changed, before a
+	// restart, are deleted
+	if volumes, err := self.store.ListVolumes(ctx); err != nil {
+		logger.WarnContext(ctx, "the volumes' caches can't be checked", "error", err.Error())
+	} else {
+		urls := make(map[string]string, len(volumes))
+		for _, volume := range volumes {
+			urls[volume.Name] = volume.URL
+		}
+		if err := self.caches.sweep(urls); err != nil {
+			logger.WarnContext(ctx, "the volumes' old caches can't be deleted", "error", err.Error())
+		}
+	}
+
 	// The changes, which are held until their objects are quiet, and are
 	// counted, and published to the broadcaster, when there is one
 	debouncer := newDebouncer(self.debounce)

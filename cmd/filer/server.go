@@ -89,6 +89,13 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	}
 	defer closeStore()
 
+	// The volumes' caches, beside the credentials, in the command's folder
+	// of the user's cache, so they're kept after a restart
+	cacheDir, err := cacheDir(ctx)
+	if err != nil {
+		return err
+	}
+
 	// The task which enriches the files of volumes with index=metadata, of
 	// go-metadata, which reads media, too, when it's built with cgo
 	task, err := runner.Enrichment.WithMetadataEnrichment(ctx)
@@ -101,7 +108,7 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// when the registry, and its volumes, are closed
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*registry.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, registry.WithCredentials(credentials), registry.WithStore(s), task,
+	}, registry.WithCredentials(credentials), registry.WithStore(s), registry.WithCacheDir(cacheDir), task,
 		// RSS feeds are a backend which isn't built into the registry, which
 		// is added, as another program's would be
 		registry.WithBackend(rss.Scheme, rss.Description, rss.Open),
