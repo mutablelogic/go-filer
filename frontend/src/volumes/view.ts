@@ -1,8 +1,9 @@
 // The Volumes module: the sidebar's Volumes, of the Volumes page, with the
 // volumes beneath it, each of which links to its page, which are added and
 // removed as the volumes are. A volume's page has a tree of its folders,
-// and the folder which is chosen, which is in the location, as
-// #volume/<name>/<path>, where its file view will be.
+// beside the objects of the folder which is chosen,
+// which is in the location, as #volume/<name>/<path>, each of which scrolls
+// on its own.
 
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
@@ -13,12 +14,15 @@ import type { NotificationController } from '@mutablelogic/go-server/notificatio
 import type { Route, Router } from '@mutablelogic/go-server/router';
 import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
+import { ObjectChangeSchema } from '../filer/schema.ts';
+import { FolderController } from '../folder/controller.ts';
 import { baseName, objectTitle, volumeLabel, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
 import '@mutablelogic/go-server/page/view';
 import '../tree/view.ts';
+import '../folder/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -99,16 +103,19 @@ export class VolumeElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
         tree: { attribute: false },
+        folder: { attribute: false },
         changes: { attribute: false },
         name: { type: String },
         path: { type: String },
         volume: { state: true },
     };
 
-    // controller keeps the volumes, tree their folders, and changes are
-    // followed, so they're loaded again when they change
+    // controller keeps the volumes, tree their folders, folder the objects
+    // of the folder which is chosen, and changes are followed, so they're
+    // loaded again when they change
     declare controller?: VolumesController;
     declare tree?: TreeController;
+    declare folder?: FolderController;
     declare changes?: ChangesController;
 
     // name is the volume's, and path the folder's which is chosen
@@ -133,7 +140,7 @@ export class VolumeElement extends LitElement {
     }
 
     protected override willUpdate(changed: PropertyValues<this>) {
-        if ((changed.has('controller') || changed.has('tree')) && this.isConnected) {
+        if ((changed.has('controller') || changed.has('tree') || changed.has('folder') || changed.has('changes')) && this.isConnected) {
             this.watch();
         }
         if (changed.has('controller') || changed.has('name')) {
@@ -141,6 +148,9 @@ export class VolumeElement extends LitElement {
         }
         if ((changed.has('name') || changed.has('path')) && this.name && this.path) {
             void this.tree?.reveal(this.name, this.path);
+        }
+        if (changed.has('name') || changed.has('path') || (changed as Map<string, unknown>).has('volume')) {
+            this.openFolder();
         }
     }
 
@@ -166,6 +176,20 @@ export class VolumeElement extends LitElement {
         }
         if (this.tree) {
             this.unsubscribe.push(this.tree.subscribe(() => this.requestUpdate()));
+        }
+        const folder = this.folder;
+        if (folder && this.changes) {
+            this.unsubscribe.push(this.changes.subscribe({ schema: ObjectChangeSchema }, (change) => folder.change(change)));
+        }
+    }
+
+    // openFolder shows the objects of the folder which is chosen, of a
+    // volume which is mounted
+    private openFolder() {
+        if (this.name && this.path && this.volume?.mounted) {
+            void this.folder?.open(this.name, this.path);
+        } else {
+            this.folder?.close();
         }
     }
 
@@ -201,7 +225,8 @@ export class VolumeElement extends LitElement {
                 <gf-file-tree class="gf-volume-tree" .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
-                <div class="gf-volume-view"></div>
+                <gf-file-view class="gf-volume-view" .controller=${this.folder}
+                    empty="Select a folder from the left"></gf-file-view>
             </div>
         `;
     }
@@ -264,6 +289,7 @@ export function volumesModule(app: VolumesApp, section = 'Volumes'): VolumesCont
     const volumeElement = document.createElement(VolumeTag);
     volumeElement.controller = controller;
     volumeElement.tree = tree;
+    volumeElement.folder = new FolderController(app.client).onError((title, error) => app.notifications?.error(title, error));
     volumeElement.changes = app.changes;
     volumePage.append(volumeElement);
 
