@@ -11,18 +11,17 @@ import { DirectoryType, ObjectChangeSchema, parentPath, type FilerObject } from 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
-// Folders are a folder's subfolders: loading, loaded, with whether there are
-// more than are loaded, or not, when they couldn't be
+// Folders are a folder's subfolders: loading, loaded, a page at a time, with
+// whether there are more than are loaded, and the key the next page starts
+// after, or not, when they couldn't be
 export type Folders =
     | { state: 'loading' }
-    | { state: 'loaded'; folders: FilerObject[]; more: boolean }
+    | { state: 'loaded'; folders: FilerObject[]; more: boolean; next?: string }
     | { state: 'error'; error: unknown };
 
-// TreeOptions are how many subfolders a page has, and how many of a folder
-// are loaded, at most
+// TreeOptions are how many subfolders a page has
 export interface TreeOptions {
     pageLimit?: number;
-    maxFolders?: number;
 }
 
 // TreeListener is called when what the tree shows changes
@@ -32,7 +31,6 @@ export type TreeListener = () => void;
 // GLOBALS
 
 const defaultPageLimit = 100;
-const defaultMaxFolders = 1000;
 
 ///////////////////////////////////////////////////////////////////////////////
 // CONTROLLER
@@ -40,7 +38,6 @@ const defaultMaxFolders = 1000;
 export class TreeController {
     readonly client: Client;
     private readonly pageLimit: number;
-    private readonly maxFolders: number;
 
     // The subfolders which are loaded, which folders are expanded, and the
     // latest load of each folder's, by their keys, so an older response
@@ -48,6 +45,7 @@ export class TreeController {
     private readonly loaded = new Map<string, Folders>();
     private readonly expanded = new Set<string>();
     private readonly loads = new Map<string, number>();
+    private readonly pending = new Map<string, Promise<void>>();
     private generation = 0;
 
     private readonly listeners = new Set<TreeListener>();
@@ -56,7 +54,6 @@ export class TreeController {
     constructor(client: Client, options: TreeOptions = {}) {
         this.client = client;
         this.pageLimit = options.pageLimit ?? defaultPageLimit;
-        this.maxFolders = options.maxFolders ?? defaultMaxFolders;
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -101,26 +98,69 @@ export class TreeController {
         this.expanded.add(key);
         if (this.loaded.get(key)?.state === 'loaded' || this.loads.has(key)) {
             this.notify();
-            return Promise.resolve();
+            return this.pending.get(key) ?? Promise.resolve();
         }
         return this.load(volume, path);
     }
 
-    // reveal expands the folders a folder is in, from its volume's root, so
-    // it's shown, such as when it's chosen by its location
+    // reveal expands the folders a folder is in, from its volume's root,
+    // which is always expanded, so it's shown, such as when it's chosen by
+    // its location, or its volume is mounted again. Each folder's subfolders
+    // are loaded, a page at a time, until the next folder of the path is, or
+    // there are no more, once those which are loading are.
     async reveal(volume: string, path: string): Promise<void> {
         const elements = path.split('/').filter((e) => e);
         let dir = '/';
-        for (const element of elements) {
-            await this.expand(volume, dir);
-            dir = dir === '/' ? '/' + element : dir + '/' + element;
+        await this.expand(volume, dir);
+        for (let i = 0; i < elements.length; i++) {
+            const child = dir === '/' ? '/' + elements[i] : dir + '/' + elements[i];
+            await this.find(volume, dir, child);
+            if (i < elements.length - 1) {
+                await this.expand(volume, child);
+            }
+            dir = child;
         }
+    }
+
+    // find loads a folder's subfolders, a page at a time, until the child is
+    // one of them, or there are no more, or they couldn't be loaded
+    private async find(volume: string, dir: string, child: string): Promise<void> {
+        const key = treeKey(volume, dir);
+        for (;;) {
+            await this.settled(key);
+            const folders = this.loaded.get(key);
+            if (folders?.state !== 'loaded' || !folders.more || folders.folders.some((folder) => folder.path === child)) {
+                return;
+            }
+            await this.loadMore(volume, dir);
+        }
+    }
+
+    // settled waits for the loads of a folder's subfolders, which are in
+    // progress, of its key
+    private async settled(key: string): Promise<void> {
+        for (let pending = this.pending.get(key); pending; pending = this.pending.get(key)) {
+            await pending;
+        }
+    }
+
+    // track keeps a load of a folder's subfolders, of its key, until it's
+    // done, so it can be waited for
+    private track(key: string, load: Promise<void>): Promise<void> {
+        this.pending.set(key, load);
+        void load.finally(() => {
+            if (this.pending.get(key) === load) {
+                this.pending.delete(key);
+            }
+        });
+        return load;
     }
 
     // collapse collapses a folder, whose subfolders are kept
     collapse(volume: string, path: string) {
-        this.expanded.delete(treeKey(volume, path));
-        this.notify();
+        if (this.expanded.delete(treeKey(volume, path))) {
+            this.notify();
+        }
     }
 
     // forgetVolume forgets the folders of a volume, such as one which isn't
@@ -130,35 +170,31 @@ export class TreeController {
         this.notify();
     }
 
-    // load loads a folder's subfolders, a page at a time, up to the most
-    // which are loaded, keeping those which are loaded, while they're loaded
-    // again
+    // load loads a folder's subfolders, its first page, or, when they're
+    // loaded, as many as are loaded again, keeping them while they're loaded.
+    // The latest load of a folder is kept, as is one of more after it.
     load(volume: string, path: string): Promise<void> {
         const key = treeKey(volume, path);
-        if (this.loaded.get(key)?.state !== 'loaded') {
+        const current = this.loaded.get(key);
+        const want = current?.state === 'loaded' ? Math.max(current.folders.length, this.pageLimit) : this.pageLimit;
+        if (current?.state !== 'loaded') {
             this.loaded.set(key, { state: 'loading' });
         }
         const generation = ++this.generation;
         this.loads.set(key, generation);
         this.notify();
         const latest = () => this.loads.get(key) === generation;
-        return (async () => {
+        return this.track(key, (async () => {
             try {
                 const folders: FilerObject[] = [];
-                let more = false;
-                let startAfter: string | undefined;
-                for (;;) {
-                    const limit = Math.min(this.pageLimit, this.maxFolders - folders.length);
-                    const list = await listObjects(this.client, volume, { path, type: DirectoryType, start_after: startAfter, limit });
-                    folders.push(...list.body.slice(0, limit));
-                    more = list.body.length > limit || (list.next !== undefined && folders.length >= this.maxFolders);
-                    if (!list.next || more || !latest()) {
-                        break;
-                    }
-                    startAfter = list.next;
-                }
+                let next: string | undefined;
+                do {
+                    const list = await listObjects(this.client, volume, { path, type: DirectoryType, start_after: next, limit: this.pageLimit });
+                    folders.push(...list.body);
+                    next = list.next;
+                } while (next && folders.length < want && latest());
                 if (latest()) {
-                    this.loaded.set(key, { state: 'loaded', folders, more });
+                    this.loaded.set(key, { state: 'loaded', folders, more: !!next, next });
                 }
             } catch (error) {
                 if (latest()) {
@@ -170,7 +206,38 @@ export class TreeController {
                 this.loads.delete(key);
                 this.notify();
             }
-        })();
+        })());
+    }
+
+    // loadMore loads the next page of a folder's subfolders, when there's
+    // one, and they aren't loading
+    loadMore(volume: string, path: string): Promise<void> {
+        const key = treeKey(volume, path);
+        const current = this.loaded.get(key);
+        if (current?.state !== 'loaded' || !current.more || this.loads.has(key)) {
+            return Promise.resolve();
+        }
+        const generation = ++this.generation;
+        this.loads.set(key, generation);
+        const latest = () => this.loads.get(key) === generation;
+        return this.track(key, (async () => {
+            try {
+                const list = await listObjects(this.client, volume, { path, type: DirectoryType, start_after: current.next, limit: this.pageLimit });
+                if (latest()) {
+                    this.loaded.set(key, { state: 'loaded', folders: [...current.folders, ...list.body], more: !!list.next, next: list.next });
+                }
+            } catch (error) {
+                if (latest()) {
+                    // They aren't tried again, as they're scrolled to
+                    this.loaded.set(key, { ...current, more: false, next: undefined });
+                    this.errorFn?.(`More folders of ${volume}${path === '/' ? '' : path} couldn't be loaded`, error);
+                }
+            }
+            if (latest()) {
+                this.loads.delete(key);
+                this.notify();
+            }
+        })());
     }
 
     // change loads what changed again: the subfolders of the folders which
@@ -209,6 +276,23 @@ export class TreeController {
                 this.forget((v, p) => v === volume && within(p, row));
             }
             this.reload((v, p) => v === volume && (p === parent || p === grandparent || (change.action === 'update' && p === row)));
+        } else {
+            // An object, which isn't a folder. In a bucket, its folders are
+            // the prefixes of its key, which are created, and deleted, with
+            // it, without changes of their own: one which is created, in a
+            // folder the tree doesn't have, may have created it, so the
+            // folders it's in, which are loaded, are loaded again, and one
+            // which is deleted may have deleted its folder, so its folder's
+            // folder, and its count, is loaded again
+            const folder = parentPath(row);
+            if (folder === '/') {
+                return;
+            } else if (change.action === 'delete') {
+                const parent = parentPath(folder);
+                this.reload((v, p) => v === volume && (p === parent || p === parentPath(parent)));
+            } else if (!this.isFolder(volume, folder)) {
+                this.reload((v, p) => v === volume && p !== folder && within(folder, p));
+            }
         }
     }
 

@@ -147,7 +147,7 @@ export class VolumeElement extends LitElement {
             this.volume = this.name ? this.controller?.volume(this.name) : undefined;
         }
         if ((changed.has('name') || changed.has('path')) && this.name && this.path) {
-            void this.tree?.reveal(this.name, this.path);
+            void this.reveal();
         }
         if (changed.has('name') || changed.has('path') || (changed as Map<string, unknown>).has('volume')) {
             this.openFolder();
@@ -170,7 +170,7 @@ export class VolumeElement extends LitElement {
                     }
                 }
                 if (this.volume?.mounted && !wasMounted && this.name && this.path) {
-                    void this.tree?.reveal(this.name, this.path);
+                    void this.reveal();
                 }
             }));
         }
@@ -180,6 +180,22 @@ export class VolumeElement extends LitElement {
         const folder = this.folder;
         if (folder && this.changes) {
             this.unsubscribe.push(this.changes.subscribe({ schema: ObjectChangeSchema }, (change) => folder.change(change)));
+        }
+    }
+
+    // reveal shows the folder which is chosen in the tree, and scrolls to it
+    private async reveal() {
+        const name = this.name;
+        const path = this.path;
+        if (!name || !path || !this.tree) {
+            return;
+        }
+        await this.tree.reveal(name, path);
+        await this.updateComplete;
+        const tree = this.querySelector('gf-file-tree');
+        await tree?.updateComplete;
+        if (name === this.name && path === this.path) {
+            tree?.querySelector(`cds-tree-node[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'nearest' });
         }
     }
 
@@ -207,6 +223,10 @@ export class VolumeElement extends LitElement {
         const path = this.path || '/';
         const volume = this.volume;
         const folder = path !== '/' ? this.tree?.folder(name, path) : undefined;
+        // The tree is only shown when the volume's root has folders, once
+        // they're loaded, or couldn't be, which it says
+        const roots = this.tree?.folders(name, '/');
+        const hasFolders = roots?.state === 'error' || (roots?.state === 'loaded' && roots.folders.length > 0);
         const header = html`
             <gs-page-header
                 heading=${folder ? objectTitle(folder) : baseName(path) || (volume ? volumeLabel(volume) : name)}
@@ -222,11 +242,11 @@ export class VolumeElement extends LitElement {
             ${header}
             ${volume.error ? html`<p class="gf-volume-error">${volume.error}</p>` : nothing}
             <div class="gf-volume">
-                <gf-file-tree class="gf-volume-tree" .controller=${this.tree} .changes=${this.changes} volume=${name}
+                <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
                 <gf-file-view class="gf-volume-view" .controller=${this.folder}
-                    empty="Select a folder from the left"></gf-file-view>
+                    empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}></gf-file-view>
             </div>
         `;
     }
