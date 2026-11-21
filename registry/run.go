@@ -143,6 +143,19 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 	// Mount the store's volumes, which are enabled, and sync them, and those
 	// which are asked to be, until it's stopped
 	self.startSyncs(ctx, logger)
+
+	// Publish the changes of the states of the volumes' indexes, until it's
+	// stopped, which is waited for before the volumes are closed
+	statesCtx, stopStates := context.WithCancel(ctx)
+	statesDone := make(chan struct{})
+	go func() {
+		defer close(statesDone)
+		self.watchStates(statesCtx)
+	}()
+	defer func() {
+		stopStates()
+		<-statesDone
+	}()
 	relist := make(chan struct{}, 1)
 	var listRetry time.Duration
 	list := func() {

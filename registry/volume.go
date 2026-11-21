@@ -239,20 +239,27 @@ func (self *Registry) view(ctx context.Context, stored *schema.Volume) *schema.V
 	volume.Mounted = backend != nil
 	if backend != nil {
 		if i, ok := backend.(*indexer.Indexer); ok {
-			volume.Index = &schema.VolumeIndex{Mode: string(i.Mode())}
-			if state, err := i.State(ctx); err != nil {
-				volume.Index.Error = err.Error()
-			} else {
-				volume.Index.IndexState = state
-			}
-			if task, err := i.Metadata(ctx); err != nil && volume.Index.Error == "" {
-				volume.Index.Error = err.Error()
-			} else {
-				volume.Index.Metadata = task
-			}
+			volume.Index = indexState(ctx, i)
 		}
 	}
 	return &volume
+}
+
+// indexState returns the state of an indexer's index, and of the indexing of
+// its files' metadata, or why it can't be read
+func indexState(ctx context.Context, i *indexer.Indexer) *schema.VolumeIndex {
+	index := &schema.VolumeIndex{Mode: string(i.Mode())}
+	if state, err := i.State(ctx); err != nil {
+		index.Error = err.Error()
+	} else {
+		index.IndexState = state
+	}
+	if task, err := i.Metadata(ctx); err != nil && index.Error == "" {
+		index.Error = err.Error()
+	} else {
+		index.Metadata = task
+	}
+	return index
 }
 
 // sameURL returns true when two URLs of a volume are the same, of their
