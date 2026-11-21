@@ -12,9 +12,20 @@ export async function listVolumes(client: Client, signal?: AbortSignal): Promise
 
 // updateVolume changes the options of a volume's URL, of a patch, where an
 // option which is null is removed, so it's its default, and those which
-// aren't in it are kept, and returns the volume
-export async function updateVolume(client: Client, name: string, patch: Record<string, unknown>, signal?: AbortSignal): Promise<Volume> {
-    return request<Volume>(client, 'PATCH', `volume/${encodeURIComponent(name)}`, { body: patch, signal });
+// aren't in it are kept, and whether it's enabled, so it's mounted, or
+// unmounted, when enabled is set, and returns the volume
+export async function updateVolume(client: Client, name: string, patch: Record<string, unknown>, enabled?: boolean, signal?: AbortSignal): Promise<Volume> {
+    return request<Volume>(client, 'PATCH', `volume/${encodeURIComponent(name)}`, {
+        body: patch,
+        query: enabled === undefined ? undefined : { enabled: String(enabled) },
+        signal,
+    });
+}
+
+// deleteVolume deletes a volume, and its index, but not its files, and
+// returns it
+export async function deleteVolume(client: Client, name: string, signal?: AbortSignal): Promise<Volume> {
+    return request<Volume>(client, 'DELETE', `volume/${encodeURIComponent(name)}`, { signal });
 }
 
 // listObjects returns a page of the objects of a volume's folder, which is
