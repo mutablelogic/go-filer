@@ -239,8 +239,8 @@ func VolumeName(u *url.URL) string {
 }
 
 // metaOf returns what's stored of a volume, of its backend: its name, its
-// URL, which a backend can be created again from, with the placeholders of
-// its credentials, when it has them, and its index option, and that it's
+// URL, which a backend can be created again from, with the names of its
+// credentials, when it has them, and its index option, and that it's
 // enabled
 func (self *Registry) metaOf(name string, b gofiler.Filer) schema.VolumeMeta {
 	mode, backend := indexer.ModeNone, b

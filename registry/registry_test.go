@@ -522,8 +522,8 @@ func fakeEndpoint(option string) string {
 	return values.Get("endpoint")
 }
 
-// credentials expands a placeholder of a credential, such as ${ID}, to its
-// name, ID
+// credentials looks up a credential of its name, such as ID, as a
+// placeholder, ${ID}, which is its name
 type credentials struct{}
 
 func (credentials) Expand(_ context.Context, value string) (string, error) {
@@ -545,8 +545,9 @@ func (credentials) Delete(context.Context, string) error {
 func Test_Registry_Credentials(t *testing.T) {
 	u := mustURL(t, "s3://keys/?name=bucket&access-key-id=${ID}&secret-access-key=${SECRET}&endpoint="+url.QueryEscape(fakeS3(t)))
 
-	// A bucket's credentials are expanded by the registry's provider, and
-	// can't be without one
+	// A bucket's credentials are looked up by the registry's provider, and
+	// can't be without one. Its URL is of an earlier version, of
+	// placeholders of their names, as a stored volume's can be.
 	r, err := New(context.Background(), WithCredentials(credentials{}), WithStore(newStore(t)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
@@ -557,17 +558,18 @@ func Test_Registry_Credentials(t *testing.T) {
 	_, err = add(t, r2, "bucket", u)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
-	// The volume's URL has the placeholders of its credentials, not the
-	// credentials, so it's mounted again from the store, which updating it
-	// keeps, as the bucket can't be accessed without them
+	// The volume's URL has the names of its credentials, of their options,
+	// not the credentials, so it's mounted again from the store, which
+	// updating it keeps, as the bucket can't be accessed without them
 	volume, err := r.GetVolume(context.Background(), "bucket")
 	require.NoError(t, err)
 	placeholders := func(volume *schema.Volume) {
 		t.Helper()
 		u, err := url.Parse(volume.URL)
 		require.NoError(t, err)
-		assert.Equal(t, "${ID}", u.Query().Get("access-key-id"))
-		assert.Equal(t, "${SECRET}", u.Query().Get("secret-access-key"))
+		assert.Equal(t, "ID", u.Query().Get("access-key-credential"))
+		assert.Equal(t, "SECRET", u.Query().Get("secret-key-credential"))
+		assert.False(t, u.Query().Has("access-key-id"))
 	}
 	placeholders(volume)
 	volume, err = update(t, r, "bucket", url.Values{"readonly": {"true"}})

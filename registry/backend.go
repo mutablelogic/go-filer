@@ -26,8 +26,8 @@ import (
 // registered with (see WithBackend), and whose options are its URL's query,
 // apart from the index option, which the registry does, with the options
 // every backend is created with: the registry's tracer, the provider of
-// credentials, which expands the placeholders of credentials in the URL,
-// such as ${S3_SECRET}, and the client options of a backend which calls
+// credentials, which the backend looks up of the names in its URL, such as
+// S3_SECRET, and the client options of a backend which calls
 // other services over HTTP. The volume's name is the URL's name option, or
 // its host. The cache is the volume's own, which the backend uses, or not,
 // and which the registry closes, and deletes, once the volume's URL changes,

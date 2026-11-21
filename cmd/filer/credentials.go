@@ -46,8 +46,8 @@ const (
 
 // provider returns the provider of the credentials, which are kept,
 // encrypted, in the command's folder of the user's data, or else the
-// environment's, such as S3_SECRET, so a volume's placeholder, such as
-// ${S3_SECRET}, is either. Those of an earlier version, in its folder of
+// environment's, so a volume's credential of its name, such as S3_SECRET,
+// is either. Those of an earlier version, in its folder of
 // the user's cache, and their passphrase, are moved there, when there are
 // none there.
 func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, error) {

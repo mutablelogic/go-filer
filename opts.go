@@ -17,9 +17,9 @@ type Opts struct {
 	// S3, when it's set
 	Tracer trace.Tracer
 
-	// Credentials expand the placeholders of the credentials in the URL of a
-	// backend, such as ${S3_SECRET}, or are its sign-in, such as Google's,
-	// when it's set
+	// Credentials are the server's, which a backend looks up of the names in
+	// its URL, such as S3_SECRET, or are its sign-in, such as Google's, when
+	// it's set
 	Credentials credential.CredentialProvider
 
 	// ClientOpts are the options of the clients of a backend which calls

@@ -181,26 +181,53 @@ func Test_S3_Credentials(t *testing.T) {
 	endpoint := fakeS3(t)
 	ctx := context.Background()
 	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN"}
-	opts := "&access-key-id=${ID}&secret-access-key=${SECRET}&session-token=${TOKEN}"
+	opts := "&access-key-credential=ID&secret-key-credential=SECRET&session-token-credential=TOKEN"
 
-	// The credentials are the options', whose placeholders are expanded, and
-	// which the URL with the credentials keeps, but the URL doesn't have
+	// The credentials are of their names, which the provider looks up, and
+	// which the URL has, but never the credentials
 	b, err := New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
-	assert.Equal(t, "${SECRET}", b.url(true).Query().Get("secret-access-key"))
-	assert.NotContains(t, b.url(true).String(), "AKIDTEST")
-	assert.False(t, b.URL().Query().Has("secret-access-key"))
+	assert.Equal(t, "SECRET", b.URL().Query().Get("secret-key-credential"))
+	assert.Equal(t, b.URL(), b.URLWithCredentials())
+	assert.NotContains(t, b.URL().String(), "AKIDTEST")
+	assert.NotContains(t, b.URL().String(), "=secret")
 
-	// Without a provider, or with a placeholder it doesn't have, they can't
-	// be expanded, and other credentials can't access the bucket
+	// Without a provider, or with a name it doesn't have, they can't be
+	// looked up, and other credentials can't access the bucket
 	_, err = New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	_, err = New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{Credentials: credentialProvider{"ID": "AKIDTEST"}})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=OTHER&secret-access-key=${SECRET}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-credential=OTHER&secret-key-credential=SECRET&session-token-credential=TOKEN"), gofiler.Opts{Credentials: credentialProvider{"OTHER": "AKIDOTHER", "SECRET": "secret", "TOKEN": "TOKEN"}})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 	_, err = New(ctx, bucketURL(t, endpoint, "keys", ""), gofiler.Opts{Credentials: provider})
 	assert.ErrorIs(t, err, gofiler.ErrForbidden)
+
+	// A credential which is empty isn't used
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-credential=ID&secret-key-credential=EMPTY"), gofiler.Opts{Credentials: credentialProvider{"ID": "AKIDTEST", "EMPTY": ""}})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+}
+
+func Test_S3_EarlierCredentials(t *testing.T) {
+	endpoint := fakeS3(t)
+	ctx := context.Background()
+	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN"}
+
+	// A stored volume's URL, of an earlier version, whose options are
+	// placeholders of the credentials' names, is of their names, which its
+	// URL has, of their options
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=$SECRET&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	require.NoError(t, err)
+	query := b.URL().Query()
+	assert.Equal(t, "ID", query.Get("access-key-credential"))
+	assert.Equal(t, "SECRET", query.Get("secret-key-credential"))
+	assert.Equal(t, "TOKEN", query.Get("session-token-credential"))
+	assert.False(t, query.Has("access-key-id"))
+
+	// Its options of the credentials themselves aren't, so they're never in
+	// a URL
+	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=AKIDTEST&secret-access-key=secret"), gofiler.Opts{Credentials: provider})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
 
 func Test_S3_Trace(t *testing.T) {
@@ -253,111 +280,33 @@ func Test_S3_Description(t *testing.T) {
 	assert.Equal(t, "S3 bucket photos in eu-west-1", aws.describe())
 }
 
-func Test_S3_StoreCredentials(t *testing.T) {
-	endpoint := fakeS3(t)
-	ctx := context.Background()
-	opts := "&access-key-id=AKIDTEST&secret-access-key=secret&session-token=TOKEN"
-
-	// Credentials which aren't placeholders are stored, once the bucket is
-	// checked with them, by new keys of the volume's name, and the URL with
-	// the credentials has their placeholders, which create it again
-	provider := credentialProvider{}
-	b, err := New(ctx, bucketURL(t, endpoint, "keys", opts+"&name=photos"), gofiler.Opts{Credentials: provider})
-	require.NoError(t, err)
-	assert.Len(t, provider, 3)
-	assert.Equal(t, "AKIDTEST", provider[storedKey(t, b, "access-key-id", "S3_PHOTOS_ACCESS_KEY_ID_")])
-	assert.Equal(t, "secret", provider[storedKey(t, b, "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_")])
-	assert.Equal(t, "TOKEN", provider[storedKey(t, b, "session-token", "S3_PHOTOS_SESSION_TOKEN_")])
-	assert.NotContains(t, b.url(true).String(), "secret&")
-
-	// Storing them again doesn't replace those which are stored, which
-	// another filer of the volume uses
-	other, err := New(ctx, bucketURL(t, endpoint, "keys", opts+"&name=photos"), gofiler.Opts{Credentials: provider})
-	require.NoError(t, err)
-	assert.Len(t, provider, 6)
-	assert.NotEqual(t, storedKey(t, b, "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_"), storedKey(t, other, "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_"))
-	assert.Equal(t, "s3://keys/?anonymous=false&description="+url.QueryEscape("S3 bucket keys at "+strings.TrimPrefix(endpoint, "http://"))+"&endpoint="+url.QueryEscape(endpoint)+"&name=photos&profile=&readonly=false&region=us-east-1&seaweedfs-filer-grpc=", b.URL().String())
-	_, err = New(ctx, b.url(true), gofiler.Opts{Credentials: provider})
-	require.NoError(t, err)
-
-	// They can be mixed with placeholders, which are kept
-	provider = credentialProvider{"TOKEN": "TOKEN"}
-	b, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=AKIDTEST&secret-access-key=secret&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
-	require.NoError(t, err)
-	assert.Equal(t, "${TOKEN}", b.url(true).Query().Get("session-token"))
-	assert.Equal(t, "secret", provider[storedKey(t, b, "secret-access-key", "S3_KEYS_SECRET_ACCESS_KEY_")])
-
-	// Without a provider, they can't be stored, and when the bucket can't be
-	// accessed with them, they aren't
-	_, err = New(ctx, bucketURL(t, endpoint, "keys", opts), gofiler.Opts{})
-	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	provider = credentialProvider{}
-	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=OTHER&secret-access-key=secret"), gofiler.Opts{Credentials: provider})
-	assert.ErrorIs(t, err, gofiler.ErrForbidden)
-	assert.Empty(t, provider)
-}
-
 func Test_S3_Clone(t *testing.T) {
 	endpoint := fakeS3(t)
 	ctx := context.Background()
-	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN"}
-	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=${SECRET}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN", "OTHER": "secret"}
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-credential=ID&secret-key-credential=SECRET&session-token-credential=TOKEN"), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
 
-	// The clone has the credentials, which its URL doesn't, with the options
-	// changed, and the filer isn't changed
+	// The clone has the credentials' names, with the options changed, and
+	// the filer isn't changed
 	clone, err := b.Clone(ctx, url.Values{"readonly": {"true"}})
 	require.NoError(t, err)
 	assert.True(t, clone.(*S3).Readonly())
 	assert.False(t, b.Readonly())
-	assert.Equal(t, b.url(true).Query().Get("secret-access-key"), clone.(*S3).url(true).Query().Get("secret-access-key"))
-	assert.False(t, clone.URL().Query().Has("secret-access-key"))
+	assert.Equal(t, "SECRET", clone.URL().Query().Get("secret-key-credential"))
 
-	// A patch can change the credentials, which are stored when they aren't
-	// placeholders, or remove them, when the bucket can't be accessed
-	clone, err = b.Clone(ctx, url.Values{"name": {"photos"}, "secret-access-key": {"secret"}})
+	// A patch can change their names, of their options, or an earlier
+	// version's, or remove them, when the bucket can't be accessed
+	clone, err = b.Clone(ctx, url.Values{"secret-key-credential": {"OTHER"}})
 	require.NoError(t, err)
-	assert.Equal(t, "secret", provider[storedKey(t, clone.(*S3), "secret-access-key", "S3_PHOTOS_SECRET_ACCESS_KEY_")])
-	_, err = b.Clone(ctx, url.Values{"access-key-id": nil, "secret-access-key": nil, "session-token": nil})
-	assert.ErrorIs(t, err, gofiler.ErrForbidden)
-}
-
-func Test_S3_Placeholder(t *testing.T) {
-	// A value is a placeholder when it's only a placeholder, and otherwise a
-	// credential, which is stored
-	for value, want := range map[string]bool{
-		"${S3_SECRET}": true, "$S3_SECRET": true, "${_x1}": true,
-		"secret": false, "secret${SUFFIX}": false, "${PREFIX}secret": false, "${A}${B}": false,
-		"$": false, "${}": false, "$1": false, "${S3-SECRET}": false, "${S3_SECRET": false,
-	} {
-		assert.Equal(t, want, isPlaceholder(value), value)
-	}
-}
-
-func Test_S3_MixedCredentials(t *testing.T) {
-	endpoint := fakeS3(t)
-	ctx := context.Background()
-
-	// A credential with a placeholder, and other text, is stored whole, as it
-	// isn't a placeholder
-	provider := credentialProvider{"ID": "AKIDTEST", "TOKEN": "TOKEN"}
-	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=actual${SUFFIX}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	assert.Equal(t, "OTHER", clone.URL().Query().Get("secret-key-credential"))
+	clone, err = b.Clone(ctx, url.Values{"secret-access-key": {"${OTHER}"}})
 	require.NoError(t, err)
-	assert.Equal(t, "actual${SUFFIX}", provider[storedKey(t, b, "secret-access-key", "S3_KEYS_SECRET_ACCESS_KEY_")])
-
-	// A credential which starts with "$$" is one which starts with "$",
-	// rather than a placeholder, which is stored, and used
-	provider = credentialProvider{"ID": "AKIDTEST", "TOKEN": "TOKEN"}
-	b, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=$$word&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
-	require.NoError(t, err)
-	assert.Equal(t, "$word", provider[storedKey(t, b, "secret-access-key", "S3_KEYS_SECRET_ACCESS_KEY_")])
-	credentials, err := optionCredentials{b}.Retrieve(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "$word", credentials.SecretAccessKey)
-
-	// A credential which is expanded to nothing isn't used
-	_, err = New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=${EMPTY}"), gofiler.Opts{Credentials: credentialProvider{"ID": "AKIDTEST", "EMPTY": ""}})
+	assert.Equal(t, "OTHER", clone.URL().Query().Get("secret-key-credential"))
+	_, err = b.Clone(ctx, url.Values{"secret-access-key": {"secret"}})
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	_, err = b.Clone(ctx, url.Values{"access-key-credential": nil, "secret-key-credential": nil, "session-token-credential": nil})
+	assert.ErrorIs(t, err, gofiler.ErrForbidden)
 }
 
 func Test_S3_RotateCredentials(t *testing.T) {
@@ -366,10 +315,10 @@ func Test_S3_RotateCredentials(t *testing.T) {
 	endpoint := fakeS3(t)
 	ctx := context.Background()
 
-	// The credentials are expanded again, once they expire, so those which
+	// The credentials are looked up again, once they expire, so those which
 	// are rotated are used by the client
 	provider := credentialProvider{"ID": "AKIDTEST", "SECRET": "secret", "TOKEN": "TOKEN"}
-	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-id=${ID}&secret-access-key=${SECRET}&session-token=${TOKEN}"), gofiler.Opts{Credentials: provider})
+	b, err := New(ctx, bucketURL(t, endpoint, "keys", "&access-key-credential=ID&secret-key-credential=SECRET&session-token-credential=TOKEN"), gofiler.Opts{Credentials: provider})
 	require.NoError(t, err)
 	provider["TOKEN"] = "ROTATED"
 	_, err = b.ping(ctx, b.client)
@@ -377,14 +326,4 @@ func Test_S3_RotateCredentials(t *testing.T) {
 	provider["TOKEN"] = "TOKEN"
 	_, err = b.ping(ctx, b.client)
 	assert.NoError(t, err)
-}
-
-// storedKey returns the key of the stored credential of the option, which is
-// its placeholder in the URL with the credentials, and has the prefix, and a
-// random suffix
-func storedKey(t *testing.T, b *S3, option, prefix string) string {
-	t.Helper()
-	value := b.url(true).Query().Get(option)
-	require.Regexp(t, `^\$\{`+prefix+`[0-9A-F]{16}\}$`, value)
-	return strings.TrimSuffix(strings.TrimPrefix(value, "${"), "}")
 }

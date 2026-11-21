@@ -41,9 +41,10 @@ func Test_S3_Parse(t *testing.T) {
 		{"s3://my-bucket/?seaweedfs-filer-grpc=[::1]:18888", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "seaweedfs-filer-grpc": {"[::1]:18888"}}, false},
 		{"s3://my-bucket/?seaweedfs-filer-grpc=", "s3://my-bucket/", url.Values{"name": {"my-bucket"}}, false},
 		{"s3://my-bucket/?seaweedfs-filer-grpc", "s3://my-bucket/", url.Values{"name": {"my-bucket"}}, false},
-		{"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"AKID"}, "secret-access-key": {"${SECRET}"}}, false},
-		{"s3://my-bucket/?access-key-id=${ID}&secret-access-key=$SECRET&session-token=${TOKEN}", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"${ID}"}, "secret-access-key": {"$SECRET"}, "session-token": {"${TOKEN}"}}, false},
-		{"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}&profile=&anonymous=false", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-id": {"AKID"}, "secret-access-key": {"${SECRET}"}}, false},
+		{"s3://my-bucket/?access-key-credential=S3_KEY&secret-key-credential=S3_SECRET", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-credential": {"S3_KEY"}, "secret-key-credential": {"S3_SECRET"}}, false},
+		{"s3://my-bucket/?access-key-credential=ID&secret-key-credential=SECRET&session-token-credential=TOKEN", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-credential": {"ID"}, "secret-key-credential": {"SECRET"}, "session-token-credential": {"TOKEN"}}, false},
+		{"s3://my-bucket/?access-key-credential=ID&secret-key-credential=SECRET&profile=&anonymous=false", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-credential": {"ID"}, "secret-key-credential": {"SECRET"}}, false},
+		{"s3://my-bucket/?access-key-id=${ID}&secret-access-key=$SECRET&session-token=${TOKEN}", "s3://my-bucket/", url.Values{"name": {"my-bucket"}, "access-key-credential": {"ID"}, "secret-key-credential": {"SECRET"}, "session-token-credential": {"TOKEN"}}, false},
 		{"s3://my-bucket/?name=photos&readonly=false", "s3://my-bucket/", nil, false},
 		{"s3://my-bucket/?name=photos&anonymous=true", "s3://my-bucket/", url.Values{"anonymous": {"true"}, "readonly": {"true"}}, true},
 		{"s3://my-bucket/?name=photos&anonymous=true&readonly=false", "s3://my-bucket/", url.Values{"anonymous": {"true"}, "readonly": {"true"}}, true},
@@ -59,17 +60,17 @@ func Test_S3_Parse(t *testing.T) {
 		require.NoError(t, err)
 		b, err := parse(u)
 		require.NoError(t, err, test.url)
-		got := b.url(true)
+		got := b.url()
 		assert.Equal(t, test.want, (&url.URL{Scheme: got.Scheme, Host: got.Host, Path: got.Path}).String(), test.url)
 		assert.Equal(t, want, got.Query(), test.url)
 		assert.Equal(t, test.readonly, b.Readonly(), test.url)
 		assert.NoError(t, b.Close())
 
-		// The URL with the credentials creates the same filer again, and the
-		// URL doesn't have them
-		again, err := parse(b.url(true))
+		// The URL creates the same filer again, with the names of its
+		// credentials, of their options, rather than an earlier version's
+		again, err := parse(b.url())
 		require.NoError(t, err, test.url)
-		assert.Equal(t, b.url(true), again.url(true), test.url)
+		assert.Equal(t, b.url(), again.url(), test.url)
 		for _, key := range []string{"access-key-id", "secret-access-key", "session-token"} {
 			assert.False(t, b.URL().Query().Has(key), test.url)
 		}
@@ -112,11 +113,16 @@ func Test_S3_ParseInvalid(t *testing.T) {
 		"s3://my-bucket/?seaweedfs-filer-grpc=192.168.86.21",
 		"s3://my-bucket/?seaweedfs-filer-grpc=:18888",
 		"s3://my-bucket/?seaweedfs-filer-grpc=192.168.86.21:",
-		"s3://my-bucket/?access-key-id=AKID",
-		"s3://my-bucket/?secret-access-key=${SECRET}",
-		"s3://my-bucket/?session-token=${TOKEN}",
-		"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}&profile=work",
-		"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}&anonymous",
+		"s3://my-bucket/?access-key-credential=ID",
+		"s3://my-bucket/?secret-key-credential=SECRET",
+		"s3://my-bucket/?session-token-credential=TOKEN",
+		"s3://my-bucket/?access-key-credential=ID&secret-key-credential=SECRET&profile=work",
+		"s3://my-bucket/?access-key-credential=ID&secret-key-credential=SECRET&anonymous",
+		"s3://my-bucket/?access-key-credential=S3-KEY&secret-key-credential=SECRET",
+		"s3://my-bucket/?access-key-credential=ID&secret-key-credential=$SECRET",
+		"s3://my-bucket/?access-key-id=AKID&secret-access-key=${SECRET}",
+		"s3://my-bucket/?access-key-id=${ID}&secret-access-key=secret",
+		"s3://my-bucket/?access-key-id=${ID}&secret-access-key=actual${SUFFIX}",
 		"s3://my-bucket/?name=photos&x=%ZZ",
 		"file://my-bucket/?name=photos",
 	} {
