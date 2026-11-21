@@ -200,6 +200,26 @@ export function volumeObjectsUnknown(volume: Volume): string {
     return "It hasn't been indexed yet";
 }
 
+// ObjectNouns are what a backend's objects are called, of its scheme, in
+// the singular and the plural, such as the events of a calendar, rather
+// than objects
+const ObjectNouns = new Map<string, [string, string]>([
+    ['file', ['file', 'files']],
+    ['gcalendar', ['event', 'events']],
+    ['gcontacts', ['contact', 'contacts']],
+    ['gdrive', ['file', 'files']],
+    ['gtasks', ['task', 'tasks']],
+    ['rss', ['item', 'items']],
+]);
+
+// volumeNoun returns what a volume's objects are called, of its backend, of
+// a count of them, such as "event", or "events", or else "object", or
+// "objects"
+export function volumeNoun(volume: Volume, count: number): string {
+    const [one, many] = ObjectNouns.get(volumeScheme(volume)) ?? ['object', 'objects'];
+    return count === 1 ? one : many;
+}
+
 // volumeTitle returns a volume's title, which is shown when it's pointed at:
 // its whole label, and its name and backend
 export function volumeTitle(volume: Volume, backends: readonly Backend[] = []): string {

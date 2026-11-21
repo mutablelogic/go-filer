@@ -16,7 +16,7 @@ import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeLabel, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -396,8 +396,8 @@ function tagType(volume: Volume, backends: readonly Backend[] = []): string {
     return i < 0 ? 'cool-gray' : TagTypes[i % TagTypes.length];
 }
 
-// tileCount returns how many objects a volume has, of a tile, with
-// "objects" beneath, or "–", when it isn't known, with why, and that it's
+// tileCount returns how many objects a volume has, of a tile, with what
+// they are beneath, such as events, or "–", when it isn't known, with why, and that it's
 // offline, when it is
 function tileCount(volume: Volume): TemplateResult {
     if (!volume.mounted) {
@@ -406,11 +406,11 @@ function tileCount(volume: Volume): TemplateResult {
     const objects = volumeObjects(volume);
     const title = objects === undefined
         ? volumeObjectsUnknown(volume)
-        : `${objects.toLocaleString()} ${objects === 1 ? 'object' : 'objects'}`;
+        : `${objects.toLocaleString()} ${volumeNoun(volume, objects)}`;
     return html`
         <p class="gf-volume-tile-count" title=${title}>
             <strong>${objects === undefined ? '–' : objects.toLocaleString()}</strong>
-            ${objects === 1 ? 'object' : 'objects'}
+            ${volumeNoun(volume, objects ?? 0)}
             ${volume.error ? html`<span class="gf-volume-tile-error">Offline</span>` : nothing}
         </p>
     `;
