@@ -45,12 +45,22 @@ func Test_Kinds(t *testing.T) {
 		kinds, err = i.Kinds(ctx)
 		return err == nil && kinds["text/plain"] == 2
 	}, 10*time.Second, 10*time.Millisecond, "its two text files")
-	reads := s.reads.Load()
+	// Once it's settled, as it can be revised a while after, such as of a
+	// change which inotify sends late, which is counted again
+	require.Eventually(t, func() bool {
+		revision := i.Revision()
+		time.Sleep(100 * time.Millisecond)
+		return i.Revision() == revision
+	}, 10*time.Second, time.Millisecond, "it settles")
+	kinds, err = i.Kinds(ctx)
+	require.NoError(t, err)
+	reads, revision := s.reads.Load(), i.Revision()
 	for range 5 {
 		again, err := i.Kinds(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, kinds, again)
 	}
+	require.Equal(t, revision, i.Revision(), "it isn't revised meanwhile")
 	assert.Equal(t, reads, s.reads.Load(), "they're read once, of a revision")
 
 	// And again, once it's revised

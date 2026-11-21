@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { volumeBackend, volumeIndexing, volumeNoun, volumeObjects, volumeStatus, volumeObjectsUnknown, volumeScheme, type Volume } from '../src/filer/schema.ts';
+import { kindLabel, volumeBackend, volumeIndexing, volumeKinds, volumeNoun, volumeObjects, volumeStatus, volumeObjectsUnknown, volumeScheme, type Volume } from '../src/filer/schema.ts';
 
 // volume returns a mounted volume of a URL, and its index
 function volume(url: string, index?: Volume['index']): Volume {
@@ -95,4 +95,39 @@ test('volumeStatus', () => {
     assert.equal(of({ mode: 'metadata', status: 'ready', error: 'it failed', metadata: { queued: 4 } }), 'Failed');
     assert.equal(of({ mode: 'objects', error: 'it failed' }), 'Failed');
     assert.equal(of({ mode: 'objects' }), 'Not indexed yet');
+});
+
+test('kindLabel', () => {
+    assert.equal(kindLabel('book'), 'Book');
+    assert.equal(kindLabel('text/plain'), 'text/plain');
+    assert.equal(kindLabel(''), 'Unknown');
+    assert.equal(kindLabel('unknown'), 'Unknown');
+});
+
+test('volumeKinds', () => {
+    const of = (index: Volume['index'], max?: number) => volumeKinds(volume('file://v/tmp', index), max);
+    // Of those which have the most first, of their labels, which are merged
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 10, kinds: { book: 2, 'text/plain': 5, '': 1, unknown: 2 } }), [
+        { group: 'text/plain', value: 5 }, { group: 'Unknown', value: 3 }, { group: 'Book', value: 2 },
+    ]);
+    // Of at most max kinds, the rest of which are Other
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 15, kinds: { a: 5, b: 4, c: 3, d: 2, e: 1 } }, 3), [
+        { group: 'A', value: 5 }, { group: 'B', value: 4 }, { group: 'Other', value: 6 },
+    ]);
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 12, kinds: { a: 5, b: 4, c: 3 } }, 3), [
+        { group: 'A', value: 5 }, { group: 'B', value: 4 }, { group: 'C', value: 3 },
+    ]);
+    // A kind which is other is of the Other of the rest, of which there's one
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 49, kinds: { other: 10, a: 9, b: 8, c: 7, d: 6, e: 5, f: 4 } }), [
+        { group: 'A', value: 9 }, { group: 'B', value: 8 }, { group: 'C', value: 7 }, { group: 'D', value: 6 }, { group: 'E', value: 5 }, { group: 'Other', value: 14 },
+    ]);
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 13, kinds: { Other: 3, other: 1, a: 9 } }), [
+        { group: 'A', value: 9 }, { group: 'Other', value: 4 },
+    ]);
+    // None, of a volume of none, and undefined, when they aren't known
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', kinds: {} }), []);
+    assert.deepEqual(of({ mode: 'objects', status: 'ready' }), [], 'of none, whose kinds are left out');
+    assert.equal(of({ mode: 'objects', status: 'ready', objects: 3 }), undefined, 'of a server which has none');
+    assert.equal(of({ mode: 'folders', status: 'ready', kinds: { a: 1 } }), undefined);
+    assert.equal(of(undefined), undefined);
 });
