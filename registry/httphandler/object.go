@@ -184,10 +184,8 @@ func objectListHandlers(reg *registry.Registry, router *httprouter.Router, docum
 	return router.Register("object/{name}", jsonschema.MustFor[objectName](), func(path httprequest.PathItem) {
 		path.Tag("Objects")
 
-		// GET, as JSON, or as HTML when it's accepted before JSON, so the
-		// response varies with Accept
+		// GET
 		path.Get(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Add("Vary", "Accept")
 			var query objectListQuery
 			if err := httprequest.Query(r.URL.Query(), &query); err != nil {
 				httpresponse.Error(w, httpresponse.ErrBadRequest.Withf("%w", err))
@@ -204,10 +202,6 @@ func objectListHandlers(reg *registry.Registry, router *httprouter.Router, docum
 				req.Recursive, req.StartAfter, req.Type = query.Recursive, query.StartAfter, query.Type
 				if list, err := reg.List(r.Context(), req); err != nil {
 					httpresponse.Error(w, gofiler.HTTPErr(err), req.Name+req.Path)
-				} else if acceptsHTML(r) {
-					if err := writeListHTML(w, r, list, readonly(reg, req.Name)); err != nil {
-						httpresponse.Error(w, httpresponse.ErrInternalError.Withf("%v", err), req.Name+req.Path)
-					}
 				} else {
 					httpresponse.JSON(w, http.StatusOK, httprequest.Indent(r), list)
 				}
@@ -217,7 +211,6 @@ func objectListHandlers(reg *registry.Registry, router *httprouter.Router, docum
 			op.Description(documentation.Section(3, "GET /object/{name}").Body)
 			op.Query(jsonschema.MustFor[objectListQuery]())
 			op.JSONResponse(http.StatusOK, jsonschema.MustFor[schema.ObjectList](), "Objects")
-			op.Response(http.StatusOK, "text/html", "Objects, as a page of HTML, when text/html is accepted before JSON")
 			op.ErrorResponse(http.StatusBadRequest, "Invalid path or query")
 			op.ErrorResponse(http.StatusNotFound, "Volume isn't mounted, or path not found")
 		})
@@ -325,17 +318,6 @@ func (w *trackingWriter) Write(data []byte) (int, error) {
 // Unwrap returns the response writer, so its deadlines can be set
 func (w *trackingWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
-}
-
-// readonly returns true when the volume is read-only, so its objects can't
-// be uploaded or deleted, or it isn't enabled, or mounted
-func readonly(reg *registry.Registry, name string) bool {
-	volume, err := reg.GetVolume(context.Background(), name)
-	if err != nil || !volume.Enabled {
-		return true
-	}
-	readonly, err := volume.Readonly()
-	return err != nil || readonly
 }
 
 // objectPut writes the request's body to the file at the path, which is
