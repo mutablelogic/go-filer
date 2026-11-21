@@ -143,7 +143,7 @@ export class VolumesElement extends LitElement {
                             { group: 'Indexed', value: indexing.indexed },
                             { group: 'Failed', value: indexing.failed },
                             { group: 'Unindexed', value: indexing.unindexed },
-                        ]} .colors=${IndexingColors} total=${objects ?? 0} unit=${volumeNoun(volume, objects ?? 0)}
+                        ]} .colors=${IndexingColors} .descriptions=${indexingDescriptions(volume)} total=${objects ?? 0} unit=${volumeNoun(volume, objects ?? 0)}
                             label=${`${volumeLabel(volume)}: indexing`}></gf-meter>
                     ` : nothing}
                 </section>
@@ -451,6 +451,19 @@ function folderHref(name: string, path: string): string {
 // which failed, and which aren't indexed, of Carbon's data visualisation
 // palette: purple 70 and teal 50, its pairing of two, and magenta 70
 const IndexingColors = { Indexed: '#6929c4', Failed: '#9f1853', Unindexed: '#009d9a' };
+
+// indexingDescriptions returns what a volume's objects which are indexed,
+// which failed, and which aren't indexed, are, of their meter's legend, in
+// the backend's words, such as files
+function indexingDescriptions(volume: Volume): Record<string, string> {
+    const noun = volumeNoun(volume, 2);
+    const objects = noun.charAt(0).toUpperCase() + noun.slice(1);
+    return {
+        Indexed: `${objects} which have been added to the index`,
+        Failed: `${objects} which couldn't be completely indexed`,
+        Unindexed: `${objects} which aren't yet searchable`,
+    };
+}
 
 // statusTagType returns the colour of the tag of a volume's status, which
 // isn't idle: blue, while it's scanned, or indexed, red, when it failed, or

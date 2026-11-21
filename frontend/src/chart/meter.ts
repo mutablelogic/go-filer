@@ -32,6 +32,7 @@ export class MeterElement extends LitElement {
     static override properties = {
         groups: { attribute: false },
         colors: { attribute: false },
+        descriptions: { attribute: false },
         total: { type: Number },
         unit: { type: String },
         label: { type: String },
@@ -42,6 +43,10 @@ export class MeterElement extends LitElement {
     // the chart is, which a screen reader says, as it has no title
     declare groups: readonly MeterGroup[];
     declare colors: Readonly<Record<string, string>>;
+
+    // descriptions are what the groups are, of their legend's items, when
+    // they're pointed at
+    declare descriptions: Readonly<Record<string, string>>;
     declare total: number;
     declare unit: string;
     declare label: string;
@@ -51,6 +56,7 @@ export class MeterElement extends LitElement {
         super();
         this.groups = [];
         this.colors = {};
+        this.descriptions = {};
         this.total = 0;
         this.unit = '';
         this.label = '';
@@ -75,6 +81,7 @@ export class MeterElement extends LitElement {
             const holder = document.createElement('div');
             this.replaceChildren(holder);
             this.chart = new MeterChart(holder, { data, options });
+            this.chart.services.events.addEventListener('render-finished', () => this.describe());
             return;
         }
         if (changed.has('groups')) {
@@ -82,6 +89,23 @@ export class MeterElement extends LitElement {
         }
         if (changed.has('total') || changed.has('unit') || changed.has('label') || changed.has('colors') || changed.has('groups')) {
             this.chart.model.setOptions(options);
+        }
+        if (changed.has('descriptions')) {
+            this.describe();
+        }
+    }
+
+    // describe sets the title of each item of the legend, of its group's
+    // description, as the legend is drawn again whenever the chart is
+    private describe() {
+        for (const item of this.querySelectorAll<HTMLElement>('.legend-item')) {
+            const group = item.querySelector('p')?.textContent?.trim() ?? '';
+            const description = Object.hasOwn(this.descriptions, group) ? this.descriptions[group] : '';
+            if (description) {
+                item.title = description;
+            } else {
+                item.removeAttribute('title');
+            }
         }
     }
 
