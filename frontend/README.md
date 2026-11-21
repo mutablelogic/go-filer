@@ -30,7 +30,14 @@ router.onRoute((route) => nav.setActive(navPage(route))).start();
 ```
 
 - **The sidebar:** Volumes, with each volume indented beneath it, as go-server's `NavPage.parent`. A volume's label is its description, the `description` of its URL, or its name, which is cut short, when it's long, and its title, shown when it's pointed at, is the whole description, with its name and backend, such as `drive · Google Drive`. Its page has the same label. Volumes are added and removed as they're created and deleted. `navPage` returns the sidebar's page of a route, which is a volume's for any of its folders.
-- **The Volumes page:** `#volumes` has a tile of each volume, which goes to its page: its description, its name, its backend as a tag, and how many objects it has indexed, in the backend's words, such as events, files, tasks or items, or "–" when that isn't known, such as before it's scanned, with why. A tile says when its volume is offline, or isn't mounted. Beneath the tiles, tabs of the volumes' stats:
+- **The Volumes page:** `#volumes` has a tile of each volume, which goes to its page: its description, its name, its backend as a tag, and how many objects it has indexed, in the backend's words, such as events, files, tasks or items, or "–" when that isn't known, such as before it's scanned, with why. A tile says when its volume is offline, or isn't mounted. Its pencil, at its bottom right, opens a panel which edits the volume:
+  - Its description.
+  - Its access, Read only or Writable, unless its backend is read-only, such as a feed.
+  - Its index: Off, On (`objects`), Metadata, and Artwork and Content, which are to come, so they're disabled.
+  - Its other options, of its URL, of a text input each, or a text area of one value a line, of those of many, such as `skip`.
+  - Save patches those which are changed (`PATCH /volume/{name}`), where one which is emptied is removed. The panel stays open, and says why, when they can't be saved.
+
+  Beneath the tiles, tabs of the volumes' stats:
   - Each tab has a section of each volume:
     - Its label, as a heading, which goes to its page.
     - Tags of its status, when it isn't Ready (Scanning, Indexing, Failed, Offline, Not mounted or Not indexed, with why when it's pointed at, such as that it isn't searched, when it isn't indexed), and of how many folders and objects it has.
