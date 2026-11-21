@@ -396,8 +396,9 @@ function tagType(volume: Volume, backends: readonly Backend[] = []): string {
     return i < 0 ? 'cool-gray' : TagTypes[i % TagTypes.length];
 }
 
-// tileCount returns how many objects a volume has, of a tile, or "–", when
-// they aren't indexed, and that it's offline, when it is
+// tileCount returns how many objects a volume has, of a tile, with
+// "objects" beneath, or "–", when they aren't indexed, and that it's
+// offline, when it is
 function tileCount(volume: Volume): TemplateResult {
     if (!volume.mounted) {
         return html`<p class="gf-volume-tile-state gf-volume-tile-error">${volume.error ? 'Offline' : 'Not mounted'}</p>`;
@@ -409,6 +410,7 @@ function tileCount(volume: Volume): TemplateResult {
     return html`
         <p class="gf-volume-tile-count" title=${title}>
             <strong>${objects === undefined ? '–' : objects.toLocaleString()}</strong>
+            ${objects === 1 ? 'object' : 'objects'}
             ${volume.error ? html`<span class="gf-volume-tile-error">Offline</span>` : nothing}
         </p>
     `;
