@@ -18,7 +18,7 @@ import Edit16 from '@carbon/icons/es/edit/16.js';
 import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -106,10 +106,18 @@ export class VolumesElement extends LitElement {
             <gs-page-header heading="Volumes"
                 subtitle=${volumes ? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` : 'Loading…'}
                 .icon=${VolumesIcon}></gs-page-header>
+            ${volumes ? this.failuresView(volumes) : nothing}
             ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
             ${volumes?.length ? this.statsView(volumes) : nothing}
             <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
         `;
+    }
+
+    // failuresView is an alert of each volume whose index failed, with why,
+    // which is there until it's indexed again, as the volumes change
+    private failuresView(volumes: readonly Volume[]): TemplateResult {
+        return html`${repeat(volumes.filter((v) => volumeIndexFailure(v)), (v) => v.name, (v) =>
+            alertView('error', `Indexing ${volumeLabel(v)} failed`, volumeIndexFailure(v)))}`;
     }
 
     // edit opens the panel of a volume, of its Edit tab
