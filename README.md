@@ -27,6 +27,12 @@ docker run -d --name filer -p 127.0.0.1:8084:8084 \
 
 Then open [http://localhost:8084/](http://localhost:8084/), choose **Add Volume**, then **Server filesystem**, with the path `/media`, and set **Search** to **Metadata**, so its files are indexed, and their metadata read.
 
+![The Volumes page: a tile of each volume, of its backend, and how many objects it has](docs/volumes.png)
+
+Choose a volume to browse its folders and files, and a file to see its metadata, preview it, play it, or download it:
+
+![A volume's folders and files, and a film's metadata, of its file and TMDB](docs/objects.png)
+
 - **Data:** credentials and the index are kept in `/data/filer`, and volumes' caches in `/data/cache`.
 - **User:** the server runs as the `filer` user. Set `UID` and `GID`, such as to the owner of the mounted directories, which `/data` is made the owner of.
 - **Image:** `ghcr.io/mutablelogic/filer`, for `linux/amd64` and `linux/arm64`, is published with each release, built with cgo, so it reads the metadata of audio, video and photos.
