@@ -14,7 +14,7 @@ A volume's backend is chosen by its URL's scheme, such as `file://media/mnt/medi
 
 ## Filesystem
 
-`fs.New` returns a writable filer for a directory, and `fs.NewFS` a filer for any `fs.FS` (see [Usage](../README.md#usage)).
+`fs.New` returns a writable filer for a directory, and `fs.NewFS` a filer for any `fs.FS` (see [Usage](development.md#usage)).
 
 ### Options
 
