@@ -23,6 +23,7 @@ import { VolumeFilters, VolumesController } from './controller.ts';
 import '@mutablelogic/go-server/page/view';
 import '../tree/view.ts';
 import '../folder/view.ts';
+import { alertView } from '../alert/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -236,11 +237,11 @@ export class VolumeElement extends LitElement {
         if (!volume) {
             return html`${header}<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
         } else if (!volume.mounted) {
-            return html`${header}<p class="gf-empty">${volume.error || "This volume isn't mounted"}</p>`;
+            return html`${header}${alertView('error', "This volume isn't mounted", volume.error)}`;
         }
         return html`
             ${header}
-            ${volume.error ? html`<p class="gf-volume-error">${volume.error}</p>` : nothing}
+            ${volume.error ? alertView('warning', 'This volume is offline, so what it shows is what was last indexed', volume.error) : nothing}
             <div class="gf-volume">
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path }}
