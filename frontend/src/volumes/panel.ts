@@ -12,7 +12,7 @@ import '@mutablelogic/go-server/panel/view';
 import '@carbon/web-components/es/components/text-input/index.js';
 import { deleteVolume, updateVolume } from '../filer/httpclient.ts';
 import { signInMessage, signInNeeded, type SignInNeeded } from './create.ts';
-import { openSignIn, signInPrompt } from './signin.ts';
+import { openSignIn, SignInLabel, signInPrompt } from './signin.ts';
 import { volumeBackend, volumeLabel, volumeNoun, volumeObjects, volumeStatus, type Volume } from '../filer/schema.ts';
 import type { VolumesController } from './controller.ts';
 import { IndexModes, volumeOptions } from './options.ts';
@@ -78,6 +78,7 @@ export class VolumePanelElement extends LitElement {
     private readonly unmountRun = () => this.setEnabled(false);
     private readonly saveRun = () => this.save();
     private readonly removeRun = () => this.removeVolume();
+    private readonly signInRun = () => this.openSignIn();
     private readonly onMessage = (event: MessageEvent) => this.signedIn(event);
 
     constructor() {
@@ -155,13 +156,25 @@ export class VolumePanelElement extends LitElement {
     }
 
     // mountActions are Unmount, unless it's unmounted, and Mount, unless
-    // it's mounted, which leave the panel open, so it's seen to change
+    // it's mounted, or Sign in, when its user needs to, to mount it, which
+    // leave the panel open, so it's seen to change
     private mountActions(volume: Volume): PanelAction[] {
         const enabled = volume.enabled || Boolean(volume.error);
         return [
             { label: 'Unmount', kind: 'secondary', close: false, disabled: !enabled, run: this.unmountRun },
-            { label: 'Mount', kind: 'primary', close: false, disabled: volume.mounted && !volume.error, run: this.mountRun },
+            this.signIn
+                ? { label: SignInLabel, kind: 'primary', close: false, run: this.signInRun }
+                : { label: 'Mount', kind: 'primary', close: false, disabled: volume.mounted && !volume.error, run: this.mountRun },
         ];
+    }
+
+    // setSignIn sets how the volume's user signs in, when they need to, to
+    // mount it, of the View tab's actions
+    private setSignIn(signIn?: SignInNeeded) {
+        this.signIn = signIn;
+        if (this.volume && this.tab === 'view') {
+            this.panel.setActions(this.mountActions(this.volume));
+        }
     }
 
     // removeAction is Remove, which is enabled once the volume's name is
@@ -189,7 +202,9 @@ export class VolumePanelElement extends LitElement {
         const options = volumeOptions(volume);
         const objects = volumeObjects(volume);
         const mode = IndexModes.find((m) => m.value === options.index)?.label ?? options.index;
-        const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
+        // The error isn't shown while its user is asked to sign in, which
+        // it's of
+        const error = this.signIn ? undefined : volume.error || volume.index?.error || volume.index?.metadata?.error;
         const rows: [string, string][] = [
             ['Description', options.description || '–'],
             ['Name', volume.name],
@@ -202,7 +217,7 @@ export class VolumePanelElement extends LitElement {
             ['URL', volume.url],
         ];
         return html`
-            ${this.signIn ? signInPrompt("it's mounted", () => void this.openSignIn()) : nothing}
+            ${this.signIn ? signInPrompt("it's mounted") : nothing}
             <dl class="gf-volume-details">
                 ${rows.map(([key, value]) => html`<dt>${key}</dt><dd>${value}</dd>`)}
                 ${error ? html`<dt>Error</dt><dd class="gf-volume-tile-error">${error}</dd>` : nothing}
@@ -247,13 +262,13 @@ export class VolumePanelElement extends LitElement {
         }
         try {
             await updateVolume(this.controller.client, name, {}, enabled);
-            this.signIn = undefined;
+            this.setSignIn(undefined);
         } catch (error) {
             const signIn = enabled ? signInNeeded(error) : undefined;
             if (!signIn) {
                 throw error;
             }
-            this.signIn = signIn;
+            this.setSignIn(signIn);
         }
         await this.controller.reload();
     }
@@ -283,7 +298,7 @@ export class VolumePanelElement extends LitElement {
             this.notifications?.error("You aren't signed in", new Error(message.error || 'The sign-in was refused'));
             return;
         }
-        this.signIn = undefined;
+        this.setSignIn(undefined);
         const mount = this.volume && this.mountActions(this.volume).find((action) => action.run === this.mountRun);
         if (mount) {
             void this.panel.run(mount);

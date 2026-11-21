@@ -1,26 +1,24 @@
 // Signing in, in a browser, when a volume's user needs to, such as with
-// Google, which the server says, when a volume is added, or mounted: a
-// prompt, of a button which opens a window at the URL to sign in at, and the
-// message the server's callback posts, once they have
+// Google, which the server says, when a volume is added, or mounted: an
+// alert which asks them to, and the panel's action, which opens a window at
+// the URL to sign in at, whose callback posts a message, once they have
 
-import { html, type TemplateResult } from 'lit';
+import type { TemplateResult } from 'lit';
 import type { Client } from '@mutablelogic/go-server/api';
-import '@carbon/web-components/es/components/button/index.js';
+import { alertView } from '../alert/view.ts';
 import { authorizeSignIn, signInCallback } from '../filer/httpclient.ts';
 import type { SignInNeeded } from './create.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
+// SignInLabel is the label of the panel's action which signs in
+export const SignInLabel = 'Sign in with Google';
+
 // signInPrompt asks the volume's user to sign in, of what's done once they
-// have, such as "it's added", and a button which signs in
-export function signInPrompt(done: string, onClick: () => void): TemplateResult {
-    return html`
-        <div class="gf-volume-signin">
-            <p>The volume needs a sign-in with Google. Sign in, in the window which opens, and ${done}.</p>
-            <cds-button kind="tertiary" size="md" @click=${onClick}>Sign in with Google</cds-button>
-        </div>
-    `;
+// have, such as "it's added", of the panel's action
+export function signInPrompt(done: string): TemplateResult {
+    return alertView('info', 'Sign in with Google', `The volume needs a sign-in. Sign in, in the window which opens, and ${done}.`);
 }
 
 // openSignIn opens a window, at once, as it's of a click, which a browser

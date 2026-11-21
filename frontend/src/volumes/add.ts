@@ -14,7 +14,7 @@ import type { Backend } from '../filer/schema.ts';
 import type { VolumesController } from './controller.ts';
 import { canBeWritable, signInMessage, signInNeeded, volumeCreate, VolumeFields, type SignInNeeded, type VolumeDraft } from './create.ts';
 import { AccessDescriptions, IndexModes, indexDescription } from './options.ts';
-import { openSignIn, signInPrompt } from './signin.ts';
+import { openSignIn, SignInLabel, signInPrompt } from './signin.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -56,6 +56,9 @@ export class VolumeAddElement extends LitElement {
     // addAction is Add, which closes the panel itself, once the volume is
     // added, so it stays open when its user needs to sign in first
     private readonly addAction: PanelAction = { label: 'Add', kind: 'primary', close: false, run: () => this.add() };
+    // signInAction is Sign in, in place of Add, when its user needs to sign
+    // in first, which opens a window, at once, as it's of a click
+    private readonly signInAction: PanelAction = { label: SignInLabel, kind: 'primary', close: false, run: () => this.openSignIn() };
     private readonly onMessage = (event: MessageEvent) => this.signedIn(event);
 
     constructor() {
@@ -97,10 +100,18 @@ export class VolumeAddElement extends LitElement {
         `;
     }
 
-    // actions are Add, as the panel is closed of its close button, the
-    // escape key, or the page beside it
+    // actions are Add, or Sign in, when its user needs to sign in first, as
+    // the panel is closed of its close button, the escape key, or the page
+    // beside it
     private actions(): PanelAction[] {
-        return [this.addAction];
+        return [this.signIn ? this.signInAction : this.addAction];
+    }
+
+    // setSignIn sets how the volume's user signs in, when they need to, of
+    // the panel's action
+    private setSignIn(signIn?: SignInNeeded) {
+        this.signIn = signIn;
+        this.panel.setActions(this.actions());
     }
 
     // formView is the form of the volume: its name, the backend's fields, its access, unless it can't be writable, and how
@@ -109,7 +120,7 @@ export class VolumeAddElement extends LitElement {
         const fields = VolumeFields.get(draft.scheme) ?? [];
         return html`
             <div class="gf-volume-form" ?inert=${this.busy}>
-                ${this.signIn ? signInPrompt("it's added", () => void this.openSignIn()) : nothing}
+                ${this.signIn ? signInPrompt("it's added") : nothing}
                 <cds-text-input label="Name" .value=${draft.name} placeholder="media" autocomplete="off"
                     helper-text="An identifier, of letters, digits, - and _, which is the volume's, in its links"
                     @input=${(event: Event) => this.set({ name: (event.target as HTMLInputElement).value })}></cds-text-input>
@@ -171,14 +182,13 @@ export class VolumeAddElement extends LitElement {
         this.panel.setClosable(false);
         try {
             await createVolume(this.controller.client, volume.name, volume.url);
-            this.signIn = undefined;
             await this.controller.reload();
         } catch (error) {
             // When its user needs to sign in, they're asked to, in the panel,
             // which stays open, rather than told it failed
             const signIn = signInNeeded(error);
             if (signIn) {
-                this.signIn = signIn;
+                this.setSignIn(signIn);
                 return;
             }
             throw error;
@@ -215,7 +225,7 @@ export class VolumeAddElement extends LitElement {
             this.notifications?.error("You aren't signed in", new Error(message.error || 'The sign-in was refused'));
             return;
         }
-        this.signIn = undefined;
+        this.setSignIn(undefined);
         void this.panel.run(this.addAction);
     }
 }
