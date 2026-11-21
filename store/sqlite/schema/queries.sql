@@ -56,8 +56,8 @@ VALUES (@volume, @key, nullif(@type, ''), @size, @etag, @modified_at)
 ON CONFLICT (volume, key) DO UPDATE SET
   type = excluded.type, size = excluded.size, etag = excluded.etag, modified_at = excluded.modified_at;
 DELETE FROM metadata WHERE volume = @volume AND object = @key AND source = '';
-INSERT INTO metadata (volume, object, source, namespace, key, value)
-SELECT @volume, @key, '', nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null')
+INSERT INTO metadata (volume, object, source, namespace, key, value, text)
+SELECT @volume, @key, '', nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null'), nullif(entry.value ->> '$.text', '')
 FROM json_each(@meta) AS entry
 ORDER BY entry.id;
 
@@ -65,8 +65,8 @@ ORDER BY entry.id;
 -- The metadata of an object, of a source, a task's, of a JSON array of
 -- entries, which replaces the source's
 DELETE FROM metadata WHERE volume = @volume AND object = @key AND source = @source;
-INSERT INTO metadata (volume, object, source, namespace, key, value)
-SELECT @volume, @key, @source, nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null')
+INSERT INTO metadata (volume, object, source, namespace, key, value, text)
+SELECT @volume, @key, @source, nullif(entry.value ->> '$.namespace', ''), entry.value ->> '$.key', coalesce(entry.value -> '$.value', 'null'), nullif(entry.value ->> '$.text', '')
 FROM json_each(@meta) AS entry
 ORDER BY entry.id;
 DELETE FROM object_geo WHERE volume = @volume AND object = @key AND source = @source;
@@ -87,7 +87,7 @@ ON CONFLICT DO NOTHING;
 
 -- object.get
 SELECT key, coalesce(type, ''), size, etag, modified_at, (
-  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value)) ORDER BY source <> '', rowid)
+  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value), 'text', text) ORDER BY source <> '', rowid)
   FROM metadata WHERE metadata.volume = object.volume AND metadata.object = object.key
     AND NOT (source = '' AND EXISTS (
       SELECT 1 FROM metadata AS task
@@ -108,7 +108,7 @@ FROM object WHERE volume = @volume AND key = @key;
 -- The objects of a folder, or beneath it, of the where clause, in the order
 -- of their keys, after the key the listing starts after
 SELECT key, coalesce(type, ''), size, etag, modified_at, (
-  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value)) ORDER BY source <> '', rowid)
+  SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value), 'text', text) ORDER BY source <> '', rowid)
   FROM metadata WHERE metadata.volume = object.volume AND metadata.object = object.key
     AND NOT (source = '' AND EXISTS (
       SELECT 1 FROM metadata AS task

@@ -1111,6 +1111,18 @@ func testSetMetadata(t *testing.T, s store.Store) {
 	require.Len(t, objects, 1)
 	assert.JSONEq(t, `[{"namespace":"dc","key":"title","value":"D"}]`, string(mustJSON(t, objects[0].Meta)))
 
+	// A value's text is kept, of an object, and a listing, and isn't of a
+	// value which has none
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.txt", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{
+		{Namespace: "audio", Key: "duration", Value: json.RawMessage(`5000000000`), Text: "5s"},
+		{Namespace: "dc", Key: "title", Value: json.RawMessage(`"D"`)},
+	}}))
+	assert.JSONEq(t, `[{"namespace":"audio","key":"duration","value":5000000000,"text":"5s"},{"namespace":"dc","key":"title","value":"D"}]`, got("/a.txt"))
+	objects, err = s.ListObjects(ctx, "media", store.ListRequest{Parent: "/"})
+	require.NoError(t, err)
+	require.Len(t, objects, 1)
+	assert.JSONEq(t, `[{"namespace":"audio","key":"duration","value":5000000000,"text":"5s"},{"namespace":"dc","key":"title","value":"D"}]`, string(mustJSON(t, objects[0].Meta)))
+
 	// A task which read a version of the object which isn't its version any
 	// more is superseded, and doesn't replace what's found of it
 	current, err := s.GetObject(ctx, "media", "/a.txt")
