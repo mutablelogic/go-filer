@@ -148,10 +148,16 @@ export function signInNeeded(error: unknown): boolean {
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// value returns a field of a draft, without its spaces
+// value returns a field of a draft, without its spaces, other than a path,
+// or a bucket, and its prefix, which are as they are, as a space can be of
+// them, as the CLI's are
 function value(draft: VolumeDraft, key: string): string {
-    return (draft.fields[key] ?? '').trim();
+    const v = draft.fields[key] ?? '';
+    return RawFields.has(key) ? v : v.trim();
 }
+
+// RawFields are the fields which aren't trimmed, as a space can be of them
+const RawFields = new Set(['path', 'bucket']);
 
 // fileURL returns the URL of a directory on the server, whose path is
 // absolute, of its elements, which are escaped

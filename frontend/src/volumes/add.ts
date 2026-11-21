@@ -136,7 +136,9 @@ export class VolumeAddElement extends LitElement {
     }
 
     // add creates the volume, of its URL, and loads the volumes again, while
-    // the panel can't be closed, nor what's typed be changed. When its user
+    // the panel can't be closed, nor what's typed be changed, so an add
+    // which ends doesn't close the panel of another, which is opened
+    // meanwhile. When its user
     // needs to sign in, such as with Google, which can't be done here yet,
     // it says to with the CLI.
     private async add() {
@@ -149,6 +151,7 @@ export class VolumeAddElement extends LitElement {
         this.panel.setClosable(false);
         try {
             await createVolume(this.controller.client, volume.name, volume.url);
+            await this.controller.reload();
         } catch (error) {
             if (signInNeeded(error)) {
                 throw new Error(`It needs a sign-in with Google, which can't be done here yet. Sign in, and add it, with the CLI: filer volume-create-${draft.scheme} ${volume.name}`);
@@ -158,7 +161,6 @@ export class VolumeAddElement extends LitElement {
             this.busy = false;
             this.panel.setClosable(true);
         }
-        await this.controller.reload();
     }
 }
 

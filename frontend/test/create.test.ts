@@ -25,6 +25,8 @@ test('volumeCreate', async (t) => {
         assert.throws(() => volumeCreate(draft('file', 'media', { path: 'mnt/media' })), /absolute/);
         assert.throws(() => volumeCreate(draft('file', 'media', {})), /path is needed/);
         assert.match(volumeCreate(draft('file', 'media', { path: 'C:\\Media' })).url, /^file:\/\/media\/C%3A\/Media\?/);
+        // A path is as it is, of its spaces
+        assert.match(volumeCreate(draft('file', 'media', { path: '/mnt/media ' })).url, /^file:\/\/media\/mnt\/media%20\?/);
     });
 
     await t.test('an S3 bucket', () => {
@@ -37,6 +39,8 @@ test('volumeCreate', async (t) => {
             'access-key-id': ['${S3_KEY}'], endpoint: ['http://localhost:9000'], index: ['objects'], name: ['photos'],
             readonly: ['true'], region: ['eu-central-1'], 'secret-access-key': ['${S3_SECRET}'],
         });
+        // A bucket, and its prefix, are as they are, of its spaces
+        assert.match(volumeCreate(draft('s3', 'media', { bucket: 'media/my photos ' })).url, /^s3:\/\/media\/my%20photos%20\?/);
         // Its name isn't an option when it's the bucket's
         assert.equal(query(volumeCreate(draft('s3', 'media', { bucket: 'media' })).url).name, undefined);
         assert.throws(() => volumeCreate(draft('s3', 'media', { bucket: 'media', 'access-key-id': 'not a name' })), /credential/);
