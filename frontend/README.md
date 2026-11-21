@@ -16,11 +16,13 @@ go-filer's web UI modules, which any app can include, and the filer server's app
 | `@mutablelogic/go-filer/tree` | `TreeController`, which keeps the folders which are expanded, and loads what changes again |
 | `@mutablelogic/go-filer/folder` | `FolderController`, which keeps a folder's objects, without its folders, a page at a time, of the listing's cursor, and loads them again when they change |
 | `@mutablelogic/go-filer/folder/view` | `gf-file-view`, a table of a folder's objects, without its folders, which loads more as it's scrolled |
+| `@mutablelogic/go-filer/chart/meter` | `gf-meter`, a proportional meter chart of Carbon Charts, of groups of a total, in units, which is changed in place as they change |
 | `@mutablelogic/go-filer/tree/view` | `gf-file-tree`, a tree of a volume's folders, which fires `gf-file-tree-selected` with the volume and path of the folder which is chosen |
 
 Including Volumes in another app:
 
 ```ts
+import '@carbon/charts/styles.min.css';
 import { navPage, volumesModule } from '@mutablelogic/go-filer/volumes/view';
 
 volumesModule({ nav, router, client, root: document.querySelector('main')!, notifications, changes });
@@ -28,7 +30,12 @@ router.onRoute((route) => nav.setActive(navPage(route))).start();
 ```
 
 - **The sidebar:** Volumes, with each volume indented beneath it, as go-server's `NavPage.parent`. A volume's label is its description, the `description` of its URL, or its name, which is cut short, when it's long, and its title, shown when it's pointed at, is the whole description, with its name and backend, such as `drive · Google Drive`. Its page has the same label. Volumes are added and removed as they're created and deleted. `navPage` returns the sidebar's page of a route, which is a volume's for any of its folders.
-- **The Volumes page:** `#volumes` has a tile of each volume, which goes to its page: its description, its name, its backend as a tag, and how many objects it has indexed, in the backend's words, such as events, files, tasks or items, or "–" when that isn't known, such as before it's scanned, with why. A tile says when its volume is offline, or isn't mounted. Charts of the volumes' stats will go beneath.
+- **The Volumes page:** `#volumes` has a tile of each volume, which goes to its page: its description, its name, its backend as a tag, and how many objects it has indexed, in the backend's words, such as events, files, tasks or items, or "–" when that isn't known, such as before it's scanned, with why. A tile says when its volume is offline, or isn't mounted. Beneath the tiles, tabs of the volumes' stats:
+  - **Indexing:** a section of each volume:
+    - Its label, as a heading, which goes to its page.
+    - Tags of its status, when it isn't Ready (Scanning, Indexing, Failed, Offline, Not mounted or Not indexed, with why when it's pointed at, such as that it isn't searched, when it isn't indexed), and of how many folders and objects it has.
+    - A meter of its objects which are Indexed, Failed and Unindexed, in that order, whose legend says what each is, when it's pointed at, of its metadata task, when it has one, of its total.
+  - **Objects:** their types, which is to come, so it's disabled.
 - **A volume's page:** `#volume/<name>/<path>` fills the window, with a tree of the volume's folders on the left, and the file view of the folder which is chosen on the right, each of which scrolls on its own, rather than the window. A volume whose root has no folders, such as contacts, or a feed, has no tree and its file view is as wide as the page. The folder is in the location, so it can be linked to, and it's revealed in the tree, and scrolled to, also once the volume is mounted, such as after the server starts, loading more of the folders it's in until it's there. A volume which isn't mounted shows why.
 - **The tree:** its roots are the folders of the volume's root, which is the volume's page, without a folder. A volume without folders has no tree. A folder is selected when it's clicked, and expanded, or collapsed, unless it has no folders; its caret only toggles it. A folder's subfolders are loaded when it's first expanded, 100 at a time, and more as they're scrolled to. A row's selection is as wide as the tree. A folder whose `folder:subfolder-count` is 0 has no caret. A folder's title is its `dc:title`, such as a task list's, or its name.
 - **The file view:** a table of the folder's objects, without its folders, which the tree has, with their types, sizes, and when they were changed, in the order the listing has them, 100 at a time. An object's type is its kind, `metadata:kind`, such as Book, or else the subtype of its type, such as mpeg, and its whole type when it's pointed at, of its cursor, as it's scrolled to its end. The listing can't leave out folders, so pages of only folders are skipped. Its header stays at the top. How many objects the folder has is beneath, once they're all loaded. More aren't loaded while they're loaded again. When they can't be loaded, it says so, with Try again, which loads them from where they couldn't be. A folder without objects has an icon, and Select a folder from the left, or No objects, without the tree. They're loaded again, as many as are shown, when an object in the folder changes, or the folder does, such as once it's indexed, or what it's in is rescanned.

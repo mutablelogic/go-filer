@@ -19,9 +19,29 @@ export interface Volume {
 export interface VolumeIndex {
     mode: string;
     status?: string;
+    phase?: string;
     folders?: number;
     objects?: number;
     error?: string;
+    metadata?: TaskState;
+}
+
+// TaskState is the work of a task of a volume's objects, such as indexing
+// their metadata: how many are queued, or being done, how many it's done,
+// and how many it failed of too often, and why it last failed
+export interface TaskState {
+    queued?: number;
+    indexed?: number;
+    failed?: number;
+    error?: string;
+}
+
+// VolumeIndexing is how many of a volume's objects aren't indexed, are,
+// and which it failed to index too often, which are given up on
+export interface VolumeIndexing {
+    unindexed: number;
+    indexed: number;
+    failed: number;
 }
 
 // Backend is a type of backend, of the scheme of its volumes' URLs
@@ -198,6 +218,54 @@ export function volumeObjectsUnknown(volume: Volume): string {
         return "It's being indexed";
     }
     return "It hasn't been indexed yet";
+}
+
+// volumeIndexing returns how many of a volume's objects aren't indexed,
+// are, and failed, of the task which indexes their metadata, whose count
+// of those it's done has those which failed, when it has one, or all of
+// them indexed, when it hasn't one, or undefined, when how many objects it
+// has isn't known
+export function volumeIndexing(volume: Volume): VolumeIndexing | undefined {
+    const objects = volumeObjects(volume);
+    if (objects === undefined) {
+        return undefined;
+    }
+    const task = volume.index?.metadata;
+    if (!task) {
+        return { unindexed: 0, indexed: objects, failed: 0 };
+    }
+    const done = Math.min(task.indexed ?? 0, objects);
+    const failed = Math.min(task.failed ?? 0, done);
+    return { unindexed: objects - done, indexed: done - failed, failed };
+}
+
+// volumeStatus returns how a volume's index is: Offline, when its backend
+// failed, whether it's mounted or not, Not mounted, Not indexed, Scanning,
+// or Indexing, while its files, or their metadata, are, Failed, when its
+// last scan, or its watch, failed, which clears its phase, but not its
+// status, or Ready, or Not indexed yet, when it hasn't been scanned
+export function volumeStatus(volume: Volume): string {
+    const index = volume.index;
+    if (volume.error) {
+        return 'Offline';
+    } else if (!volume.mounted) {
+        return 'Not mounted';
+    } else if (!index) {
+        return 'Not indexed';
+    } else if (index.phase === 'scanning') {
+        return 'Scanning';
+    } else if (index.phase === 'indexing') {
+        return 'Indexing';
+    } else if (index.error) {
+        return 'Failed';
+    } else if (index.status === 'scanning') {
+        return 'Scanning';
+    } else if ((index.metadata?.queued ?? 0) > 0) {
+        return 'Indexing';
+    } else if (index.status === 'ready') {
+        return 'Ready';
+    }
+    return 'Not indexed yet';
 }
 
 // ObjectNouns are what a backend's objects are called, of its scheme, in

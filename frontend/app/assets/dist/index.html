@@ -100,6 +100,62 @@
             color: var(--cds-text-error);
         }
 
+        /* The volumes' stats, beneath their tiles, of the tab which is chosen */
+        .gf-volume-stats {
+            margin-top: 2rem;
+        }
+
+        .gf-volume-stats cds-tabs {
+            margin-bottom: 1rem;
+        }
+
+        /* Each volume's section, of a faint line from the one before */
+        .gf-indexing {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .gf-indexing-volume {
+            padding-block: 1.5rem;
+        }
+
+        .gf-indexing-volume + .gf-indexing-volume {
+            border-top: 1px solid var(--cds-border-subtle);
+        }
+
+        .gf-indexing-volume h3 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 300;
+            line-height: 1.75rem;
+        }
+
+        .gf-indexing-volume h3 a {
+            color: var(--cds-text-primary);
+            text-decoration: none;
+        }
+
+        .gf-indexing-volume h3 a:hover {
+            text-decoration: underline;
+        }
+
+        .gf-indexing-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin: 0.25rem 0 0.5rem;
+        }
+
+        .gf-indexing-tags cds-tag {
+            margin: 0;
+        }
+
+        .gf-meter-empty {
+            margin: 0.5rem 0 0;
+            color: var(--cds-text-secondary);
+            font-size: 0.875rem;
+        }
+
         /* A volume's page fills the window, beneath its header, with the
            tree of its folders beside the objects of the folder which is
            chosen, each of which scrolls on its own, rather than the window */

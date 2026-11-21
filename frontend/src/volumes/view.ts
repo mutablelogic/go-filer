@@ -16,7 +16,7 @@ import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeIndexing, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -25,6 +25,8 @@ import '../tree/view.ts';
 import '../folder/view.ts';
 import '@carbon/web-components/es/components/tile/clickable-tile.js';
 import '@carbon/web-components/es/components/tag/tag.js';
+import '@carbon/web-components/es/components/tabs/index.js';
+import '../chart/meter.ts';
 import { alertView } from '../alert/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -33,6 +35,9 @@ import { alertView } from '../alert/view.ts';
 // The tags of the Volumes page, and of a volume's page, and their routes,
 // such as #volumes, and #volume/media/Music
 export const VolumesTag = 'gf-volumes';
+
+// StatsTab is a tab of the volumes' stats
+type StatsTab = 'indexing' | 'objects';
 export const VolumeTag = 'gf-volume';
 export const VolumesRoute = 'volumes';
 export const VolumeRoute = 'volume';
@@ -46,11 +51,19 @@ export class VolumesElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
         volumes: { state: true },
+        tab: { state: true },
     };
 
-    // controller keeps the volumes
+    // controller keeps the volumes, and tab is the tab of their stats which
+    // is shown, beneath their tiles
     declare controller?: VolumesController;
     declare private volumes?: readonly Volume[];
+    declare private tab: StatsTab;
+
+    constructor() {
+        super();
+        this.tab = 'indexing';
+    }
     private unsubscribe?: () => void;
 
     protected override createRenderRoot() {
@@ -87,7 +100,55 @@ export class VolumesElement extends LitElement {
                 subtitle=${volumes ? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` : 'Loading…'}
                 .icon=${VolumesIcon}></gs-page-header>
             ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
+            ${volumes?.length ? this.statsView(volumes) : nothing}
         `;
+    }
+
+    // statsView is the tabs of the volumes' stats, of which the one which is
+    // chosen is shown: Indexing, and Objects, which is to come
+    private statsView(volumes: readonly Volume[]): TemplateResult {
+        return html`
+            <section class="gf-volume-stats">
+                <cds-tabs value=${this.tab} @cds-tabs-selected=${(event: CustomEvent<{ item: HTMLElement & { value: string } }>) => { this.tab = event.detail.item.value as StatsTab; }}>
+                    <cds-tab value="indexing">Indexing</cds-tab>
+                    <cds-tab value="objects" disabled>Objects</cds-tab>
+                </cds-tabs>
+                ${this.tab === 'indexing' ? this.indexingView(volumes) : nothing}
+            </section>
+        `;
+    }
+
+    // indexingView is a section of each volume: its label, as a heading, and
+    // its status, when it isn't idle, with why, when it's pointed at, and
+    // how many folders and objects it has, as tags, beneath it, and a meter
+    // of its objects which are indexed, which failed, and which aren't
+    // indexed yet, of how many it has, when that's known
+    private indexingView(volumes: readonly Volume[]): TemplateResult {
+        return html`<div class="gf-indexing">${repeat(volumes, (volume) => volume.name, (volume) => {
+            const indexing = volumeIndexing(volume);
+            const objects = volumeObjects(volume);
+            const folders = volume.index?.folders;
+            const status = volumeStatus(volume);
+            const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
+            return html`
+                <section class="gf-indexing-volume">
+                    <h3><a href=${volumeHref(volume.name)} title=${volumeTitle(volume, this.controller?.backends)}>${volumeLabel(volume)}</a></h3>
+                    <div class="gf-indexing-tags">
+                        ${status !== 'Ready' ? html`<cds-tag size="sm" type=${statusTagType(status)} title=${statusTitle(volume, status, error)}>${status}</cds-tag>` : nothing}
+                        ${folders !== undefined ? html`<cds-tag size="sm" type="cool-gray">${folders.toLocaleString()} ${folders === 1 ? 'folder' : 'folders'}</cds-tag>` : nothing}
+                        ${objects !== undefined ? html`<cds-tag size="sm" type="cool-gray">${objects.toLocaleString()} ${volumeNoun(volume, objects)}</cds-tag>` : nothing}
+                    </div>
+                    ${indexing ? html`
+                        <gf-meter .groups=${[
+                            { group: 'Indexed', value: indexing.indexed },
+                            { group: 'Failed', value: indexing.failed },
+                            { group: 'Unindexed', value: indexing.unindexed },
+                        ]} .colors=${IndexingColors} .descriptions=${indexingDescriptions(volume)} total=${objects ?? 0} unit=${volumeNoun(volume, objects ?? 0)}
+                            label=${`${volumeLabel(volume)}: indexing`}></gf-meter>
+                    ` : nothing}
+                </section>
+            `;
+        })}</div>`;
     }
 
     // tileView is a volume's tile, which goes to its page: its label, and
@@ -384,6 +445,50 @@ function volumeHref(name: string): string {
 // folderHref returns the link of a folder of a volume
 function folderHref(name: string, path: string): string {
     return '#' + [VolumeRoute, name, ...path.split('/').filter((e) => e)].map(encodeURIComponent).join('/');
+}
+
+// IndexingColors are the colours of a meter's objects which are indexed,
+// which failed, and which aren't indexed, of Carbon's data visualisation
+// palette: purple 70 and teal 50, its pairing of two, and magenta 70
+const IndexingColors = { Indexed: '#6929c4', Failed: '#9f1853', Unindexed: '#009d9a' };
+
+// indexingDescriptions returns what a volume's objects which are indexed,
+// which failed, and which aren't indexed, are, of their meter's legend, in
+// the backend's words, such as files
+function indexingDescriptions(volume: Volume): Record<string, string> {
+    const noun = volumeNoun(volume, 2);
+    const objects = noun.charAt(0).toUpperCase() + noun.slice(1);
+    return {
+        Indexed: `${objects} which have been added to the index`,
+        Failed: `${objects} which couldn't be completely indexed`,
+        Unindexed: `${objects} which aren't yet searchable`,
+    };
+}
+
+// statusTagType returns the colour of the tag of a volume's status, which
+// isn't idle: blue, while it's scanned, or indexed, red, when it failed, or
+// is offline, and gray, otherwise
+function statusTagType(status: string): string {
+    switch (status) {
+        case 'Scanning':
+        case 'Indexing':
+            return 'blue';
+        case 'Failed':
+        case 'Offline':
+            return 'red';
+        default:
+            return 'gray';
+    }
+}
+
+// statusTitle returns why a volume's status is what it is, which its tag
+// says when it's pointed at: that it isn't searched, when it isn't
+// indexed, or why it failed, or why how many objects it has isn't known
+function statusTitle(volume: Volume, status: string, error?: string): string {
+    if (status === 'Not indexed') {
+        return "It isn't indexed, and therefore not searched";
+    }
+    return error || volumeObjectsUnknown(volume);
 }
 
 // TagTypes are the colours of the backends' tags, in the order of the
