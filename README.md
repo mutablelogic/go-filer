@@ -40,6 +40,22 @@ A filer stores the objects in a volume. Each backend implements `filer.Filer`, a
 * `make` builds the web UI first, which the server embeds and serves at `/`. It needs npm, and `GITHUB_TOKEN` with `read:packages`, such as `$(gh auth token)`. See [frontend/README.md](frontend/README.md).
 * `make CGO_ENABLED=0` builds without cgo, and so without the libraries. It reads less metadata, and can't watch volumes on macOS, which are polled instead.
 
+## Docker
+
+Each release publishes an image, `ghcr.io/mutablelogic/filer`, for `linux/amd64` and `linux/arm64`, built with cgo, so it reads the metadata of audio, video and photos.
+
+* **Data:** credentials and the index are kept in `/data/filer`, and volumes' caches in `/data/cache`, of a volume at `/data`.
+* **Volumes:** mount the directories to index, such as `-v /mnt/media:/media:ro`, and add them as volumes of their paths in the container.
+* **User:** the server runs as the `filer` user, whose `UID` and `GID` can be set, such as to the owner of the mounted directories, and which `/data` is made the owner of.
+* **Port:** it listens on `8084`. It has no authentication yet, so publish it on localhost only, unless it's behind a proxy which signs people in.
+
+```bash
+docker run -d --name filer -p 127.0.0.1:8084:8084 \
+  -v filer-data:/data -v /mnt/media:/media:ro \
+  ghcr.io/mutablelogic/filer:latest
+docker exec filer filer volume-create-fs media /media
+```
+
 ## Usage
 
 `fs.New` returns a writable filer for a directory, and `fs.NewFS` returns a filer for any `fs.FS`, which is read-only unless it implements `fs.WriterFS`. Either can be made read-only with the `readonly` option, when creating and deleting objects is `filer.ErrForbidden`. The filer takes ownership of the filesystem, and closes it when it's closed. `filer.Filer` has no `Close`: a filer which holds resources, as these do, implements `io.Closer`, which its owner calls, rather than the code it's given to.
