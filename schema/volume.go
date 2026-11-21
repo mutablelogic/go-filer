@@ -270,7 +270,7 @@ func (v Volume) IndexStatus() string {
 		}
 		result = fmt.Sprintf("%s, %d folders", phase, v.Index.Folders)
 		if (v.Index.Mode == "objects" || v.Index.Mode == "metadata") && (v.Index.Status == IndexStatusReady || v.Index.Files > 0) {
-			result += fmt.Sprintf(", %d files", v.Index.Files)
+			result += fmt.Sprintf(", %d objects", v.Index.Files)
 		}
 		if task := v.Index.Metadata; task != nil {
 			result += fmt.Sprintf(", %d indexed", task.Indexed)
