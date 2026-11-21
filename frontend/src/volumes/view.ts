@@ -120,9 +120,9 @@ export class VolumesElement extends LitElement {
             alertView('error', `Indexing ${volumeLabel(v)} failed`, volumeIndexFailure(v)))}`;
     }
 
-    // edit opens the panel of a volume, of its Edit tab
+    // edit opens the panel of a volume, of its View tab
     private edit(volume: Volume) {
-        this.querySelector('gf-volume-panel')?.open(volume, 'edit');
+        this.querySelector('gf-volume-panel')?.open(volume, 'view');
     }
 
     // statsView is the tabs of the volumes' stats, of which the one which is

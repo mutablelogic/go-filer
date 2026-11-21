@@ -101,8 +101,9 @@ export class VolumePanelElement extends LitElement {
         this.unsubscribe = undefined;
     }
 
-    // open opens the panel of the volume, of the tab
-    open(volume: Volume, tab: VolumeTab = 'edit') {
+    // open opens the panel of the volume, of the tab, which is View, by
+    // default
+    open(volume: Volume, tab: VolumeTab = 'view') {
         if (!this.unsubscribe && this.controller) {
             this.unsubscribe = this.controller.subscribe(() => this.refresh());
         }
