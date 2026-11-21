@@ -18,6 +18,7 @@ import Edit16 from '@carbon/icons/es/edit/16.js';
 import FolderAdd32 from '@carbon/icons/es/folder--add/32.js';
 import Search32 from '@carbon/icons/es/search/32.js';
 import Password32 from '@carbon/icons/es/password/32.js';
+import ObjectStorage32 from '@carbon/icons/es/object-storage/32.js';
 import FolderIcon16 from '@carbon/icons/es/folder/16.js';
 import ObjectStorageIcon from '@carbon/icons/es/object-storage/16.js';
 import RssIcon from '@carbon/icons/es/rss/16.js';
@@ -512,7 +513,7 @@ const GoogleWorkspaceHelp = 'https://github.com/mutablelogic/go-filer#adding-goo
 
 // welcomeView welcomes someone to a filer without volumes, of how to start:
 // adding a volume, indexing it, so it's searched, and connecting Google
-// Workspace
+// Workspace, and S3 buckets
 function welcomeView(): TemplateResult {
     return html`
         <div class="gf-welcome">
@@ -537,6 +538,13 @@ function welcomeView(): TemplateResult {
                     <div>
                         <h3>Add a Google OAuth Client credential to connect to Google Workspace</h3>
                         <p>Store a web application's OAuth client as the <code>GOOGLE_CLIENT</code> credential, with <code>filer credential-set GOOGLE_CLIENT --json &lt; client_secret.json</code>, and add Google Drive, Calendar, Contacts or Tasks. See <a href=${GoogleWorkspaceHelp} target="_blank" rel="noopener noreferrer">Adding Google Workspace</a>.</p>
+                    </div>
+                </li>
+                <li>
+                    ${iconLoader(ObjectStorage32)}
+                    <div>
+                        <h3>Add your AWS credentials to connect to S3 buckets</h3>
+                        <p>Store your access key ID and secret access key as the server's credentials, with <code>filer credential-set S3_KEY</code> and <code>filer credential-set S3_SECRET</code>, which read them from stdin, and name them when you add an S3 bucket. Or set <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> in the server's environment.</p>
                     </div>
                 </li>
             </ul>
