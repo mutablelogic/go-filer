@@ -34,6 +34,7 @@ import '@mutablelogic/go-server/page/view';
 import '../tree/view.ts';
 import '../folder/view.ts';
 import '../folder/panel.ts';
+import { apiLister, startFolder } from '../folder/start.ts';
 import type { FilerObject } from '../filer/schema.ts';
 import '@carbon/web-components/es/components/tile/clickable-tile.js';
 import '@carbon/web-components/es/components/tag/tag.js';
@@ -236,6 +237,7 @@ export class VolumeElement extends LitElement {
         path: { type: String },
         volume: { state: true },
         selected: { state: true },
+        shown: { state: true },
     };
 
     // controller keeps the volumes, tree their folders, folder the objects
@@ -255,6 +257,15 @@ export class VolumeElement extends LitElement {
 
     // selected is the path of the file whose panel is open, if any
     declare private selected?: string;
+
+    // shown is the folder whose objects are shown, of the volume's root,
+    // which is the root's, or the first folder beneath it with objects, or
+    // the month's, of a dated volume, so the root always shows some, without
+    // its location changing; starts counts what's asked of it, so only the
+    // latest is shown
+    declare private shown?: string;
+    private starts = 0;
+    private starting = false;
     private unsubscribe: (() => void)[] = [];
 
     protected override createRenderRoot() {
@@ -281,9 +292,13 @@ export class VolumeElement extends LitElement {
         if ((changed.has('name') || changed.has('path')) && this.name && this.path) {
             void this.reveal();
         }
-        // The panel of a file is of its folder, so it's closed of another
+        // The panel of a file is of its folder, so it's closed of another,
+        // and the root's folder is found again
         if (changed.has('name') || changed.has('path')) {
             this.selected = undefined;
+            this.shown = undefined;
+            this.starting = false;
+            this.starts++;
             this.querySelector('gf-object-panel')?.close();
         }
         if (changed.has('name') || changed.has('path') || (changed as Map<string, unknown>).has('volume')) {
@@ -356,12 +371,51 @@ export class VolumeElement extends LitElement {
     }
 
     // openFolder shows the objects of the folder which is chosen, of a
-    // volume which is mounted
+    // volume which is mounted, or, of its root, of the folder it shows
     private openFolder() {
-        if (this.name && this.path && this.volume?.mounted) {
-            void this.folder?.open(this.name, this.path);
-        } else {
+        const name = this.name;
+        const volume = this.volume;
+        if (!name || !this.path || !volume?.mounted) {
             this.folder?.close();
+        } else if (this.path !== '/') {
+            void this.folder?.open(name, this.path);
+        } else if (this.shown) {
+            void this.folder?.open(name, this.shown);
+        } else if (!this.starting) {
+            void this.openStart(name, volumeScheme(volume));
+        }
+    }
+
+    // openStart finds the folder the volume's root shows, which shows nothing
+    // until it's found, and shows its objects, and reveals it in the tree,
+    // chosen, unless another folder, or volume, is chosen meanwhile
+    private async openStart(name: string, scheme: string) {
+        const start = ++this.starts;
+        const client = this.controller?.client;
+        this.starting = true;
+        this.folder?.close();
+        let path = '/';
+        if (client) {
+            try {
+                path = await startFolder(scheme, apiLister(client, name));
+            } catch {
+                // Its root's objects are shown, which say why they can't be
+            }
+        }
+        if (start !== this.starts || name !== this.name || this.path !== '/') {
+            return;
+        }
+        this.starting = false;
+        this.shown = path;
+        void this.folder?.open(name, path);
+        if (path !== '/' && this.tree) {
+            await this.tree.reveal(name, path);
+            await this.updateComplete;
+            const tree = this.querySelector('gf-file-tree');
+            await tree?.updateComplete;
+            if (start === this.starts) {
+                tree?.querySelector(`cds-tree-node[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'nearest' });
+            }
         }
     }
 
@@ -416,7 +470,7 @@ export class VolumeElement extends LitElement {
             ${volume.error ? alertView('warning', 'This volume is offline, so what it shows is what was last indexed', volume.error) : nothing}
             <div class="gf-volume">
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
-                    .selected=${{ volume: name, path }}
+                    .selected=${{ volume: name, path: path === '/' ? this.shown ?? path : path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
                 <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected}
                     empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}
