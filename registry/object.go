@@ -114,6 +114,24 @@ func (self *Registry) ReadObject(ctx context.Context, req schema.GetObjectReques
 	}, obj, nil
 }
 
+// Markdown reads the content of the object, which ReadObject returned, of
+// its function, as Markdown, and returns its start, and where the rest
+// starts, when there's more. It's ErrNotImplemented when the registry has no
+// way to read Markdown, or the object can't be read as it.
+func (self *Registry) Markdown(ctx context.Context, read gofiler.ReadObjectFunc, object *schema.Object) (*schema.Markdown, error) {
+	if self.markdown == nil {
+		return nil, gofiler.ErrNotImplemented.With("files can't be read as Markdown")
+	}
+	var result *schema.Markdown
+	if err := read(ctx, func(r io.Reader) (err error) {
+		result, err = self.markdown(ctx, r, object)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // ListObjects lists the objects in the volume named by the request. The
 // volume's backend isn't closed until the iterator is closed, or the volume
 // is removed, when the iterator is closed, and returns fs.ErrClosed.

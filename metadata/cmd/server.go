@@ -26,11 +26,11 @@ type Flags struct {
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
-// WithMetadataEnrichment returns the option of the registry which enriches
+// WithMetadataEnrichment returns the options of the registry which enrich
 // the files of its volumes with index=metadata, with their metadata, of the
 // flags, the server's tracer, and a user agent of its name and version, of
-// the requests to TMDB and AcoustID
-func (flags Flags) WithMetadataEnrichment(ctx server.Cmd) (registry.Opt, error) {
+// the requests to TMDB and AcoustID, and which read files as Markdown
+func (flags Flags) WithMetadataEnrichment(ctx server.Cmd) ([]registry.Opt, error) {
 	opts := []metadata.Opt{
 		metadata.WithTracer(ctx.Tracer()),
 		metadata.WithClientOpts(client.OptUserAgent(ctx.Name() + "/" + ctx.Version())),
@@ -48,5 +48,5 @@ func (flags Flags) WithMetadataEnrichment(ctx server.Cmd) (registry.Opt, error) 
 	if err != nil {
 		return nil, err
 	}
-	return registry.WithMetadataTask(e.Enrich), nil
+	return []registry.Opt{registry.WithMetadataTask(e.Enrich), registry.WithMarkdown(e.Markdown)}, nil
 }

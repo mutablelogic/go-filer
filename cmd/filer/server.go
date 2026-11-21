@@ -117,19 +117,20 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 
 	// The task which enriches the files of volumes with index=metadata, of
 	// go-metadata, which reads media, too, when it's built with cgo
-	task, err := runner.Enrichment.WithMetadataEnrichment(ctx)
+	enrichment, err := runner.Enrichment.WithMetadataEnrichment(ctx)
 	if err != nil {
 		return err
 	}
+	opts := append([]registry.Opt{registry.WithCredentials(credentials), registry.WithStore(s), registry.WithCacheDir(cacheDir)}, enrichment...)
 
 	// Create the registry of volumes, which registers its HTTP methods, and
 	// run the HTTP server to serve requests, until the server is stopped,
 	// when the registry, and its volumes, are closed
 	return runner.Filer.WithRegistry(ctx, &runner.RunServer, b, func(*registry.Registry) error {
 		return runner.RunServer.Run(ctx)
-	}, registry.WithCredentials(credentials), registry.WithStore(s), registry.WithCacheDir(cacheDir), task,
+	}, append(opts,
 		// RSS feeds are a backend which isn't built into the registry, which
 		// is added, as another program's would be
 		registry.WithBackend(rss.Scheme, rss.Description, rss.Open),
-	)
+	)...)
 }

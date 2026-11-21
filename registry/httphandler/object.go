@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +93,8 @@ func objectHandler(reg *registry.Registry, router *httprouter.Router, documentat
 			op.Description(documentation.Section(3, "GET /object/{name}/{path...}").Body)
 			op.Query(jsonschema.MustFor[objectGetQuery]())
 			op.Response(http.StatusOK, "*/*", "File's content, of its type, with its metadata as JSON in the X-Meta header")
+			op.Response(http.StatusOK, markdownType, "File's content, as Markdown, when text/markdown is accepted, such as of a PDF, of its start, with X-Markdown-Next when there's more")
+			op.ErrorResponse(http.StatusNotAcceptable, "text/markdown is accepted, and the file can't be read as Markdown")
 			op.Response(http.StatusPartialContent, "*/*", "Range of the file's content, when the file can seek, such as a file on disk")
 			op.Response(http.StatusRequestedRangeNotSatisfiable, types.ContentTypeTextPlain, "Range not satisfiable")
 			op.Response(http.StatusTemporaryRedirect, "", "A directory, which redirects to its listing")
@@ -260,6 +263,12 @@ func objectGet(reg *registry.Registry, w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
+		return
+	}
+
+	// Its content as Markdown, when it's asked for, and it isn't Markdown
+	if acceptsMarkdown(r) && !isMarkdown(object) {
+		objectMarkdown(reg, w, r, key, read, object)
 		return
 	}
 
@@ -590,6 +599,96 @@ func objectKeyFromRequest(r *http.Request) (schema.ObjectKey, error) {
 		path += "/"
 	}
 	return schema.ObjectKey{Name: r.PathValue("name"), Path: path}, nil
+}
+
+// markdownType is the type of Markdown, and markdownNextHeader the header of
+// where the rest of a file's Markdown starts, when there's more
+const (
+	markdownType       = "text/markdown"
+	markdownNextHeader = "X-Markdown-Next"
+)
+
+// acceptsMarkdown returns true when the request accepts text/markdown, whose
+// quality isn't 0
+func acceptsMarkdown(r *http.Request) bool {
+	for _, value := range strings.Split(r.Header.Get("Accept"), ",") {
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		} else if q, err := strconv.ParseFloat(params["q"], 64); err == nil && q <= 0 {
+			continue
+		} else if mediaType == markdownType {
+			return true
+		}
+	}
+	return false
+}
+
+// isMarkdown returns true when the object is Markdown, of its type, or its
+// extension, as a type isn't always known of .md, which is sent as it is,
+// as it's Markdown already
+func isMarkdown(object *schema.Object) bool {
+	if mediaType, _, err := mime.ParseMediaType(object.ContentType); err == nil && (mediaType == markdownType || mediaType == "text/x-markdown") {
+		return true
+	}
+	switch strings.ToLower(path.Ext(object.Path)) {
+	case ".md", ".markdown":
+		return true
+	}
+	return false
+}
+
+// markdownTag returns what a file's Markdown's entity tag is of: the file's
+// entity tag, or its time and size, of a file which has none, such as on
+// disk, or "" when it has neither
+func markdownTag(object *schema.Object) string {
+	if tag := strings.Trim(types.Value(object.ETag), `"`); tag != "" {
+		return tag
+	} else if object.ModTime.IsZero() {
+		return ""
+	}
+	return strconv.FormatInt(object.ModTime.UnixNano(), 36) + "-" + strconv.FormatInt(types.Value(object.Size), 36)
+}
+
+// objectMarkdown responds with the start of the file's content as Markdown,
+// of its function, such as a PDF's, and where the rest starts, when there's
+// more, in X-Markdown-Next, whose entity tag is the file's, of Markdown, so
+// it's 304 when it isn't modified, without reading it. A file which can't be
+// read as Markdown is 406.
+func objectMarkdown(reg *registry.Registry, w http.ResponseWriter, r *http.Request, key schema.ObjectKey, read gofiler.ReadObjectFunc, object *schema.Object) {
+	w.Header().Add("Vary", "Accept")
+	etag := ""
+	if tag := markdownTag(object); tag != "" {
+		etag = `"` + tag + `.md"`
+		w.Header().Set("ETag", etag)
+		for _, match := range strings.Split(r.Header.Get("If-None-Match"), ",") {
+			if match = strings.TrimSpace(match); match == etag || match == "*" {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+	}
+	var markdown *schema.Markdown
+	err := interruptible(reg, w, r.Context(), key.Name, func(ctx context.Context) (err error) {
+		markdown, err = reg.Markdown(ctx, read, object)
+		return err
+	})
+	if errors.Is(err, gofiler.ErrNotImplemented) {
+		w.Header().Del("ETag")
+		httpresponse.Error(w, httpresponse.Err(http.StatusNotAcceptable).With(err.Error()), key.Name+key.Path)
+		return
+	} else if err != nil {
+		w.Header().Del("ETag")
+		httpresponse.Error(w, gofiler.HTTPErr(err), key.Name+key.Path)
+		return
+	}
+	w.Header().Set("Content-Type", markdownType+"; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, no-cache")
+	if markdown.Next > 0 {
+		w.Header().Set(markdownNextHeader, strconv.FormatUint(markdown.Next, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, markdown.Body)
 }
 
 // objectBinary returns the headers of an object's response, with its
