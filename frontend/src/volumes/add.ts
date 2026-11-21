@@ -1,6 +1,7 @@
-// The panel which adds a volume, of a backend: its name, its description,
-// its backend's fields, such as a directory's path, or a bucket, whether
-// it's writable, and how it's searched
+// The panel which adds a volume, of a backend: its name, its backend's
+// fields, such as a directory's path, or a bucket, whether it's writable,
+// and how it's searched. Its description is the backend's, such as a
+// feed's title, which can be edited once it's added.
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { PanelController, type PanelAction } from '@mutablelogic/go-server/panel';
@@ -83,8 +84,7 @@ export class VolumeAddElement extends LitElement {
         ];
     }
 
-    // formView is the form of the volume: its name, description, the
-    // backend's fields, its access, unless it can't be writable, and how
+    // formView is the form of the volume: its name, the backend's fields, its access, unless it can't be writable, and how
     // it's searched, each of what the one which is chosen does
     private formView(draft: VolumeDraft): TemplateResult {
         const fields = VolumeFields.get(draft.scheme) ?? [];
@@ -93,9 +93,6 @@ export class VolumeAddElement extends LitElement {
                 <cds-text-input label="Name" .value=${draft.name} placeholder="media" autocomplete="off"
                     helper-text="An identifier, of letters, digits, - and _, which is the volume's, in its links"
                     @input=${(event: Event) => this.set({ name: (event.target as HTMLInputElement).value })}></cds-text-input>
-                <cds-text-input label="Description" .value=${draft.description}
-                    helper-text="What the volume is, which is its label, or else the backend's"
-                    @input=${(event: Event) => this.set({ description: (event.target as HTMLInputElement).value })}></cds-text-input>
                 ${fields.map((field) => html`
                     <cds-text-input label=${field.required ? field.label : `${field.label} (optional)`} .value=${draft.fields[field.key] ?? ''}
                         placeholder=${field.placeholder ?? ''} helper-text=${field.helper ?? ''} autocomplete="off"
