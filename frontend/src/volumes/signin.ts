@@ -24,18 +24,19 @@ export function signInPrompt(done: string): TemplateResult {
 // openSignIn opens a window, at once, as it's of a click, which a browser
 // allows, and then at the URL to sign in at, which the server makes, or
 // closes it, and throws why it can't, such as when the server's client isn't
-// a web application's, of the CLI's command which signs in instead
+// a web application's, of the CLI's command which signs in instead. A window
+// which is blocked is an error, rather than this one going to sign in, as
+// the server's callback tells only the window which opened it, so what's
+// typed here would be lost.
 export async function openSignIn(client: Client, signIn: SignInNeeded, command: string): Promise<void> {
     const popup = window.open('', 'gf-signin', 'popup,width=520,height=680');
+    if (!popup) {
+        throw new Error('The window which signs in was blocked, so allow pop-ups for this page, and sign in again');
+    }
     try {
-        const url = await authorizeSignIn(client, signIn.key, signIn.scopes);
-        if (popup) {
-            popup.location.href = url;
-        } else {
-            window.location.href = url;
-        }
+        popup.location.href = await authorizeSignIn(client, signIn.key, signIn.scopes);
     } catch (error) {
-        popup?.close();
+        popup.close();
         throw new Error(`${error instanceof Error ? error.message : String(error)}. Signing in in a browser needs the server's GOOGLE_CLIENT to be a web application's client, whose redirect URIs are this server's callback, ${signInCallback(client)}, so sign in with the CLI: ${command}`);
     }
 }
