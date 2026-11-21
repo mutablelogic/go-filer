@@ -37,9 +37,8 @@ type Flags struct {
 
 // WithRegistry creates a registry of volumes, with the server's tracer and
 // meter, and the flags' worker, when it's set, and then the options, such as
-// the provider of the volumes' credentials (registry.WithCredentials), whose
-// placeholders, such as ${S3_SECRET}, it expands, and which stores those
-// which aren't placeholders, and runs it, so the changes to its volumes are
+// the provider of the volumes' credentials (registry.WithCredentials), which
+// they look up of their names, such as S3_SECRET, and runs it, so the changes to its volumes are
 // published to the broadcaster, and it's closed when the function returns, adds the volumes of the flags, registers its
 // HTTP handlers with the server, when there is one, and then calls the
 // function with the registry. The broadcaster is one a server shares with
@@ -120,8 +119,8 @@ func (flags Flags) WithRegistry(ctx server.Cmd, srv *servercmd.RunServer, b *bro
 		}
 
 		// It's stored, enabled, replacing a stored volume of the same name,
-		// and mounted by Run. Its URL is logged, as it has the placeholders
-		// of the credentials, which are stored, not the credentials.
+		// and mounted by Run. Its URL is logged, as it has the names of the
+		// credentials, not the credentials.
 		meta := schema.VolumeMeta{Name: name, URL: u.String(), Enabled: true}
 		var volume *schema.Volume
 		if _, err := reg.GetVolume(ctx.Context(), name); errors.Is(err, gofiler.ErrNotFound) {

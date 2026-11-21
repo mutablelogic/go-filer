@@ -607,8 +607,8 @@ func (cmd *VolumeCreateFSCmd) volume() (schema.Volume, error) {
 // volume returns the volume of a bucket, whose URL is
 // s3://<bucket>/<prefix>, with its options, as they are, and the name
 // option, when the volume's name isn't the bucket's. Its credentials are the
-// names of the server's, which it looks up, as placeholders, such as
-// ${S3_SECRET}, so they aren't sent, or stored.
+// names of the server's, such as S3_SECRET, which it looks up, so they aren't
+// sent, or stored.
 func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 	if !types.IsIdentifier(cmd.Name) {
 		return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid volume name: %q", cmd.Name)
@@ -633,16 +633,16 @@ func (cmd *VolumeCreateS3Cmd) volume() (schema.Volume, error) {
 		}
 	}
 	for key, name := range map[string]string{
-		"access-key-id":     cmd.AccessKey,
-		"secret-access-key": cmd.SecretKey,
-		"session-token":     cmd.SessionToken,
+		"access-key-credential":    cmd.AccessKey,
+		"secret-key-credential":    cmd.SecretKey,
+		"session-token-credential": cmd.SessionToken,
 	} {
 		if name == "" {
 			continue
 		} else if !credentialName.MatchString(name) {
 			return schema.Volume{}, gofiler.ErrBadParameter.Withf("invalid name of a credential: %q, which is letters, digits and underscores, such as S3_SECRET", name)
 		}
-		query.Set(key, "${"+name+"}")
+		query.Set(key, name)
 	}
 	if cmd.Anonymous {
 		query.Set("anonymous", "true")

@@ -176,8 +176,8 @@ func WithMetadataTask(task indexer.Task) Opt {
 }
 
 // WithCredentials sets the provider of the credentials of the backends,
-// which expands the placeholders of the credentials in their URLs, such as
-// ${S3_SECRET}, so the URLs don't have the credentials
+// which they look up of the names in their URLs, such as S3_SECRET, so the
+// URLs don't have the credentials
 func WithCredentials(credentials credential.CredentialProvider) Opt {
 	return func(o *opt) error {
 		o.backendOpts.Credentials = credentials

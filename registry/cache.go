@@ -285,8 +285,8 @@ func (f *cachedFiler) Readonly() bool {
 	return false
 }
 
-// URLWithCredentials returns the backend's URL, with the placeholders of
-// its credentials, when it has them, or its URL
+// URLWithCredentials returns the backend's URL, with the names of its
+// credentials, when it has them, or its URL
 func (f *cachedFiler) URLWithCredentials() *url.URL {
 	if b, ok := f.Filer.(interface{ URLWithCredentials() *url.URL }); ok {
 		return b.URLWithCredentials()

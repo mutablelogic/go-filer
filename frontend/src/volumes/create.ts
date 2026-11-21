@@ -64,8 +64,8 @@ export const VolumeFields = new Map<string, readonly VolumeField[]>([
         { key: 'bucket', label: 'Bucket', placeholder: 'my.bucket/photos', required: true, helper: 'The bucket, and optionally a prefix of its keys' },
         { key: 'region', label: 'Region', helper: "The bucket's region, which is its own, when it isn't set" },
         { key: 'endpoint', label: 'Endpoint', placeholder: 'http://localhost:9000', helper: 'The URL of a service which is compatible with S3, such as MinIO or SeaweedFS' },
-        { key: 'access-key-id', label: 'Access key ID credential', placeholder: 'S3_KEY', helper: "The name of the server's credential of the access key ID, which it looks up" },
-        { key: 'secret-access-key', label: 'Secret access key credential', placeholder: 'S3_SECRET', helper: "The name of the server's credential of the secret access key, which it looks up" },
+        { key: 'access-key-credential', label: 'Access key credential', placeholder: 'S3_KEY', helper: "The name of the server's credential of the access key ID, which it looks up" },
+        { key: 'secret-key-credential', label: 'Secret key credential', placeholder: 'S3_SECRET', helper: "The name of the server's credential of the secret access key, which it looks up" },
         { key: 'seaweedfs-filer-grpc', label: 'SeaweedFS filer', placeholder: 'host:18888', helper: "The gRPC service of the SeaweedFS filer, whose bucket's objects are watched" },
     ]],
     [SchemeRSS, [
@@ -122,7 +122,7 @@ export function volumeCreate(draft: VolumeDraft): VolumeCreate {
                 throw new Error(`A volume of ${draft.scheme} can't be added here`);
             }
             url = `${draft.scheme}://${name}`;
-            setCredential(query, 'credential', value(draft, 'credential'), false);
+            setCredential(query, 'credential', value(draft, 'credential'));
             if (draft.scheme === SchemeCalendar && value(draft, 'window')) {
                 query.set('window', value(draft, 'window'));
             }
@@ -216,8 +216,8 @@ function s3URL(name: string, draft: VolumeDraft, query: URLSearchParams): string
             query.set(key, value(draft, key));
         }
     }
-    setCredential(query, 'access-key-id', value(draft, 'access-key-id'), true);
-    setCredential(query, 'secret-access-key', value(draft, 'secret-access-key'), true);
+    setCredential(query, 'access-key-credential', value(draft, 'access-key-credential'));
+    setCredential(query, 'secret-key-credential', value(draft, 'secret-key-credential'));
     return `s3://${bucket}${prefix ? '/' + prefix.split('/').map(encodeURIComponent).join('/') : ''}`;
 }
 
@@ -243,13 +243,12 @@ function rssURL(name: string, feed: string, query: URLSearchParams): string {
 }
 
 // setCredential sets an option of the name of a credential, which is
-// checked, as a placeholder of it, ${NAME}, when it's of a placeholder, or
-// as it is
-function setCredential(query: URLSearchParams, key: string, name: string, placeholder: boolean) {
+// checked, such as S3_SECRET, which the server looks up
+function setCredential(query: URLSearchParams, key: string, name: string) {
     if (!name) {
         return;
     } else if (!reCredential.test(name)) {
         throw new Error(`The name of a credential is letters, digits and _, such as S3_SECRET: ${name}`);
     }
-    query.set(key, placeholder ? '${' + name + '}' : name);
+    query.set(key, name);
 }

@@ -2,13 +2,8 @@ package s3
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	// Packages
@@ -170,30 +165,31 @@ func (self *S3) ping(ctx context.Context, client *s3.Client) (string, error) {
 	}
 }
 
-// Retrieve returns the credentials of the options, whose placeholders are
-// expanded by the provider of credentials each time, so credentials which
-// are rotated, such as session tokens, are used once the SDK's cache of
-// them expires, which is credentialRefresh. A credential which can't be
-// expanded, or is empty, is ErrBadParameter.
+// Retrieve returns the credentials of the options, of their names, which
+// the provider of credentials looks up each time, such as of its store, or
+// the environment, so credentials which are rotated, such as session tokens,
+// are used once the SDK's cache of them expires, which is credentialRefresh.
+// A credential which can't be looked up, or is empty, is ErrBadParameter.
 func (self optionCredentials) Retrieve(ctx context.Context) (aws.Credentials, error) {
+	if self.Credentials == nil {
+		return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be looked up, without a provider of credentials", self.bucket)
+	}
 	values := make([]string, 0, 3)
-	for _, value := range []string{self.keyID, self.secret, self.token} {
-		if !isPlaceholder(value) {
-			values = append(values, literal(value))
+	for _, name := range []string{self.keyID, self.secret, self.token} {
+		if name == "" {
+			values = append(values, "")
 			continue
-		} else if self.Credentials == nil {
-			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be expanded, without a provider of credentials", self.bucket)
 		}
-		expanded, err := self.Credentials.Expand(ctx, value)
+		value, err := self.Credentials.Expand(ctx, "${"+name+"}")
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return aws.Credentials{}, ctxErr
 			}
 			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: credentials: %v", self.bucket, err)
-		} else if expanded == "" {
-			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: credentials: %s is empty", self.bucket, value)
+		} else if value == "" {
+			return aws.Credentials{}, gofiler.ErrBadParameter.Withf("Bucket %q: credentials: %s is empty", self.bucket, name)
 		}
-		values = append(values, expanded)
+		values = append(values, value)
 	}
 	return aws.Credentials{
 		AccessKeyID:     values[0],
@@ -203,43 +199,4 @@ func (self optionCredentials) Retrieve(ctx context.Context) (aws.Credentials, er
 		CanExpire:       true,
 		Expires:         time.Now().Add(credentialRefresh),
 	}, nil
-}
-
-// storeCredentials stores the credentials of the options which aren't
-// placeholders, with the provider of credentials, by new keys of the volume's
-// name (see credentialKey), as JSON strings, and replaces them with their
-// placeholders, so the URL doesn't have them
-func (self *S3) storeCredentials(ctx context.Context) error {
-	for _, credential := range []struct {
-		option string
-		value  *string
-	}{
-		{optAccessKeyID, &self.keyID},
-		{optSecretAccessKey, &self.secret},
-		{optSessionToken, &self.token},
-	} {
-		if *credential.value == "" || isPlaceholder(*credential.value) {
-			continue
-		}
-		key := credentialKey(self.name, credential.option)
-		data, err := json.Marshal(literal(*credential.value))
-		if err != nil {
-			return err
-		} else if err := self.Credentials.Set(ctx, key, data); err != nil {
-			return fmt.Errorf("Bucket %q: storing the %s option: %w", self.bucket, credential.option, err)
-		}
-		*credential.value = "${" + key + "}"
-	}
-	return nil
-}
-
-// credentialKey returns a new key of a credential of a volume, which is the
-// option of its URL, such as S3_PHOTOS_SECRET_ACCESS_KEY_0123456789ABCDEF,
-// whose random suffix means it doesn't replace a credential which another
-// volume, or the same volume before it's changed, uses, or one of the
-// environment, so a credential is only used by the volume which stored it
-func credentialKey(name, option string) string {
-	suffix := make([]byte, 8)
-	rand.Read(suffix)
-	return strings.ToUpper(strings.NewReplacer("-", "_").Replace("s3_" + name + "_" + option + "_" + hex.EncodeToString(suffix)))
 }

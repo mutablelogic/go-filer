@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
-	"strings"
 
 	// Packages
 	filer "github.com/mutablelogic/go-filer"
@@ -22,9 +21,9 @@ type opt struct {
 	name        string // the volume's name
 	region      string // the bucket's region, when it's set
 	profile     string // the profile of the credentials, when it's set
-	keyID       string // the access key ID, which can have placeholders, when it's set
-	secret      string // the secret access key, which has placeholders, when it's set
-	token       string // the session token, which has placeholders, when it's set
+	keyID       string // the name of the credential of the access key ID, when it's set
+	secret      string // the name of the credential of the secret access key, when it's set
+	token       string // the name of the credential of the session token, when it's set
 	endpoint    string // the endpoint of a service which is compatible with S3, when it's set
 	anonymous   bool   // requests aren't signed, so they're without credentials
 	readonly    bool   // objects can't be created or deleted
@@ -49,15 +48,21 @@ const (
 	// default one, or of AWS_PROFILE
 	optProfile = "profile"
 
+	// optAccessKeyCredential, optSecretKeyCredential and
+	// optSessionTokenCredential are the names of the server's credentials,
+	// such as S3_KEY and S3_SECRET, of the access key ID, the secret access
+	// key, and the session token, which is optional, in place of the
+	// profile's, or the default ones. They're looked up, of the provider of
+	// credentials, such as of its store, or the environment, each time
+	// they're used, so the URL has their names, and never the credentials.
+	optAccessKeyCredential    = "access-key-credential"
+	optSecretKeyCredential    = "secret-key-credential"
+	optSessionTokenCredential = "session-token-credential"
+
 	// optAccessKeyID, optSecretAccessKey and optSessionToken are the
-	// credentials, in place of the profile's, or the default ones, whose
-	// placeholders, such as ${S3_SECRET}, are expanded by the provider of
-	// credentials, when the bucket is checked. A value which isn't a
-	// placeholder is stored by the provider, once the bucket is checked, and
-	// the URL has its placeholder, so it never has the credentials. A
-	// credential which starts with "$" is given with "$$", so $$word is
-	// $word, rather than the placeholder of word. The session token is
-	// optional.
+	// options of earlier versions, of placeholders of the credentials'
+	// names, such as ${S3_SECRET}, which a stored volume has, and which are
+	// read as their names
 	optAccessKeyID     = "access-key-id"
 	optSecretAccessKey = "secret-access-key"
 	optSessionToken    = "session-token"
@@ -82,8 +87,12 @@ const (
 	optSeaweedFS = "seaweedfs-filer-grpc"
 )
 
-// placeholder is the pattern of a value which is only a placeholder
-var placeholder = regexp.MustCompile(`^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$`)
+// credentialName is the name of a credential, as an environment variable's,
+// and placeholder an earlier version's placeholder of one, ${NAME} or $NAME
+var (
+	credentialName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	placeholder    = regexp.MustCompile(`^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$`)
+)
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
@@ -97,7 +106,7 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 	// Check the options are known
 	for key := range values {
 		switch key {
-		case optName, optRegion, optProfile, optAccessKeyID, optSecretAccessKey, optSessionToken, optEndpoint, optAnonymous, optReadonly, optSeaweedFS, schema.OptDescription:
+		case optName, optRegion, optProfile, optAccessKeyCredential, optSecretKeyCredential, optSessionTokenCredential, optAccessKeyID, optSecretAccessKey, optSessionToken, optEndpoint, optAnonymous, optReadonly, optSeaweedFS, schema.OptDescription:
 		default:
 			return opt{}, filer.ErrBadParameter.Withf("Unknown option: %q", key)
 		}
@@ -138,17 +147,30 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 		self.readonly = readonly
 	}
 
-	// Set the credentials, which are an access key ID and secret access key,
-	// with an optional session token, whose secrets are placeholders, which
-	// aren't with the profile, or anonymous
-	self.keyID, self.secret, self.token = values.Get(optAccessKeyID), values.Get(optSecretAccessKey), values.Get(optSessionToken)
+	// Set the names of the credentials, of an access key ID and secret
+	// access key, with an optional session token, which aren't with the
+	// profile, or anonymous
+	for _, credential := range []struct {
+		option, earlier string
+		name            *string
+	}{
+		{optAccessKeyCredential, optAccessKeyID, &self.keyID},
+		{optSecretKeyCredential, optSecretAccessKey, &self.secret},
+		{optSessionTokenCredential, optSessionToken, &self.token},
+	} {
+		name, err := credentialOption(values, credential.option, credential.earlier)
+		if err != nil {
+			return opt{}, err
+		}
+		*credential.name = name
+	}
 	if (self.keyID == "") != (self.secret == "") || (self.token != "" && self.keyID == "") {
-		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options are both needed, with the %s option", optAccessKeyID, optSecretAccessKey, optSessionToken)
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options are both needed, with the %s option", optAccessKeyCredential, optSecretKeyCredential, optSessionTokenCredential)
 	}
 	if self.keyID != "" && self.profile != "" {
-		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optProfile)
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyCredential, optProfile)
 	} else if self.keyID != "" && self.anonymous {
-		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyID, optAnonymous)
+		return opt{}, filer.ErrBadParameter.Withf("The %s and %s options can't be used together", optAccessKeyCredential, optAnonymous)
 	}
 
 	// Set the address of the SeaweedFS filer, which is host:port, unless
@@ -170,8 +192,9 @@ func parseOpts(bucket string, values url.Values) (opt, error) {
 
 // values returns each of the options, as query parameters, so the bucket
 // can be created again with them, and a URL says how it's set up, with the
-// credentials, which are placeholders, only when they're asked for
-func (self opt) values(credentials bool) url.Values {
+// names of its credentials, which aren't the credentials, so they're always
+// there
+func (self opt) values() url.Values {
 	// Each option which isn't a credential is set, empty when it isn't, so
 	// the URL says how it's set up
 	values := url.Values{
@@ -181,12 +204,12 @@ func (self opt) values(credentials bool) url.Values {
 		optEndpoint:  {self.endpoint},
 		optSeaweedFS: {self.seaweedfs},
 	}
-	if self.keyID != "" && credentials {
-		values.Set(optAccessKeyID, self.keyID)
-		values.Set(optSecretAccessKey, self.secret)
+	if self.keyID != "" {
+		values.Set(optAccessKeyCredential, self.keyID)
+		values.Set(optSecretKeyCredential, self.secret)
 	}
-	if self.token != "" && credentials {
-		values.Set(optSessionToken, self.token)
+	if self.token != "" {
+		values.Set(optSessionTokenCredential, self.token)
 	}
 	// An anonymous bucket is read-only, whatever its readonly option
 	values.Set(optAnonymous, strconv.FormatBool(self.anonymous))
@@ -211,21 +234,48 @@ func parseBool(values url.Values, key string) (bool, error) {
 	}
 }
 
-// literal returns the credential of a value which isn't a placeholder, which
-// is the value, unless it starts with "$$", which is a "$", so a credential
-// which would be a placeholder, such as $word, is given as $$word
-func literal(value string) string {
-	if strings.HasPrefix(value, "$$") {
-		return value[1:]
+// credentialOption returns the name of a credential, of its option, such as
+// access-key-credential=S3_KEY, or else of its earlier option, of a
+// placeholder of its name, such as access-key-id=${S3_KEY}, which a stored
+// volume has, or "". A value which isn't a name, such as a credential
+// itself, is ErrBadParameter, so a URL never has one.
+func credentialOption(values url.Values, option, earlier string) (string, error) {
+	if name := values.Get(option); name != "" {
+		if !credentialName.MatchString(name) {
+			return "", filer.ErrBadParameter.Withf("The %s option is the name of the server's credential, such as S3_SECRET, of letters, digits and underscores, not %q", option, name)
+		}
+		return name, nil
+	} else if value := values.Get(earlier); value == "" {
+		return "", nil
+	} else if m := placeholder.FindStringSubmatch(value); m != nil {
+		return m[1] + m[2], nil
 	}
-	return value
+	return "", filer.ErrBadParameter.Withf("The %s option is a credential, rather than the name of one, so store it as the server's, such as with filer credential-set, and name it with the %s option", earlier, option)
 }
 
-// isPlaceholder returns true when the value of a credential is a
-// placeholder, such as ${S3_SECRET} or $S3_SECRET, which the provider of
-// credentials expands, rather than being the credential. A value which has a
-// placeholder, and other text, is a credential, which is stored, so its text
-// isn't kept.
-func isPlaceholder(value string) bool {
-	return placeholder.MatchString(value)
+// currentCredentials returns the options, whose earlier versions' options of
+// credentials, of placeholders of their names, such as
+// access-key-id=${S3_KEY}, are their options, such as
+// access-key-credential=S3_KEY, so they replace those of a URL
+func currentCredentials(values url.Values) (url.Values, error) {
+	result := url.Values{}
+	for key, value := range values {
+		result[key] = value
+	}
+	for _, credential := range [][2]string{
+		{optAccessKeyCredential, optAccessKeyID},
+		{optSecretKeyCredential, optSecretAccessKey},
+		{optSessionTokenCredential, optSessionToken},
+	} {
+		if !result.Has(credential[1]) {
+			continue
+		}
+		name, err := credentialOption(result, credential[0], credential[1])
+		if err != nil {
+			return nil, err
+		}
+		result.Del(credential[1])
+		result.Set(credential[0], name)
+	}
+	return result, nil
 }

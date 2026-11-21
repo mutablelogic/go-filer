@@ -67,14 +67,12 @@ func New(ctx context.Context, u *url.URL, opts gofiler.Opts) (*S3, error) {
 		self.Opts = opts
 	}
 
-	// Credentials which aren't placeholders are stored, so there must be a
-	// provider of credentials, which stores them once the bucket is checked
-	if self.Credentials == nil && ((self.keyID != "" && !isPlaceholder(self.keyID)) || (self.secret != "" && !isPlaceholder(self.secret)) || (self.token != "" && !isPlaceholder(self.token))) {
-		return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be stored, without a provider of credentials", self.bucket)
+	// Credentials of their names are looked up, so there must be a provider
+	// of credentials
+	if self.Credentials == nil && self.keyID != "" {
+		return nil, gofiler.ErrBadParameter.Withf("Bucket %q: the credentials can't be looked up, without a provider of credentials", self.bucket)
 	}
 	if err := self.connect(ctx); err != nil {
-		return nil, err
-	} else if err := self.storeCredentials(ctx); err != nil {
 		return nil, err
 	}
 
@@ -168,21 +166,27 @@ func (self *S3) Description() string {
 // URL returns the URL of the bucket, with the options which are set as its
 // query, but not its credentials, so it can be returned to clients
 func (self *S3) URL() *url.URL {
-	return self.url(false)
+	return self.url()
 }
 
 // URLWithCredentials returns the URL of the bucket, with each of its options,
-// and its credentials, which are placeholders, so it can be created again
-// from it, such as from the store of volumes
+// and the names of its credentials, so it can be created again from it, such
+// as from the store of volumes, which is its URL, as the names aren't the
+// credentials
 func (self *S3) URLWithCredentials() *url.URL {
-	return self.url(true)
+	return self.url()
 }
 
 // Clone returns a new filer of the bucket, with the options, including the
-// placeholders of the credentials, changed by the patch, which is checked as
-// New does, and stores credentials of the patch which aren't placeholders
+// names of the credentials, changed by the patch, which is checked as New
+// does. A patch of an earlier version's option of a credential, of a
+// placeholder of its name, changes its option.
 func (self *S3) Clone(ctx context.Context, patch url.Values) (gofiler.Filer, error) {
-	u := self.url(true)
+	patch, err := currentCredentials(patch)
+	if err != nil {
+		return nil, err
+	}
+	u := self.url()
 	u.RawQuery = gofiler.PatchValues(u.Query(), patch).Encode()
 	if clone, err := New(ctx, u, self.Opts); err != nil {
 		return nil, err
@@ -243,7 +247,8 @@ func isBucketName(name string) bool {
 	return true
 }
 
-// url returns the URL of the bucket, with or without its credentials
-func (self *S3) url(credentials bool) *url.URL {
-	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values(credentials).Encode()}
+// url returns the URL of the bucket, with its options, and the names of its
+// credentials
+func (self *S3) url() *url.URL {
+	return &url.URL{Scheme: schema.SchemeS3, Host: self.bucket, Path: "/" + self.prefix, RawQuery: self.opt.values().Encode()}
 }

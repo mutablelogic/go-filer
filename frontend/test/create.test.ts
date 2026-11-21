@@ -32,18 +32,18 @@ test('volumeCreate', async (t) => {
     await t.test('an S3 bucket', () => {
         const v = volumeCreate(draft('s3', 'photos', {
             bucket: 'my.bucket/family/photos/', region: 'eu-central-1', endpoint: 'http://localhost:9000',
-            'access-key-id': 'S3_KEY', 'secret-access-key': 'S3_SECRET', 'seaweedfs-filer-grpc': '',
+            'access-key-credential': 'S3_KEY', 'secret-key-credential': 'S3_SECRET', 'seaweedfs-filer-grpc': '',
         }));
         assert.match(v.url, /^s3:\/\/my\.bucket\/family\/photos\?/);
         assert.deepEqual(query(v.url), {
-            'access-key-id': ['${S3_KEY}'], endpoint: ['http://localhost:9000'], index: ['objects'], name: ['photos'],
-            readonly: ['true'], region: ['eu-central-1'], 'secret-access-key': ['${S3_SECRET}'],
+            'access-key-credential': ['S3_KEY'], endpoint: ['http://localhost:9000'], index: ['objects'], name: ['photos'],
+            readonly: ['true'], region: ['eu-central-1'], 'secret-key-credential': ['S3_SECRET'],
         });
         // A bucket, and its prefix, are as they are, of its spaces
         assert.match(volumeCreate(draft('s3', 'media', { bucket: 'media/my photos ' })).url, /^s3:\/\/media\/my%20photos%20\?/);
         // Its name isn't an option when it's the bucket's
         assert.equal(query(volumeCreate(draft('s3', 'media', { bucket: 'media' })).url).name, undefined);
-        assert.throws(() => volumeCreate(draft('s3', 'media', { bucket: 'media', 'access-key-id': 'not a name' })), /credential/);
+        assert.throws(() => volumeCreate(draft('s3', 'media', { bucket: 'media', 'access-key-credential': 'not a name' })), /credential/);
     });
 
     await t.test('a feed', () => {

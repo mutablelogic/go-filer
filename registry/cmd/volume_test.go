@@ -309,13 +309,13 @@ func Test_VolumeCreateS3Cmd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "s3://my.bucket/photos%20?name=photos&readonly=true", u)
 
-	// Its options, and the names of the server's credentials, which are
-	// placeholders, which it looks up
+	// Its options, and the names of the server's credentials, which it
+	// looks up
 	u, err = volume("media", "media", "--endpoint", "http://localhost:9000", "--region", "eu-west-1",
 		"--access-key-credential", "S3_KEY", "--secret-key-credential", "S3_SECRET", "--writable",
 		"--seaweedfs-filer-grpc", "192.168.86.21:18888")
 	require.NoError(t, err)
-	assert.Equal(t, "s3://media?access-key-id=%24%7BS3_KEY%7D&endpoint=http%3A%2F%2Flocalhost%3A9000&readonly=false&region=eu-west-1&seaweedfs-filer-grpc=192.168.86.21%3A18888&secret-access-key=%24%7BS3_SECRET%7D", u)
+	assert.Equal(t, "s3://media?access-key-credential=S3_KEY&endpoint=http%3A%2F%2Flocalhost%3A9000&readonly=false&region=eu-west-1&seaweedfs-filer-grpc=192.168.86.21%3A18888&secret-key-credential=S3_SECRET", u)
 
 	// A name of a credential which isn't one, such as a secret
 	_, err = volume("media", "media", "--secret-key-credential", "not/a-name")
