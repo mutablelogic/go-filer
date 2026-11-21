@@ -15,6 +15,14 @@ import type { Route, Router } from '@mutablelogic/go-server/router';
 import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import Edit16 from '@carbon/icons/es/edit/16.js';
+import FolderIcon16 from '@carbon/icons/es/folder/16.js';
+import ObjectStorageIcon from '@carbon/icons/es/object-storage/16.js';
+import RssIcon from '@carbon/icons/es/rss/16.js';
+import CalendarIcon from '@carbon/icons/es/calendar/16.js';
+import ContactsIcon from '@carbon/icons/es/user--multiple/16.js';
+import CloudIcon from '@carbon/icons/es/cloud/16.js';
+import TaskIcon from '@carbon/icons/es/task/16.js';
+import DataBaseIcon from '@carbon/icons/es/data--base/16.js';
 import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
@@ -31,6 +39,9 @@ import '@carbon/web-components/es/components/tabs/index.js';
 import '../chart/meter.ts';
 import '@carbon/web-components/es/components/icon-button/index.js';
 import './panel.ts';
+import './add.ts';
+import { VolumeFields } from './create.ts';
+import type { PageAction } from '@mutablelogic/go-server/page';
 import { alertView } from '../alert/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -105,11 +116,12 @@ export class VolumesElement extends LitElement {
         return html`
             <gs-page-header heading="Volumes"
                 subtitle=${volumes ? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` : 'Loading…'}
-                .icon=${VolumesIcon}></gs-page-header>
+                .icon=${VolumesIcon} .actions=${this.addActions()}></gs-page-header>
             ${volumes ? this.failuresView(volumes) : nothing}
             ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
             ${volumes?.length ? this.statsView(volumes) : nothing}
             <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
+            <gf-volume-add .controller=${this.controller} .notifications=${this.notifications}></gf-volume-add>
         `;
     }
 
@@ -118,6 +130,24 @@ export class VolumesElement extends LitElement {
     private failuresView(volumes: readonly Volume[]): TemplateResult {
         return html`${repeat(volumes.filter((v) => volumeIndexFailure(v)), (v) => v.name, (v) =>
             alertView('error', `Indexing ${volumeLabel(v)} failed`, volumeIndexFailure(v)))}`;
+    }
+
+    // addActions are Add Volume, a menu of the backends, each of which opens
+    // the panel which adds a volume of it, of those it can add
+    private addActions(): PageAction[] {
+        const backends = this.controller?.backends ?? [];
+        if (backends.length === 0) {
+            return [];
+        }
+        return [{
+            label: 'Add Volume',
+            menu: backends.map((backend) => ({
+                label: backend.description || backend.scheme,
+                icon: BackendIcons.get(backend.scheme) ?? DataBaseIcon,
+                disabled: !VolumeFields.has(backend.scheme),
+                run: () => this.querySelector('gf-volume-add')?.open(backend),
+            })),
+        }];
     }
 
     // edit opens the panel of a volume, of its View tab
@@ -575,6 +605,18 @@ function statusTitle(volume: Volume, status: string, error?: string): string {
 
 // EditIcon is Carbon's edit icon, of an icon button
 const EditIcon = iconLoader(Edit16, { slot: 'icon' });
+
+// BackendIcons are the icons of the backends, of their schemes, of the Add
+// Volume menu, of which another's is a database's
+const BackendIcons = new Map<string, unknown>([
+    ['file', FolderIcon16],
+    ['s3', ObjectStorageIcon],
+    ['rss', RssIcon],
+    ['gcalendar', CalendarIcon],
+    ['gcontacts', ContactsIcon],
+    ['gdrive', CloudIcon],
+    ['gtasks', TaskIcon],
+]);
 
 // TagTypes are the colours of the backends' tags, in the order of the
 // backends, so each backend has its own, while there are enough
