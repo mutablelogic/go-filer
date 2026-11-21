@@ -69,11 +69,14 @@ export const RegistryChangeSchema = 'registry';
 export const VolumeChangeTable = 'volume';
 export const ObjectChangeSchema = 'filer';
 
-// Meta is an object's metadata, of a namespace and key, whose value is JSON
+// Meta is an object's metadata, of a namespace and key, whose value is JSON,
+// and its text, for people, such as 5s of a duration, when it says more than
+// the value
 export interface Meta {
     namespace?: string;
     key?: string;
     value?: unknown;
+    text?: string;
 }
 
 // FilerObject is a file or a folder in a volume, of its path, which is

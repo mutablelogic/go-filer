@@ -33,9 +33,10 @@
         }
 
         /* The server's status is at the bottom of the side navigation, and
-           its items scroll above it */
+           the player above it, while something is played, and its items
+           scroll above them, of the player's height, which the app sets */
         cds-side-nav-items {
-            margin-bottom: calc(3rem + 1px);
+            margin-bottom: calc(3rem + 1px + var(--gf-player-height, 0px));
         }
 
 
@@ -428,6 +429,7 @@
     <div class="cds--g100">
         <gs-header></gs-header>
         <gs-side-nav>
+            <gs-media-player></gs-media-player>
             <gs-server-status></gs-server-status>
         </gs-side-nav>
     </div>

@@ -15,6 +15,7 @@ import { NavController } from '@mutablelogic/go-server/nav';
 import '@mutablelogic/go-server/nav/view';
 import { NotificationController } from '@mutablelogic/go-server/notification';
 import '@mutablelogic/go-server/notification/view';
+import '@mutablelogic/go-server/player/view';
 import { Router } from '@mutablelogic/go-server/router';
 
 // go-filer's modules
@@ -49,6 +50,13 @@ const sideNav = document.querySelector('gs-side-nav');
 if (header && sideNav) {
     header.controller = nav;
     sideNav.controller = nav;
+}
+
+// The sidebar's pages scroll above the player, of its height, which is of
+// what it plays, audio or video, and none while it's hidden
+const player = document.querySelector('gs-media-player');
+if (player && sideNav) {
+    new ResizeObserver(() => sideNav.style.setProperty('--gf-player-height', `${player.offsetHeight}px`)).observe(player);
 }
 const router = new Router('volumes');
 const root = document.querySelector('main')!;
