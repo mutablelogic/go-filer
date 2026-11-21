@@ -52,6 +52,13 @@ export async function deleteVolume(client: Client, name: string, signal?: AbortS
     return request<Volume>(client, 'DELETE', `volume/${encodeURIComponent(name)}`, { signal });
 }
 
+// objectURL returns the URL of the content of a volume's file, of its path,
+// as the browser reaches it, which downloads it
+export function objectURL(client: Client, name: string, path: string): string {
+    const segments = path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+    return new URL(`${client.base.replace(/\/$/, '')}/object/${encodeURIComponent(name)}/${segments}`, location.href).href;
+}
+
 // listObjects returns a page of the objects of a volume's folder, which is
 // its root by default. A folder's path is listed with a "/" after it, so a
 // bucket's object of the same name isn't listed instead.

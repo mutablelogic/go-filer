@@ -1,14 +1,15 @@
 // The gf-file-view element is the objects of a folder, which aren't folders,
 // as the tree has those, as a table of their names, types, sizes and when
 // they were changed, which loads more as it's scrolled, in the element it's in,
-// which scrolls.
+// which scrolls. A row which is clicked is chosen, which is an event of
+// its object, and is shown chosen, of its path, as selected.
 
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
 import EmptyIcon from '@carbon/icons/es/folders/32.js';
-import { objectTitle, objectType } from '../filer/schema.ts';
+import { objectTitle, objectType, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 import '@carbon/web-components/es/components/button/index.js';
 
@@ -18,8 +19,10 @@ import '@carbon/web-components/es/components/button/index.js';
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
-// FileViewTag is the element's tag
+// FileViewTag is the element's tag, and FileViewSelected the event of an
+// object which is chosen
 export const FileViewTag = 'gf-file-view';
+export const FileViewSelected = 'gf-file-view-selected';
 
 const fileIcon = iconLoader(FileIcon);
 
@@ -30,6 +33,7 @@ export class FileViewElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
         empty: { type: String },
+        selected: { attribute: false },
         state: { state: true },
     };
 
@@ -37,6 +41,9 @@ export class FileViewElement extends LitElement {
     // it has none, such as to choose another folder
     declare controller?: FolderController;
     declare empty?: string;
+
+    // selected is the path of the object which is chosen, if any
+    declare selected?: string;
     declare private state?: FolderState;
 
     private unsubscribe?: () => void;
@@ -118,7 +125,7 @@ export class FileViewElement extends LitElement {
                 </thead>
                 <tbody>
                     ${repeat(state.objects, (object) => object.path, (object) => html`
-                        <tr>
+                        <tr class=${object.path === this.selected ? 'cds--data-table--selected' : ''} @click=${() => this.choose(object)}>
                             <td>
                                 <span class="gf-file-view-name" title=${object.path}>${fileIcon}<span>${objectTitle(object)}</span></span>
                             </td>
@@ -132,6 +139,11 @@ export class FileViewElement extends LitElement {
             ${state.failed ? this.failedView() : state.more ? html`<p class="gf-file-view-end gf-empty">${state.loading ? 'Loading…' : ''}</p>` : nothing}
             ${count !== null ? html`<p class="gf-file-view-count">${countText(count)}</p>` : nothing}
         `;
+    }
+
+    // choose says the object is chosen
+    private choose(object: FilerObject) {
+        this.dispatchEvent(new CustomEvent<FilerObject>(FileViewSelected, { detail: object, bubbles: true, composed: true }));
     }
 
     // failedView says the objects couldn't be loaded, and loads them again,

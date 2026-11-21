@@ -33,6 +33,8 @@ import { VolumeFilters, VolumesController } from './controller.ts';
 import '@mutablelogic/go-server/page/view';
 import '../tree/view.ts';
 import '../folder/view.ts';
+import '../folder/panel.ts';
+import type { FilerObject } from '../filer/schema.ts';
 import '@carbon/web-components/es/components/tile/clickable-tile.js';
 import '@carbon/web-components/es/components/tag/tag.js';
 import '@carbon/web-components/es/components/tabs/index.js';
@@ -233,6 +235,7 @@ export class VolumeElement extends LitElement {
         name: { type: String },
         path: { type: String },
         volume: { state: true },
+        selected: { state: true },
     };
 
     // controller keeps the volumes, tree their folders, folder the objects
@@ -249,6 +252,9 @@ export class VolumeElement extends LitElement {
     declare path?: string;
 
     declare private volume?: Volume;
+
+    // selected is the path of the file whose panel is open, if any
+    declare private selected?: string;
     private unsubscribe: (() => void)[] = [];
 
     protected override createRenderRoot() {
@@ -274,6 +280,11 @@ export class VolumeElement extends LitElement {
         }
         if ((changed.has('name') || changed.has('path')) && this.name && this.path) {
             void this.reveal();
+        }
+        // The panel of a file is of its folder, so it's closed of another
+        if (changed.has('name') || changed.has('path')) {
+            this.selected = undefined;
+            this.querySelector('gf-object-panel')?.close();
         }
         if (changed.has('name') || changed.has('path') || (changed as Map<string, unknown>).has('volume')) {
             this.openFolder();
@@ -361,6 +372,7 @@ export class VolumeElement extends LitElement {
                 ${volume ? html`<div class="gf-volume-header-status">${statusTag(volume, 'md')}</div>` : nothing}
             </gs-page-header>
             <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
+            <gf-object-panel .client=${this.controller?.client} @gf-object-panel-closed=${() => { this.selected = undefined; }}></gf-object-panel>
         `;
         // The header, and the panel, are of one template, whatever's beneath
         // them, so the panel, which is open, isn't made again, closed, when
@@ -387,10 +399,18 @@ export class VolumeElement extends LitElement {
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
-                <gf-file-view class="gf-volume-view" .controller=${this.folder}
-                    empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}></gf-file-view>
+                <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected}
+                    empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}
+                    @gf-file-view-selected=${(event: CustomEvent<FilerObject>) => this.select(event.detail)}></gf-file-view>
             </div>
         `;
+    }
+
+    // select opens the panel of the object which is chosen, which is shown
+    // chosen, until it's closed
+    private select(object: FilerObject) {
+        this.selected = object.path;
+        this.querySelector('gf-object-panel')?.open(object);
     }
 
     // editActions are Edit Volume, which opens the volume's panel, of its
