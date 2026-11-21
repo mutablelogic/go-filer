@@ -5,10 +5,10 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"sync"
 
 	// Packages
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
+	blocks "github.com/mutablelogic/go-filer/backend/internal/blocks"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -20,21 +20,17 @@ import (
 // than all of it. What's read is requested from the offset, and is read as
 // it's received, until it's sought elsewhere, when it's requested again,
 // from there. ReadAt requests blocks of the file, apart from Read and
-// Seek, of at least driveBlock, the last of which is kept, so reads near
-// each other, such as a parser's of a file's headers, are of one request.
+// Seek, the last of which are kept, so a parser's reads, which are
+// scattered across a file, such as a PDF's objects, are of few requests.
 type driveReader struct {
 	*DriveFiler
 	ctx    context.Context
 	path   string // The file's path, of its errors
 	file   *httpclient.DriveFile
 	size   int64
-	offset int64        // Where the next read is from
-	stream *driveStream // What's requested, from where it's read, or nil
-
-	// The block which ReadAt read last, and where it's from
-	mu         sync.Mutex
-	block      []byte
-	blockStart int64
+	offset int64          // Where the next read is from
+	stream *driveStream   // What's requested, from where it's read, or nil
+	blocks *blocks.Reader // The blocks which ReadAt requests, and keeps
 }
 
 // driveStream is the content of a file which is requested, from where it's
@@ -48,13 +44,6 @@ type driveStream struct {
 
 var _ io.ReadSeekCloser = (*driveReader)(nil)
 var _ io.ReaderAt = (*driveReader)(nil)
-
-////////////////////////////////////////////////////////////////////////////////
-// GLOBALS
-
-// driveBlock is the least of a file which ReadAt requests, so small reads
-// near each other aren't each a request
-const driveBlock = 512 << 10
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -107,34 +96,16 @@ func (r *driveReader) Seek(offset int64, whence int) (int64, error) {
 	return r.offset, nil
 }
 
-// ReadAt reads the content at the offset, which is requested of its range,
-// at least driveBlock of it, which is kept, apart from Read and Seek, and
-// is safe to call at once
+// ReadAt reads the content at the offset, of the blocks which are
+// requested of their ranges, the last of which are kept, apart from Read
+// and Seek, and is safe to call at once
 func (r *driveReader) ReadAt(p []byte, off int64) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	} else if off < 0 {
 		return 0, &fs.PathError{Op: "read", Path: r.path, Err: fs.ErrInvalid}
-	} else if off >= r.size {
-		return 0, io.EOF
 	}
-	n := 0
-	for n < len(p) && off < r.size {
-		if off < r.blockStart || off >= r.blockStart+int64(len(r.block)) {
-			if err := r.fetch(off, int64(len(p)-n)); err != nil {
-				return n, err
-			}
-		}
-		copied := copy(p[n:], r.block[off-r.blockStart:])
-		n += copied
-		off += int64(copied)
-	}
-	if n < len(p) {
-		return n, io.EOF
-	}
-	return n, nil
+	return r.blocks.ReadAt(p, off)
 }
 
 // Close cancels what's requested, if anything
@@ -148,6 +119,14 @@ func (r *driveReader) Close() error {
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
+
+// newDriveReader returns a reader of the file, of its size, which isn't
+// requested until it's read
+func newDriveReader(ctx context.Context, filer *DriveFiler, path string, file *httpclient.DriveFile, size int64) *driveReader {
+	r := &driveReader{DriveFiler: filer, ctx: ctx, path: path, file: file, size: size}
+	r.blocks = blocks.New(size, r.fetch)
+	return r
+}
 
 // open requests the content from the offset, in place of what's requested,
 // and returns once it's received, or the error of requesting it
@@ -181,19 +160,15 @@ func (r *driveReader) open(offset int64) error {
 	}
 }
 
-// fetch requests the block of the file from the offset, of at least
-// driveBlock, or of want, when it's more, up to the end of the file, which
-// must be locked
-func (r *driveReader) fetch(off, want int64) error {
-	length := min(off+max(want, driveBlock), r.size) - off
-	block := make([]byte, length)
-	if err := r.client.Download(r.ctx, r.file.Id, r.file.HeadRevision, off, length, func(body io.Reader) error {
-		_, err := io.ReadFull(body, block)
+// fetch requests the content of the file at the offset, of the buffer's
+// length, which is within the file
+func (r *driveReader) fetch(p []byte, off int64) error {
+	if err := r.client.Download(r.ctx, r.file.Id, r.file.HeadRevision, off, int64(len(p)), func(body io.Reader) error {
+		_, err := io.ReadFull(body, p)
 		return err
 	}); err != nil {
 		return r.readError(err)
 	}
-	r.block, r.blockStart = block, off
 	return nil
 }
 

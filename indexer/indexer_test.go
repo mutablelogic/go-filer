@@ -1342,6 +1342,40 @@ func Test_MetadataTaskUnreadable(t *testing.T) {
 	assert.Contains(t, logs.String(), "not a valid file")
 }
 
+// A task which takes longer than its timeout, of a file, is cancelled,
+// before its lease ends, so it isn't claimed again while it's done, and
+// it's tried again, until it's given up, with why
+func Test_MetadataTaskTimeout(t *testing.T) {
+	defer indexer.SetTaskTimeout(50 * time.Millisecond)()
+	backend, _ := newBackend(t)
+	z := &sizer{}
+	var mu sync.Mutex
+	slow := 0
+	task := func(ctx context.Context, filer gofiler.Filer, s indexer.MetadataStore, object *schema.Object) error {
+		if object.Path != "/a/y.txt" {
+			return z.task(ctx, filer, s, object)
+		}
+		mu.Lock()
+		slow++
+		mu.Unlock()
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	i, err := indexer.New("media", &unwatched{Filer: backend}, newStore(t), indexer.WithMode(indexer.ModeMetadata), indexer.WithMetadataTask(task), indexer.WithRescanInterval(time.Hour), indexer.WithRetry(time.Millisecond))
+	require.NoError(t, err)
+	run(t, i)
+	require.Eventually(t, func() bool {
+		state, err := i.Metadata(context.Background())
+		return err == nil && state != nil && state.Queued == 0 && state.Failed == 1
+	}, 30*time.Second, 5*time.Millisecond)
+	state, err := i.Metadata(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, state.Error, "the task took longer than 50ms")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 5, slow, "it's tried taskAttempts times")
+}
+
 // A file whose backend is unavailable, for a while, isn't given up, as
 // it's tried again, until it's read
 func Test_MetadataTaskUnavailable(t *testing.T) {

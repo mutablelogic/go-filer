@@ -11,6 +11,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	blocks "github.com/mutablelogic/go-filer/backend/internal/blocks"
 	schema "github.com/mutablelogic/go-filer/schema"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	assert "github.com/stretchr/testify/assert"
@@ -219,7 +220,7 @@ func Test_S3_ReadChangedResponse(t *testing.T) {
 
 func Test_S3_ReadAt(t *testing.T) {
 	bucket, b := newFakeBucket(t, "", "a.txt")
-	content := strings.Repeat("0123456789", readAtBlock/4) // 2.5 blocks
+	content := strings.Repeat("0123456789", blocks.Size/4) // 2.5 blocks
 	bucket.Lock()
 	bucket.keys["a.txt"] = content
 	bucket.Unlock()
@@ -238,7 +239,7 @@ func Test_S3_ReadAt(t *testing.T) {
 
 		// Small reads near each other are of one request, of a block
 		data := make([]byte, 4)
-		for _, off := range []int64{0, 100, 4000, readAtBlock - 4} {
+		for _, off := range []int64{0, 100, 4000, blocks.Size - 4} {
 			n, err := at.ReadAt(data, off)
 			require.NoError(t, err)
 			assert.Equal(t, content[off:off+4], string(data[:n]))
@@ -247,16 +248,16 @@ func Test_S3_ReadAt(t *testing.T) {
 
 		// A read across blocks requests the next
 		data = make([]byte, 8)
-		_, err := at.ReadAt(data, readAtBlock-4)
+		_, err := at.ReadAt(data, blocks.Size-4)
 		require.NoError(t, err)
-		assert.Equal(t, content[readAtBlock-4:readAtBlock+4], string(data))
+		assert.Equal(t, content[blocks.Size-4:blocks.Size+4], string(data))
 		assert.Equal(t, before+2, gets())
 
 		// A read of more than a block is of one request
-		data = make([]byte, readAtBlock*2)
+		data = make([]byte, blocks.Size*2)
 		_, err = at.ReadAt(data, 1)
 		require.NoError(t, err)
-		assert.Equal(t, content[1:1+readAtBlock*2], string(data))
+		assert.Equal(t, content[1:1+blocks.Size*2], string(data))
 		assert.Equal(t, before+3, gets())
 
 		// The end of the file is io.EOF, with what was read
@@ -270,11 +271,15 @@ func Test_S3_ReadAt(t *testing.T) {
 		_, err = at.ReadAt(data, -1)
 		assert.ErrorIs(t, err, fs.ErrInvalid)
 
-		// A file which changes isn't read
+		return nil
+	}))
+
+	// A file which changes isn't read, of a block which isn't kept
+	require.NoError(t, read(context.Background(), func(r io.Reader) error {
 		bucket.Lock()
 		bucket.keys["a.txt"] = "changed"
 		bucket.Unlock()
-		_, err = at.ReadAt(data, 0)
+		_, err := r.(io.ReaderAt).ReadAt(make([]byte, 4), blocks.Size)
 		assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
 		return nil
 	}))
