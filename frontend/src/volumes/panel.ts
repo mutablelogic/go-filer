@@ -101,8 +101,9 @@ export class VolumePanelElement extends LitElement {
         this.unsubscribe = undefined;
     }
 
-    // open opens the panel of the volume, of the tab
-    open(volume: Volume, tab: VolumeTab = 'edit') {
+    // open opens the panel of the volume, of the tab, which is View, by
+    // default
+    open(volume: Volume, tab: VolumeTab = 'view') {
         if (!this.unsubscribe && this.controller) {
             this.unsubscribe = this.controller.subscribe(() => this.refresh());
         }
@@ -168,7 +169,8 @@ export class VolumePanelElement extends LitElement {
         }
     }
 
-    // viewView is the volume's details
+    // viewView is the volume's details, and what unmounting it does, of its
+    // actions
     private viewView(volume: Volume): TemplateResult {
         const options = volumeOptions(volume);
         const objects = volumeObjects(volume);
@@ -180,7 +182,7 @@ export class VolumePanelElement extends LitElement {
             ['Backend', volumeBackend(volume, this.controller?.backends) || '–'],
             ['Status', volumeStatus(volume)],
             ['Access', options.readonly === undefined ? 'Read only' : options.readonly ? 'Read only' : 'Writable'],
-            ['Index', mode],
+            ['Search', mode],
             ['Folders', volume.index?.folders?.toLocaleString() ?? '–'],
             [volumeNoun(volume, 2).replace(/^./, (c) => c.toUpperCase()), objects?.toLocaleString() ?? '–'],
             ['URL', volume.url],
@@ -190,6 +192,7 @@ export class VolumePanelElement extends LitElement {
                 ${rows.map(([key, value]) => html`<dt>${key}</dt><dd>${value}</dd>`)}
                 ${error ? html`<dt>Error</dt><dd class="gf-volume-tile-error">${error}</dd>` : nothing}
             </dl>
+            <p class="gf-volume-view-note">A volume can be unmounted to exclude it from search and browsing.</p>
         `;
     }
 
@@ -197,7 +200,7 @@ export class VolumePanelElement extends LitElement {
     private removeView(volume: Volume): TemplateResult {
         return html`
             <div class="gf-volume-form gf-volume-remove" ?inert=${this.busy}>
-                <p>Removing the volume removes it from the filer, with its index and cache.</p>
+                <p>This removes the volume from the filer, which also removes its index and cache.</p>
                 <cds-text-input label=${`Type "${volume.name}" to remove it`} .value=${this.confirm} autocomplete="off"
                     @input=${(event: Event) => this.setConfirm(volume, (event.target as HTMLInputElement).value)}></cds-text-input>
             </div>

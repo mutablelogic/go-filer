@@ -56,15 +56,25 @@
             gap: 1rem;
         }
 
+        /* A tile fills its cell of the grid, as high as the highest of its
+           row, so its pencil is always at its bottom right, of its link,
+           which is Carbon's tile, too */
         .gf-volume-tile-wrap {
             position: relative;
+            display: flex;
+            flex-direction: column;
             min-width: 0;
         }
 
         .gf-volume-tile {
             display: block;
-            height: 100%;
+            flex: 1;
             min-width: 0;
+        }
+
+        .gf-volume-tile::part(link) {
+            box-sizing: border-box;
+            height: 100%;
         }
 
         /* The button which edits a volume, at its tile's bottom right */
@@ -110,6 +120,12 @@
             margin: 0;
             min-width: 0;
             overflow-wrap: anywhere;
+        }
+
+        .gf-volume-view-note {
+            margin: 1.5rem 0 0;
+            color: var(--cds-text-secondary);
+            font-size: 0.875rem;
         }
 
         .gf-volume-form[hidden],
