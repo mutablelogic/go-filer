@@ -15,6 +15,11 @@ import type { Route, Router } from '@mutablelogic/go-server/router';
 import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import Edit16 from '@carbon/icons/es/edit/16.js';
+import FolderAdd32 from '@carbon/icons/es/folder--add/32.js';
+import Search32 from '@carbon/icons/es/search/32.js';
+import Password32 from '@carbon/icons/es/password/32.js';
+import ObjectStorage32 from '@carbon/icons/es/object-storage/32.js';
+import Rss32 from '@carbon/icons/es/rss/32.js';
 import FolderIcon16 from '@carbon/icons/es/folder/16.js';
 import ObjectStorageIcon from '@carbon/icons/es/object-storage/16.js';
 import RssIcon from '@carbon/icons/es/rss/16.js';
@@ -121,7 +126,8 @@ export class VolumesElement extends LitElement {
                 subtitle=${volumes ? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` : 'Loading…'}
                 .icon=${VolumesIcon} .actions=${this.addActions()}></gs-page-header>
             ${volumes ? this.failuresView(volumes) : nothing}
-            ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
+            ${volumes?.length === 0 ? welcomeView() : nothing}
+            ${volumes?.length ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
             ${volumes?.length ? this.statsView(volumes) : nothing}
             <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
             <gf-volume-add .controller=${this.controller} .notifications=${this.notifications}></gf-volume-add>
@@ -501,6 +507,57 @@ export class VolumeElement extends LitElement {
             history.pushState(null, '', hash);
         }
     }
+}
+
+// GoogleWorkspaceHelp is where adding Google Workspace is explained
+const GoogleWorkspaceHelp = 'https://github.com/mutablelogic/go-filer#adding-google-workspace';
+
+// welcomeView welcomes someone to a filer without volumes, of how to start:
+// adding a volume, indexing it, so it's searched, and connecting Google
+// Workspace, and S3 buckets, and subscribing to RSS feeds
+function welcomeView(): TemplateResult {
+    return html`
+        <div class="gf-welcome">
+            <h2>Welcome</h2>
+            <ul>
+                <li>
+                    ${iconLoader(FolderAdd32)}
+                    <div>
+                        <h3>Add a volume to start using Filer</h3>
+                        <p>Choose <strong>Add Volume</strong>, above, and the kind of volume, such as a directory on the server, an S3 bucket, an RSS feed, or Google Drive.</p>
+                    </div>
+                </li>
+                <li>
+                    ${iconLoader(Search32)}
+                    <div>
+                        <h3>Index the volume's metadata, artwork and content to allow it to be searched</h3>
+                        <p>A volume's <strong>Search</strong> option sets what's indexed, such as <strong>Metadata</strong>, which reads each file's title, dates, places and more.</p>
+                    </div>
+                </li>
+                <li>
+                    ${iconLoader(Password32)}
+                    <div>
+                        <h3>Add a Google OAuth Client credential to connect to Google Workspace</h3>
+                        <p>Store a web application's OAuth client as the <code>GOOGLE_CLIENT</code> credential, with <code>filer credential-set GOOGLE_CLIENT --json &lt; client_secret.json</code>, and add Google Drive, Calendar, Contacts or Tasks. See <a href=${GoogleWorkspaceHelp} target="_blank" rel="noopener noreferrer">Adding Google Workspace</a>.</p>
+                    </div>
+                </li>
+                <li>
+                    ${iconLoader(ObjectStorage32)}
+                    <div>
+                        <h3>Add your AWS credentials to connect to S3 buckets</h3>
+                        <p>Store your access key ID and secret access key as the server's credentials, with <code>filer credential-set S3_KEY</code> and <code>filer credential-set S3_SECRET</code>, which read them from stdin, and name them when you add an S3 bucket. Or set <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> in the server's environment.</p>
+                    </div>
+                </li>
+                <li>
+                    ${iconLoader(Rss32)}
+                    <div>
+                        <h3>Subscribe to an RSS feed to make it searchable</h3>
+                        <p>Choose <strong>Add Volume</strong>, then <strong>RSS feed</strong>, with the feed's URL. Its items are kept as pages, in folders of the month they're published, which are searched as files are.</p>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    `;
 }
 
 for (const [tag, element] of [[VolumesTag, VolumesElement], [VolumeTag, VolumeElement]] as const) {
