@@ -147,7 +147,8 @@ func (req ObjectCountRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, e
 }
 
 // listWhere returns the condition of the objects of a listing, of a folder,
-// or beneath it, of a type, and of files only, which binds its values
+// or beneath it, of a type, and of objects only, without folders, which
+// binds its values
 func listWhere(bind *sqlite.Bind, req store.ListRequest) string {
 	var where string
 	if req.Recursive {
@@ -158,7 +159,7 @@ func listWhere(bind *sqlite.Bind, req store.ListRequest) string {
 	}
 
 	// A folder's key ends with a "/", whatever its type
-	if req.Files {
+	if req.Objects {
 		where += " AND key NOT GLOB '*/'"
 	}
 

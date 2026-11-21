@@ -124,7 +124,7 @@ type ListRequest struct {
 	After     string // The key of the last object returned, or empty
 	Limit     int    // The most objects returned, or zero for every one
 	Type      string // Only objects of this type, its major type, or its subtype, or empty for every one
-	Files     bool   // Only files, without folders, of their keys, whatever their types
+	Objects   bool   // Only objects, without folders, of their keys, whatever their types
 }
 
 // MediaType returns a type of a listing, without its parameters, in lower

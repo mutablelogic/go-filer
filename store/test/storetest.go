@@ -930,7 +930,7 @@ func testListType(t *testing.T, s store.Store) {
 		}
 	}
 
-	// A listing of files is without folders, of their keys, including a
+	// A listing of objects is without folders, of their keys, including a
 	// folder of a type of its own
 	for _, recursive := range []bool{true, false} {
 		want := []string{}
@@ -939,16 +939,16 @@ func testListType(t *testing.T, s store.Store) {
 				want = append(want, key)
 			}
 		}
-		objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Files: true})
+		objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Objects: true})
 		require.NoError(t, err)
-		assert.Equal(t, want, keys(objects), "files recursive=%v", recursive)
-		assert.NotContains(t, keys(objects), "/g/", "a folder of a type of its own isn't a file")
-		count, err := s.CountObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Files: true})
+		assert.Equal(t, want, keys(objects), "objects recursive=%v", recursive)
+		assert.NotContains(t, keys(objects), "/g/", "a folder of a type of its own isn't an object")
+		count, err := s.CountObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Objects: true})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(len(want)), count, "files recursive=%v are counted", recursive)
-		count, err = s.CountObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Files: true, Type: "image"})
+		assert.Equal(t, uint64(len(want)), count, "objects recursive=%v are counted", recursive)
+		count, err = s.CountObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Objects: true, Type: "image"})
 		require.NoError(t, err)
-		assert.NotZero(t, count, "files of a type, recursive=%v", recursive)
+		assert.NotZero(t, count, "objects of a type, recursive=%v", recursive)
 	}
 }
 

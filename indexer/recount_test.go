@@ -30,7 +30,7 @@ func (s *recounts) Done(ctx context.Context, volume string, work ...store.Work) 
 }
 
 func (s *recounts) CountObjects(ctx context.Context, volume string, req store.ListRequest) (uint64, error) {
-	if req.Files {
+	if req.Objects {
 		s.counts.Add(1)
 	}
 	return s.Store.CountObjects(ctx, volume, req)

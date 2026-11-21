@@ -329,7 +329,7 @@ func (self *Indexer) recount(ctx context.Context) {
 	if state, err := self.store.State(ctx, self.name); err != nil || !idle(&state) {
 		return
 	}
-	files, err := self.store.CountObjects(ctx, self.name, store.ListRequest{Parent: "/", Recursive: true, Files: true})
+	files, err := self.store.CountObjects(ctx, self.name, store.ListRequest{Parent: "/", Recursive: true, Objects: true})
 	if err != nil {
 		return
 	}
