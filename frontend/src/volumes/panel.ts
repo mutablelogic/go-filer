@@ -1,6 +1,7 @@
-// The panel of a volume, of three tabs: View, its details, of which it's
-// mounted, or unmounted, Edit, its options, which are saved, and Delete,
-// which deletes it, once its name is typed
+// The panel of a volume, of four tabs: View, its details, of which it's
+// mounted, or unmounted, Edit, its description, access and index, and
+// Options, its other options, both of which are saved together, and Remove,
+// which removes it from the filer, once its name is typed
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { PanelController, type PanelAction, type PanelTab } from '@mutablelogic/go-server/panel';
@@ -17,7 +18,7 @@ import './edit.ts';
 // TYPES
 
 // VolumeTab is a tab of a volume's panel
-export type VolumeTab = 'view' | 'edit' | 'delete';
+export type VolumeTab = 'view' | 'edit' | 'options' | 'remove';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -46,16 +47,16 @@ export class VolumePanelElement extends LitElement {
     declare notifications?: NotificationController;
 
     // name is the volume's, while the panel is open, tab is the tab which is
-    // chosen, confirm is the name which is typed, to delete it, and volume is
+    // chosen, confirm is the name which is typed, to remove it, and volume is
     // the volume, as it is now
     declare private name?: string;
     declare private tab?: VolumeTab;
     declare private confirm: string;
     declare private volume?: Volume;
 
-    // busy is whether the volume is saved, or deleted, while which its form,
+    // busy is whether the volume is saved, or removed, while which its form,
     // or the name which is typed, can't be changed, as what's saved, or
-    // deleted, is of them as they were
+    // removed, is of them as they were
     declare private busy: boolean;
 
     private readonly panel = new PanelController<string>({ closable: true });
@@ -66,7 +67,7 @@ export class VolumePanelElement extends LitElement {
     private readonly mountRun = () => this.setEnabled(true);
     private readonly unmountRun = () => this.setEnabled(false);
     private readonly saveRun = () => this.save();
-    private readonly deleteRun = () => this.removeVolume();
+    private readonly removeRun = () => this.removeVolume();
 
     constructor() {
         super();
@@ -118,8 +119,9 @@ export class VolumePanelElement extends LitElement {
         return html`
             <gs-panel .controller=${this.panel}>
                 ${volume && this.tab === 'view' ? this.viewView(volume) : nothing}
-                <gf-volume-form ?hidden=${this.tab !== 'edit'} ?inert=${this.busy} .volume=${this.name ? volume : undefined}></gf-volume-form>
-                ${volume && this.tab === 'delete' ? this.deleteView(volume) : nothing}
+                <gf-volume-form ?hidden=${this.tab !== 'edit' && this.tab !== 'options'} ?inert=${this.busy}
+                    section=${this.tab === 'options' ? 'options' : 'edit'} .volume=${this.name ? volume : undefined}></gf-volume-form>
+                ${volume && this.tab === 'remove' ? this.removeView(volume) : nothing}
             </gs-panel>
         `;
     }
@@ -129,7 +131,11 @@ export class VolumePanelElement extends LitElement {
         return [
             { value: 'view', label: 'View', actions: this.mountActions(volume) },
             { value: 'edit', label: 'Edit', actions: [{ label: 'Save', kind: 'primary', run: this.saveRun }] },
-            { value: 'delete', label: 'Delete', actions: [this.deleteAction(volume)] },
+            {
+                value: 'options', label: 'Options', disabled: volumeOptions(volume).others.length === 0,
+                actions: [{ label: 'Save', kind: 'primary', run: this.saveRun }],
+            },
+            { value: 'remove', label: 'Remove', actions: [this.removeAction(volume)] },
         ];
     }
 
@@ -143,10 +149,10 @@ export class VolumePanelElement extends LitElement {
         ];
     }
 
-    // deleteAction is Delete, which is enabled once the volume's name is
+    // removeAction is Remove, which is enabled once the volume's name is
     // typed
-    private deleteAction(volume: Volume): PanelAction {
-        return { label: 'Delete', kind: 'danger', disabled: this.confirm !== volume.name, run: this.deleteRun };
+    private removeAction(volume: Volume): PanelAction {
+        return { label: 'Remove', kind: 'danger', disabled: this.confirm !== volume.name, run: this.removeRun };
     }
 
     // refresh follows the volume which is open, as it changes, of its View
@@ -187,25 +193,25 @@ export class VolumePanelElement extends LitElement {
         `;
     }
 
-    // deleteView asks for the volume's name, before it's deleted
-    private deleteView(volume: Volume): TemplateResult {
+    // removeView asks for the volume's name, before it's removed
+    private removeView(volume: Volume): TemplateResult {
         return html`
-            <div class="gf-volume-form gf-volume-delete" ?inert=${this.busy}>
-                <p>Deleting the volume removes it, and its index, but not its ${volumeNoun(volume, 2)}, which are kept where they are.</p>
-                <cds-text-input label=${`Type ${volume.name} to delete it`} .value=${this.confirm} autocomplete="off"
+            <div class="gf-volume-form gf-volume-remove" ?inert=${this.busy}>
+                <p>Removing the volume removes it from the filer, with its index and cache.</p>
+                <cds-text-input label=${`Type "${volume.name}" to remove it`} .value=${this.confirm} autocomplete="off"
                     @input=${(event: Event) => this.setConfirm(volume, (event.target as HTMLInputElement).value)}></cds-text-input>
             </div>
         `;
     }
 
-    // setConfirm sets the name which is typed, which enables Delete, once it's
+    // setConfirm sets the name which is typed, which enables Remove, once it's
     // the volume's
     private setConfirm(volume: Volume, value: string) {
         this.confirm = value;
-        this.panel.setActions([this.deleteAction(volume)]);
+        this.panel.setActions([this.removeAction(volume)]);
     }
 
-    // setBusy sets whether the volume is saved, or deleted, while which the
+    // setBusy sets whether the volume is saved, or removed, while which the
     // panel can't be closed, and its form, or the name which is typed, can't
     // be changed, and are again, once it's done, or it fails
     private setBusy(busy: boolean) {
@@ -242,7 +248,8 @@ export class VolumePanelElement extends LitElement {
         }
     }
 
-    // removeVolume deletes the volume, once its name is typed, and loads the volumes
+    // removeVolume removes the volume, and its index and cache, but not what's
+    // its backend's, once its name is typed, and loads the volumes
     // again
     private async removeVolume() {
         const name = this.name;
@@ -266,8 +273,8 @@ function failed(action: PanelAction): string {
             return 'mounted';
         case 'Unmount':
             return 'unmounted';
-        case 'Delete':
-            return 'deleted';
+        case 'Remove':
+            return 'removed';
         default:
             return 'saved';
     }
