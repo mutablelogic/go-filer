@@ -20,6 +20,7 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	registry "github.com/mutablelogic/go-filer/registry"
 	httphandler "github.com/mutablelogic/go-filer/registry/httphandler"
 	schema "github.com/mutablelogic/go-filer/schema"
@@ -664,4 +665,72 @@ func TestObjectListType(t *testing.T) {
 	assert.Equal(t, []string{"/a", "/a/b"}, paths("type=inode"))
 	assert.Equal(t, []string{"/a", "/a/b"}, paths("type=inode%2Fdirectory"))
 	assert.Equal(t, []string{"/a/photo.png"}, paths("type=image"))
+}
+
+func TestObjectGetMarkdown(t *testing.T) {
+	// Markdown, of a function which reads a text file's lines as a list,
+	// and says there's more of one which is long, and can't read others
+	markdown := func(_ context.Context, r io.Reader, object *schema.Object) (*schema.Markdown, error) {
+		if !strings.HasSuffix(object.Path, ".txt") {
+			return nil, gofiler.ErrNotImplemented.Withf("%q can't be read as Markdown", object.Path)
+		}
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		result := &schema.Markdown{Body: "- " + strings.TrimSpace(string(data)) + "\n"}
+		if strings.Contains(object.Path, "long") {
+			result.Next = 100
+		}
+		return result, nil
+	}
+	server, dir := newServer(t, registry.WithMarkdown(markdown))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "long.txt"), []byte("more"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.md"), []byte("# Notes\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.bin"), []byte{0, 1}, 0o644))
+	accept := http.Header{"Accept": {"text/markdown"}}
+
+	// A file which isn't Markdown is read as it, when it's accepted, of the
+	// file's entity tag, of Markdown, which varies with Accept
+	status, header, body := getObject(t, server, "object/media/a.txt", accept)
+	require.Equal(t, http.StatusOK, status, body)
+	assert.Equal(t, "- hello\n", body)
+	assert.Equal(t, "text/markdown; charset=utf-8", header.Get("Content-Type"))
+	assert.Equal(t, "Accept", header.Get("Vary"))
+	assert.Empty(t, header.Get("X-Markdown-Next"))
+	etag := header.Get("ETag")
+	require.True(t, strings.HasSuffix(etag, `.md"`), etag)
+
+	// It isn't read again, when it isn't modified
+	status, _, body = getObject(t, server, "object/media/a.txt", http.Header{"Accept": {"text/markdown"}, "If-None-Match": {etag}})
+	assert.Equal(t, http.StatusNotModified, status)
+	assert.Empty(t, body)
+
+	// Of one which is long, it says where the rest starts
+	status, header, _ = getObject(t, server, "object/media/long.txt", accept)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "100", header.Get("X-Markdown-Next"))
+
+	// Markdown is sent as it is, and a file is sent as it is, without it
+	status, _, body = getObject(t, server, "object/media/notes.md", accept)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "# Notes\n", body)
+	status, header, body = getObject(t, server, "object/media/a.txt", nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "hello", body)
+	assert.NotContains(t, header.Get("Content-Type"), "markdown")
+	status, _, _ = getObject(t, server, "object/media/a.txt", http.Header{"Accept": {"text/markdown;q=0, */*"}})
+	require.Equal(t, http.StatusOK, status)
+
+	// A file which can't be read as Markdown isn't acceptable
+	status, header, _ = getObject(t, server, "object/media/a.bin", accept)
+	assert.Equal(t, http.StatusNotAcceptable, status)
+	assert.Empty(t, header.Get("ETag"))
+
+	// Without a way to read Markdown, no file can be
+	plain, plainDir := newServer(t)
+	require.NoError(t, os.WriteFile(filepath.Join(plainDir, "a.txt"), []byte("hello"), 0o644))
+	status, _, _ = getObject(t, plain, "object/media/a.txt", accept)
+	assert.Equal(t, http.StatusNotAcceptable, status)
 }

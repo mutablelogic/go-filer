@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"context"
+	"io"
 	"maps"
 	"os"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	client "github.com/mutablelogic/go-client"
 	gofiler "github.com/mutablelogic/go-filer"
 	indexer "github.com/mutablelogic/go-filer/indexer"
+	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
 	broadcaster "github.com/mutablelogic/go-server/broadcaster"
 	metric "go.opentelemetry.io/otel/metric"
@@ -24,6 +27,11 @@ import (
 // Opt is a functional option of the registry
 type Opt func(*opt) error
 
+// MarkdownFunc reads a file's content, of the reader, as Markdown, and
+// returns its start, and where the rest starts, when there's more, or
+// ErrNotImplemented, when it can't be read as Markdown
+type MarkdownFunc func(ctx context.Context, r io.Reader, object *schema.Object) (*schema.Markdown, error)
+
 type opt struct {
 	broadcaster *broadcaster.Broadcaster
 	meter       metric.Meter
@@ -32,6 +40,7 @@ type opt struct {
 	worker      string            // the name of the worker, which is in the metrics
 	debounce    time.Duration     // how long a change is held, until its object is quiet
 	metadata    indexer.Task      // the task which enriches the files of volumes with index=metadata, or nil
+	markdown    MarkdownFunc      // what reads a file's content as Markdown, or nil
 	backends    map[string]plugin // the backends of the volumes, of their URLs' schemes, which are built in, and of WithBackend
 	schemes     []string          // the schemes of the backends which are used, of WithSchemes, or all of them, when it's empty
 	cacheDir    string            // the directory of the volumes' caches, or a temporary one, when it's empty
@@ -137,6 +146,18 @@ func WithTracer(tracer trace.Tracer) Opt {
 func WithMeter(meter metric.Meter) Opt {
 	return func(o *opt) error {
 		o.meter = meter
+		return nil
+	}
+}
+
+// WithMarkdown sets what reads a file's content as Markdown, such as a PDF's,
+// of go-metadata, which Markdown does
+func WithMarkdown(fn MarkdownFunc) Opt {
+	return func(o *opt) error {
+		if fn == nil {
+			return gofiler.ErrBadParameter.With("a Markdown function is nil")
+		}
+		o.markdown = fn
 		return nil
 	}
 }

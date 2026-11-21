@@ -80,6 +80,13 @@ type GetObjectRequest struct {
 	IfNoneMatch     []string  `json:"-"` // if non-empty, only return the object if its ETag doesn't match any of these
 }
 
+// Markdown is the start of a file's content, as Markdown, such as of a PDF,
+// and where the rest of it starts, when there's more, or zero
+type Markdown struct {
+	Body string `json:"body"`
+	Next uint64 `json:"next,omitempty"`
+}
+
 // ListObjectsRequest lists the objects beneath a path in a volume, which is
 // a directory, or an object, when only it's listed. A path which ends with
 // "/" is a directory, which is listed, even when an object has its name, as
