@@ -82,6 +82,7 @@ test('volumeStatus', () => {
     const of = (index: Volume['index'], mounted = true, error?: string) => volumeStatus({ ...volume('file://v/tmp', index), mounted, error });
     assert.equal(of(undefined, false), 'Not mounted');
     assert.equal(of(undefined, false, 'down'), 'Offline');
+    assert.equal(of({ mode: 'objects', status: 'ready' }, true, 'down'), 'Offline', 'mounted, of an index, while its backend is offline');
     assert.equal(of(undefined), 'Not indexed');
     assert.equal(of({ mode: 'objects', status: 'scanning', phase: 'scanning' }), 'Scanning');
     assert.equal(of({ mode: 'objects', status: 'scanning' }), 'Scanning');
@@ -89,6 +90,9 @@ test('volumeStatus', () => {
     assert.equal(of({ mode: 'metadata', status: 'ready', metadata: { queued: 4 } }), 'Indexing');
     assert.equal(of({ mode: 'objects', status: 'ready', phase: 'scanning' }), 'Scanning', 'again');
     assert.equal(of({ mode: 'objects', status: 'ready' }), 'Ready');
+    assert.equal(of({ mode: 'objects', status: 'scanning', error: 'it failed' }), 'Failed', 'its first scan failed, which cleared its phase');
+    assert.equal(of({ mode: 'objects', status: 'ready', error: 'it failed' }), 'Failed', 'a scan again, or its watch, failed');
+    assert.equal(of({ mode: 'metadata', status: 'ready', error: 'it failed', metadata: { queued: 4 } }), 'Failed');
     assert.equal(of({ mode: 'objects', error: 'it failed' }), 'Failed');
     assert.equal(of({ mode: 'objects' }), 'Not indexed yet');
 });

@@ -67,14 +67,32 @@ export class MeterElement extends LitElement {
         return this;
     }
 
+    // A meter which is removed, and added again, is updated, so its chart,
+    // which was destroyed, is made again, as Lit doesn't update an element
+    // which is added again, without a change
+    override connectedCallback() {
+        super.connectedCallback();
+        if (this.hasUpdated) {
+            this.requestUpdate();
+        }
+    }
+
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.chart?.destroy();
-        this.chart = undefined;
-        this.replaceChildren();
+        this.clear();
     }
 
     protected override updated(changed: PropertyValues<this>) {
+        // A meter of nothing has no chart, as Carbon Charts' scale of a total
+        // of zero draws each group as half of the bar, and says so
+        if (!(this.total > 0)) {
+            this.clear();
+            const empty = document.createElement('p');
+            empty.className = 'gf-meter-empty';
+            empty.textContent = this.unit ? `No ${this.unit}` : 'None';
+            this.replaceChildren(empty);
+            return;
+        }
         const data = this.groups.map((g) => ({ ...g })) as ChartTabularData;
         const options = this.options();
         if (!this.chart) {
@@ -93,6 +111,13 @@ export class MeterElement extends LitElement {
         if (changed.has('descriptions')) {
             this.describe();
         }
+    }
+
+    // clear destroys the chart, when there's one, and its elements
+    private clear() {
+        this.chart?.destroy();
+        this.chart = undefined;
+        this.replaceChildren();
     }
 
     // describe sets the title of each item of the legend, of its group's

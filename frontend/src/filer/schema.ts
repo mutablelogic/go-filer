@@ -239,24 +239,33 @@ export function volumeIndexing(volume: Volume): VolumeIndexing | undefined {
     return { unindexed: objects - done, indexed: done - failed, failed };
 }
 
-// volumeStatus returns how a volume's index is: Offline, or Not mounted,
-// when it isn't mounted, Not indexed, Scanning, Indexing, when its files are
-// stored, or their metadata is, Ready, or Failed, when it hasn't been
-// indexed, and why
+// volumeStatus returns how a volume's index is: Offline, when its backend
+// failed, whether it's mounted or not, Not mounted, Not indexed, Scanning,
+// or Indexing, while its files, or their metadata, are, Failed, when its
+// last scan, or its watch, failed, which clears its phase, but not its
+// status, or Ready, or Not indexed yet, when it hasn't been scanned
 export function volumeStatus(volume: Volume): string {
     const index = volume.index;
-    if (!volume.mounted) {
-        return volume.error ? 'Offline' : 'Not mounted';
+    if (volume.error) {
+        return 'Offline';
+    } else if (!volume.mounted) {
+        return 'Not mounted';
     } else if (!index) {
         return 'Not indexed';
-    } else if (index.phase === 'scanning' || (index.status === 'scanning' && !index.phase)) {
+    } else if (index.phase === 'scanning') {
         return 'Scanning';
-    } else if (index.phase === 'indexing' || (index.metadata?.queued ?? 0) > 0) {
+    } else if (index.phase === 'indexing') {
+        return 'Indexing';
+    } else if (index.error) {
+        return 'Failed';
+    } else if (index.status === 'scanning') {
+        return 'Scanning';
+    } else if ((index.metadata?.queued ?? 0) > 0) {
         return 'Indexing';
     } else if (index.status === 'ready') {
         return 'Ready';
     }
-    return index.error ? 'Failed' : 'Not indexed yet';
+    return 'Not indexed yet';
 }
 
 // ObjectNouns are what a backend's objects are called, of its scheme, in
