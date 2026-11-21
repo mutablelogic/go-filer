@@ -63,6 +63,8 @@ func Test_metaText(t *testing.T) {
 		textEntry{entry{"metadata", "hint", []string{"artwork", "markdown"}}, "artwork,markdown"},
 		textEntry{entry{"audio", "bitrate", 128000}, "128 kb/s"},
 		textEntry{entry{"audio", "bitrate", 256000}, ""},
+		textEntry{entry{"audio", "length", 5 * time.Second}, "5s"},
+		entry{"audio", "length", nil},
 	})
 	got := make(map[string][2]string, len(result))
 	for _, m := range result {
@@ -85,4 +87,7 @@ func Test_metaText(t *testing.T) {
 	// Of more than one value, the texts are of each, of its value when it
 	// has none
 	assert.Equal(t, [2]string{"[128000,256000]", "128 kb/s, 256000"}, got["audio:bitrate"])
+
+	// A value of null, without text, reads as null, rather than nothing
+	assert.Equal(t, [2]string{"[5000000000,null]", "5s, null"}, got["audio:length"])
 }

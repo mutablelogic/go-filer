@@ -182,10 +182,10 @@ func text(entry gometadata.Metadata, value json.RawMessage) string {
 }
 
 // plain returns a value of JSON as it reads: a string, without its quotes,
-// or else its JSON
+// or else its JSON, such as null
 func plain(value json.RawMessage) string {
 	var s string
-	if err := json.Unmarshal(value, &s); err == nil {
+	if len(value) > 0 && value[0] == '"' && json.Unmarshal(value, &s) == nil {
 		return s
 	}
 	return string(value)
