@@ -33,19 +33,14 @@
         }
 
         /* The server's status is at the bottom of the side navigation, and
-           its items scroll above it */
+           the player above it, while something is played, and its items
+           scroll above them, of the player's height, which the app sets */
         cds-side-nav-items {
-            margin-bottom: calc(3rem + 1px);
+            margin-bottom: calc(3rem + 1px + var(--gf-player-height, 0px));
         }
 
 
 
-
-        /* The sidebar's pages are above the player, while something is
-           played */
-        cds-side-nav:has(gs-media-player[playing]) cds-side-nav-items {
-            margin-bottom: calc(8rem + 2px);
-        }
 
         gs-server-status {
             position: absolute;
