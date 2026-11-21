@@ -5,7 +5,7 @@
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import type { Volume } from '../filer/schema.ts';
-import { IndexModes, indexDescription, isMany, volumeOptions, volumePatch, type VolumeOptions, type VolumePatch } from './options.ts';
+import { AccessDescriptions, IndexModes, indexDescription, isMany, volumeOptions, volumePatch, type VolumeOptions, type VolumePatch } from './options.ts';
 import '@carbon/web-components/es/components/text-input/index.js';
 import '@carbon/web-components/es/components/textarea/index.js';
 import '@carbon/web-components/es/components/content-switcher/index.js';
@@ -79,10 +79,11 @@ export class VolumeFormElement extends LitElement {
                             <cds-content-switcher-item value="readonly">Read only</cds-content-switcher-item>
                             <cds-content-switcher-item value="writable">Writable</cds-content-switcher-item>
                         </cds-content-switcher>
+                        <p class="gf-volume-form-helper">${edited.readonly ? AccessDescriptions.readonly : AccessDescriptions.writable}</p>
                     </div>
                 ` : nothing}
                 <div class="gf-volume-form-field">
-                    <p class="cds--label">Index</p>
+                    <p class="cds--label">Search</p>
                     <cds-content-switcher size="sm" value=${edited.index}
                         @cds-content-switcher-selected=${(event: CustomEvent<{ item: HTMLElement & { value: string } }>) => this.set({ index: event.detail.item.value })}>
                         ${IndexModes.map((mode) => html`<cds-content-switcher-item value=${mode.value} ?disabled=${mode.disabled}>${mode.label}</cds-content-switcher-item>`)}

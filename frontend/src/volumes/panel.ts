@@ -180,7 +180,7 @@ export class VolumePanelElement extends LitElement {
             ['Backend', volumeBackend(volume, this.controller?.backends) || '–'],
             ['Status', volumeStatus(volume)],
             ['Access', options.readonly === undefined ? 'Read only' : options.readonly ? 'Read only' : 'Writable'],
-            ['Index', mode],
+            ['Search', mode],
             ['Folders', volume.index?.folders?.toLocaleString() ?? '–'],
             [volumeNoun(volume, 2).replace(/^./, (c) => c.toUpperCase()), objects?.toLocaleString() ?? '–'],
             ['URL', volume.url],

@@ -38,6 +38,13 @@ export const OptDescription = 'description';
 export const OptReadonly = 'readonly';
 export const OptIndex = 'index';
 
+// AccessDescriptions are what a volume's access is, of whether it's
+// read-only
+export const AccessDescriptions = {
+    readonly: 'Objects cannot be uploaded or deleted',
+    writable: 'Objects can be uploaded or deleted, and additional actions may be available',
+};
+
 // IndexModes are the ways a volume is indexed: Off, On, of its files, and
 // Metadata, of their metadata, too, and Artwork and Content, which are to
 // come. A volume of folders, which isn't one of them, has none chosen.
