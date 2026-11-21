@@ -43,7 +43,7 @@ export async function authorizeSignIn(client: Client, key: string, scopes: reado
 // signInCallback returns the URL of the server's callback of a sign-in, as
 // the browser reaches it, which is registered with the server's web client
 export function signInCallback(client: Client): string {
-    return new URL(client.base.replace(/\/$/, '') + '/credential/callback', location.href).href;
+    return new URL(client.base.replace(/\/$/, '') + '/credential-signin/callback', location.href).href;
 }
 
 // deleteVolume deletes a volume, and its index, but not its files, and
