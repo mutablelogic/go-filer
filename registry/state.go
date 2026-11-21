@@ -15,10 +15,27 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
-// stateInterval is how often the states of the volumes' indexes are read,
-// and a change published of each which changed, such as while it's scanned,
-// or its files' metadata is indexed
-var stateInterval = 5 * time.Second
+var (
+	// stateInterval is how often the states of the volumes' indexes are
+	// checked, and a change published of each which changed, such as while
+	// it's scanned, or its files' metadata is indexed. A state is read only
+	// when its indexer's revision changed, or at least every stateRefresh,
+	// as it can be changed of another process, such as another server of
+	// the store, which doesn't revise it.
+	stateInterval = 5 * time.Second
+	stateRefresh  = time.Minute
+)
+
+////////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// published is the state of a volume's index which was published last, of
+// the indexer's revision, and when it was read
+type published struct {
+	state    []byte
+	revision uint64
+	read     time.Time
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
@@ -32,7 +49,7 @@ func (self *Registry) watchStates(ctx context.Context) {
 	}
 	ticker := time.NewTicker(stateInterval)
 	defer ticker.Stop()
-	last := make(map[string][]byte)
+	last := make(map[string]published)
 	for {
 		select {
 		case <-ctx.Done():
@@ -44,9 +61,10 @@ func (self *Registry) watchStates(ctx context.Context) {
 }
 
 // publishStates reads the state of the index of each volume which is
-// mounted, and indexed, and publishes a change of each whose state isn't
-// the last one, which it keeps
-func (self *Registry) publishStates(ctx context.Context, last map[string][]byte) {
+// mounted, and indexed, whose revision changed, or which wasn't read for a
+// while, and publishes a change of each whose state isn't the last one,
+// which it keeps
+func (self *Registry) publishStates(ctx context.Context, last map[string]published) {
 	// The volumes which are mounted
 	self.RLock()
 	volumes := make(map[string]bool, len(self.backend))
@@ -68,19 +86,30 @@ func (self *Registry) publishStates(ctx context.Context, last map[string][]byte)
 	// The state of each, which is read while it's in use, so it isn't closed
 	// meanwhile
 	for _, name := range slices.Sorted(maps.Keys(volumes)) {
-		var state []byte
+		previous, exists := last[name]
+		next := previous
 		if err := self.With(ctx, name, func(ctx context.Context, b gofiler.Filer) error {
-			if i, ok := b.(*indexer.Indexer); ok {
-				state, _ = json.Marshal(indexState(ctx, i))
+			i, ok := b.(*indexer.Indexer)
+			if !ok {
+				return nil
 			}
-			return nil
-		}); err != nil || state == nil || ctx.Err() != nil {
+			// Its revision is read before its state, so a change while it's
+			// read is read again, of the next revision
+			revision := i.Revision()
+			if exists && revision == previous.revision && time.Since(previous.read) < stateRefresh {
+				return nil
+			}
+			state, err := json.Marshal(indexState(ctx, i))
+			if err == nil {
+				next = published{state: state, revision: revision, read: time.Now()}
+			}
+			return err
+		}); err != nil || next.state == nil || ctx.Err() != nil {
 			continue
 		}
-		if previous, exists := last[name]; exists && string(previous) == string(state) {
-			continue
+		last[name] = next
+		if !exists || string(previous.state) != string(next.state) {
+			self.publishState(name)
 		}
-		last[name] = state
-		self.publishState(name)
 	}
 }
