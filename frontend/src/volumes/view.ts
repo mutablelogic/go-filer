@@ -362,17 +362,26 @@ export class VolumeElement extends LitElement {
             </gs-page-header>
             <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
         `;
+        // The header, and the panel, are of one template, whatever's beneath
+        // them, so the panel, which is open, isn't made again, closed, when
+        // the volume is mounted, or unmounted, of it
+        return html`${header}${this.contentView(name, path, volume, hasFolders)}`;
+    }
+
+    // contentView is what's beneath the header: why the volume isn't shown,
+    // or its tree of folders, beside the objects of the folder which is
+    // chosen
+    private contentView(name: string, path: string, volume: Volume | undefined, hasFolders: boolean): TemplateResult {
         if (!volume) {
-            return html`${header}<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
+            return html`<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
         } else if (!volume.mounted) {
             // One which is unmounted is, of its own, so it isn't an error,
             // which its tag says, too
             return volumeStatus(volume) === 'Unmounted'
-                ? html`${header}<p class="gf-empty">This volume is unmounted, so its files aren't shown until it's mounted again</p>`
-                : html`${header}${alertView('error', "This volume isn't mounted", volume.error)}`;
+                ? html`<p class="gf-empty">This volume is unmounted, so its files aren't shown until it's mounted again</p>`
+                : html`${alertView('error', "This volume isn't mounted", volume.error)}`;
         }
         return html`
-            ${header}
             ${volume.error ? alertView('warning', 'This volume is offline, so what it shows is what was last indexed', volume.error) : nothing}
             <div class="gf-volume">
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
