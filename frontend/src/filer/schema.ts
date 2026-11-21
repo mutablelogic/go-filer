@@ -169,13 +169,35 @@ export function volumeScheme(volume: Volume): string {
 }
 
 // volumeObjects returns how many objects a volume's index has, which are
-// its files, or undefined, when it isn't indexed, or only its folders are
+// its files, or undefined, when it isn't known (see volumeObjectsUnknown).
+// The count is left out when it's zero, once the index is ready, and when
+// it isn't counted yet, such as before it's scanned.
 export function volumeObjects(volume: Volume): number | undefined {
     const index = volume.index;
     if (!index || index.mode === 'folders') {
         return undefined;
+    } else if (index.files !== undefined) {
+        return index.files;
     }
-    return index.files ?? 0;
+    return index.status === 'ready' ? 0 : undefined;
+}
+
+// volumeObjectsUnknown returns why how many objects a volume has isn't
+// known, or "" when it is
+export function volumeObjectsUnknown(volume: Volume): string {
+    const index = volume.index;
+    if (volumeObjects(volume) !== undefined) {
+        return '';
+    } else if (!index) {
+        return "It isn't indexed";
+    } else if (index.mode === 'folders') {
+        return 'Only its folders are indexed';
+    } else if (index.error) {
+        return `Its count isn't known: ${index.error}`;
+    } else if (index.status === 'scanning') {
+        return "It's being indexed";
+    }
+    return "It hasn't been indexed yet";
 }
 
 // volumeTitle returns a volume's title, which is shown when it's pointed at:

@@ -16,7 +16,7 @@ import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeObjects, volumeLabel, volumeScheme, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeLabel, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -397,7 +397,7 @@ function tagType(volume: Volume, backends: readonly Backend[] = []): string {
 }
 
 // tileCount returns how many objects a volume has, of a tile, with
-// "objects" beneath, or "–", when they aren't indexed, and that it's
+// "objects" beneath, or "–", when it isn't known, with why, and that it's
 // offline, when it is
 function tileCount(volume: Volume): TemplateResult {
     if (!volume.mounted) {
@@ -405,7 +405,7 @@ function tileCount(volume: Volume): TemplateResult {
     }
     const objects = volumeObjects(volume);
     const title = objects === undefined
-        ? (volume.index ? 'Only its folders are indexed' : "It isn't indexed")
+        ? volumeObjectsUnknown(volume)
         : `${objects.toLocaleString()} ${objects === 1 ? 'object' : 'objects'}`;
     return html`
         <p class="gf-volume-tile-count" title=${title}>
