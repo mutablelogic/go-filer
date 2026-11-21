@@ -132,11 +132,11 @@ SELECT count(*) FROM object WHERE volume = @volume AND ${where};
 
 -- object.kinds
 -- How many objects, without folders, of a volume are of each kind, of their
--- metadata, of a task's, rather than the backend's, or of their media type,
--- without one, or of none
+-- metadata, of a task's, rather than the backend's, which is a string which
+-- isn't empty, or of their media type, without one, or of none
 SELECT kind, count(*) FROM (
   SELECT coalesce((
-      SELECT json_extract(value, '$') FROM metadata
+      SELECT CASE WHEN json_type(value) = 'text' THEN nullif(json_extract(value, '$'), '') END FROM metadata
       WHERE metadata.volume = object.volume AND metadata.object = object.key
         AND namespace = 'metadata' AND metadata.key = 'kind'
       ORDER BY source = '', rowid LIMIT 1
