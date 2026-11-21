@@ -12,11 +12,14 @@ import (
 // TYPES
 
 // Meta is a string key-value map for user-defined metadata.
-// Keys should be lowercase for S3 compatibility
+// Keys should be lowercase for S3 compatibility. Text is the value's text,
+// for people, such as 5s of a duration whose value is 5000000000, when it
+// says more than the value, which is shown in its place.
 type Meta struct {
 	Namespace string          `json:"namespace,omitempty"`
 	Key       string          `json:"key,omitempty"`
 	Value     json.RawMessage `json:"value,omitempty"`
+	Text      string          `json:"text,omitempty"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS metadata (
                     length(key) <= 64 AND key GLOB '[a-zA-Z]*'
                     AND key NOT GLOB '*[^a-zA-Z0-9_-]*'),          -- an identifier
   value           TEXT NOT NULL,                                  -- its JSON
-  text            TEXT,                                           -- its text, or NULL when it's value's string (#77)
+  text            TEXT,                                           -- its text, for people, such as 5s of a duration, or NULL when it says no more than its value
   FOREIGN KEY (volume, object) REFERENCES object (volume, key) ON DELETE CASCADE ON UPDATE CASCADE
 );
 

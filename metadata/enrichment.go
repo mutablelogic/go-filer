@@ -16,6 +16,8 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strings"
+	"time"
 
 	// Packages
 	otel "github.com/mutablelogic/go-client/pkg/otel"
@@ -118,10 +120,13 @@ func (self *Metadata) extractOpts(file *schema.Object) []gometadata.Option {
 // which are identifiers. A key which has more than one value, such as the
 // artists of a recording, is one entry, of an array of its values, in the
 // order they're found, without those which are repeated, as the store keeps
-// one value of each namespace and key.
+// one value of each namespace and key. Its text is go-metadata's, such as 5s
+// of a duration, when it says more than the value (see text), and of more
+// than one value, their texts, between commas.
 func meta(entries []gometadata.Metadata) []schema.Meta {
 	result := make([]schema.Meta, 0, len(entries))
 	values := make(map[string][]json.RawMessage, len(entries))
+	texts := make(map[string][]string, len(entries))
 	for _, entry := range entries {
 		if skipped[entry.NS()] || !identifier.MatchString(entry.NS()) || !identifier.MatchString(entry.Key()) {
 			continue
@@ -141,15 +146,49 @@ func meta(entries []gometadata.Metadata) []schema.Meta {
 			continue
 		}
 		values[key] = append(values[key], value)
+		texts[key] = append(texts[key], text(entry, value))
 	}
 	for i, m := range result {
-		if v := values[m.Namespace+":"+m.Key]; len(v) > 1 {
+		key := m.Namespace + ":" + m.Key
+		if v := values[key]; len(v) > 1 {
 			if array, err := json.Marshal(v); err == nil {
 				result[i].Value = array
 			}
 		}
+		if t := texts[key]; slices.ContainsFunc(t, func(s string) bool { return s != "" }) {
+			for j, s := range t {
+				if s == "" {
+					t[j] = plain(values[key][j])
+				}
+			}
+			result[i].Text = strings.Join(t, ", ")
+		}
 	}
 	return result
+}
+
+// text returns an entry's text, of go-metadata, such as 5s of a duration,
+// or "" when it says no more than its value: a value which is its text, of a
+// string, or of JSON, such as a number, a list, which is shown of its
+// values, or a time, which is shown in the reader's own time
+func text(entry gometadata.Metadata, value json.RawMessage) string {
+	t := strings.TrimSpace(entry.Value())
+	if _, isTime := entry.Any().(time.Time); isTime || t == "" || t == plain(value) {
+		return ""
+	} else if len(value) > 0 && value[0] == '[' {
+		return ""
+	}
+	return t
+}
+
+// plain returns a value of JSON as it reads: a string, without its quotes,
+// or else its JSON
+func plain(value json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(value, &s); err == nil {
+		return s
+	}
+	return string(value)
 }
 
 // isNotImplemented returns true when go-metadata has no handler of a file's
