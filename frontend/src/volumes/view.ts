@@ -16,7 +16,7 @@ import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeIndexing, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -25,6 +25,8 @@ import '../tree/view.ts';
 import '../folder/view.ts';
 import '@carbon/web-components/es/components/tile/clickable-tile.js';
 import '@carbon/web-components/es/components/tag/tag.js';
+import '@carbon/web-components/es/components/tabs/index.js';
+import '../chart/meter.ts';
 import { alertView } from '../alert/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -33,6 +35,9 @@ import { alertView } from '../alert/view.ts';
 // The tags of the Volumes page, and of a volume's page, and their routes,
 // such as #volumes, and #volume/media/Music
 export const VolumesTag = 'gf-volumes';
+
+// StatsTab is a tab of the volumes' stats
+type StatsTab = 'indexing' | 'objects';
 export const VolumeTag = 'gf-volume';
 export const VolumesRoute = 'volumes';
 export const VolumeRoute = 'volume';
@@ -46,11 +51,19 @@ export class VolumesElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
         volumes: { state: true },
+        tab: { state: true },
     };
 
-    // controller keeps the volumes
+    // controller keeps the volumes, and tab is the tab of their stats which
+    // is shown, beneath their tiles
     declare controller?: VolumesController;
     declare private volumes?: readonly Volume[];
+    declare private tab: StatsTab;
+
+    constructor() {
+        super();
+        this.tab = 'indexing';
+    }
     private unsubscribe?: () => void;
 
     protected override createRenderRoot() {
@@ -87,6 +100,56 @@ export class VolumesElement extends LitElement {
                 subtitle=${volumes ? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` : 'Loading…'}
                 .icon=${VolumesIcon}></gs-page-header>
             ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
+            ${volumes?.length ? this.statsView(volumes) : nothing}
+        `;
+    }
+
+    // statsView is the tabs of the volumes' stats, of which the one which is
+    // chosen is shown: Indexing, and Objects, which is to come
+    private statsView(volumes: readonly Volume[]): TemplateResult {
+        return html`
+            <section class="gf-volume-stats">
+                <cds-tabs value=${this.tab} @cds-tabs-selected=${(event: CustomEvent<{ item: HTMLElement & { value: string } }>) => { this.tab = event.detail.item.value as StatsTab; }}>
+                    <cds-tab value="indexing">Indexing</cds-tab>
+                    <cds-tab value="objects" disabled>Objects</cds-tab>
+                </cds-tabs>
+                ${this.tab === 'indexing' ? this.indexingView(volumes) : nothing}
+            </section>
+        `;
+    }
+
+    // indexingView is each volume's objects which are indexed, and aren't, as
+    // a meter, titled of the volume, of how many it has, with how many
+    // folders it has, and how its index is
+    private indexingView(volumes: readonly Volume[]): TemplateResult {
+        return html`
+            <table class="cds--data-table cds--data-table--lg gf-indexing">
+                <thead>
+                    <tr>
+                        <th class="gf-indexing-meter"><div class="cds--table-header-label">Indexing</div></th>
+                        <th class="gf-indexing-number"><div class="cds--table-header-label">Folders</div></th>
+                        <th><div class="cds--table-header-label">Status</div></th>
+                    </tr>
+                </thead>
+                <tbody>${repeat(volumes, (volume) => volume.name, (volume) => {
+                    const indexing = volumeIndexing(volume);
+                    const total = indexing ? indexing.indexed + indexing.unindexed : 0;
+                    const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
+                    return html`
+                        <tr>
+                            <td class="gf-indexing-meter">${indexing ? html`
+                                <gf-meter .groups=${[{ group: 'Indexed', value: indexing.indexed }, { group: 'Unindexed', value: indexing.unindexed }]}
+                                    total=${total} unit=${volumeNoun(volume, total)} label=${volumeLabel(volume)}></gf-meter>
+                            ` : html`
+                                <p class="gf-indexing-label">${volumeLabel(volume)}</p>
+                                <p title=${volumeObjectsUnknown(volume)}>–</p>
+                            `}</td>
+                            <td class="gf-indexing-number">${volume.index?.folders !== undefined ? volume.index.folders.toLocaleString() : '–'}</td>
+                            <td title=${error ?? ''} class=${error ? 'gf-volume-tile-error' : ''}>${volumeStatus(volume)}</td>
+                        </tr>
+                    `;
+                })}</tbody>
+            </table>
         `;
     }
 

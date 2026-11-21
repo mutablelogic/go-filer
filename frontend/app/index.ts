@@ -4,6 +4,7 @@
 // way, from @mutablelogic/go-filer/volumes/view.
 
 import '@carbon/styles/css/styles.min.css';
+import '@carbon/charts/styles.min.css';
 import './fonts.css';
 
 // go-server's components

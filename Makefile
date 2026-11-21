@@ -141,16 +141,17 @@ client: go-dep mkdir
 # Build the web UI's modules into frontend/dist, and the server's app into
 # frontend/app/dist, which the commands embed, with the "frontend" tag, from
 # package-lock.json, once they're type checked. It needs npm, and a token
-# which can read GitHub Packages, in GITHUB_TOKEN.
+# which can read GitHub Packages, in GITHUB_TOKEN. Carbon Charts' install
+# telemetry is turned off.
 .PHONY: frontend
 frontend: npm-dep
 	@echo Build frontend
-	@cd $(TS_DIR) && ${NPM} ci --silent && ${NPM} run --silent check && ${NPM} run --silent build && ${NPM} run --silent build-app
+	@cd $(TS_DIR) && IBM_TELEMETRY_DISABLED=true ${NPM} ci --silent && ${NPM} run --silent check && ${NPM} run --silent build && ${NPM} run --silent build-app
 
 .PHONY: frontend-test
 frontend-test: npm-dep
 	@echo Frontend Tests
-	@cd $(TS_DIR) && ${NPM} ci --silent && ${NPM} run --silent check && ${NPM} test --silent
+	@cd $(TS_DIR) && IBM_TELEMETRY_DISABLED=true ${NPM} ci --silent && ${NPM} run --silent check && ${NPM} test --silent
 
 ###############################################################################
 # GENERATE

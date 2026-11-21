@@ -19,9 +19,27 @@ export interface Volume {
 export interface VolumeIndex {
     mode: string;
     status?: string;
+    phase?: string;
     folders?: number;
     objects?: number;
     error?: string;
+    metadata?: TaskState;
+}
+
+// TaskState is the work of a task of a volume's objects, such as indexing
+// their metadata: how many are queued, or being done, how many it's done,
+// and how many it failed of too often, and why it last failed
+export interface TaskState {
+    queued?: number;
+    indexed?: number;
+    failed?: number;
+    error?: string;
+}
+
+// VolumeIndexing is how many of a volume's objects are indexed, and aren't
+export interface VolumeIndexing {
+    indexed: number;
+    unindexed: number;
 }
 
 // Backend is a type of backend, of the scheme of its volumes' URLs
@@ -198,6 +216,40 @@ export function volumeObjectsUnknown(volume: Volume): string {
         return "It's being indexed";
     }
     return "It hasn't been indexed yet";
+}
+
+// volumeIndexing returns how many of a volume's objects are indexed, of
+// the task which indexes their metadata, when it has one, and aren't, or
+// all of them, when it hasn't one, or undefined, when how many objects it
+// has isn't known
+export function volumeIndexing(volume: Volume): VolumeIndexing | undefined {
+    const objects = volumeObjects(volume);
+    if (objects === undefined) {
+        return undefined;
+    }
+    const task = volume.index?.metadata;
+    const indexed = task ? Math.min(task.indexed ?? 0, objects) : objects;
+    return { indexed, unindexed: objects - indexed };
+}
+
+// volumeStatus returns how a volume's index is: Offline, or Not mounted,
+// when it isn't mounted, Not indexed, Scanning, Indexing, when its files are
+// stored, or their metadata is, Ready, or Failed, when it hasn't been
+// indexed, and why
+export function volumeStatus(volume: Volume): string {
+    const index = volume.index;
+    if (!volume.mounted) {
+        return volume.error ? 'Offline' : 'Not mounted';
+    } else if (!index) {
+        return 'Not indexed';
+    } else if (index.phase === 'scanning' || (index.status === 'scanning' && !index.phase)) {
+        return 'Scanning';
+    } else if (index.phase === 'indexing' || (index.metadata?.queued ?? 0) > 0) {
+        return 'Indexing';
+    } else if (index.status === 'ready') {
+        return 'Ready';
+    }
+    return index.error ? 'Failed' : 'Not indexed yet';
 }
 
 // ObjectNouns are what a backend's objects are called, of its scheme, in
