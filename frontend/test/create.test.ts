@@ -1,0 +1,76 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { ApiError } from '@mutablelogic/go-server/api';
+import { canBeWritable, signInNeeded, volumeCreate, type VolumeDraft } from '../src/volumes/create.ts';
+
+// draft returns a draft of a backend, read-only and searched, by default
+function draft(scheme: string, name: string, fields: Record<string, string> = {}, more: Partial<VolumeDraft> = {}): VolumeDraft {
+    return { scheme, name, description: '', readonly: true, index: 'objects', fields, ...more };
+}
+
+// query returns a URL's options, of its keys, in order
+function query(url: string): Record<string, string[]> {
+    const result: Record<string, string[]> = {};
+    for (const [key, value] of new URL(url).searchParams) {
+        (result[key] ??= []).push(value);
+    }
+    return result;
+}
+
+test('volumeCreate', async (t) => {
+    await t.test('a directory on the server', () => {
+        const v = volumeCreate(draft('file', 'media', { path: '/mnt/My Media' }, { description: ' Films ', readonly: false }));
+        assert.equal(v.name, 'media');
+        assert.equal(v.url, 'file://media/mnt/My%20Media?description=Films&index=objects&readonly=false');
+        assert.throws(() => volumeCreate(draft('file', 'media', { path: 'mnt/media' })), /absolute/);
+        assert.throws(() => volumeCreate(draft('file', 'media', {})), /path is needed/);
+        assert.match(volumeCreate(draft('file', 'media', { path: 'C:\\Media' })).url, /^file:\/\/media\/C%3A\/Media\?/);
+    });
+
+    await t.test('an S3 bucket', () => {
+        const v = volumeCreate(draft('s3', 'photos', {
+            bucket: 'my.bucket/family/photos/', region: 'eu-central-1', endpoint: 'http://localhost:9000',
+            'access-key-id': 'S3_KEY', 'secret-access-key': 'S3_SECRET', 'seaweedfs-filer-grpc': '',
+        }));
+        assert.match(v.url, /^s3:\/\/my\.bucket\/family\/photos\?/);
+        assert.deepEqual(query(v.url), {
+            'access-key-id': ['${S3_KEY}'], endpoint: ['http://localhost:9000'], index: ['objects'], name: ['photos'],
+            readonly: ['true'], region: ['eu-central-1'], 'secret-access-key': ['${S3_SECRET}'],
+        });
+        // Its name isn't an option when it's the bucket's
+        assert.equal(query(volumeCreate(draft('s3', 'media', { bucket: 'media' })).url).name, undefined);
+        assert.throws(() => volumeCreate(draft('s3', 'media', { bucket: 'media', 'access-key-id': 'not a name' })), /credential/);
+    });
+
+    await t.test('a feed', () => {
+        const v = volumeCreate(draft('rss', 'news', { feed: 'http://example.com/feeds/world.xml?edition=uk' }));
+        assert.match(v.url, /^rss:\/\/news\/example\.com\/feeds\/world\.xml\?/);
+        assert.deepEqual(query(v.url), { edition: ['uk'], index: ['objects'], insecure: ['true'] }, "a feed isn't writable, and has no readonly");
+        assert.equal(query(volumeCreate(draft('rss', 'news', { feed: 'https://example.com/rss' })).url).insecure, undefined);
+        assert.throws(() => volumeCreate(draft('rss', 'news', { feed: 'ftp://example.com/rss' })), /http or https/);
+        assert.ok(!canBeWritable('rss'));
+    });
+
+    await t.test("a Google account's", () => {
+        assert.deepEqual(query(volumeCreate(draft('gdrive', 'drive')).url), { index: ['objects'], readonly: ['true'] });
+        const cal = volumeCreate(draft('gcalendar', 'cal', { credential: 'GOOGLE_WORK', window: '30d' }, { readonly: false }));
+        assert.match(cal.url, /^gcalendar:\/\/cal\?/);
+        assert.deepEqual(query(cal.url), { credential: ['GOOGLE_WORK'], index: ['objects'], readonly: ['false'], window: ['30d'] });
+        assert.equal(query(volumeCreate(draft('gtasks', 'tasks', { window: '30d' })).url).window, undefined, 'only of a calendar');
+        assert.throws(() => volumeCreate(draft('gdrive', 'drive', { credential: 'GOOGLE TOKEN' })), /credential/);
+    });
+
+    await t.test('its name, and an unknown backend', () => {
+        assert.throws(() => volumeCreate(draft('gdrive', '1drive')), /name/);
+        assert.throws(() => volumeCreate(draft('gdrive', '')), /name/);
+        assert.throws(() => volumeCreate(draft('ftp', 'files')), /can't be added/);
+    });
+});
+
+test('signInNeeded', () => {
+    // An error of the server, of how to sign in, of a volume whose user needs to
+    assert.ok(signInNeeded(new ApiError(401, 'sign in', { server: {}, client_id: 'x' })));
+    assert.ok(!signInNeeded(new ApiError(401, 'unauthorized')));
+    assert.ok(!signInNeeded(new ApiError(400, 'bad', { client_id: 'x' })));
+    assert.ok(!signInNeeded(new Error('other')));
+});

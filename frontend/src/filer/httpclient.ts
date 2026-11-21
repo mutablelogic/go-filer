@@ -22,6 +22,12 @@ export async function updateVolume(client: Client, name: string, patch: Record<s
     });
 }
 
+// createVolume creates a volume, of its name, and its backend's URL, with its
+// options, which is mounted, and returns it
+export async function createVolume(client: Client, name: string, url: string, signal?: AbortSignal): Promise<Volume> {
+    return request<Volume>(client, 'POST', 'volume', { body: { name, url }, signal });
+}
+
 // deleteVolume deletes a volume, and its index, but not its files, and
 // returns it
 export async function deleteVolume(client: Client, name: string, signal?: AbortSignal): Promise<Volume> {
