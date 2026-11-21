@@ -42,6 +42,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueuePendingBeneath", func(t *testing.T) { testQueuePendingBeneath(t, withVolumes(t, newStore(t))) })
 	t.Run("Revisions", func(t *testing.T) { testRevisions(t, withVolumes(t, newStore(t))) })
 	t.Run("ListType", func(t *testing.T) { testListType(t, withVolumes(t, newStore(t))) })
+	t.Run("Kinds", func(t *testing.T) { testKinds(t, withVolumes(t, newStore(t))) })
 	t.Run("Scan", func(t *testing.T) { testScan(t, withVolumes(t, newStore(t))) })
 	t.Run("SetMetadata", func(t *testing.T) { testSetMetadata(t, withVolumes(t, newStore(t))) })
 	t.Run("QueueStale", func(t *testing.T) { testQueueStale(t, withVolumes(t, newStore(t))) })
@@ -950,6 +951,60 @@ func testListType(t *testing.T, s store.Store) {
 		require.NoError(t, err)
 		assert.NotZero(t, count, "objects of a type, recursive=%v", recursive)
 	}
+}
+
+func testKinds(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	kind := func(object *schema.Object, contentType, kind string) *schema.Object {
+		object.ContentType = contentType
+		if kind != "" {
+			object.Meta = []schema.Meta{{Namespace: "metadata", Key: "kind", Value: json.RawMessage(`"` + kind + `"`)}}
+		}
+		return object
+	}
+
+	// A volume of no objects has no kinds
+	kinds, err := s.Kinds(ctx, "media")
+	require.NoError(t, err)
+	assert.Empty(t, kinds)
+
+	// Of its objects, without its folders, even of a type of their own, their
+	// kind, of a task's metadata rather than the backend's, or else their
+	// media type, without its parameters, in lower case, or "", of neither,
+	// and not of another volume's
+	require.NoError(t, s.PutObject(ctx, "media",
+		folder("/"), folder("/d"), kind(folder("/g"), "application/x-apple-sparsebundle", ""),
+		kind(file("/a.txt"), "text/plain", "document"), kind(file("/b.jpg"), "image/jpeg", ""), kind(file("/c.ics"), "text/calendar", "calendar"),
+		kind(file("/d/e.mp3"), "audio/mpeg", ""), file("/f"), kind(file("/h.TXT"), "TEXT/PLAIN; charset=utf-8", ""), kind(file("/i.txt"), "text/plain", "document"),
+	))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.jpg", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "metadata", Key: "kind", Value: json.RawMessage(`"image"`)}}}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/c.ics", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "metadata", Key: "kind", Value: json.RawMessage(`"event"`)}}}))
+	require.NoError(t, s.PutObject(ctx, "photos", folder("/"), kind(file("/p.jpg"), "image/jpeg", "image")))
+	kinds, err = s.Kinds(ctx, "media")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]uint64{"document": 2, "image": 1, "event": 1, "audio/mpeg": 1, "text/plain": 1, "": 1}, kinds)
+
+	// A kind which isn't a string, or is empty, is of its media type, and a
+	// string which is a number is a kind of its own
+	raw := func(object *schema.Object, contentType, value string) *schema.Object {
+		object.ContentType = contentType
+		object.Meta = []schema.Meta{{Namespace: "metadata", Key: "kind", Value: json.RawMessage(value)}}
+		return object
+	}
+	require.NoError(t, s.PutObject(ctx, "photos",
+		raw(file("/n.png"), "image/png", `1`), raw(file("/e.png"), "image/png", `""`), raw(file("/a.png"), "image/png", `["x"]`),
+		raw(file("/s.txt"), "text/plain", `"1"`), raw(file("/o.txt"), "text/plain", `{"x":1}`),
+	))
+	kinds, err = s.Kinds(ctx, "photos")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]uint64{"image": 1, "image/png": 3, "1": 1, "text/plain": 1}, kinds)
+
+	// An object which is deleted isn't counted, nor are its kinds
+	require.NoError(t, s.DeleteObject(ctx, "media", "/d/"))
+	require.NoError(t, s.DeleteObject(ctx, "media", "/c.ics"))
+	kinds, err = s.Kinds(ctx, "media")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]uint64{"document": 2, "image": 1, "text/plain": 1, "": 1}, kinds)
 }
 
 func testScan(t *testing.T, s store.Store) {

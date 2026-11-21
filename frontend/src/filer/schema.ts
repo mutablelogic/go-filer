@@ -14,8 +14,10 @@ export interface Volume {
 }
 
 // VolumeIndex is a volume's index, when it's indexed: what's indexed, such
-// as folders, or objects, or metadata, how far, and how many folders and
-// objects it has, which are left out when there are none
+// as folders, or objects, or metadata, how far, how many folders and objects
+// it has, which are left out when there are none, and how many objects are
+// of each kind, such as book, or else of their media type, such as
+// text/plain, or of "", of neither, when its objects are indexed
 export interface VolumeIndex {
     mode: string;
     status?: string;
@@ -24,6 +26,7 @@ export interface VolumeIndex {
     objects?: number;
     error?: string;
     metadata?: TaskState;
+    kinds?: Record<string, number>;
 }
 
 // TaskState is the work of a task of a volume's objects, such as indexing

@@ -104,6 +104,10 @@ func (self *Store) CountObjects(context.Context, string, store.ListRequest) (uin
 	return 0, errNotImplemented
 }
 
+func (self *Store) Kinds(context.Context, string) (map[string]uint64, error) {
+	return nil, errNotImplemented
+}
+
 func (self *Store) Seen(context.Context, string, map[string]string) error {
 	return errNotImplemented
 }

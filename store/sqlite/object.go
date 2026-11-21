@@ -158,6 +158,18 @@ func (self *Store) CountObjects(ctx context.Context, volume string, req store.Li
 	return uint64(count), nil
 }
 
+// Kinds returns how many objects, without folders, of the volume are of
+// each kind, of their metadata, or else their media type, or "", of none
+func (self *Store) Kinds(ctx context.Context, volume string) (_ map[string]uint64, err error) {
+	ctx, end := self.span(ctx, "Kinds", attribute.String("arg.volume", volume))
+	defer func() { end(err) }()
+	result := schema.Kinds{}
+	if err := self.conn.List(ctx, &result, schema.KindsRequest{Volume: volume}); err != nil {
+		return nil, storeErr(err)
+	}
+	return result, nil
+}
+
 // Revisions returns, by their keys, the revisions of the files of a folder's
 // key, or of every file beneath it, when it's recursive
 func (self *Store) Revisions(ctx context.Context, volume, folder string, recursive bool) (_ map[string]string, err error) {

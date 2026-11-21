@@ -69,6 +69,12 @@ type ObjectStore interface {
 	// the key it starts after, or its limit
 	CountObjects(ctx context.Context, volume string, req ListRequest) (uint64, error)
 
+	// Kinds returns how many objects, without folders, of a volume are of each
+	// kind, of their metadata's metadata:kind, a task's rather than the
+	// backend's, or else of their media type, without its parameters, or "",
+	// of none
+	Kinds(ctx context.Context, volume string) (map[string]uint64, error)
+
 	// Revisions returns, by their keys, the revisions of the files of a
 	// folder, or of every file beneath it, when it's recursive, which are
 	// what the backend's listing said of them (see Revision) when they were
