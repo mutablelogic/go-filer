@@ -1,7 +1,9 @@
 // The panel of a volume, of four tabs: View, its details, of which it's
 // mounted, or unmounted, Edit, its description, access and index, and
 // Options, its other options, both of which are saved together, and Remove,
-// which removes it from the filer, once its name is typed
+// which removes it from the filer, once its name is typed. When its user
+// needs to sign in to mount it, such as with Google, the View tab asks them
+// to, and mounts it, once they have
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { PanelController, type PanelAction, type PanelTab } from '@mutablelogic/go-server/panel';
@@ -9,6 +11,8 @@ import type { NotificationController } from '@mutablelogic/go-server/notificatio
 import '@mutablelogic/go-server/panel/view';
 import '@carbon/web-components/es/components/text-input/index.js';
 import { deleteVolume, updateVolume } from '../filer/httpclient.ts';
+import { signInMessage, signInNeeded, type SignInNeeded } from './create.ts';
+import { openSignIn, signInPrompt } from './signin.ts';
 import { volumeBackend, volumeLabel, volumeNoun, volumeObjects, volumeStatus, type Volume } from '../filer/schema.ts';
 import type { VolumesController } from './controller.ts';
 import { IndexModes, volumeOptions } from './options.ts';
@@ -39,6 +43,7 @@ export class VolumePanelElement extends LitElement {
         confirm: { state: true },
         volume: { state: true },
         busy: { state: true },
+        signIn: { state: true },
     };
 
     // controller keeps the volumes, and notifications are told why an action
@@ -59,6 +64,11 @@ export class VolumePanelElement extends LitElement {
     // removed, is of them as they were
     declare private busy: boolean;
 
+    // signIn is how the volume's user signs in, when they need to, to mount
+    // it, which they do in a window which it opens, of the server's
+    // callback, which tells this one, once they have
+    declare private signIn?: SignInNeeded;
+
     private readonly panel = new PanelController<string>({ closable: true });
     private unsubscribe?: () => void;
 
@@ -68,6 +78,7 @@ export class VolumePanelElement extends LitElement {
     private readonly unmountRun = () => this.setEnabled(false);
     private readonly saveRun = () => this.save();
     private readonly removeRun = () => this.removeVolume();
+    private readonly onMessage = (event: MessageEvent) => this.signedIn(event);
 
     constructor() {
         super();
@@ -91,12 +102,14 @@ export class VolumePanelElement extends LitElement {
 
     override connectedCallback() {
         super.connectedCallback();
+        window.addEventListener('message', this.onMessage);
         this.unsubscribe?.();
         this.unsubscribe = this.controller?.subscribe(() => this.refresh());
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        window.removeEventListener('message', this.onMessage);
         this.unsubscribe?.();
         this.unsubscribe = undefined;
     }
@@ -109,6 +122,7 @@ export class VolumePanelElement extends LitElement {
         }
         const backend = volumeBackend(volume, this.controller?.backends);
         this.confirm = '';
+        this.signIn = undefined;
         this.volume = volume;
         this.panel.setHeader({ title: volumeLabel(volume), subtitle: backend ? `${volume.name} · ${backend}` : volume.name });
         this.panel.setTabs(this.tabs(volume), tab);
@@ -188,6 +202,7 @@ export class VolumePanelElement extends LitElement {
             ['URL', volume.url],
         ];
         return html`
+            ${this.signIn ? signInPrompt("it's mounted", () => void this.openSignIn()) : nothing}
             <dl class="gf-volume-details">
                 ${rows.map(([key, value]) => html`<dt>${key}</dt><dd>${value}</dd>`)}
                 ${error ? html`<dt>Error</dt><dd class="gf-volume-tile-error">${error}</dd>` : nothing}
@@ -222,12 +237,56 @@ export class VolumePanelElement extends LitElement {
         this.panel.setClosable(!busy);
     }
 
-    // setEnabled mounts the volume, or unmounts it, and loads the volumes again
+    // setEnabled mounts the volume, or unmounts it, and loads the volumes
+    // again. When its user needs to sign in to mount it, they're asked to,
+    // rather than told it failed.
     private async setEnabled(enabled: boolean) {
         const name = this.name;
-        if (name && this.controller) {
+        if (!name || !this.controller) {
+            return;
+        }
+        try {
             await updateVolume(this.controller.client, name, {}, enabled);
-            await this.controller.reload();
+            this.signIn = undefined;
+        } catch (error) {
+            const signIn = enabled ? signInNeeded(error) : undefined;
+            if (!signIn) {
+                throw error;
+            }
+            this.signIn = signIn;
+        }
+        await this.controller.reload();
+    }
+
+    // openSignIn opens a window, which signs in, or says why it can't, and
+    // to mount the volume with the CLI instead
+    private async openSignIn() {
+        const signIn = this.signIn;
+        if (!signIn || !this.name || !this.controller) {
+            return;
+        }
+        try {
+            await openSignIn(this.controller.client, signIn, `filer volume-mount ${this.name}`);
+        } catch (error) {
+            this.notifications?.error("You can't sign in here", error);
+        }
+    }
+
+    // signedIn mounts the volume again, once its user has signed in, of the
+    // message the server's callback posts, or says why they aren't
+    private signedIn(event: MessageEvent) {
+        const message = signInMessage(event, location.origin);
+        if (!message || !this.signIn || message.key !== this.signIn.key) {
+            return;
+        }
+        if (!message.ok) {
+            this.notifications?.error("You aren't signed in", new Error(message.error || 'The sign-in was refused'));
+            return;
+        }
+        this.signIn = undefined;
+        const mount = this.volume && this.mountActions(this.volume).find((action) => action.run === this.mountRun);
+        if (mount) {
+            void this.panel.run(mount);
         }
     }
 

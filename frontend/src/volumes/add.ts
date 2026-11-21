@@ -9,12 +9,12 @@ import type { NotificationController } from '@mutablelogic/go-server/notificatio
 import '@mutablelogic/go-server/panel/view';
 import '@carbon/web-components/es/components/text-input/index.js';
 import '@carbon/web-components/es/components/content-switcher/index.js';
-import '@carbon/web-components/es/components/button/index.js';
-import { authorizeSignIn, createVolume, signInCallback } from '../filer/httpclient.ts';
+import { createVolume } from '../filer/httpclient.ts';
 import type { Backend } from '../filer/schema.ts';
 import type { VolumesController } from './controller.ts';
 import { canBeWritable, signInMessage, signInNeeded, volumeCreate, VolumeFields, type SignInNeeded, type VolumeDraft } from './create.ts';
 import { AccessDescriptions, IndexModes, indexDescription } from './options.ts';
+import { openSignIn, signInPrompt } from './signin.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -109,12 +109,7 @@ export class VolumeAddElement extends LitElement {
         const fields = VolumeFields.get(draft.scheme) ?? [];
         return html`
             <div class="gf-volume-form" ?inert=${this.busy}>
-                ${this.signIn ? html`
-                    <div class="gf-volume-signin">
-                        <p>The volume needs a sign-in with Google. Sign in, in the window which opens, and it's added.</p>
-                        <cds-button kind="tertiary" size="md" @click=${() => void this.openSignIn()}>Sign in with Google</cds-button>
-                    </div>
-                ` : nothing}
+                ${this.signIn ? signInPrompt("it's added", () => void this.openSignIn()) : nothing}
                 <cds-text-input label="Name" .value=${draft.name} placeholder="media" autocomplete="off"
                     helper-text="An identifier, of letters, digits, - and _, which is the volume's, in its links"
                     @input=${(event: Event) => this.set({ name: (event.target as HTMLInputElement).value })}></cds-text-input>
@@ -194,28 +189,18 @@ export class VolumeAddElement extends LitElement {
         this.panel.close();
     }
 
-    // openSignIn opens a window, at once, as it's of a click, which a
-    // browser allows, at the URL to sign in at, which the server makes. When
-    // the server's client isn't a web application's, the window is closed,
-    // and it says to sign in with the CLI.
+    // openSignIn opens a window, which signs in, or says why it can't, and
+    // to add the volume with the CLI instead
     private async openSignIn() {
         const signIn = this.signIn;
         const draft = this.draft;
         if (!signIn || !draft || !this.controller) {
             return;
         }
-        const popup = window.open('', 'gf-signin', 'popup,width=520,height=680');
         try {
-            const url = await authorizeSignIn(this.controller.client, signIn.key, signIn.scopes);
-            if (popup) {
-                popup.location.href = url;
-            } else {
-                window.location.href = url;
-            }
+            await openSignIn(this.controller.client, signIn, `filer volume-create-${draft.scheme} ${draft.name.trim() || '<name>'}`);
         } catch (error) {
-            popup?.close();
-            const name = draft.name.trim() || '<name>';
-            this.notifications?.error("You can't sign in here", new Error(`${error instanceof Error ? error.message : String(error)}. Signing in in a browser needs the server's GOOGLE_CLIENT to be a web application's client, whose redirect URIs are this server's callback, ${signInCallback(this.controller.client)}, so sign in, and add the volume, with the CLI: filer volume-create-${draft.scheme} ${name}`));
+            this.notifications?.error("You can't sign in here", error);
         }
     }
 
