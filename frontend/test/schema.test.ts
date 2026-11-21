@@ -117,6 +117,13 @@ test('volumeKinds', () => {
     assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 12, kinds: { a: 5, b: 4, c: 3 } }, 3), [
         { group: 'A', value: 5 }, { group: 'B', value: 4 }, { group: 'C', value: 3 },
     ]);
+    // A kind which is other is of the Other of the rest, of which there's one
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 49, kinds: { other: 10, a: 9, b: 8, c: 7, d: 6, e: 5, f: 4 } }), [
+        { group: 'A', value: 9 }, { group: 'B', value: 8 }, { group: 'C', value: 7 }, { group: 'D', value: 6 }, { group: 'E', value: 5 }, { group: 'Other', value: 14 },
+    ]);
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 13, kinds: { Other: 3, other: 1, a: 9 } }), [
+        { group: 'A', value: 9 }, { group: 'Other', value: 4 },
+    ]);
     // None, of a volume of none, and undefined, when they aren't known
     assert.deepEqual(of({ mode: 'objects', status: 'ready', kinds: {} }), []);
     assert.deepEqual(of({ mode: 'objects', status: 'ready' }), [], 'of none, whose kinds are left out');
