@@ -28,6 +28,24 @@ export async function createVolume(client: Client, name: string, url: string, si
     return request<Volume>(client, 'POST', 'volume', { body: { name, url }, signal });
 }
 
+// authorizeSignIn returns the URL a person signs in at, in a browser, as the
+// credential of the key, such as GOOGLE_TOKEN, with the scopes, which
+// redirects to the server's callback, which stores the sign-in, and tells
+// the window which opened it
+export async function authorizeSignIn(client: Client, key: string, scopes: readonly string[], signal?: AbortSignal): Promise<string> {
+    const response = await request<{ url: string }>(client, 'POST', `credential/${encodeURIComponent(key)}/authorize`, {
+        body: { redirect_uri: signInCallback(client), scopes },
+        signal,
+    });
+    return response.url;
+}
+
+// signInCallback returns the URL of the server's callback of a sign-in, as
+// the browser reaches it, which is registered with the server's web client
+export function signInCallback(client: Client): string {
+    return new URL(client.base.replace(/\/$/, '') + '/credential-signin/callback', location.href).href;
+}
+
 // deleteVolume deletes a volume, and its index, but not its files, and
 // returns it
 export async function deleteVolume(client: Client, name: string, signal?: AbortSignal): Promise<Volume> {

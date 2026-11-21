@@ -12,8 +12,9 @@ import '@carbon/web-components/es/components/content-switcher/index.js';
 import { createVolume } from '../filer/httpclient.ts';
 import type { Backend } from '../filer/schema.ts';
 import type { VolumesController } from './controller.ts';
-import { canBeWritable, signInNeeded, volumeCreate, VolumeFields, type VolumeDraft } from './create.ts';
+import { canBeWritable, signInMessage, signInNeeded, volumeCreate, VolumeFields, type SignInNeeded, type VolumeDraft } from './create.ts';
 import { AccessDescriptions, IndexModes, indexDescription } from './options.ts';
+import { openSignIn, SignInLabel, signInPrompt } from './signin.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -32,6 +33,7 @@ export class VolumeAddElement extends LitElement {
         backend: { state: true },
         draft: { state: true },
         busy: { state: true },
+        signIn: { state: true },
     };
 
     // controller keeps the volumes, and notifications are told why one
@@ -45,13 +47,34 @@ export class VolumeAddElement extends LitElement {
     declare private draft?: VolumeDraft;
     declare private busy: boolean;
 
+    // signIn is how the volume's user signs in, when they need to, before
+    // it's added, such as with Google, which they do in a window which it
+    // opens, of the server's callback, which tells this one, once they have
+    declare private signIn?: SignInNeeded;
+
     private readonly panel = new PanelController<string>({ closable: true });
-    private readonly addRun = () => this.add();
+    // addAction is Add, which closes the panel itself, once the volume is
+    // added, so it stays open when its user needs to sign in first
+    private readonly addAction: PanelAction = { label: 'Add', kind: 'primary', close: false, run: () => this.add() };
+    // signInAction is Sign in, in place of Add, when its user needs to sign
+    // in first, which opens a window, at once, as it's of a click
+    private readonly signInAction: PanelAction = { label: SignInLabel, kind: 'primary', close: false, run: () => this.openSignIn() };
+    private readonly onMessage = (event: MessageEvent) => this.signedIn(event);
 
     constructor() {
         super();
         this.busy = false;
         this.panel.onError((error) => this.notifications?.error("The volume couldn't be added", error));
+    }
+
+    override connectedCallback() {
+        super.connectedCallback();
+        window.addEventListener('message', this.onMessage);
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        window.removeEventListener('message', this.onMessage);
     }
 
     protected override createRenderRoot() {
@@ -61,6 +84,7 @@ export class VolumeAddElement extends LitElement {
     // open opens the panel which adds a volume of the backend
     open(backend: Backend) {
         this.backend = backend;
+        this.signIn = undefined;
         this.draft = { scheme: backend.scheme, name: '', description: '', readonly: true, index: 'objects', fields: {} };
         this.panel.setHeader({ title: `Add ${backend.description || backend.scheme}`, subtitle: `A volume of ${backend.scheme}` });
         this.panel.setActions(this.actions());
@@ -76,10 +100,18 @@ export class VolumeAddElement extends LitElement {
         `;
     }
 
-    // actions are Add, as the panel is closed of its close button, the
-    // escape key, or the page beside it
+    // actions are Add, or Sign in, when its user needs to sign in first, as
+    // the panel is closed of its close button, the escape key, or the page
+    // beside it
     private actions(): PanelAction[] {
-        return [{ label: 'Add', kind: 'primary', run: this.addRun }];
+        return [this.signIn ? this.signInAction : this.addAction];
+    }
+
+    // setSignIn sets how the volume's user signs in, when they need to, of
+    // the panel's action
+    private setSignIn(signIn?: SignInNeeded) {
+        this.signIn = signIn;
+        this.panel.setActions(this.actions());
     }
 
     // formView is the form of the volume: its name, the backend's fields, its access, unless it can't be writable, and how
@@ -88,6 +120,7 @@ export class VolumeAddElement extends LitElement {
         const fields = VolumeFields.get(draft.scheme) ?? [];
         return html`
             <div class="gf-volume-form" ?inert=${this.busy}>
+                ${this.signIn ? signInPrompt("it's added") : nothing}
                 <cds-text-input label="Name" .value=${draft.name} placeholder="media" autocomplete="off"
                     helper-text="An identifier, of letters, digits, - and _, which is the volume's, in its links"
                     @input=${(event: Event) => this.set({ name: (event.target as HTMLInputElement).value })}></cds-text-input>
@@ -151,14 +184,49 @@ export class VolumeAddElement extends LitElement {
             await createVolume(this.controller.client, volume.name, volume.url);
             await this.controller.reload();
         } catch (error) {
-            if (signInNeeded(error)) {
-                throw new Error(`It needs a sign-in with Google, which can't be done here yet. Sign in, and add it, with the CLI: filer volume-create-${draft.scheme} ${volume.name}`);
+            // When its user needs to sign in, they're asked to, in the panel,
+            // which stays open, rather than told it failed
+            const signIn = signInNeeded(error);
+            if (signIn) {
+                this.setSignIn(signIn);
+                return;
             }
             throw error;
         } finally {
             this.busy = false;
             this.panel.setClosable(true);
         }
+        this.panel.close();
+    }
+
+    // openSignIn opens a window, which signs in, or says why it can't, and
+    // to add the volume with the CLI instead
+    private async openSignIn() {
+        const signIn = this.signIn;
+        const draft = this.draft;
+        if (!signIn || !draft || !this.controller) {
+            return;
+        }
+        try {
+            await openSignIn(this.controller.client, signIn, `filer volume-create-${draft.scheme} ${draft.name.trim() || '<name>'}`);
+        } catch (error) {
+            this.notifications?.error("You can't sign in here", error);
+        }
+    }
+
+    // signedIn adds the volume again, once its user has signed in, of the
+    // message the server's callback posts, or says why they aren't
+    private signedIn(event: MessageEvent) {
+        const message = signInMessage(event, location.origin);
+        if (!message || !this.signIn || message.key !== this.signIn.key) {
+            return;
+        }
+        if (!message.ok) {
+            this.notifications?.error("You aren't signed in", new Error(message.error || 'The sign-in was refused'));
+            return;
+        }
+        this.setSignIn(undefined);
+        void this.panel.run(this.addAction);
     }
 }
 

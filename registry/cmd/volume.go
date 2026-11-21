@@ -59,7 +59,7 @@ type VolumeGetCmd struct {
 
 type VolumeUpdateCmd struct {
 	VolumeGetCmd
-	NoBrowser   bool     `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it."`
+	SignInFlags
 	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Option to set, such as readonly=true, which can be repeated, when the option has each of the values, such as -o skip=^\\. -o skip=\\.tmp$. An option without a value, such as skip, has none."`
 	Unset       []string `name:"unset" sep:"none" placeholder:"KEY" help:"Option to remove, so it's the default, which can be repeated."`
 	Enabled     *bool    `name:"enabled" negatable:"" help:"Enable the volume, so it's mounted, or disable it, with --no-enabled, so it's unmounted, which is kept as it is without either."`
@@ -69,7 +69,7 @@ type VolumeUpdateCmd struct {
 
 type VolumeMountCmd struct {
 	VolumeGetCmd
-	NoBrowser bool `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it."`
+	SignInFlags
 }
 
 type VolumeUnmountCmd struct {
@@ -124,9 +124,9 @@ type VolumeCreateGContactsCmd struct {
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
-	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
-	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
-	Description     string         `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
+	SignInFlags
+	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 type VolumeCreateGDriveCmd struct {
@@ -135,9 +135,9 @@ type VolumeCreateGDriveCmd struct {
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How long the list of files is kept, once it's got, or 0 not to keep it, which is a minute, unless it's set."`
-	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
-	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
-	Description     string         `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
+	SignInFlags
+	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 type VolumeCreateGCalendarCmd struct {
@@ -147,9 +147,9 @@ type VolumeCreateGCalendarCmd struct {
 	Credential      string         `name:"credential" placeholder:"KEY" help:"Key of the server's credential of the sign-in, which is GOOGLE_TOKEN, unless it's set, such as GOOGLE_WORK, for another account."`
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
-	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
-	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=metadata, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
-	Description     string         `name:"description" help:"What the volume is, such as \"Work calendar\", which the server sets, of its backend, when it isn't set."`
+	SignInFlags
+	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=metadata, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description string   `name:"description" help:"What the volume is, such as \"Work calendar\", which the server sets, of its backend, when it isn't set."`
 }
 
 type VolumeCreateRSSCmd struct {
@@ -167,9 +167,9 @@ type VolumeCreateGTasksCmd struct {
 	Quota           *uint          `name:"quota" help:"Most requests to Google each minute, or 0 not to limit them, which is 120, unless it's set."`
 	RefreshInterval *time.Duration `name:"refresh-interval" placeholder:"DURATION" help:"How often changes are polled for, or 0 not to watch them, which is a minute, unless it's set."`
 	Hidden          bool           `name:"hidden" help:"Include tasks which are hidden, as they're completed, and cleared from their list, which aren't, unless it's set."`
-	NoBrowser       bool           `name:"no-browser" help:"Print the URL to sign in with Google at, rather than opening it in the browser."`
-	Opt             []string       `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
-	Description     string         `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
+	SignInFlags
+	Opt         []string `name:"opt" sep:"none" short:"o" placeholder:"KEY=VALUE" help:"Another option of the volume, such as index=folders, which can be repeated, and replaces one which a flag sets. An option without a value is empty."`
+	Description string   `name:"description" help:"What the volume is, such as \"Family photos\", which the server sets, of its backend, when it isn't set."`
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -261,7 +261,7 @@ func (cmd *VolumeCreateGTasksCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
-	return createSignedIn(ctx, "filer.VolumeCreateGTasksCmd", volume, signInClient, cmd.NoBrowser)
+	return createSignedIn(ctx, "filer.VolumeCreateGTasksCmd", volume, signInClient, cmd.SignInFlags)
 }
 
 // Run creates a volume of contacts, as a volume of tasks is created
@@ -274,7 +274,7 @@ func (cmd *VolumeCreateGCalendarCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
-	return createSignedIn(ctx, "filer.VolumeCreateGCalendarCmd", volume, signInClient, cmd.NoBrowser)
+	return createSignedIn(ctx, "filer.VolumeCreateGCalendarCmd", volume, signInClient, cmd.SignInFlags)
 }
 
 func (cmd *VolumeCreateRSSCmd) Run(ctx server.Cmd) error {
@@ -294,7 +294,7 @@ func (cmd *VolumeCreateGContactsCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
-	return createSignedIn(ctx, "filer.VolumeCreateGContactsCmd", volume, signInClient, cmd.NoBrowser)
+	return createSignedIn(ctx, "filer.VolumeCreateGContactsCmd", volume, signInClient, cmd.SignInFlags)
 }
 
 func (cmd *VolumeCreateGDriveCmd) Run(ctx server.Cmd) error {
@@ -306,12 +306,12 @@ func (cmd *VolumeCreateGDriveCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
-	return createSignedIn(ctx, "filer.VolumeCreateGDriveCmd", volume, signInClient, cmd.NoBrowser)
+	return createSignedIn(ctx, "filer.VolumeCreateGDriveCmd", volume, signInClient, cmd.SignInFlags)
 }
 
 // createSignedIn creates a volume, and, when its user needs to sign in,
 // signs in with Google, in the browser, and creates it again, and prints it
-func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInClient *credentialclient.Client, noBrowser bool) error {
+func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInClient *credentialclient.Client, flags SignInFlags) error {
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
 		if err := checkBackend(ctx, client, volume.URL); err != nil {
 			return err
@@ -319,7 +319,7 @@ func createSignedIn(ctx server.Cmd, span string, volume schema.Volume, signInCli
 		req := schema.VolumeCreateRequest{Name: volume.Name, URL: volume.URL}
 		created, err := client.CreateVolume(ctx, req)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
-			if err := signInWithBrowser(ctx, signInClient, *signIn, noBrowser); err != nil {
+			if err := signInWithBrowser(ctx, signInClient, *signIn, flags); err != nil {
 				return err
 			}
 			created, err = client.CreateVolume(ctx, req)
@@ -364,22 +364,22 @@ func (cmd *VolumeUpdateCmd) Run(ctx server.Cmd) error {
 	if err != nil {
 		return err
 	}
-	return updateVolume(ctx, "filer.VolumeUpdateCmd", cmd.Name, patch, cmd.Enabled, cmd.NoBrowser)
+	return updateVolume(ctx, "filer.VolumeUpdateCmd", cmd.Name, patch, cmd.Enabled, cmd.SignInFlags)
 }
 
 // Run enables the volume, so it's mounted
 func (cmd *VolumeMountCmd) Run(ctx server.Cmd) error {
-	return updateVolume(ctx, "filer.VolumeMountCmd", cmd.Name, nil, types.Ptr(true), cmd.NoBrowser)
+	return updateVolume(ctx, "filer.VolumeMountCmd", cmd.Name, nil, types.Ptr(true), cmd.SignInFlags)
 }
 
 // Run disables the volume, so it's unmounted
 func (cmd *VolumeUnmountCmd) Run(ctx server.Cmd) error {
-	return updateVolume(ctx, "filer.VolumeUnmountCmd", cmd.Name, nil, types.Ptr(false), true)
+	return updateVolume(ctx, "filer.VolumeUnmountCmd", cmd.Name, nil, types.Ptr(false), SignInFlags{NoBrowser: true})
 }
 
 // updateVolume updates the options of a volume, and whether it's enabled,
 // when it isn't nil, signing in when its user needs to, and prints it
-func updateVolume(ctx server.Cmd, span, name string, patch schema.VolumePatch, enabled *bool, noBrowser bool) error {
+func updateVolume(ctx server.Cmd, span, name string, patch schema.VolumePatch, enabled *bool, flags SignInFlags) error {
 	signInClient, err := newSignInClient(ctx)
 	if err != nil {
 		return err
@@ -387,7 +387,7 @@ func updateVolume(ctx server.Cmd, span, name string, patch schema.VolumePatch, e
 	return withClient(ctx, span, func(ctx context.Context, client *httpclient.Client) error {
 		volume, err := client.UpdateVolume(ctx, name, patch, enabled)
 		if signIn := httpclient.SignInOf(err); signIn != nil {
-			if err := signInWithBrowser(ctx, signInClient, *signIn, noBrowser); err != nil {
+			if err := signInWithBrowser(ctx, signInClient, *signIn, flags); err != nil {
 				return err
 			}
 			volume, err = client.UpdateVolume(ctx, name, patch, enabled)

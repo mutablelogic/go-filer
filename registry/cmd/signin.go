@@ -20,16 +20,25 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
+// SignInFlags are the flags of signing in, of a command which signs in, when
+// the server needs it: whether the URL to sign in at is opened, and the
+// loopback address it redirects to, which is fixed, so it can be one a web
+// application's client registers, as well as any a desktop app's can
+type SignInFlags struct {
+	NoBrowser  bool   `name:"no-browser" help:"Print the URL to sign in at, when its user needs to sign in, rather than opening it in the browser."`
+	SignInAddr string `name:"signin-addr" default:"localhost:8085" placeholder:"HOST:PORT" help:"Loopback address the sign-in redirects to, http://<addr>/callback, which a web application's client registers as a redirect URI."`
+}
+
 // signInWithBrowser signs in, of what the server needs: the person signs in
 // with Google, in the browser, at the URL, which is printed, and opened,
-// unless noBrowser, which redirects to a loopback address, with the code,
+// unless NoBrowser, which redirects to the loopback address, with the code,
 // which the server's credentials API exchanges, as it has the client's
 // secret, and stores
-func signInWithBrowser(ctx context.Context, api *credentialclient.Client, signIn authclient.SignIn, noBrowser bool) error {
+func signInWithBrowser(ctx context.Context, api *credentialclient.Client, signIn authclient.SignIn, flags SignInFlags) error {
 	if signIn.Server.Issuer != google.Google.Issuer {
 		return gofiler.ErrNotImplemented.Withf("signing in with %q", signIn.Server.Issuer)
 	}
-	loopback, err := authclient.NewLoopback()
+	loopback, err := authclient.NewLoopbackAt(flags.SignInAddr)
 	if err != nil {
 		return err
 	}
@@ -40,7 +49,7 @@ func signInWithBrowser(ctx context.Context, api *credentialclient.Client, signIn
 	u := signIn.AuthCodeURL(loopback.RedirectURI(), state, verifier, google.SignInOptions...)
 	fmt.Fprintln(os.Stderr, "Sign in with Google, in your browser, at:")
 	fmt.Fprintln(os.Stderr, u)
-	if !noBrowser {
+	if !flags.NoBrowser {
 		_ = openBrowser(u)
 	}
 

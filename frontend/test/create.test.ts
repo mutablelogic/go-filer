@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from '@mutablelogic/go-server/api';
-import { canBeWritable, signInNeeded, volumeCreate, type VolumeDraft } from '../src/volumes/create.ts';
+import { canBeWritable, signInMessage, signInNeeded, volumeCreate, type VolumeDraft } from '../src/volumes/create.ts';
 
 // draft returns a draft of a backend, read-only and searched, by default
 function draft(scheme: string, name: string, fields: Record<string, string> = {}, more: Partial<VolumeDraft> = {}): VolumeDraft {
@@ -72,9 +72,21 @@ test('volumeCreate', async (t) => {
 });
 
 test('signInNeeded', () => {
-    // An error of the server, of how to sign in, of a volume whose user needs to
-    assert.ok(signInNeeded(new ApiError(401, 'sign in', { server: {}, client_id: 'x' })));
-    assert.ok(!signInNeeded(new ApiError(401, 'unauthorized')));
-    assert.ok(!signInNeeded(new ApiError(400, 'bad', { client_id: 'x' })));
-    assert.ok(!signInNeeded(new Error('other')));
+    // An error of the server, of how to sign in, of a volume whose user needs
+    // to, of its credential, and scopes
+    assert.deepEqual(signInNeeded(new ApiError(401, 'sign in', { server: {}, client_id: 'x', credential: 'GOOGLE_WORK', scopes: ['a', 1, 'b'] })), { key: 'GOOGLE_WORK', scopes: ['a', 'b'] });
+    assert.deepEqual(signInNeeded(new ApiError(401, 'sign in', { client_id: 'x' })), { key: 'GOOGLE_TOKEN', scopes: [] });
+    assert.equal(signInNeeded(new ApiError(401, 'unauthorized')), undefined);
+    assert.equal(signInNeeded(new ApiError(400, 'bad', { client_id: 'x' })), undefined);
+    assert.equal(signInNeeded(new Error('other')), undefined);
+});
+
+test('signInMessage', () => {
+    const origin = 'http://localhost:8084';
+    assert.deepEqual(signInMessage({ origin, data: { type: 'credential-signin', key: 'GOOGLE_TOKEN', ok: true, error: '' } }, origin), { key: 'GOOGLE_TOKEN', ok: true, error: '' });
+    assert.deepEqual(signInMessage({ origin, data: { type: 'credential-signin', key: 'GOOGLE_TOKEN', ok: false, error: 'access_denied' } }, origin), { key: 'GOOGLE_TOKEN', ok: false, error: 'access_denied' });
+    // Not of another origin, nor another type, nor without a key
+    assert.equal(signInMessage({ origin: 'https://evil.example.com', data: { type: 'credential-signin', key: 'GOOGLE_TOKEN', ok: true } }, origin), undefined);
+    assert.equal(signInMessage({ origin, data: { type: 'other', key: 'GOOGLE_TOKEN', ok: true } }, origin), undefined);
+    assert.equal(signInMessage({ origin, data: 'credential-signin' }, origin), undefined);
 });
