@@ -76,12 +76,10 @@ export class VolumeAddElement extends LitElement {
         `;
     }
 
-    // actions are Cancel, and Add
+    // actions are Add, as the panel is closed of its close button, the
+    // escape key, or the page beside it
     private actions(): PanelAction[] {
-        return [
-            { label: 'Cancel', kind: 'secondary' },
-            { label: 'Add', kind: 'primary', run: this.addRun },
-        ];
+        return [{ label: 'Add', kind: 'primary', run: this.addRun }];
     }
 
     // formView is the form of the volume: its name, the backend's fields, its access, unless it can't be writable, and how
