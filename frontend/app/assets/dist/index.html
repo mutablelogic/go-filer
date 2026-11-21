@@ -122,6 +122,18 @@
             overflow-wrap: anywhere;
         }
 
+        /* A namespace of a file's metadata, in its panel */
+        .gf-object-namespace {
+            margin: 1.5rem 0 0.75rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--cds-border-subtle-01, #e0e0e0);
+            color: var(--cds-text-secondary);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.32px;
+            text-transform: uppercase;
+        }
+
         .gf-volume-view-note {
             margin: 1.5rem 0 0;
             color: var(--cds-text-secondary);
@@ -317,10 +329,24 @@
             z-index: 1;
         }
 
+        /* A file's name is a button, which chooses it, of its row's click,
+           and of the keyboard, which reads as its name */
         .gf-file-view-name {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
+            padding: 0;
+            border: 0;
+            background: none;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .gf-file-view-name:focus-visible {
+            outline: 2px solid var(--cds-focus, #0f62fe);
+            outline-offset: 2px;
         }
 
         .gf-file-view-type {
