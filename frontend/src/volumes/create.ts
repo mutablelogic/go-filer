@@ -138,11 +138,40 @@ export function volumeCreate(draft: VolumeDraft): VolumeCreate {
     return { name, url: `${url}?${query}` };
 }
 
-// signInNeeded returns whether a volume can't be added, as its user needs to
-// sign in, such as with Google, which the server says with how they sign in
-export function signInNeeded(error: unknown): boolean {
+// SignInNeeded is how a volume's user signs in, which the server says, when
+// they need to: the key of the credential the sign-in is stored as, such as
+// GOOGLE_TOKEN, and the scopes to ask for
+export interface SignInNeeded {
+    key: string;
+    scopes: string[];
+}
+
+// signInNeeded returns how a volume's user signs in, when it can't be added
+// as they need to, such as with Google, which the server says, or undefined
+export function signInNeeded(error: unknown): SignInNeeded | undefined {
     const detail = error instanceof ApiError ? error.detail : undefined;
-    return error instanceof ApiError && error.status === 401 && typeof detail === 'object' && detail !== null && 'client_id' in detail;
+    if (!(error instanceof ApiError) || error.status !== 401 || typeof detail !== 'object' || detail === null || !('client_id' in detail)) {
+        return undefined;
+    }
+    const { credential, scopes } = detail as { credential?: unknown; scopes?: unknown };
+    return {
+        key: typeof credential === 'string' && credential ? credential : 'GOOGLE_TOKEN',
+        scopes: Array.isArray(scopes) ? scopes.filter((s): s is string => typeof s === 'string') : [],
+    };
+}
+
+// SignInMessage is the type of the message the server's callback posts to
+// the window which opened it, of the key, and whether it's signed in
+export const SignInMessage = 'credential-signin';
+
+// signInMessage returns the key, and whether it's signed in, or why not, of
+// a message the server's callback posts, of the same origin, or undefined
+export function signInMessage(event: { origin: string; data: unknown }, origin: string): { key: string; ok: boolean; error: string } | undefined {
+    const data = event.data as { type?: unknown; key?: unknown; ok?: unknown; error?: unknown } | null;
+    if (event.origin !== origin || typeof data !== 'object' || data === null || data.type !== SignInMessage || typeof data.key !== 'string') {
+        return undefined;
+    }
+    return { key: data.key, ok: data.ok === true, error: typeof data.error === 'string' ? data.error : '' };
 }
 
 ///////////////////////////////////////////////////////////////////////////////
