@@ -37,6 +37,7 @@ export class VolumePanelElement extends LitElement {
         tab: { state: true },
         confirm: { state: true },
         volume: { state: true },
+        busy: { state: true },
     };
 
     // controller keeps the volumes, and notifications are told why an action
@@ -52,6 +53,11 @@ export class VolumePanelElement extends LitElement {
     declare private confirm: string;
     declare private volume?: Volume;
 
+    // busy is whether the volume is saved, or deleted, while which its form,
+    // or the name which is typed, can't be changed, as what's saved, or
+    // deleted, is of them as they were
+    declare private busy: boolean;
+
     private readonly panel = new PanelController<string>({ closable: true });
     private unsubscribe?: () => void;
 
@@ -65,6 +71,7 @@ export class VolumePanelElement extends LitElement {
     constructor() {
         super();
         this.confirm = '';
+        this.busy = false;
         this.panel.subscribe((state) => {
             const tab = state.tab as VolumeTab | undefined;
             const changed = tab !== this.tab;
@@ -111,7 +118,7 @@ export class VolumePanelElement extends LitElement {
         return html`
             <gs-panel .controller=${this.panel}>
                 ${volume && this.tab === 'view' ? this.viewView(volume) : nothing}
-                <gf-volume-form ?hidden=${this.tab !== 'edit'} .volume=${this.name ? volume : undefined}></gf-volume-form>
+                <gf-volume-form ?hidden=${this.tab !== 'edit'} ?inert=${this.busy} .volume=${this.name ? volume : undefined}></gf-volume-form>
                 ${volume && this.tab === 'delete' ? this.deleteView(volume) : nothing}
             </gs-panel>
         `;
@@ -160,7 +167,7 @@ export class VolumePanelElement extends LitElement {
         const options = volumeOptions(volume);
         const objects = volumeObjects(volume);
         const mode = IndexModes.find((m) => m.value === options.index)?.label ?? options.index;
-        const error = volume.error || volume.index?.error;
+        const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
         const rows: [string, string][] = [
             ['Description', options.description || '–'],
             ['Name', volume.name],
@@ -183,7 +190,7 @@ export class VolumePanelElement extends LitElement {
     // deleteView asks for the volume's name, before it's deleted
     private deleteView(volume: Volume): TemplateResult {
         return html`
-            <div class="gf-volume-form gf-volume-delete">
+            <div class="gf-volume-form gf-volume-delete" ?inert=${this.busy}>
                 <p>Deleting the volume removes it, and its index, but not its ${volumeNoun(volume, 2)}, which are kept where they are.</p>
                 <cds-text-input label=${`Type ${volume.name} to delete it`} .value=${this.confirm} autocomplete="off"
                     @input=${(event: Event) => this.setConfirm(volume, (event.target as HTMLInputElement).value)}></cds-text-input>
@@ -198,6 +205,14 @@ export class VolumePanelElement extends LitElement {
         this.panel.setActions([this.deleteAction(volume)]);
     }
 
+    // setBusy sets whether the volume is saved, or deleted, while which the
+    // panel can't be closed, and its form, or the name which is typed, can't
+    // be changed, and are again, once it's done, or it fails
+    private setBusy(busy: boolean) {
+        this.busy = busy;
+        this.panel.setClosable(!busy);
+    }
+
     // setEnabled mounts the volume, or unmounts it, and loads the volumes again
     private async setEnabled(enabled: boolean) {
         const name = this.name;
@@ -209,20 +224,21 @@ export class VolumePanelElement extends LitElement {
 
     // save saves the options of the volume which are changed, of its form,
     // and loads the volumes again, rather than only once they change, as an
-    // app needn't follow their changes. The panel can't be closed meanwhile,
-    // so a save which ends doesn't close the panel of another volume.
+    // app needn't follow their changes. The panel can't be closed, nor the
+    // form changed, meanwhile, so a save which ends doesn't close the panel
+    // of another volume, nor are changes made after it's saved lost.
     private async save() {
         const name = this.name;
         const patch = this.querySelector('gf-volume-form')?.patch() ?? {};
         if (!name || Object.keys(patch).length === 0 || !this.controller) {
             return;
         }
-        this.panel.setClosable(false);
+        this.setBusy(true);
         try {
             await updateVolume(this.controller.client, name, patch);
             await this.controller.reload();
         } finally {
-            this.panel.setClosable(true);
+            this.setBusy(false);
         }
     }
 
@@ -233,12 +249,12 @@ export class VolumePanelElement extends LitElement {
         if (!name || this.confirm !== name || !this.controller) {
             return;
         }
-        this.panel.setClosable(false);
+        this.setBusy(true);
         try {
             await deleteVolume(this.controller.client, name);
             await this.controller.reload();
         } finally {
-            this.panel.setClosable(true);
+            this.setBusy(false);
         }
     }
 }
