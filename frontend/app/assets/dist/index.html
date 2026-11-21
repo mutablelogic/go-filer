@@ -109,10 +109,18 @@
             margin-bottom: 1rem;
         }
 
+        /* Each volume's section, of a faint line from the one before */
         .gf-indexing {
             display: flex;
             flex-direction: column;
-            gap: 2rem;
+        }
+
+        .gf-indexing-volume {
+            padding-block: 1.5rem;
+        }
+
+        .gf-indexing-volume + .gf-indexing-volume {
+            border-top: 1px solid var(--cds-border-subtle);
         }
 
         .gf-indexing-volume h3 {
@@ -140,11 +148,6 @@
 
         .gf-indexing-tags cds-tag {
             margin: 0;
-        }
-
-        .gf-indexing-unknown {
-            color: var(--cds-text-secondary);
-            font-size: 0.875rem;
         }
 
         /* A volume's page fills the window, beneath its header, with the

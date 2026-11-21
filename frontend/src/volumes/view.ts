@@ -119,9 +119,10 @@ export class VolumesElement extends LitElement {
     }
 
     // indexingView is a section of each volume: its label, as a heading, and
-    // its status, when it isn't idle, and how many folders and objects it
-    // has, as tags, beneath it, and a meter of its objects which are
-    // indexed, which aren't, and which failed, of how many it has
+    // its status, when it isn't idle, with why, when it's pointed at, and
+    // how many folders and objects it has, as tags, beneath it, and a meter
+    // of its objects which are indexed, which failed, and which aren't
+    // indexed yet, of how many it has, when that's known
     private indexingView(volumes: readonly Volume[]): TemplateResult {
         return html`<div class="gf-indexing">${repeat(volumes, (volume) => volume.name, (volume) => {
             const indexing = volumeIndexing(volume);
@@ -133,18 +134,18 @@ export class VolumesElement extends LitElement {
                 <section class="gf-indexing-volume">
                     <h3><a href=${volumeHref(volume.name)} title=${volumeTitle(volume, this.controller?.backends)}>${volumeLabel(volume)}</a></h3>
                     <div class="gf-indexing-tags">
-                        ${status !== 'Ready' ? html`<cds-tag size="sm" type=${statusTagType(status)} title=${error ?? ''}>${status}</cds-tag>` : nothing}
+                        ${status !== 'Ready' ? html`<cds-tag size="sm" type=${statusTagType(status)} title=${statusTitle(volume, status, error)}>${status}</cds-tag>` : nothing}
                         ${folders !== undefined ? html`<cds-tag size="sm" type="cool-gray">${folders.toLocaleString()} ${folders === 1 ? 'folder' : 'folders'}</cds-tag>` : nothing}
                         ${objects !== undefined ? html`<cds-tag size="sm" type="cool-gray">${objects.toLocaleString()} ${volumeNoun(volume, objects)}</cds-tag>` : nothing}
                     </div>
                     ${indexing ? html`
                         <gf-meter .groups=${[
                             { group: 'Indexed', value: indexing.indexed },
-                            { group: 'Unindexed', value: indexing.unindexed },
                             { group: 'Failed', value: indexing.failed },
+                            { group: 'Unindexed', value: indexing.unindexed },
                         ]} .colors=${IndexingColors} total=${objects ?? 0} unit=${volumeNoun(volume, objects ?? 0)}
                             label=${`${volumeLabel(volume)}: indexing`}></gf-meter>
-                    ` : status === 'Ready' ? html`<p class="gf-indexing-unknown">${volumeObjectsUnknown(volume)}</p>` : nothing}
+                    ` : nothing}
                 </section>
             `;
         })}</div>`;
@@ -447,8 +448,9 @@ function folderHref(name: string, path: string): string {
 }
 
 // IndexingColors are the colours of a meter's objects which are indexed,
-// which aren't, and which failed, of Carbon's blue 60, gray 30 and red 60
-const IndexingColors = { Indexed: '#0f62fe', Unindexed: '#c6c6c6', Failed: '#da1e28' };
+// which failed, and which aren't indexed, of Carbon's data visualisation
+// palette: purple 70 and teal 50, its pairing of two, and magenta 70
+const IndexingColors = { Indexed: '#6929c4', Failed: '#9f1853', Unindexed: '#009d9a' };
 
 // statusTagType returns the colour of the tag of a volume's status, which
 // isn't idle: blue, while it's scanned, or indexed, red, when it failed, or
@@ -464,6 +466,16 @@ function statusTagType(status: string): string {
         default:
             return 'gray';
     }
+}
+
+// statusTitle returns why a volume's status is what it is, which its tag
+// says when it's pointed at: that it isn't searched, when it isn't
+// indexed, or why it failed, or why how many objects it has isn't known
+function statusTitle(volume: Volume, status: string, error?: string): string {
+    if (status === 'Not indexed') {
+        return "It isn't indexed, and therefore not searched";
+    }
+    return error || volumeObjectsUnknown(volume);
 }
 
 // TagTypes are the colours of the backends' tags, in the order of the
