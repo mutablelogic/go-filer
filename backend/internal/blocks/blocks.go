@@ -23,6 +23,7 @@ type Reader struct {
 	size   int64
 	fetch  FetchFunc
 	blocks []block // the blocks which are kept, the last read last
+	kept   int64   // the bytes of the blocks which are kept
 }
 
 // block is a block of the file, from its offset
@@ -41,8 +42,9 @@ const (
 	// reads near each other are of one block
 	Size = 512 << 10
 
-	// Blocks is how many blocks are kept, of each file which is read,
-	// whose most is Blocks * Size, 8 MB, apart from a read which is more
+	// Blocks is how many blocks are kept, of each file which is read, as
+	// bytes, so at most Blocks * Size, 8 MB, is kept, apart from one read
+	// which is more, which is kept alone
 	Blocks = 16
 )
 
@@ -107,7 +109,7 @@ func (r *Reader) find(off int64) *block {
 // request requests the blocks of the offset, from the start of its block,
 // to the end of the block of the last byte which is wanted, or the end of
 // the file, as one block, which is kept, in place of the one read least
-// recently, when Blocks are kept
+// recently, until what's kept, with it, is at most Blocks * Size
 func (r *Reader) request(off, want int64) (*block, error) {
 	start := off - off%Size
 	end := min(off+want, r.size)
@@ -118,9 +120,11 @@ func (r *Reader) request(off, want int64) (*block, error) {
 	if err := r.fetch(data, start); err != nil {
 		return nil, err
 	}
-	if len(r.blocks) >= Blocks {
+	for len(r.blocks) > 0 && r.kept+int64(len(data)) > Blocks*Size {
+		r.kept -= int64(len(r.blocks[0].data))
 		r.blocks = slices.Delete(r.blocks, 0, 1)
 	}
 	r.blocks = append(r.blocks, block{start: start, data: data})
+	r.kept += int64(len(data))
 	return &r.blocks[len(r.blocks)-1], nil
 }

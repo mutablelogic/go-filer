@@ -80,6 +80,35 @@ func Test_Reader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, *requests, blocks.Blocks+1, "the first isn't")
 
+	// Reads across the end of a block are of two blocks each, which are
+	// kept as bytes, so what's kept is at most Blocks of them
+	_, straddled, requests, _ := file(size)
+	for i := range blocks.Blocks {
+		_, err := straddled.ReadAt(make([]byte, 2), int64(2*i+1)*blocks.Size-1)
+		require.NoError(t, err)
+	}
+	*requests = nil
+	for i := blocks.Blocks / 2; i < blocks.Blocks; i++ {
+		_, err := straddled.ReadAt(make([]byte, 2), int64(2*i+1)*blocks.Size-1)
+		require.NoError(t, err)
+	}
+	assert.Empty(t, *requests, "the last of them are kept")
+	_, err = straddled.ReadAt(make([]byte, 2), blocks.Size-1)
+	require.NoError(t, err)
+	assert.Len(t, *requests, 1, "the first isn't")
+
+	// A read of more than Blocks is kept, alone
+	_, large, requests, _ := file(size)
+	_, err = large.ReadAt(make([]byte, 1), 39*blocks.Size)
+	require.NoError(t, err)
+	_, err = large.ReadAt(make([]byte, 20*blocks.Size), 0)
+	require.NoError(t, err)
+	_, err = large.ReadAt(make([]byte, 1), 10*blocks.Size)
+	require.NoError(t, err)
+	_, err = large.ReadAt(make([]byte, 1), 39*blocks.Size)
+	require.NoError(t, err)
+	assert.Len(t, *requests, 3, "the read of more is kept, and the block before it isn't")
+
 	// The end of the file is its last block, which is short, and a read
 	// beyond it is io.EOF
 	_, fresh, requests, _ := file(size)

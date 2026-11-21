@@ -134,7 +134,7 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 		tctx, end := self.workSpan(ctx, w)
 		tctx, cancel := context.WithTimeout(tctx, taskTimeout)
 		err = self.doTask(tctx, task, kind, w)
-		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		if errors.Is(err, context.DeadlineExceeded) && errors.Is(tctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 			err = fmt.Errorf("the task took longer than %v: %w", taskTimeout, err)
 		}
 		cancel()
