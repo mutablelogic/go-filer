@@ -15,6 +15,14 @@ import type { Route, Router } from '@mutablelogic/go-server/router';
 import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import Edit16 from '@carbon/icons/es/edit/16.js';
+import FolderIcon16 from '@carbon/icons/es/folder/16.js';
+import ObjectStorageIcon from '@carbon/icons/es/object-storage/16.js';
+import RssIcon from '@carbon/icons/es/rss/16.js';
+import CalendarIcon from '@carbon/icons/es/calendar/16.js';
+import ContactsIcon from '@carbon/icons/es/user--multiple/16.js';
+import CloudIcon from '@carbon/icons/es/cloud/16.js';
+import TaskIcon from '@carbon/icons/es/task/16.js';
+import DataBaseIcon from '@carbon/icons/es/data--base/16.js';
 import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
@@ -135,6 +143,7 @@ export class VolumesElement extends LitElement {
             label: 'Add Volume',
             menu: backends.map((backend) => ({
                 label: backend.description || backend.scheme,
+                icon: BackendIcons.get(backend.scheme) ?? DataBaseIcon,
                 disabled: !VolumeFields.has(backend.scheme),
                 run: () => this.querySelector('gf-volume-add')?.open(backend),
             })),
@@ -596,6 +605,18 @@ function statusTitle(volume: Volume, status: string, error?: string): string {
 
 // EditIcon is Carbon's edit icon, of an icon button
 const EditIcon = iconLoader(Edit16, { slot: 'icon' });
+
+// BackendIcons are the icons of the backends, of their schemes, of the Add
+// Volume menu, of which another's is a database's
+const BackendIcons = new Map<string, unknown>([
+    ['file', FolderIcon16],
+    ['s3', ObjectStorageIcon],
+    ['rss', RssIcon],
+    ['gcalendar', CalendarIcon],
+    ['gcontacts', ContactsIcon],
+    ['gdrive', CloudIcon],
+    ['gtasks', TaskIcon],
+]);
 
 // TagTypes are the colours of the backends' tags, in the order of the
 // backends, so each backend has its own, while there are enough
