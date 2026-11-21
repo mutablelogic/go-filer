@@ -164,7 +164,7 @@ export class ObjectPanelElement extends LitElement {
             ${namespaces.map(([namespace, meta]) => html`
                 <h4 class="gf-object-namespace">${namespace}</h4>
                 <dl class="gf-volume-details">
-                    ${meta.map((m) => html`<dt>${m.key}</dt><dd>${metaView(m.value)}</dd>`)}
+                    ${meta.map((m) => html`<dt>${m.key}</dt><dd>${metaView(m.text || m.value)}</dd>`)}
                 </dl>
             `)}
         `;
@@ -196,7 +196,7 @@ function metaNamespaces(meta: readonly Meta[]): [string, Meta[]][] {
     return [...namespaces].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
-// metaView returns a value of metadata: a list, of its values, a time, in
+// metaView returns a value of metadata, or its text, in preference: a list, of its values, a time, in
 // the browser's locale, a link, which opens elsewhere, or its JSON
 function metaView(value: unknown): TemplateResult | string {
     if (Array.isArray(value)) {
