@@ -290,6 +290,10 @@ export function kindLabel(kind: string): string {
     return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
+// OtherKind is the kinds of a volume's objects which aren't shown, of their
+// own, as there are too many, and of a kind which is other
+const OtherKind = 'Other';
+
 // volumeKinds returns how many of a volume's objects are of each kind, as
 // they're shown, of those which have the most first, of at most max kinds,
 // the rest of which are Other, or undefined, when its kinds aren't known,
@@ -308,13 +312,16 @@ export function volumeKinds(volume: Volume, max = 6): VolumeKind[] | undefined {
             labels.set(label, (labels.get(label) ?? 0) + count);
         }
     }
+    // A kind which is Other, of its own, is of the rest, so there's one
+    const other = labels.get(OtherKind) ?? 0;
+    labels.delete(OtherKind);
     const sorted = [...labels].map(([group, value]) => ({ group, value }))
         .sort((a, b) => b.value - a.value || a.group.localeCompare(b.group));
-    if (sorted.length <= max) {
-        return sorted;
+    if (sorted.length + (other > 0 ? 1 : 0) <= max) {
+        return other > 0 ? [...sorted, { group: OtherKind, value: other }] : sorted;
     }
-    const other = sorted.slice(max - 1).reduce((sum, kind) => sum + kind.value, 0);
-    return [...sorted.slice(0, max - 1), { group: 'Other', value: other }];
+    const rest = sorted.slice(max - 1).reduce((sum, kind) => sum + kind.value, other);
+    return [...sorted.slice(0, max - 1), { group: OtherKind, value: rest }];
 }
 
 // ObjectNouns are what a backend's objects are called, of its scheme, in
