@@ -444,14 +444,19 @@ export function navPage(route: Route): string {
 // PRIVATE FUNCTIONS
 
 // navPages returns the sidebar's pages: Volumes, and each volume beneath it,
-// of its label, which is cut short, when it's long, and its title
+// of its label, which is cut short, when it's long, and its title, which is
+// disabled while it's unmounted, so it's dimmed, and isn't linked to
 function navPages(volumes: readonly Volume[], backends?: readonly Backend[]): NavPage[] {
     return [
         { id: VolumesRoute, label: 'Volumes', href: '#' + VolumesRoute },
-        ...volumes.map((volume) => ({
-            id: `${VolumeRoute}/${volume.name}`, label: volumeLabel(volume), title: volumeTitle(volume, backends),
-            href: volumeHref(volume.name), parent: VolumesRoute,
-        })),
+        ...volumes.map((volume) => {
+            const unmounted = volumeStatus(volume) === 'Unmounted';
+            return {
+                id: `${VolumeRoute}/${volume.name}`, label: volumeLabel(volume),
+                title: volumeTitle(volume, backends) + (unmounted ? '\nUnmounted' : ''),
+                href: volumeHref(volume.name), parent: VolumesRoute, disabled: unmounted,
+            };
+        }),
     ];
 }
 
@@ -586,7 +591,9 @@ function tagType(volume: Volume, backends: readonly Backend[] = []): string {
 // offline, when it is
 function tileCount(volume: Volume): TemplateResult {
     if (!volume.mounted) {
-        return html`<p class="gf-volume-tile-state gf-volume-tile-error">${volume.error ? 'Offline' : 'Not mounted'}</p>`;
+        // One which is unmounted, of its own, isn't an error
+        const status = volumeStatus(volume);
+        return html`<p class="gf-volume-tile-state ${status === 'Unmounted' ? '' : 'gf-volume-tile-error'}">${status}</p>`;
     }
     const objects = volumeObjects(volume);
     const title = objects === undefined
