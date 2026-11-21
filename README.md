@@ -113,3 +113,44 @@ TODO: milestones of these themes, from the [issue list](https://github.com/mutab
 ## License
 
 go-filer is licensed under the [Apache License, Version 2.0](LICENSE).
+
+### Third-party libraries
+
+Built with cgo, as `make` and the Docker image are, the `filer` command links go-media's libraries, of the LGPL build of its release, which read the metadata of audio, video and photos. A build of `CGO_ENABLED=0` has none of them. See go-media's [NOTICE](https://github.com/mutablelogic/go-media/blob/v1.11.5/NOTICE) for their versions, copyrights and sources.
+
+| Library | License |
+| --- | --- |
+| [FFmpeg](https://ffmpeg.org/) | LGPL version 3 or later, of its LGPL build |
+| [libexif](https://libexif.github.io/) | LGPL version 2.1 or later |
+| [libheif](https://github.com/strukturag/libheif) | LGPL version 3 |
+| [LibRaw](https://www.libraw.org/) | LGPL version 2.1, or CDDL version 1.0 |
+| [Chromaprint](https://acoustid.org/chromaprint) | LGPL version 2.1, as a whole (its own code is MIT) |
+| [libfvad](https://github.com/dpirch/libfvad) | BSD 3-clause, with Google's patent grant |
+
+They're linked statically, so under the LGPL, the source of this program, and its `Makefile`, which links go-media's libraries, or a build of them of your own, of `GO_MEDIA_PREFIX`, let you relink it with a modified version of them.
+
+The libraries they link with, in turn, are the system's, which the Docker image installs from Debian, each with its copyright in `/usr/share/doc/<package>/copyright`:
+
+| Library | License |
+| --- | --- |
+| [libde265](https://github.com/strukturag/libde265) | LGPL version 3 |
+| [libaom](https://aomedia.googlesource.com/aom/) | BSD 2-clause, with the AOMedia patent license |
+| [dav1d](https://code.videolan.org/videolan/dav1d) | BSD 2-clause |
+| [libxml2](https://gitlab.gnome.org/GNOME/libxml2) | MIT |
+| [OpenSSL](https://www.openssl.org/) | Apache License 2.0 |
+| [zstd](https://github.com/facebook/zstd) | BSD 3-clause, or GPL version 2 |
+| [XZ Utils](https://tukaani.org/xz/) (liblzma) | 0BSD |
+| [zlib](https://zlib.net/) | zlib License |
+| GCC's runtime (libstdc++, libgcc, libgomp) | GPL version 3, with the GCC Runtime Library Exception |
+| [glibc](https://www.gnu.org/software/libc/) | LGPL version 2.1 or later |
+
+The web UI, which the server embeds, includes:
+
+| Package | License |
+| --- | --- |
+| [Carbon Design System](https://carbondesignsystem.com/): web components, charts, icons and styles | Apache License 2.0 |
+| [Lit](https://lit.dev/) | BSD 3-clause |
+| [marked](https://marked.js.org/) | MIT |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | Apache License 2.0, or MPL 2.0 |
+| [IBM Plex](https://www.ibm.com/plex/) Sans and Mono | SIL Open Font License 1.1 |
+| [go-server](https://github.com/mutablelogic/go-server)'s frontend | Apache License 2.0 |
