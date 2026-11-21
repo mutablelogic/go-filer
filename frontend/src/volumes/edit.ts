@@ -1,6 +1,6 @@
 // The form of a volume's options, which a panel shows when it's edited: its
-// description, whether it's writable, how it's indexed, and its other
-// options, of whose changes a patch is made
+// description, whether it's writable, and how it's indexed, of one section,
+// and its other options, of another, of whose changes a patch is made
 
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
@@ -25,13 +25,23 @@ export const VolumeFormTag = 'gf-volume-form';
 export class VolumeFormElement extends LitElement {
     static override properties = {
         volume: { attribute: false },
+        section: { type: String },
         edited: { state: true },
     };
 
+    // volume is the volume which is edited, and section is the part of its
+    // form which is shown: edit, its description, access and index, or
+    // options, its others, both of which are kept, while the other is shown
     declare volume?: Volume;
+    declare section: 'edit' | 'options';
     declare private edited?: VolumeOptions;
     private original?: VolumeOptions;
     private name?: string;
+
+    constructor() {
+        super();
+        this.section = 'edit';
+    }
 
     protected override createRenderRoot() {
         return this;
@@ -57,7 +67,7 @@ export class VolumeFormElement extends LitElement {
             return nothing;
         }
         return html`
-            <div class="gf-volume-form">
+            <div class="gf-volume-form" ?hidden=${this.section !== 'edit'}>
                 <cds-text-input label="Description" .value=${edited.description}
                     helper-text="What the volume is, which is its label"
                     @input=${(event: Event) => this.set({ description: (event.target as HTMLInputElement).value })}></cds-text-input>
@@ -78,10 +88,11 @@ export class VolumeFormElement extends LitElement {
                         ${IndexModes.map((mode) => html`<cds-content-switcher-item value=${mode.value} ?disabled=${mode.disabled}>${mode.label}</cds-content-switcher-item>`)}
                     </cds-content-switcher>
                 </div>
-                ${edited.others.length ? html`
-                    <h4 class="gf-volume-form-heading">Options</h4>
-                    ${repeat(edited.others, ([key]) => key, ([key, values], i) => this.optionView(key, values, i))}
-                ` : nothing}
+            </div>
+            <div class="gf-volume-form" ?hidden=${this.section !== 'options'}>
+                ${edited.others.length
+                    ? repeat(edited.others, ([key]) => key, ([key, values], i) => this.optionView(key, values, i))
+                    : html`<p>The volume has no other options.</p>`}
             </div>
         `;
     }

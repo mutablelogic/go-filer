@@ -1,5 +1,6 @@
-// The panel of a volume, of three tabs: View, its details, of which it's
-// mounted, or unmounted, Edit, its options, which are saved, and Remove,
+// The panel of a volume, of four tabs: View, its details, of which it's
+// mounted, or unmounted, Edit, its description, access and index, and
+// Options, its other options, both of which are saved together, and Remove,
 // which removes it from the filer, once its name is typed
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
@@ -17,7 +18,7 @@ import './edit.ts';
 // TYPES
 
 // VolumeTab is a tab of a volume's panel
-export type VolumeTab = 'view' | 'edit' | 'remove';
+export type VolumeTab = 'view' | 'edit' | 'options' | 'remove';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -118,7 +119,8 @@ export class VolumePanelElement extends LitElement {
         return html`
             <gs-panel .controller=${this.panel}>
                 ${volume && this.tab === 'view' ? this.viewView(volume) : nothing}
-                <gf-volume-form ?hidden=${this.tab !== 'edit'} ?inert=${this.busy} .volume=${this.name ? volume : undefined}></gf-volume-form>
+                <gf-volume-form ?hidden=${this.tab !== 'edit' && this.tab !== 'options'} ?inert=${this.busy}
+                    section=${this.tab === 'options' ? 'options' : 'edit'} .volume=${this.name ? volume : undefined}></gf-volume-form>
                 ${volume && this.tab === 'remove' ? this.removeView(volume) : nothing}
             </gs-panel>
         `;
@@ -129,6 +131,10 @@ export class VolumePanelElement extends LitElement {
         return [
             { value: 'view', label: 'View', actions: this.mountActions(volume) },
             { value: 'edit', label: 'Edit', actions: [{ label: 'Save', kind: 'primary', run: this.saveRun }] },
+            {
+                value: 'options', label: 'Options', disabled: volumeOptions(volume).others.length === 0,
+                actions: [{ label: 'Save', kind: 'primary', run: this.saveRun }],
+            },
             { value: 'remove', label: 'Remove', actions: [this.removeAction(volume)] },
         ];
     }
@@ -187,12 +193,11 @@ export class VolumePanelElement extends LitElement {
         `;
     }
 
-    // removeView asks for the volume's name, before it's removed, and says
-    // what isn't, which is its backend's
+    // removeView asks for the volume's name, before it's removed
     private removeView(volume: Volume): TemplateResult {
         return html`
             <div class="gf-volume-form gf-volume-remove" ?inert=${this.busy}>
-                <p>Removing the volume removes it from the filer, with its index and cache. Its ${volumeNoun(volume, 2)} stay in ${volumeBackend(volume, this.controller?.backends) || 'its backend'}, which isn't changed.</p>
+                <p>Removing the volume removes it from the filer, with its index and cache.</p>
                 <cds-text-input label=${`Type "${volume.name}" to remove it`} .value=${this.confirm} autocomplete="off"
                     @input=${(event: Event) => this.setConfirm(volume, (event.target as HTMLInputElement).value)}></cds-text-input>
             </div>
