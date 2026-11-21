@@ -137,11 +137,20 @@ export class VolumesElement extends LitElement {
     }
 
     // save saves the options of the volume which are changed, of its form,
-    // whose volume is loaded again of its change
+    // and loads the volumes again, rather than only once they change, as an
+    // app needn't follow their changes. The panel can't be closed meanwhile,
+    // so a save which ends doesn't close the panel of another volume.
     private async save(name: string) {
         const patch = this.querySelector('gf-volume-form')?.patch() ?? {};
-        if (Object.keys(patch).length > 0 && this.controller) {
+        if (Object.keys(patch).length === 0 || !this.controller) {
+            return;
+        }
+        this.panel.setClosable(false);
+        try {
             await updateVolume(this.controller.client, name, patch);
+            await this.controller.reload();
+        } finally {
+            this.panel.setClosable(true);
         }
     }
 

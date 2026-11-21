@@ -106,7 +106,10 @@ export function volumeOptions(volume: Volume): VolumeOptions {
 
 // volumePatch returns the patch of the options which are changed, of those
 // which were: a description which is empty is removed, as is an option of
-// one value, and an option of many is a list, of those which aren't empty
+// one value, and an option of many is a list, of those which aren't empty.
+// Options are as they are, without their spaces trimmed, as a space can be
+// of them, such as a pattern of skip, ^ , so those which aren't changed
+// aren't.
 export function volumePatch(from: VolumeOptions, to: VolumeOptions): VolumePatch {
     const patch: VolumePatch = {};
     if (to.description.trim() !== from.description.trim()) {
@@ -122,14 +125,14 @@ export function volumePatch(from: VolumeOptions, to: VolumeOptions): VolumePatch
     for (const [key, values] of to.others) {
         const previous = before.get(key) ?? [];
         if (isMany(key, previous)) {
-            const list = values.map((v) => v.trim()).filter((v) => v);
-            if (list.join('\n') !== previous.join('\n')) {
+            const list = values.filter((v) => v !== '');
+            if (list.length !== previous.length || list.some((v, i) => v !== previous[i])) {
                 patch[key] = list;
             }
         } else {
-            const value = (values[0] ?? '').trim();
+            const value = values[0] ?? '';
             if (value !== (previous[0] ?? '')) {
-                patch[key] = value || null;
+                patch[key] = value === '' ? null : value;
             }
         }
     }

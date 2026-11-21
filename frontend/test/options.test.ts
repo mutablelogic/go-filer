@@ -44,6 +44,12 @@ test('volumePatch', () => {
     // An option of many, as a list, of those which aren't empty, even of one
     assert.deepEqual(edit({ others: [['quota', ['120']], ['skip', ['a', '', 'c']], ['package', ['x']]] }), { skip: ['a', 'c'] });
     assert.deepEqual(edit({ others: [['quota', ['120']], ['skip', ['a', 'b']], ['package', []]] }), { package: [] });
+    // Options are as they are, of their spaces, so those which aren't changed
+    // aren't, and only empty values of a list are left out
+    const spaced: VolumeOptions = { ...from, others: [['q', [' x ']], ['skip', ['^ ', ' $']]] };
+    assert.deepEqual(volumePatch(spaced, { ...spaced, description: 'Media' }), { description: 'Media' });
+    assert.deepEqual(volumePatch(spaced, { ...spaced, others: [['q', [' y ']], ['skip', ['^ ', '', ' $']]] }), { q: ' y ' });
+    assert.deepEqual(volumePatch(spaced, { ...spaced, others: [['q', [' x ']], ['skip', ['^ ']]] }), { skip: ['^ '] });
     // A volume which can't be writable doesn't change it
     assert.deepEqual(volumePatch({ ...from, readonly: undefined }, { ...from, readonly: undefined }), {});
 });
