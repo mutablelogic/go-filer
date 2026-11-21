@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { volumeBackend, volumeObjects, volumeObjectsUnknown, volumeScheme, type Volume } from '../src/filer/schema.ts';
+import { volumeBackend, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, type Volume } from '../src/filer/schema.ts';
 
 // volume returns a mounted volume of a URL, and its index
 function volume(url: string, index?: Volume['index']): Volume {
@@ -39,4 +39,22 @@ test('volumeObjects', async (t) => {
     await t.test('scanning, before a file is stored', () => check({ mode: 'objects', status: 'scanning' }, undefined, "It's being indexed"));
     await t.test('scanning, of the objects stored', () => check({ mode: 'objects', status: 'scanning', objects: 12 }, 12, ''));
     await t.test("its state can't be read", () => check({ mode: 'objects', error: 'database is locked' }, undefined, /database is locked/));
+});
+
+test('volumeNoun', () => {
+    // What a backend's objects are called, of a count of them, or objects
+    for (const [url, one, many] of [
+        ['gtasks://tasks', 'task', 'tasks'],
+        ['gcalendar://cal', 'event', 'events'],
+        ['s3://media/', 'object', 'objects'],
+        ['file://media/mnt/media', 'file', 'files'],
+        ['rss://news/example.com/rss', 'item', 'items'],
+        ['gdrive://drive', 'file', 'files'],
+        ['gcontacts://contacts', 'contact', 'contacts'],
+        ['other://x', 'object', 'objects'],
+    ]) {
+        assert.equal(volumeNoun(volume(url), 1), one, url);
+        assert.equal(volumeNoun(volume(url), 0), many, url);
+        assert.equal(volumeNoun(volume(url), 805), many, url);
+    }
 });
