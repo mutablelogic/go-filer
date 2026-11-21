@@ -200,7 +200,7 @@ export class VolumePanelElement extends LitElement {
     private removeView(volume: Volume): TemplateResult {
         return html`
             <div class="gf-volume-form gf-volume-remove" ?inert=${this.busy}>
-                <p>Removing the volume removes it from the filer, with its index and cache.</p>
+                <p>Removing the volume from the filer, which also removes its index and cache.</p>
                 <cds-text-input label=${`Type "${volume.name}" to remove it`} .value=${this.confirm} autocomplete="off"
                     @input=${(event: Event) => this.setConfirm(volume, (event.target as HTMLInputElement).value)}></cds-text-input>
             </div>
