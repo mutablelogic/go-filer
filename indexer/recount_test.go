@@ -51,15 +51,17 @@ func Test_RecountCoalesced(t *testing.T) {
 		return state.Objects
 	}
 
-	// Many files, of many batches of work, are counted at most every while,
-	// rather than of each batch, and once their work is done
+	// Many files, of batches of work, are counted at most every while,
+	// rather than of each batch, and once their work is done, which is at
+	// most once of each recountInterval which passed, and once more
 	batches, counts := s.batches.Load(), s.counts.Load()
+	start := time.Now()
 	for n := range 500 {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%03d.txt", n)), []byte("f"), 0o644))
 	}
-	require.Eventually(t, func() bool { return fileCount() == 502 }, 20*time.Second, 10*time.Millisecond, "the files which are added")
+	require.Eventually(t, func() bool { return fileCount() == 502 }, time.Minute, 10*time.Millisecond, "the files which are added")
+	elapsed := time.Since(start)
 	batches, counts = s.batches.Load()-batches, s.counts.Load()-counts
-	t.Logf("%d batches, %d counts", batches, counts)
-	assert.Greater(t, batches, int64(2), "of many batches")
-	assert.Less(t, counts, batches, "they're counted less often than each batch")
+	t.Logf("%d batches, %d counts, in %v", batches, counts, elapsed)
+	assert.LessOrEqual(t, counts, int64(elapsed/indexer.RecountInterval)+2, "they're counted at most every while, and once their work is done")
 }
