@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"sync"
 	"time"
@@ -69,6 +70,12 @@ const (
 	DefaultTaskWorkers = 2
 )
 
+// taskTimeout is how long a task's work of a file takes at most, which is
+// less than its lease, so it's done, or failed, before the lease ends, and
+// it isn't claimed again while it's done, which is a variable, so a test
+// can set it
+var taskTimeout = taskLease - time.Minute
+
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
 
@@ -125,7 +132,12 @@ func (self *Indexer) tasker(ctx context.Context, kind store.Kind) {
 		}
 		w := claimed[0]
 		tctx, end := self.workSpan(ctx, w)
+		tctx, cancel := context.WithTimeout(tctx, taskTimeout)
 		err = self.doTask(tctx, task, kind, w)
+		if errors.Is(err, context.DeadlineExceeded) && errors.Is(tctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			err = fmt.Errorf("the task took longer than %v: %w", taskTimeout, err)
+		}
+		cancel()
 		end(err)
 		switch {
 		case ctx.Err() != nil:

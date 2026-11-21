@@ -7,12 +7,12 @@ import (
 	"io"
 	"io/fs"
 	"strings"
-	"sync"
 
 	// Packages
 	aws "github.com/aws/aws-sdk-go-v2/aws"
 	s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	gofiler "github.com/mutablelogic/go-filer"
+	blocks "github.com/mutablelogic/go-filer/backend/internal/blocks"
 	schema "github.com/mutablelogic/go-filer/schema"
 )
 
@@ -36,20 +36,13 @@ type reader struct {
 	at     int64         // where the content which is requested is read from
 	body   io.ReadCloser // the content which is requested, or nil when it isn't
 
-	// The block which ReadAt read last, and where it's from, so reads near
-	// each other, such as a parser's, are of one request
-	mu         sync.Mutex
-	block      []byte
-	blockStart int64
+	// The blocks which ReadAt requests, the last of which are kept, so a
+	// parser's reads, which are scattered across a file, are of few requests
+	blocks *blocks.Reader
 }
 
 var _ io.ReadSeekCloser = (*reader)(nil)
 var _ io.ReaderAt = (*reader)(nil)
-
-// readAtBlock is the least of a file which ReadAt requests, so small reads
-// near each other, such as a parser's of a video's headers, aren't each a
-// request
-const readAtBlock = 512 << 10
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
@@ -83,6 +76,7 @@ func (self *S3) ReadObject(ctx context.Context, req schema.GetObjectRequest) (_ 
 		// The content is requested before it's read, so a file which changed
 		// isn't read, before a response is written
 		r := &reader{S3: self, ctx: ctx, rel: rel, etag: aws.ToString(object.ETag), size: aws.ToInt64(object.Size)}
+		r.blocks = blocks.New(r.size, r.fetch)
 		defer func() { err = errors.Join(err, r.Close()) }()
 		if err := r.request(); err != nil {
 			return err
@@ -142,35 +136,17 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	return r.offset, nil
 }
 
-// ReadAt reads the content at the offset, which is requested of its range,
-// with the file's entity tag, at least readAtBlock of it, which is kept, so
-// a file is read in place, such as of its headers, rather than all of it,
-// apart from Read and Seek, and is safe to call at once
+// ReadAt reads the content at the offset, of the blocks which are
+// requested of their ranges, with the file's entity tag, the last of which
+// are kept, so a file is read in place, such as of its headers, rather than
+// all of it, apart from Read and Seek, and is safe to call at once
 func (r *reader) ReadAt(p []byte, off int64) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	} else if off < 0 {
 		return 0, &fs.PathError{Op: "read", Path: "/" + r.rel, Err: fs.ErrInvalid}
-	} else if off >= r.size {
-		return 0, io.EOF
 	}
-	n := 0
-	for n < len(p) && off < r.size {
-		if off < r.blockStart || off >= r.blockStart+int64(len(r.block)) {
-			if err := r.fetch(off, int64(len(p)-n)); err != nil {
-				return n, err
-			}
-		}
-		copied := copy(p[n:], r.block[off-r.blockStart:])
-		n += copied
-		off += int64(copied)
-	}
-	if n < len(p) {
-		return n, io.EOF
-	}
-	return n, nil
+	return r.blocks.ReadAt(p, off)
 }
 
 // Close closes the content which is requested, if any
@@ -186,26 +162,22 @@ func (r *reader) Close() error {
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS
 
-// fetch requests the block of the file from the offset, of at least
-// readAtBlock, or of want, when it's more, up to the end of the file, with
-// the file's entity tag, which must be locked
-func (r *reader) fetch(off, want int64) error {
-	end := min(off+max(want, readAtBlock), r.size) - 1
+// fetch requests the content of the file at the offset, of the buffer's
+// length, which is within the file, with the file's entity tag
+func (r *reader) fetch(p []byte, off int64) error {
 	response, err := r.client.GetObject(r.ctx, &s3.GetObjectInput{
 		Bucket:  aws.String(r.bucket),
 		Key:     aws.String(r.prefix + r.rel),
 		IfMatch: aws.String(`"` + r.etag + `"`),
-		Range:   aws.String(fmt.Sprintf("bytes=%d-%d", off, end)),
+		Range:   aws.String(fmt.Sprintf("bytes=%d-%d", off, off+int64(len(p))-1)),
 	})
 	if err != nil {
 		return r.objectError("read", r.rel, err)
 	}
 	defer response.Body.Close()
-	block := make([]byte, end-off+1)
-	if _, err := io.ReadFull(response.Body, block); err != nil {
+	if _, err := io.ReadFull(response.Body, p); err != nil {
 		return r.objectError("read", r.rel, err)
 	}
-	r.block, r.blockStart = block, off
 	return nil
 }
 

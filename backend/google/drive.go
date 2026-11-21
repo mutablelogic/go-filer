@@ -316,7 +316,7 @@ func (self *DriveFiler) ReadObject(ctx context.Context, req schema.GetObjectRequ
 		if size, err := strconv.ParseInt(file.Size, 10, 64); err == nil && size > 0 && file.HeadRevision != "" {
 			// It's read in place, of the ranges which are read, and requested
 			// before it's read, so a request which fails is known first
-			r := &driveReader{DriveFiler: self, ctx: ctx, path: object.Path, file: file, size: size}
+			r := newDriveReader(ctx, self, object.Path, file, size)
 			defer r.Close()
 			if err := r.open(0); err != nil {
 				return err

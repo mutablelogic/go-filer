@@ -734,15 +734,15 @@ func Test_DriveReadRanges(t *testing.T) {
 		assert.Equal(t, "6789", string(rest))
 		assert.Equal(t, []string{"bytes=1500003-", "bytes=1999996-"}, ranges())
 
-		// ReadAt reads a block, which reads near it are of, and at the end,
-		// it's short, and EOF
+		// ReadAt reads the block of an offset, from its start, which reads
+		// near it are of, and at the end, it's short, and EOF
 		n, err := ra.ReadAt(buf, 100)
 		require.NoError(t, err)
 		assert.Equal(t, 10, n)
 		assert.Equal(t, "0123456789", string(buf))
 		_, err = ra.ReadAt(buf, 1_000)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"bytes=100-524387"}, ranges(), "one block")
+		assert.Equal(t, []string{"bytes=0-524287"}, ranges(), "one block")
 		n, err = ra.ReadAt(buf, int64(len(content)-3))
 		assert.Equal(t, 3, n)
 		assert.ErrorIs(t, err, io.EOF)
