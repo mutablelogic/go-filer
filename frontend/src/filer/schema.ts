@@ -10,6 +10,18 @@ export interface Volume {
     created?: string;
     modified?: string;
     error?: string;
+    index?: VolumeIndex;
+}
+
+// VolumeIndex is a volume's index, when it's indexed: what's indexed, such
+// as folders, or objects, or metadata, how far, and how many folders and
+// files the last scan indexed, which are left out when there are none
+export interface VolumeIndex {
+    mode: string;
+    status?: string;
+    folders?: number;
+    files?: number;
+    error?: string;
 }
 
 // Backend is a type of backend, of the scheme of its volumes' URLs
@@ -140,13 +152,52 @@ export function volumeLabel(volume: Volume): string {
 // volumeBackend returns what a volume's backend is, such as Google Drive,
 // of the backends, or its scheme
 export function volumeBackend(volume: Volume, backends: readonly Backend[] = []): string {
-    let scheme = '';
-    try {
-        scheme = new URL(volume.url).protocol.replace(/:$/, '');
-    } catch {
+    const scheme = volumeScheme(volume);
+    if (!scheme) {
         return '';
     }
     return backends.find((backend) => backend.scheme === scheme)?.description || scheme;
+}
+
+// volumeScheme returns the scheme of a volume's backend, such as file, or ""
+export function volumeScheme(volume: Volume): string {
+    try {
+        return new URL(volume.url).protocol.replace(/:$/, '');
+    } catch {
+        return '';
+    }
+}
+
+// volumeObjects returns how many objects a volume's index has, which are
+// its files, or undefined, when it isn't known (see volumeObjectsUnknown).
+// The count is left out when it's zero, once the index is ready, and when
+// it isn't counted yet, such as before it's scanned.
+export function volumeObjects(volume: Volume): number | undefined {
+    const index = volume.index;
+    if (!index || index.mode === 'folders') {
+        return undefined;
+    } else if (index.files !== undefined) {
+        return index.files;
+    }
+    return index.status === 'ready' ? 0 : undefined;
+}
+
+// volumeObjectsUnknown returns why how many objects a volume has isn't
+// known, or "" when it is
+export function volumeObjectsUnknown(volume: Volume): string {
+    const index = volume.index;
+    if (volumeObjects(volume) !== undefined) {
+        return '';
+    } else if (!index) {
+        return "It isn't indexed";
+    } else if (index.mode === 'folders') {
+        return 'Only its folders are indexed';
+    } else if (index.error) {
+        return `Its count isn't known: ${index.error}`;
+    } else if (index.status === 'scanning') {
+        return "It's being indexed";
+    }
+    return "It hasn't been indexed yet";
 }
 
 // volumeTitle returns a volume's title, which is shown when it's pointed at:

@@ -49,35 +49,55 @@
             border-top: 1px solid var(--cds-border-subtle);
         }
 
-        /* The Volumes page: the volumes, and their state */
-        .gf-volumes {
-            margin: 0;
-            padding: 0;
-            list-style: none;
+        /* The Volumes page: a tile of each volume, which goes to its page */
+        .gf-volume-tiles {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+            gap: 1rem;
         }
 
-        .gf-volumes li {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem 1rem;
-            padding: 0.75rem 0;
-            border-bottom: 1px solid var(--cds-border-subtle);
-            font-size: 0.875rem;
-        }
-
-        .gf-volumes a {
-            color: var(--cds-link-primary);
-            font-weight: 600;
-            text-decoration: none;
-        }
-
-        .gf-volumes span {
-            flex: 1 1 0;
+        .gf-volume-tile {
+            display: block;
             min-width: 0;
-            color: var(--cds-text-secondary);
+        }
+
+        .gf-volume-tile cds-tag {
+            margin: 0 0 0.75rem;
+        }
+
+        .gf-volume-tile-label {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+            line-height: 1.375rem;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        .gf-volume-tile-name {
+            margin: 0 0 1rem;
+            color: var(--cds-text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .gf-volume-tile-count,
+        .gf-volume-tile-state {
+            margin: 0;
+            color: var(--cds-text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .gf-volume-tile-count strong {
+            display: block;
+            color: var(--cds-text-primary);
+            font-size: 1.75rem;
+            font-weight: 300;
+            line-height: 2.25rem;
+        }
+
+        .gf-volume-tile-error {
+            color: var(--cds-text-error);
         }
 
         /* A volume's page fills the window, beneath its header, with the
