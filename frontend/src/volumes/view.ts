@@ -19,6 +19,7 @@ import FolderAdd32 from '@carbon/icons/es/folder--add/32.js';
 import Search32 from '@carbon/icons/es/search/32.js';
 import Password32 from '@carbon/icons/es/password/32.js';
 import ObjectStorage32 from '@carbon/icons/es/object-storage/32.js';
+import Rss32 from '@carbon/icons/es/rss/32.js';
 import FolderIcon16 from '@carbon/icons/es/folder/16.js';
 import ObjectStorageIcon from '@carbon/icons/es/object-storage/16.js';
 import RssIcon from '@carbon/icons/es/rss/16.js';
@@ -513,7 +514,7 @@ const GoogleWorkspaceHelp = 'https://github.com/mutablelogic/go-filer#adding-goo
 
 // welcomeView welcomes someone to a filer without volumes, of how to start:
 // adding a volume, indexing it, so it's searched, and connecting Google
-// Workspace, and S3 buckets
+// Workspace, and S3 buckets, and subscribing to RSS feeds
 function welcomeView(): TemplateResult {
     return html`
         <div class="gf-welcome">
@@ -545,6 +546,13 @@ function welcomeView(): TemplateResult {
                     <div>
                         <h3>Add your AWS credentials to connect to S3 buckets</h3>
                         <p>Store your access key ID and secret access key as the server's credentials, with <code>filer credential-set S3_KEY</code> and <code>filer credential-set S3_SECRET</code>, which read them from stdin, and name them when you add an S3 bucket. Or set <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> in the server's environment.</p>
+                    </div>
+                </li>
+                <li>
+                    ${iconLoader(Rss32)}
+                    <div>
+                        <h3>Subscribe to an RSS feed to make it searchable</h3>
+                        <p>Choose <strong>Add Volume</strong>, then <strong>RSS feed</strong>, with the feed's URL. Its items are kept as pages, in folders of the month they're published, which are searched as files are.</p>
                     </div>
                 </li>
             </ul>
