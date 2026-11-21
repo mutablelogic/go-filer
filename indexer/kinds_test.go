@@ -75,3 +75,23 @@ func Test_KindsFolders(t *testing.T) {
 	assert.Nil(t, kinds)
 	assert.Zero(t, s.reads.Load())
 }
+
+func Test_KindsRefresh(t *testing.T) {
+	backend, _ := newBackend(t)
+	s := &kindReads{Store: newStore(t)}
+	t.Cleanup(indexer.SetKindsRefresh(50 * time.Millisecond))
+
+	// Kinds of a revision are counted again once a while has passed, as
+	// another process, which doesn't revise it, can change them
+	i, err := indexer.New("media", backend, s, indexer.WithMode(indexer.ModeObjects), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	_, err = i.Kinds(context.Background())
+	require.NoError(t, err)
+	_, err = i.Kinds(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), s.reads.Load(), "of a revision")
+	time.Sleep(60 * time.Millisecond)
+	_, err = i.Kinds(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), s.reads.Load(), "once a while has passed")
+}

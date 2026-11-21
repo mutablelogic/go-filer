@@ -75,11 +75,17 @@ type watcher struct {
 	failed chan error
 }
 
-// revisedKinds are how many objects are of each kind, of a revision
+// revisedKinds are how many objects are of each kind, of a revision, and
+// when they were counted
 type revisedKinds struct {
 	revision uint64
+	counted  time.Time
 	kinds    map[string]uint64
 }
+
+// kindsRefresh is how long the kinds of a revision are kept, at most, as
+// another process can change them
+var kindsRefresh = time.Minute
 
 var _ gofiler.Filer = (*Indexer)(nil)
 
@@ -155,7 +161,9 @@ func (self *Indexer) State(ctx context.Context) (schema.IndexState, error) {
 // each kind, of their metadata, or else their media type (see
 // store.Store.Kinds), or nil, when its objects aren't indexed, which are
 // counted again only once the index is revised (see Revision), as they're
-// of every object
+// of every object, or kindsRefresh has passed, as they can be changed of
+// another process, such as another server of the store, which doesn't
+// revise it
 func (self *Indexer) Kinds(ctx context.Context) (map[string]uint64, error) {
 	if !self.mode.Files() {
 		return nil, nil
@@ -166,14 +174,15 @@ func (self *Indexer) Kinds(ctx context.Context) (map[string]uint64, error) {
 	// The revision is read before they're counted, so a change while they
 	// are is counted again, of the next revision
 	revision := self.Revision()
-	if self.kinds != nil && self.kinds.revision == revision {
+	if self.kinds != nil && self.kinds.revision == revision && time.Since(self.kinds.counted) < kindsRefresh {
 		return self.kinds.kinds, nil
 	}
+	counted := time.Now()
 	kinds, err := self.store.Kinds(ctx, self.name)
 	if err != nil {
 		return nil, err
 	}
-	self.kinds = &revisedKinds{revision: revision, kinds: kinds}
+	self.kinds = &revisedKinds{revision: revision, counted: counted, kinds: kinds}
 	return kinds, nil
 }
 

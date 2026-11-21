@@ -984,6 +984,21 @@ func testKinds(t *testing.T, s store.Store) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]uint64{"document": 2, "image": 1, "event": 1, "audio/mpeg": 1, "text/plain": 1, "": 1}, kinds)
 
+	// A kind which isn't a string, or is empty, is of its media type, and a
+	// string which is a number is a kind of its own
+	raw := func(object *schema.Object, contentType, value string) *schema.Object {
+		object.ContentType = contentType
+		object.Meta = []schema.Meta{{Namespace: "metadata", Key: "kind", Value: json.RawMessage(value)}}
+		return object
+	}
+	require.NoError(t, s.PutObject(ctx, "photos",
+		raw(file("/n.png"), "image/png", `1`), raw(file("/e.png"), "image/png", `""`), raw(file("/a.png"), "image/png", `["x"]`),
+		raw(file("/s.txt"), "text/plain", `"1"`), raw(file("/o.txt"), "text/plain", `{"x":1}`),
+	))
+	kinds, err = s.Kinds(ctx, "photos")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]uint64{"image": 1, "image/png": 3, "1": 1, "text/plain": 1}, kinds)
+
 	// An object which is deleted isn't counted, nor are its kinds
 	require.NoError(t, s.DeleteObject(ctx, "media", "/d/"))
 	require.NoError(t, s.DeleteObject(ctx, "media", "/c.ics"))
