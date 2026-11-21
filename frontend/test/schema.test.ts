@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kindLabel, volumeBackend, volumeIndexing, volumeKinds, volumeNoun, volumeObjects, volumeStatus, volumeObjectsUnknown, volumeScheme, type Volume } from '../src/filer/schema.ts';
+import { kindLabel, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeNoun, volumeObjects, volumeStatus, volumeObjectsUnknown, volumeScheme, type Volume } from '../src/filer/schema.ts';
 
 // volume returns a mounted volume of a URL, and its index
 function volume(url: string, index?: Volume['index']): Volume {
@@ -130,4 +130,17 @@ test('volumeKinds', () => {
     assert.equal(of({ mode: 'objects', status: 'ready', objects: 3 }), undefined, 'of a server which has none');
     assert.equal(of({ mode: 'folders', status: 'ready', kinds: { a: 1 } }), undefined);
     assert.equal(of(undefined), undefined);
+});
+
+test('volumeIndexFailure', () => {
+    const of = (index: Volume['index'], error?: string) => volumeIndexFailure({ ...volume('file://v/tmp', index), error });
+    // Why its index failed, while it's Failed
+    assert.equal(of({ mode: 'objects', status: 'ready', error: 'it failed' }), 'it failed');
+    assert.equal(of({ mode: 'objects', status: 'scanning', error: 'it failed' }), 'it failed');
+    // Not while it's scanned, or indexed, again, nor once it's ready, nor
+    // when it's offline, which its own alert says, nor when it isn't indexed
+    assert.equal(of({ mode: 'objects', status: 'ready', phase: 'scanning', error: 'it failed' }), '');
+    assert.equal(of({ mode: 'objects', status: 'ready' }), '');
+    assert.equal(of({ mode: 'objects', status: 'ready', error: 'it failed' }, 'down'), '');
+    assert.equal(of(undefined), '');
 });

@@ -271,6 +271,13 @@ export function volumeStatus(volume: Volume): string {
     return 'Not indexed yet';
 }
 
+// volumeIndexFailure returns why a volume's index failed, while its status
+// is Failed, such as when its last scan, or its watch, failed, and it isn't
+// scanned, or indexed, again, or "", otherwise, such as once it's indexed
+export function volumeIndexFailure(volume: Volume): string {
+    return volumeStatus(volume) === 'Failed' ? volume.index?.error ?? '' : '';
+}
+
 // VolumeKind is a kind of a volume's objects, as it's shown, and how many
 // objects are of it
 export interface VolumeKind {
