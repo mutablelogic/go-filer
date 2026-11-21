@@ -229,6 +229,7 @@ export class VolumeElement extends LitElement {
         tree: { attribute: false },
         folder: { attribute: false },
         changes: { attribute: false },
+        notifications: { attribute: false },
         name: { type: String },
         path: { type: String },
         volume: { state: true },
@@ -239,6 +240,7 @@ export class VolumeElement extends LitElement {
     // loaded again when they change
     declare controller?: VolumesController;
     declare tree?: TreeController;
+    declare notifications?: NotificationController;
     declare folder?: FolderController;
     declare changes?: ChangesController;
 
@@ -355,21 +357,31 @@ export class VolumeElement extends LitElement {
             <gs-page-header
                 heading=${folder ? objectTitle(folder) : baseName(path) || (volume ? volumeLabel(volume) : name)}
                 subtitle=${`${name}${path === '/' ? '' : path}`}
-                .icon=${path === '/' ? VolumesIcon : FolderIcon}>
+                .icon=${path === '/' ? VolumesIcon : FolderIcon} .actions=${volume ? this.editActions(volume) : []}>
                 ${volume ? html`<div class="gf-volume-header-status">${statusTag(volume, 'md')}</div>` : nothing}
             </gs-page-header>
+            <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
         `;
+        // The header, and the panel, are of one template, whatever's beneath
+        // them, so the panel, which is open, isn't made again, closed, when
+        // the volume is mounted, or unmounted, of it
+        return html`${header}${this.contentView(name, path, volume, hasFolders)}`;
+    }
+
+    // contentView is what's beneath the header: why the volume isn't shown,
+    // or its tree of folders, beside the objects of the folder which is
+    // chosen
+    private contentView(name: string, path: string, volume: Volume | undefined, hasFolders: boolean): TemplateResult {
         if (!volume) {
-            return html`${header}<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
+            return html`<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
         } else if (!volume.mounted) {
             // One which is unmounted is, of its own, so it isn't an error,
             // which its tag says, too
             return volumeStatus(volume) === 'Unmounted'
-                ? html`${header}<p class="gf-empty">This volume is unmounted, so its files aren't shown until it's mounted again</p>`
-                : html`${header}${alertView('error', "This volume isn't mounted", volume.error)}`;
+                ? html`<p class="gf-empty">This volume is unmounted, so its files aren't shown until it's mounted again</p>`
+                : html`${alertView('error', "This volume isn't mounted", volume.error)}`;
         }
         return html`
-            ${header}
             ${volume.error ? alertView('warning', 'This volume is offline, so what it shows is what was last indexed', volume.error) : nothing}
             <div class="gf-volume">
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
@@ -379,6 +391,12 @@ export class VolumeElement extends LitElement {
                     empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}></gf-file-view>
             </div>
         `;
+    }
+
+    // editActions are Edit Volume, which opens the volume's panel, of its
+    // View tab, as its tile's pencil does
+    private editActions(volume: Volume): PageAction[] {
+        return [{ label: 'Edit Volume', kind: 'secondary', icon: Edit16, run: () => this.querySelector('gf-volume-panel')?.open(volume, 'view') }];
     }
 
     // chosen chooses the folder which is chosen in the tree, and adds it to
@@ -439,6 +457,7 @@ export function volumesModule(app: VolumesApp, section = 'Volumes'): VolumesCont
     const volumePage = page('page-volume', app.root);
     const volumeElement = document.createElement(VolumeTag);
     volumeElement.controller = controller;
+    volumeElement.notifications = app.notifications;
     volumeElement.tree = tree;
     volumeElement.folder = new FolderController(app.client).onError((title, error) => app.notifications?.error(title, error));
     volumeElement.changes = app.changes;
