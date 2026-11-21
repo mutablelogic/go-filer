@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS metadata (
 -- schema.metadata_key
 CREATE UNIQUE INDEX IF NOT EXISTS metadata_key ON metadata (volume, object, source, ifnull(namespace, ''), key);
 
+-- schema.metadata_kind
+-- The kinds of the objects, of their sources, such as a book, of which how
+-- many objects of a volume are of each kind is counted
+CREATE INDEX IF NOT EXISTS metadata_kind ON metadata (volume, object, source) WHERE namespace = 'metadata' AND key = 'kind';
+
 -- schema.object_geo
 -- The shapes of where the objects are, of GeoJSON, such as where a photo
 -- was taken, of their sources, as metadata is, which a task finds, and the

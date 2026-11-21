@@ -85,6 +85,16 @@ type ObjectCountRequest struct {
 // ObjectCount is how many objects a listing has
 type ObjectCount uint64
 
+// KindsRequest selects how many objects, without folders, of a volume are
+// of each kind
+type KindsRequest struct {
+	Volume string
+}
+
+// Kinds is how many objects are of each kind, of their metadata, or else
+// their media type, or "", of none
+type Kinds map[string]uint64
+
 // RevisionListRequest selects the revisions of the files of a folder's key,
 // or beneath it
 type RevisionListRequest struct {
@@ -144,6 +154,14 @@ func (req ObjectCountRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, e
 	bind.Set("volume", req.Volume)
 	bind.Set("where", listWhere(bind, req.ListRequest))
 	return bind.Query("object.count"), nil
+}
+
+func (req KindsRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	if op != sqlite.List {
+		return "", sqlite.ErrNotImplemented.Withf("kinds: %v", op)
+	}
+	bind.Set("volume", req.Volume)
+	return bind.Query("object.kinds"), nil
 }
 
 // listWhere returns the condition of the objects of a listing, of a folder,
@@ -296,6 +314,19 @@ func (put ObjectMetaPut) Update(*sqlite.Bind) error {
 
 func (count *ObjectCount) Scan(row sqlite.Row) error {
 	return row.Scan((*uint64)(count))
+}
+
+func (kinds *Kinds) Scan(row sqlite.Row) error {
+	var kind string
+	var count uint64
+	if err := row.Scan(&kind, &count); err != nil {
+		return err
+	}
+	if *kinds == nil {
+		*kinds = Kinds{}
+	}
+	(*kinds)[kind] = count
+	return nil
 }
 
 func (revisions *Revisions) Scan(row sqlite.Row) error {

@@ -245,8 +245,9 @@ func (self *Registry) view(ctx context.Context, stored *schema.Volume) *schema.V
 	return &volume
 }
 
-// indexState returns the state of an indexer's index, and of the indexing of
-// its files' metadata, or why it can't be read
+// indexState returns the state of an indexer's index, of the indexing of its
+// files' metadata, and how many of its objects are of each kind, or why they
+// can't be read
 func indexState(ctx context.Context, i *indexer.Indexer) *schema.VolumeIndex {
 	index := &schema.VolumeIndex{Mode: string(i.Mode())}
 	if state, err := i.State(ctx); err != nil {
@@ -258,6 +259,11 @@ func indexState(ctx context.Context, i *indexer.Indexer) *schema.VolumeIndex {
 		index.Error = err.Error()
 	} else {
 		index.Metadata = task
+	}
+	if kinds, err := i.Kinds(ctx); err != nil && index.Error == "" {
+		index.Error = err.Error()
+	} else {
+		index.Kinds = kinds
 	}
 	return index
 }

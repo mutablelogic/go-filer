@@ -108,6 +108,33 @@ func Test_Registry_IndexOption(t *testing.T) {
 	assert.False(t, indexed)
 }
 
+func Test_Registry_IndexedKinds(t *testing.T) {
+	r, _, dir := newIndexedRegistry(t)
+	ctx := context.Background()
+
+	// A volume whose objects are indexed has their kinds, which are listed,
+	// and one of folders has none
+	u := indexedURL(t, dir, "media", "objects")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.FromSlash(u.Path), "a", "x.txt"), []byte("x"), 0o644))
+	_, err := add(t, r, "media", u)
+	require.NoError(t, err)
+	_, err = add(t, r, "folders", indexedURL(t, dir, "folders", "folders"))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		v, err := r.GetVolume(ctx, "media")
+		return err == nil && v.Index != nil && v.Index.Kinds["text/plain"] == 1
+	}, 10*time.Second, 5*time.Millisecond, "its kinds")
+	v := ready(t, r, "folders")
+	assert.Nil(t, v.Index.Kinds)
+	volumes, err := r.ListVolumes(ctx)
+	require.NoError(t, err)
+	for _, v := range volumes {
+		if v.Name == "media" {
+			assert.Equal(t, map[string]uint64{"text/plain": 1}, v.Index.Kinds)
+		}
+	}
+}
+
 func Test_Registry_Indexed(t *testing.T) {
 	r, s, dir := newIndexedRegistry(t)
 

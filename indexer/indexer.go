@@ -57,6 +57,11 @@ type Indexer struct {
 	smu      sync.Mutex
 	watchers map[*watcher]struct{}
 
+	// kinds are how many of the index's objects are of each kind, of its
+	// revision, so they're counted again only once it's revised
+	kmu   sync.Mutex
+	kinds *revisedKinds
+
 	// logger is the logger which Run is given, which failures are logged
 	// to, or nil before it runs
 	logger atomic.Pointer[slog.Logger]
@@ -68,6 +73,12 @@ type watcher struct {
 	ctx    context.Context
 	ch     chan<- schema.Event
 	failed chan error
+}
+
+// revisedKinds are how many objects are of each kind, of a revision
+type revisedKinds struct {
+	revision uint64
+	kinds    map[string]uint64
 }
 
 var _ gofiler.Filer = (*Indexer)(nil)
@@ -138,6 +149,32 @@ func New(name string, backend gofiler.Filer, s store.Store, opts ...Opt) (*Index
 // State returns the state of the index
 func (self *Indexer) State(ctx context.Context) (schema.IndexState, error) {
 	return self.store.State(ctx, self.name)
+}
+
+// Kinds returns how many of the index's objects, without folders, are of
+// each kind, of their metadata, or else their media type (see
+// store.Store.Kinds), or nil, when its objects aren't indexed, which are
+// counted again only once the index is revised (see Revision), as they're
+// of every object
+func (self *Indexer) Kinds(ctx context.Context) (map[string]uint64, error) {
+	if !self.mode.Files() {
+		return nil, nil
+	}
+	self.kmu.Lock()
+	defer self.kmu.Unlock()
+
+	// The revision is read before they're counted, so a change while they
+	// are is counted again, of the next revision
+	revision := self.Revision()
+	if self.kinds != nil && self.kinds.revision == revision {
+		return self.kinds.kinds, nil
+	}
+	kinds, err := self.store.Kinds(ctx, self.name)
+	if err != nil {
+		return nil, err
+	}
+	self.kinds = &revisedKinds{revision: revision, kinds: kinds}
+	return kinds, nil
 }
 
 // Metadata returns the state of the indexing of the metadata of its files,
