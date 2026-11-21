@@ -14,6 +14,8 @@ import type { NotificationController } from '@mutablelogic/go-server/notificatio
 import type { Route, Router } from '@mutablelogic/go-server/router';
 import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
+import Edit16 from '@carbon/icons/es/edit/16.js';
+import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
 import { baseName, objectTitle, volumeBackend, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
@@ -27,6 +29,11 @@ import '@carbon/web-components/es/components/tile/clickable-tile.js';
 import '@carbon/web-components/es/components/tag/tag.js';
 import '@carbon/web-components/es/components/tabs/index.js';
 import '../chart/meter.ts';
+import '@carbon/web-components/es/components/icon-button/index.js';
+import '@mutablelogic/go-server/panel/view';
+import { PanelController } from '@mutablelogic/go-server/panel';
+import { updateVolume } from '../filer/httpclient.ts';
+import './edit.ts';
 import { alertView } from '../alert/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -50,19 +57,29 @@ export const VolumeRoute = 'volume';
 export class VolumesElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
+        notifications: { attribute: false },
         volumes: { state: true },
         tab: { state: true },
+        editing: { state: true },
     };
 
-    // controller keeps the volumes, and tab is the tab of their stats which
-    // is shown, beneath their tiles
+    // controller keeps the volumes, notifications are told why a volume
+    // can't be saved, and tab is the tab of their stats which is shown,
+    // beneath their tiles
     declare controller?: VolumesController;
+    declare notifications?: NotificationController;
     declare private volumes?: readonly Volume[];
     declare private tab: StatsTab;
+
+    // panel is of the volume which is edited, of its name
+    private readonly panel = new PanelController<string>({ closable: true });
+    declare private editing?: string;
 
     constructor() {
         super();
         this.tab = 'objects';
+        this.panel.subscribe((state) => { this.editing = state.open ? state.item : undefined; });
+        this.panel.onError((error) => this.notifications?.error("The volume couldn't be saved", error));
     }
     private unsubscribe?: () => void;
 
@@ -101,7 +118,40 @@ export class VolumesElement extends LitElement {
                 .icon=${VolumesIcon}></gs-page-header>
             ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
             ${volumes?.length ? this.statsView(volumes) : nothing}
+            <gs-panel .controller=${this.panel}>
+                <gf-volume-form .volume=${this.editing ? volumes?.find((v) => v.name === this.editing) : undefined}></gf-volume-form>
+            </gs-panel>
         `;
+    }
+
+    // edit opens the panel of a volume's options, whose Save button saves
+    // those which are changed, and closes it, unless they can't be
+    private edit(volume: Volume) {
+        const backend = volumeBackend(volume, this.controller?.backends);
+        this.panel.setHeader({ title: volumeLabel(volume), subtitle: backend ? `${volume.name} · ${backend}` : volume.name });
+        this.panel.setActions([
+            { label: 'Cancel', kind: 'secondary' },
+            { label: 'Save', kind: 'primary', run: () => this.save(volume.name) },
+        ]);
+        this.panel.open(volume.name);
+    }
+
+    // save saves the options of the volume which are changed, of its form,
+    // and loads the volumes again, rather than only once they change, as an
+    // app needn't follow their changes. The panel can't be closed meanwhile,
+    // so a save which ends doesn't close the panel of another volume.
+    private async save(name: string) {
+        const patch = this.querySelector('gf-volume-form')?.patch() ?? {};
+        if (Object.keys(patch).length === 0 || !this.controller) {
+            return;
+        }
+        this.panel.setClosable(false);
+        try {
+            await updateVolume(this.controller.client, name, patch);
+            await this.controller.reload();
+        } finally {
+            this.panel.setClosable(true);
+        }
     }
 
     // statsView is the tabs of the volumes' stats, of which the one which is
@@ -145,17 +195,26 @@ export class VolumesElement extends LitElement {
     }
 
     // tileView is a volume's tile, which goes to its page: its label, and
-    // its name, its backend, as a tag, and how many objects it has
+    // its name, its backend, as a tag, and how many objects it has, with a
+    // button, at its bottom right, beside it, rather than in it, which edits
+    // it
     private tileView(volume: Volume): TemplateResult {
         const backends = this.controller?.backends;
         const backend = volumeBackend(volume, backends);
         return html`
-            <cds-clickable-tile class="gf-volume-tile" href=${volumeHref(volume.name)} title=${volumeTitle(volume, backends)}>
-                ${backend ? html`<cds-tag size="sm" type=${tagType(volume, backends)}>${backend}</cds-tag>` : nothing}
-                <h3 class="gf-volume-tile-label">${volumeLabel(volume)}</h3>
-                <p class="gf-volume-tile-name">${volume.name}</p>
-                ${tileCount(volume)}
-            </cds-clickable-tile>
+            <div class="gf-volume-tile-wrap">
+                <cds-clickable-tile class="gf-volume-tile" href=${volumeHref(volume.name)} title=${volumeTitle(volume, backends)}>
+                    ${backend ? html`<cds-tag size="sm" type=${tagType(volume, backends)}>${backend}</cds-tag>` : nothing}
+                    <h3 class="gf-volume-tile-label">${volumeLabel(volume)}</h3>
+                    <p class="gf-volume-tile-name">${volume.name}</p>
+                    ${tileCount(volume)}
+                </cds-clickable-tile>
+                <cds-icon-button class="gf-volume-tile-edit" kind="ghost" size="sm" align="top-end"
+                    @click=${() => this.edit(volume)}>
+                    ${EditIcon}
+                    <span slot="tooltip-content">Edit</span>
+                </cds-icon-button>
+            </div>
         `;
     }
 }
@@ -370,6 +429,7 @@ export function volumesModule(app: VolumesApp, section = 'Volumes'): VolumesCont
     const volumesPage = page('page-volumes', app.root);
     const volumesElement = document.createElement(VolumesTag);
     volumesElement.controller = controller;
+    volumesElement.notifications = app.notifications;
     volumesPage.append(volumesElement);
     const volumePage = page('page-volume', app.root);
     const volumeElement = document.createElement(VolumeTag);
@@ -515,6 +575,9 @@ function statusTitle(volume: Volume, status: string, error?: string): string {
     }
     return error || volumeObjectsUnknown(volume);
 }
+
+// EditIcon is Carbon's edit icon, of an icon button
+const EditIcon = iconLoader(Edit16, { slot: 'icon' });
 
 // TagTypes are the colours of the backends' tags, in the order of the
 // backends, so each backend has its own, while there are enough

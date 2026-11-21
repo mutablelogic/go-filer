@@ -2,12 +2,19 @@
 // serves, at the client's prefix, such as /api
 
 import { request, type Client } from '@mutablelogic/go-server/api';
-import type { ObjectList, ObjectListQuery, VolumeList } from './schema.ts';
+import type { ObjectList, ObjectListQuery, Volume, VolumeList } from './schema.ts';
 
 // listVolumes returns the volumes, in order of their names, and the
 // backends volumes can be added of
 export async function listVolumes(client: Client, signal?: AbortSignal): Promise<VolumeList> {
     return request<VolumeList>(client, 'GET', 'volume', { signal });
+}
+
+// updateVolume changes the options of a volume's URL, of a patch, where an
+// option which is null is removed, so it's its default, and those which
+// aren't in it are kept, and returns the volume
+export async function updateVolume(client: Client, name: string, patch: Record<string, unknown>, signal?: AbortSignal): Promise<Volume> {
+    return request<Volume>(client, 'PATCH', `volume/${encodeURIComponent(name)}`, { body: patch, signal });
 }
 
 // listObjects returns a page of the objects of a volume's folder, which is

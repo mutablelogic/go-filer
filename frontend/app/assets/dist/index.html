@@ -56,9 +56,39 @@
             gap: 1rem;
         }
 
+        .gf-volume-tile-wrap {
+            position: relative;
+            min-width: 0;
+        }
+
         .gf-volume-tile {
             display: block;
+            height: 100%;
             min-width: 0;
+        }
+
+        /* The button which edits a volume, at its tile's bottom right */
+        .gf-volume-tile-edit {
+            position: absolute;
+            right: 0.5rem;
+            bottom: 0.5rem;
+        }
+
+        /* The form of a volume's options, in its panel */
+        .gf-volume-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .gf-volume-form-field .cds--label {
+            margin-bottom: 0.5rem;
+        }
+
+        .gf-volume-form-heading {
+            margin: 0.5rem 0 -0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
         }
 
         .gf-volume-tile cds-tag {
