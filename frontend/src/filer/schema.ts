@@ -271,6 +271,52 @@ export function volumeStatus(volume: Volume): string {
     return 'Not indexed yet';
 }
 
+// VolumeKind is a kind of a volume's objects, as it's shown, and how many
+// objects are of it
+export interface VolumeKind {
+    group: string;
+    value: number;
+}
+
+// kindLabel returns how a kind is shown: a kind, such as book, capitalised,
+// such as Book, a media type, such as text/plain, as it is, or Unknown, of
+// "", or of the unknown kind
+export function kindLabel(kind: string): string {
+    if (kind === '' || kind === 'unknown') {
+        return 'Unknown';
+    } else if (kind.includes('/')) {
+        return kind;
+    }
+    return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+// volumeKinds returns how many of a volume's objects are of each kind, as
+// they're shown, of those which have the most first, of at most max kinds,
+// the rest of which are Other, or undefined, when its kinds aren't known,
+// as its objects aren't indexed
+export function volumeKinds(volume: Volume, max = 6): VolumeKind[] | undefined {
+    // A volume of none has no kinds, which are left out
+    const objects = volumeObjects(volume);
+    const kinds = volume.index?.kinds ?? (objects === 0 ? {} : undefined);
+    if (!kinds || objects === undefined) {
+        return undefined;
+    }
+    const labels = new Map<string, number>();
+    for (const [kind, count] of Object.entries(kinds)) {
+        if (count > 0) {
+            const label = kindLabel(kind);
+            labels.set(label, (labels.get(label) ?? 0) + count);
+        }
+    }
+    const sorted = [...labels].map(([group, value]) => ({ group, value }))
+        .sort((a, b) => b.value - a.value || a.group.localeCompare(b.group));
+    if (sorted.length <= max) {
+        return sorted;
+    }
+    const other = sorted.slice(max - 1).reduce((sum, kind) => sum + kind.value, 0);
+    return [...sorted.slice(0, max - 1), { group: 'Other', value: other }];
+}
+
 // ObjectNouns are what a backend's objects are called, of its scheme, in
 // the singular and the plural, such as the events of a calendar, rather
 // than objects

@@ -16,7 +16,7 @@ import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeIndexing, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -36,8 +36,8 @@ import { alertView } from '../alert/view.ts';
 // such as #volumes, and #volume/media/Music
 export const VolumesTag = 'gf-volumes';
 
-// StatsTab is a tab of the volumes' stats
-type StatsTab = 'indexing' | 'objects';
+// StatsTab is a tab of the volumes' stats, of which Objects is chosen first
+type StatsTab = 'objects' | 'indexing';
 export const VolumeTag = 'gf-volume';
 export const VolumesRoute = 'volumes';
 export const VolumeRoute = 'volume';
@@ -62,7 +62,7 @@ export class VolumesElement extends LitElement {
 
     constructor() {
         super();
-        this.tab = 'indexing';
+        this.tab = 'objects';
     }
     private unsubscribe?: () => void;
 
@@ -107,25 +107,25 @@ export class VolumesElement extends LitElement {
     // statsView is the tabs of the volumes' stats, of which the one which is
     // chosen is shown: Indexing, and Objects, which is to come
     private statsView(volumes: readonly Volume[]): TemplateResult {
+        const tab = this.tab;
         return html`
             <section class="gf-volume-stats">
-                <cds-tabs value=${this.tab} @cds-tabs-selected=${(event: CustomEvent<{ item: HTMLElement & { value: string } }>) => { this.tab = event.detail.item.value as StatsTab; }}>
+                <cds-tabs value=${tab} @cds-tabs-selected=${(event: CustomEvent<{ item: HTMLElement & { value: string } }>) => { this.tab = event.detail.item.value as StatsTab; }}>
+                    <cds-tab value="objects">Objects</cds-tab>
                     <cds-tab value="indexing">Indexing</cds-tab>
-                    <cds-tab value="objects" disabled>Objects</cds-tab>
                 </cds-tabs>
-                ${this.tab === 'indexing' ? this.indexingView(volumes) : nothing}
+                ${this.sectionsView(volumes, tab, tab === 'objects' ? kindsMeter : indexingMeter)}
             </section>
         `;
     }
 
-    // indexingView is a section of each volume: its label, as a heading, and
-    // its status, when it isn't idle, with why, when it's pointed at, and
-    // how many folders and objects it has, as tags, beneath it, and a meter
-    // of its objects which are indexed, which failed, and which aren't
-    // indexed yet, of how many it has, when that's known
-    private indexingView(volumes: readonly Volume[]): TemplateResult {
-        return html`<div class="gf-indexing">${repeat(volumes, (volume) => volume.name, (volume) => {
-            const indexing = volumeIndexing(volume);
+    // sectionsView is a section of each volume, of a tab: its label, as a
+    // heading, and its status, when it isn't idle, with why, when it's
+    // pointed at, and how many folders and objects it has, as tags, beneath
+    // it, and the tab's meter of it, whose sections are of the tab, so a
+    // meter isn't of another's
+    private sectionsView(volumes: readonly Volume[], tab: StatsTab, meter: (volume: Volume) => TemplateResult | typeof nothing): TemplateResult {
+        return html`<div class="gf-indexing">${repeat(volumes, (volume) => `${tab}:${volume.name}`, (volume) => {
             const objects = volumeObjects(volume);
             const folders = volume.index?.folders;
             const status = volumeStatus(volume);
@@ -138,14 +138,7 @@ export class VolumesElement extends LitElement {
                         ${folders !== undefined ? html`<cds-tag size="sm" type="cool-gray">${folders.toLocaleString()} ${folders === 1 ? 'folder' : 'folders'}</cds-tag>` : nothing}
                         ${objects !== undefined ? html`<cds-tag size="sm" type="cool-gray">${objects.toLocaleString()} ${volumeNoun(volume, objects)}</cds-tag>` : nothing}
                     </div>
-                    ${indexing ? html`
-                        <gf-meter .groups=${[
-                            { group: 'Indexed', value: indexing.indexed },
-                            { group: 'Failed', value: indexing.failed },
-                            { group: 'Unindexed', value: indexing.unindexed },
-                        ]} .colors=${IndexingColors} .descriptions=${indexingDescriptions(volume)} total=${objects ?? 0} unit=${volumeNoun(volume, objects ?? 0)}
-                            label=${`${volumeLabel(volume)}: indexing`}></gf-meter>
-                    ` : nothing}
+                    ${meter(volume)}
                 </section>
             `;
         })}</div>`;
@@ -451,6 +444,38 @@ function folderHref(name: string, path: string): string {
 // which failed, and which aren't indexed, of Carbon's data visualisation
 // palette: purple 70 and teal 50, its pairing of two, and magenta 70
 const IndexingColors = { Indexed: '#6929c4', Failed: '#9f1853', Unindexed: '#009d9a' };
+
+// kindsMeter is a meter of a volume's objects of each kind, of those which
+// have the most, the rest of which are Other, when its kinds are known
+function kindsMeter(volume: Volume): TemplateResult | typeof nothing {
+    const kinds = volumeKinds(volume);
+    if (!kinds) {
+        return nothing;
+    }
+    const total = kinds.reduce((sum, kind) => sum + kind.value, 0);
+    return html`
+        <gf-meter .groups=${kinds} total=${total} unit=${volumeNoun(volume, total)}
+            label=${`${volumeLabel(volume)}: objects`}></gf-meter>
+    `;
+}
+
+// indexingMeter is a meter of a volume's objects which are indexed, which
+// failed, and which aren't indexed yet, of how many it has, when that's known
+function indexingMeter(volume: Volume): TemplateResult | typeof nothing {
+    const indexing = volumeIndexing(volume);
+    const objects = volumeObjects(volume) ?? 0;
+    if (!indexing) {
+        return nothing;
+    }
+    return html`
+        <gf-meter .groups=${[
+            { group: 'Indexed', value: indexing.indexed },
+            { group: 'Failed', value: indexing.failed },
+            { group: 'Unindexed', value: indexing.unindexed },
+        ]} .colors=${IndexingColors} .descriptions=${indexingDescriptions(volume)} total=${objects} unit=${volumeNoun(volume, objects)}
+            label=${`${volumeLabel(volume)}: indexing`}></gf-meter>
+    `;
+}
 
 // indexingDescriptions returns what a volume's objects which are indexed,
 // which failed, and which aren't indexed, are, of their meter's legend, in
