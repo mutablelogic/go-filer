@@ -10,7 +10,7 @@ import '@mutablelogic/go-server/panel/view';
 import '@carbon/web-components/es/components/text-input/index.js';
 import '@carbon/web-components/es/components/content-switcher/index.js';
 import '@carbon/web-components/es/components/button/index.js';
-import { authorizeSignIn, createVolume } from '../filer/httpclient.ts';
+import { authorizeSignIn, createVolume, signInCallback } from '../filer/httpclient.ts';
 import type { Backend } from '../filer/schema.ts';
 import type { VolumesController } from './controller.ts';
 import { canBeWritable, signInMessage, signInNeeded, volumeCreate, VolumeFields, type SignInNeeded, type VolumeDraft } from './create.ts';
@@ -196,8 +196,8 @@ export class VolumeAddElement extends LitElement {
 
     // openSignIn opens a window, at once, as it's of a click, which a
     // browser allows, at the URL to sign in at, which the server makes. When
-    // the server has no web client, the window is closed, and it says to
-    // sign in with the CLI.
+    // the server's client isn't a web application's, the window is closed,
+    // and it says to sign in with the CLI.
     private async openSignIn() {
         const signIn = this.signIn;
         const draft = this.draft;
@@ -215,7 +215,7 @@ export class VolumeAddElement extends LitElement {
         } catch (error) {
             popup?.close();
             const name = draft.name.trim() || '<name>';
-            this.notifications?.error("You can't sign in here", new Error(`${error instanceof Error ? error.message : String(error)}. The server needs a web client, ${'GOOGLE_WEB_CLIENT'}, to sign in in a browser, so sign in, and add the volume, with the CLI: filer volume-create-${draft.scheme} ${name}`));
+            this.notifications?.error("You can't sign in here", new Error(`${error instanceof Error ? error.message : String(error)}. Signing in in a browser needs the server's GOOGLE_CLIENT to be a web application's client, whose redirect URIs are this server's callback, ${signInCallback(this.controller.client)}, so sign in, and add the volume, with the CLI: filer volume-create-${draft.scheme} ${name}`));
         }
     }
 

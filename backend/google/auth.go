@@ -38,13 +38,6 @@ const (
 	// Grant, which the credential parameter sets another of
 	ClientCredential  = SignInPrefix + "CLIENT"
 	DefaultCredential = SignInPrefix + "TOKEN"
-
-	// WebClientCredential is the key of the credential of the OAuth client
-	// of a web application, whose redirect URI is the server's callback,
-	// credential/callback, with which the web UI signs in, in a browser,
-	// whose sign-ins are refreshed with it, as a refresh token is the
-	// client's which issued it
-	WebClientCredential = SignInPrefix + "WEB_CLIENT"
 )
 
 var (
@@ -70,13 +63,13 @@ var (
 // LIFECYCLE
 
 // newTokens returns the source of the access token of the sign-in with the
-// key, which must be for the client, of ClientCredential, or the web
-// client, of WebClientCredential, and have one of the required scopes. The scopes are asked for when the user signs in, with
+// key, which must be for the client, of ClientCredential, and have one of
+// the required scopes. The scopes are asked for when the user signs in, with
 // those the sign-in has already. Returns go-auth's errors, which the
 // root's HTTPErr maps: a SignInError, which is 401, with how to sign in, when the user hasn't, or their
 // sign-in is for another client, or doesn't have the scopes.
 func newTokens(ctx context.Context, credentials credential.CredentialProvider, key string, required, scopes []string) (*tokens, error) {
-	source, err := grant.New(ctx, credentials, grant.Config{Server: Google, Client: ClientCredential, Clients: []string{WebClientCredential}, Key: key, Required: required, Scopes: scopes})
+	source, err := grant.New(ctx, credentials, grant.Config{Server: Google, Client: ClientCredential, Key: key, Required: required, Scopes: scopes})
 	if err != nil {
 		return nil, err
 	}

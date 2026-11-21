@@ -61,11 +61,11 @@ func (runner *RunServer) Run(ctx server.Cmd) error {
 	// Serve the credentials, so they're stored, such as GOOGLE_CLIENT, with
 	// the filer command's credential-set, and listed, without their values,
 	// and Google's sign-ins, of a loopback address, of the CLI, or of the
-	// server's callback, of the web UI, with the web client, such as
-	// GOOGLE_WEB_CLIENT, when it's stored
+	// server's callback, of the web UI, when GOOGLE_CLIENT is a web
+	// application's client
 	runner.RunServer.Register(credentialhandler.RegisterManagerHandlers(credentials, false,
 		credentialhandler.WithSignIn(google.SignInPrefix, google.Google, google.ClientCredential),
-		credentialhandler.WithWebSignIn(google.SignInPrefix, google.WebClientCredential, google.SignInOptions...),
+		credentialhandler.WithWebSignIn(google.SignInPrefix, google.SignInOptions...),
 	))
 
 	// The broadcaster, of the changes of the volumes' objects, and of the
