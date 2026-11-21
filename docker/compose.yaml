@@ -1,0 +1,89 @@
+# The filer server, with its web UI, at http://localhost:8084/, of the
+# directory which is mounted at /media:
+#
+#   docker compose -f docker/compose.yaml up -d
+#
+# The variables are read from the environment, or a .env file beside this
+# one. Each is optional, and its default is beside it. The server's
+# credentials, such as Google's sign-in, and the index of its volumes, are
+# kept in the filer volume. Volumes are added in the web UI, with Add Volume,
+# such as a Server filesystem of /media, or with the command line:
+#
+#   docker compose -f docker/compose.yaml exec filer filer volume-create-fs media /media -o index=metadata
+#
+# Google Workspace's volumes need an OAuth client, as the server's
+# GOOGLE_CLIENT credential (see the README's Adding Google Workspace):
+#
+#   docker compose -f docker/compose.yaml exec -T filer filer credential-set GOOGLE_CLIENT --json < client_secret.json
+
+name: filer
+
+services:
+  filer:
+    image: ghcr.io/mutablelogic/filer:${FILER_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      secrets:
+        - github_token
+    restart: unless-stopped
+    ports:
+      # On localhost only, as the server has no authentication yet, unless
+      # FILER_BIND is set, such as to 0.0.0.0, for a network you trust
+      - "${FILER_BIND:-127.0.0.1}:${FILER_PORT:-8084}:8084"
+    volumes:
+      - filer:/data
+      # The directory whose files are a volume, read-only, unless
+      # FILER_MEDIA_MODE is rw, so files can be uploaded and deleted. Mount
+      # more directories, beneath /media, or elsewhere, as volumes of their
+      # own.
+      - "${FILER_MEDIA:-./media}:/media:${FILER_MEDIA_MODE:-ro}"
+    environment:
+      # The user the server runs as, such as the owner of the directories
+      # which are mounted, which /data is made the owner of
+      UID: ${UID:-}
+      GID: ${GID:-}
+      # The passphrase the server's credentials are encrypted with. Without
+      # it, one is made, and kept in the filer volume, beside them
+      FILER_PASSPHRASE: ${FILER_PASSPHRASE:-}
+      # The backends which are run, of their schemes, such as file,s3,rss,
+      # or every backend, when it's empty
+      FILER_BACKEND: ${FILER_BACKEND:-}
+      # The name of the server in its metrics, which is its hostname, when
+      # it's empty
+      FILER_WORKER: ${FILER_WORKER:-}
+      # Enrichment, of volumes of index=metadata: TMDB's API Read Access
+      # Token, which looks up videos, as films and TV episodes, and
+      # AcoustID's API key, which looks up audio, as recordings
+      TMDB_TOKEN: ${TMDB_TOKEN:-}
+      ACOUSTID_KEY: ${ACOUSTID_KEY:-}
+      # OpenTelemetry: the collector's endpoint, of traces, logs and
+      # metrics, such as http://otel-collector:4318, its headers, such as
+      # of authorization, and the service's name, which is filer
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-filer}
+    # The server's command. Behind a proxy which serves it over TLS, such as
+    # https://filer.example.com, FILER_TLS_NAME is its host name, so the
+    # server says its URL is https://filer.example.com/, while it's served
+    # over HTTP, to the proxy, without a certificate of its own.
+    #
+    # Its other options are flags, which are added after it, such as:
+    #
+    #   --debug, or --verbose, which log more
+    #   --http.origin=https://filer.example.com, of the origin requests come
+    #     from, behind a proxy of another host
+    #   --enrich-max-size=BYTES, the most of a file which is read when it's
+    #     enriched
+    #   --volume=URL, a volume to add, or update, when the server starts
+    command: ["run", "--tls.name=${FILER_TLS_NAME:-}"]
+
+# The token, with read:packages, which installs the web UI's packages from
+# GitHub Packages, when the image is built, rather than pulled, such as of
+# GITHUB_TOKEN=$(gh auth token)
+secrets:
+  github_token:
+    environment: GITHUB_TOKEN
+
+volumes:
+  filer:

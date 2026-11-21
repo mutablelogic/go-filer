@@ -38,6 +38,7 @@ Choose a volume to browse its folders and files, and a file to see its metadata,
 
 - **Data:** credentials and the index are kept in `/data/filer`, and volumes' caches in `/data/cache`.
 - **User:** the server runs as the `filer` user. Set `UID` and `GID`, such as to the owner of the mounted directories, which `/data` is made the owner of.
+- **Docker Compose:** [docker/compose.yaml](docker/compose.yaml) runs it with its variables, such as `TMDB_TOKEN` and `ACOUSTID_KEY`, which look up films and recordings, and `FILER_TLS_NAME`, behind a proxy which serves it over TLS: `docker compose -f docker/compose.yaml up -d`.
 - **Image:** `ghcr.io/mutablelogic/filer`, for `linux/amd64` and `linux/arm64`, is published with each release, built with cgo, so it reads the metadata of audio, video and photos.
 
 For the command line:

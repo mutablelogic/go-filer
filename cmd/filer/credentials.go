@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	// Packages
@@ -63,7 +64,13 @@ func (flags CredentialFlags) provider(ctx server.Cmd) (*filecredential.Manager, 
 			}
 		}
 	}
+	// A passphrase which is empty, as a variable which is set, but empty,
+	// such as of Docker Compose, is none, unless there are others, whose
+	// versions are of their places
 	passphrases := flags.Passphrase
+	if !slices.ContainsFunc(passphrases, func(p string) bool { return p != "" }) {
+		passphrases = nil
+	}
 	if len(passphrases) == 0 {
 		passphrase, err := credentialsKey(filepath.Join(dir, credentialsKeyFile))
 		if err != nil {
