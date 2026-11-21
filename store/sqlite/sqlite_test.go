@@ -134,13 +134,13 @@ func Test_Migrate(t *testing.T) {
 	state, err := s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Zero(t, state.Folders, "its index is scanned again, as its objects are of keys")
-	assert.Zero(t, state.Files)
+	assert.Zero(t, state.Objects)
 	assert.Empty(t, state.Mode, "so it's scanned again before its files are listed from the index")
-	state.Files, state.Mode = 7, "objects"
+	state.Objects, state.Mode = 7, "objects"
 	require.NoError(t, s.SetState(ctx, "media", state))
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
-	assert.Equal(t, uint64(7), state.Files)
+	assert.Equal(t, uint64(7), state.Objects)
 	assert.Equal(t, "objects", state.Mode)
 	require.NoError(t, s.PutObject(ctx, "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a"}, ObjectAttr: schema.ObjectAttr{IsDir: true}}))
 	_, err = s.GetObject(ctx, "media", "/a/")

@@ -334,10 +334,10 @@ func (self *Indexer) recount(ctx context.Context) {
 		return
 	}
 	_ = self.updateState(ctx, func(state *schema.IndexState) bool {
-		if !idle(state) || state.Files == files {
+		if !idle(state) || state.Objects == files {
 			return false
 		}
-		state.Files = files
+		state.Objects = files
 		return true
 	})
 }

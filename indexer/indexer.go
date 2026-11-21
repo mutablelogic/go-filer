@@ -510,7 +510,7 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 		ready := false
 		if err := self.updateState(ctx, func(state *schema.IndexState) bool {
 			if ready = state.Status == schema.IndexStatusReady; !ready {
-				state.Status, state.Folders, state.Files, state.Mode = schema.IndexStatusScanning, 0, 0, ""
+				state.Status, state.Folders, state.Objects, state.Mode = schema.IndexStatusScanning, 0, 0, ""
 			}
 			state.Started, state.Error, state.Phase = time.Now(), "", schema.IndexPhaseScanning
 			return true
@@ -526,7 +526,7 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 			}
 			stored = func(files int) {
 				_ = self.updateState(ctx, func(state *schema.IndexState) bool {
-					state.Files = uint64(files)
+					state.Objects = uint64(files)
 					return true
 				})
 			}
@@ -632,7 +632,7 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 	}
 	if whole {
 		return self.updateState(ctx, func(state *schema.IndexState) bool {
-			state.Status, state.Folders, state.Files, state.Mode, state.Phase, state.Scanned = schema.IndexStatusReady, uint64(len(l.folders)+1), uint64(done), string(self.mode), schema.IndexPhaseIdle, time.Now()
+			state.Status, state.Folders, state.Objects, state.Mode, state.Phase, state.Scanned = schema.IndexStatusReady, uint64(len(l.folders)+1), uint64(done), string(self.mode), schema.IndexPhaseIdle, time.Now()
 			return true
 		})
 	}

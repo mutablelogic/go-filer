@@ -48,7 +48,7 @@ func Test_RecountCoalesced(t *testing.T) {
 	fileCount := func() uint64 {
 		state, err := i.State(context.Background())
 		require.NoError(t, err)
-		return state.Files
+		return state.Objects
 	}
 
 	// Many files, of many batches of work, are counted at most every while,

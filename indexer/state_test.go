@@ -30,7 +30,7 @@ func Test_updateState(t *testing.T) {
 	for i := range 50 {
 		wg.Go(func() {
 			_ = self.updateState(ctx, func(state *schema.IndexState) bool {
-				state.Files++
+				state.Objects++
 				return true
 			})
 		})
@@ -39,7 +39,7 @@ func Test_updateState(t *testing.T) {
 	wg.Wait()
 	state, err := s.State(ctx, "media")
 	require.NoError(t, err)
-	assert.Equal(t, uint64(50), state.Files, "each of its changes")
+	assert.Equal(t, uint64(50), state.Objects, "each of its changes")
 	assert.NotEmpty(t, state.Error)
 	assert.Equal(t, schema.IndexStatusReady, state.Status)
 
