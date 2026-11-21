@@ -53,10 +53,15 @@ export async function deleteVolume(client: Client, name: string, signal?: AbortS
 }
 
 // objectURL returns the URL of the content of a volume's file, of its path,
-// as the browser reaches it, which downloads it
-export function objectURL(client: Client, name: string, path: string): string {
+// as the browser reaches it, which shows it, or, when it's a download, is
+// an attachment, which the browser saves
+export function objectURL(client: Client, name: string, path: string, download = false): string {
     const segments = path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
-    return new URL(`${client.base.replace(/\/$/, '')}/object/${encodeURIComponent(name)}/${segments}`, location.href).href;
+    const url = new URL(`${client.base.replace(/\/$/, '')}/object/${encodeURIComponent(name)}/${segments}`, location.href);
+    if (download) {
+        url.searchParams.set('download', 'true');
+    }
+    return url.href;
 }
 
 // listObjects returns a page of the objects of a volume's folder, which is
