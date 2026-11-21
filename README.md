@@ -15,17 +15,20 @@ Filer puts object-oriented data sources behind one file system.
 > [!WARNING]
 > **Don't run filer on the internet.** It has no authentication yet, so anyone who can reach it can read, and change, your volumes and credentials. Publish its port on `localhost` only, as below, or put it behind a proxy that signs people in, or a VPN.
 
-Run the server, with a directory of yours mounted, such as `/mnt/media`:
+Run the server, with a directory of yours mounted, such as `/mnt/media`, as a volume, `media`, whose files are indexed, and their metadata read:
 
 ```bash
 docker volume create filer
 
 docker run -d --name filer -p 127.0.0.1:8084:8084 \
   -v filer:/data -v /mnt/media:/media:ro \
-  ghcr.io/mutablelogic/filer
+  ghcr.io/mutablelogic/filer run --volume "file://media/media?index=metadata"
 ```
 
-Then open [http://localhost:8084/](http://localhost:8084/), choose **Add Volume**, then **Server filesystem**, with the path `/media`, and set **Search** to **Metadata**, so its files are indexed, and their metadata read.
+Then open [http://localhost:8084/](http://localhost:8084/).
+
+- **`--volume`:** the URL of a volume, whose host is its name, and whose path is in the container, which is created, or updated, each time the server starts. It can be repeated.
+- **Add Volume** adds more, in the web UI, such as a **Server filesystem** of another directory which is mounted.
 
 ![The Volumes page: a tile of each volume, of its backend, and how many objects it has](docs/volumes.png)
 
