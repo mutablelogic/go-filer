@@ -162,21 +162,21 @@ func Test_VolumeCells(t *testing.T) {
 		}
 	}
 	for want, volume := range map[string]Volume{
-		"none":                                                        v,
-		"idle, 3 folders":                                             indexed(IndexState{Status: IndexStatusScanning, Folders: 3}),
-		"scanning, 3 folders, 2 files":                                objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseScanning, Folders: 3, Files: 2}),
-		"indexing, 3 folders, 2 files":                                objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseIndexing, Folders: 3, Files: 2}),
-		"idle, 12 folders":                                            indexed(IndexState{Status: IndexStatusReady, Folders: 12}),
-		"scanning, 12 folders":                                        indexed(IndexState{Status: IndexStatusReady, Phase: IndexPhaseScanning, Folders: 12}),
-		"indexing, 12 folders":                                        indexed(IndexState{Status: IndexStatusReady, Phase: IndexPhaseIndexing, Folders: 12}),
-		"failed: it isn't implemented":                                indexed(IndexState{Error: "it isn't implemented"}),
-		"idle, 12 folders: the watch failed":                          indexed(IndexState{Status: IndexStatusReady, Folders: 12, Error: "the watch failed"}),
-		"idle, 4 folders, 9 files":                                    objects(IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}),
-		"idle, 4 folders, 0 files":                                    objects(IndexState{Status: IndexStatusReady, Folders: 4}),
-		"indexing, 4 folders, 9 files":                                objects(IndexState{Status: IndexStatusReady, Phase: IndexPhaseIndexing, Folders: 4, Files: 9}),
-		"indexing, 4 folders, 9 files, 0 indexed, 9 queued":           {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}, Metadata: &TaskState{Queued: 9}}},
-		"idle, 4 folders, 9 files, 9 indexed, 1 failed":               {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}, Metadata: &TaskState{Indexed: 9, Failed: 1}}},
-		"indexing, 4 folders, 9 files, 7 indexed, 2 queued, 1 failed": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Files: 9}, Metadata: &TaskState{Queued: 2, Indexed: 7, Failed: 1, Error: "it failed"}}},
+		"none":                                                          v,
+		"idle, 3 folders":                                               indexed(IndexState{Status: IndexStatusScanning, Folders: 3}),
+		"scanning, 3 folders, 2 objects":                                objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseScanning, Folders: 3, Objects: 2}),
+		"indexing, 3 folders, 2 objects":                                objects(IndexState{Status: IndexStatusScanning, Phase: IndexPhaseIndexing, Folders: 3, Objects: 2}),
+		"idle, 12 folders":                                              indexed(IndexState{Status: IndexStatusReady, Folders: 12}),
+		"scanning, 12 folders":                                          indexed(IndexState{Status: IndexStatusReady, Phase: IndexPhaseScanning, Folders: 12}),
+		"indexing, 12 folders":                                          indexed(IndexState{Status: IndexStatusReady, Phase: IndexPhaseIndexing, Folders: 12}),
+		"failed: it isn't implemented":                                  indexed(IndexState{Error: "it isn't implemented"}),
+		"idle, 12 folders: the watch failed":                            indexed(IndexState{Status: IndexStatusReady, Folders: 12, Error: "the watch failed"}),
+		"idle, 4 folders, 9 objects":                                    objects(IndexState{Status: IndexStatusReady, Folders: 4, Objects: 9}),
+		"idle, 4 folders, 0 objects":                                    objects(IndexState{Status: IndexStatusReady, Folders: 4}),
+		"indexing, 4 folders, 9 objects":                                objects(IndexState{Status: IndexStatusReady, Phase: IndexPhaseIndexing, Folders: 4, Objects: 9}),
+		"indexing, 4 folders, 9 objects, 0 indexed, 9 queued":           {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Objects: 9}, Metadata: &TaskState{Queued: 9}}},
+		"idle, 4 folders, 9 objects, 9 indexed, 1 failed":               {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Objects: 9}, Metadata: &TaskState{Indexed: 9, Failed: 1}}},
+		"indexing, 4 folders, 9 objects, 7 indexed, 2 queued, 1 failed": {VolumeMeta: VolumeMeta{Name: "media", Enabled: true}, Mounted: true, Index: &VolumeIndex{Mode: "metadata", IndexState: IndexState{Status: IndexStatusReady, Folders: 4, Objects: 9}, Metadata: &TaskState{Queued: 2, Indexed: 7, Failed: 1, Error: "it failed"}}},
 	} {
 		if got := volume.IndexStatus(); got != want {
 			t.Errorf("index: got %q, want %q", got, want)

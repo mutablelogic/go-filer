@@ -33,10 +33,10 @@ test('volumeObjects', async (t) => {
     };
     await t.test('not indexed', () => check(undefined, undefined, "It isn't indexed"));
     await t.test('folders only', () => check({ mode: 'folders', status: 'ready', folders: 3 }, undefined, 'Only its folders are indexed'));
-    await t.test('ready', () => check({ mode: 'metadata', status: 'ready', files: 805 }, 805, ''));
+    await t.test('ready', () => check({ mode: 'metadata', status: 'ready', objects: 805 }, 805, ''));
     await t.test('ready and empty, which is left out', () => check({ mode: 'objects', status: 'ready' }, 0, ''));
     await t.test('never scanned', () => check({ mode: 'objects' }, undefined, "It hasn't been indexed yet"));
     await t.test('scanning, before a file is stored', () => check({ mode: 'objects', status: 'scanning' }, undefined, "It's being indexed"));
-    await t.test('scanning, of the files stored', () => check({ mode: 'objects', status: 'scanning', files: 12 }, 12, ''));
+    await t.test('scanning, of the objects stored', () => check({ mode: 'objects', status: 'scanning', objects: 12 }, 12, ''));
     await t.test("its state can't be read", () => check({ mode: 'objects', error: 'database is locked' }, undefined, /database is locked/));
 });

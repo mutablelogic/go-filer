@@ -12,12 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"slices"
 	"time"
 
 	// Packages
@@ -409,7 +409,7 @@ func Test_Objects(t *testing.T) {
 	state, err := i.State(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, uint64(4), state.Folders, "with the root")
-	assert.Equal(t, uint64(2), state.Files)
+	assert.Equal(t, uint64(2), state.Objects)
 	file, err := s.GetObject(context.Background(), "media", "/x.txt")
 	require.NoError(t, err)
 	require.NotNil(t, file.Size)
@@ -455,7 +455,7 @@ func Test_ObjectsToFolders(t *testing.T) {
 	files(t, s, "/a/y.txt", "/x.txt")
 	require.Eventually(t, func() bool {
 		state, err := s.State(context.Background(), "media")
-		return err == nil && state.Status == schema.IndexStatusReady && state.Files == 2
+		return err == nil && state.Status == schema.IndexStatusReady && state.Objects == 2
 	}, 10*time.Second, 5*time.Millisecond, "its scan is done")
 	cancel()
 	require.NoError(t, <-done)
@@ -490,7 +490,7 @@ func Test_ObjectsToFolders(t *testing.T) {
 	// done, after its files are removed
 	assert.Eventually(t, func() bool {
 		after, err := s.State(context.Background(), "media")
-		return err == nil && after.Files == 0 && after.Mode == string(indexer.ModeFolders)
+		return err == nil && after.Objects == 0 && after.Mode == string(indexer.ModeFolders)
 	}, 10*time.Second, 5*time.Millisecond, "it has no files, of a scan of its folders")
 }
 
@@ -997,7 +997,7 @@ func Test_ScanPages(t *testing.T) {
 	cancel, done := start(first)
 	require.Eventually(t, func() bool {
 		state := state()
-		return state.Status == schema.IndexStatusScanning && state.Phase == schema.IndexPhaseIndexing && state.Files >= 100
+		return state.Status == schema.IndexStatusScanning && state.Phase == schema.IndexPhaseIndexing && state.Objects >= 100
 	}, 10*time.Second, time.Millisecond, "its files are stored while it's indexing them, once they're listed")
 	assert.Equal(t, uint64(5), state().Folders, "of the folders it's listed")
 	cancel()
@@ -1015,7 +1015,7 @@ func Test_ScanPages(t *testing.T) {
 	}()
 	require.Eventually(t, func() bool {
 		state := state()
-		return state.Status == schema.IndexStatusReady && state.Files == files && state.Phase == schema.IndexPhaseIdle
+		return state.Status == schema.IndexStatusReady && state.Objects == files && state.Phase == schema.IndexPhaseIdle
 	}, 10*time.Second, time.Millisecond, "it's scanned, and idle")
 	assert.Equal(t, int32(files-stored), second.gets.Load(), "only the files which weren't stored are got")
 	assert.Len(t, indexed(t, s), files)
@@ -1064,7 +1064,7 @@ func Test_ScanCountsStored(t *testing.T) {
 	run(t, i)
 	state, err := s.State(context.Background(), "media")
 	require.NoError(t, err)
-	assert.Equal(t, uint64(1), state.Files, "only /a/y.txt")
+	assert.Equal(t, uint64(1), state.Objects, "only /a/y.txt")
 	assert.Equal(t, []string{"/a/y.txt"}, indexed(t, s))
 }
 
@@ -1469,7 +1469,7 @@ func Test_MetadataTaskUpgrade(t *testing.T) {
 	files(t, s, "/a/y.txt", "/x.txt")
 	require.Eventually(t, func() bool {
 		state, err := s.State(context.Background(), "media")
-		return err == nil && state.Status == schema.IndexStatusReady && state.Files == 2
+		return err == nil && state.Status == schema.IndexStatusReady && state.Objects == 2
 	}, 10*time.Second, 5*time.Millisecond)
 
 	// One of which is stored again, as a watch event does when it changes,
@@ -1821,4 +1821,53 @@ func Test_WatchIndexedDeleted(t *testing.T) {
 			t.Fatal("the folder wasn't deleted again once it was indexed")
 		}
 	}
+}
+
+func Test_WatchedFileCount(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	s := newStore(t)
+	i, err := indexer.New("media", backend, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	fileCount := func() uint64 {
+		state, err := i.State(context.Background())
+		require.NoError(t, err)
+		return state.Objects
+	}
+	assert.Equal(t, uint64(2), fileCount(), "of its scan")
+
+	// The files which are added, and deleted, while it's watched, are
+	// counted, as they're indexed, without it being scanned again
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "w.txt"), []byte("w"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "d"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "d", "v.txt"), []byte("v"), 0o644))
+	require.Eventually(t, func() bool { return fileCount() == 4 }, 10*time.Second, 10*time.Millisecond, "the files which are added")
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "a")))
+	require.Eventually(t, func() bool { return fileCount() == 3 }, 10*time.Second, 10*time.Millisecond, "the files of a folder which is removed")
+	state, err := i.State(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, schema.IndexStatusReady, state.Status)
+	assert.Equal(t, schema.IndexPhaseIdle, state.Phase)
+}
+
+func Test_WatchedFileCountFolders(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	s := newStore(t)
+
+	// Of an index of folders, its files aren't counted
+	i, err := indexer.New("media", backend, s, indexer.WithDebounce(0), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "d"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "w.txt"), []byte("w"), 0o644))
+	require.Eventually(t, func() bool { return slices.Contains(folders(t, i, "/", true), "/d") }, 10*time.Second, 10*time.Millisecond)
+	state, err := i.State(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, state.Objects)
 }

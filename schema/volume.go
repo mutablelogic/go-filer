@@ -142,7 +142,7 @@ type TaskState struct {
 type IndexState struct {
 	Status  IndexStatus `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
 	Folders uint64      `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
-	Files   uint64      `json:"files,omitempty" help:"How many files the last scan indexed, of a volume whose files are indexed"`
+	Objects uint64      `json:"objects,omitempty" help:"How many objects, without folders, the index has, of the last scan, and the changes since, of a volume whose objects are indexed"`
 	Mode    string      `json:"mode,omitempty" help:"What the last scan which finished indexed: folders, or objects"`
 	Phase   IndexPhase  `json:"phase,omitempty" help:"What the scan in progress is doing: scanning, when it's listed, or indexing, when its files are stored, or empty, when it's idle"`
 	Started time.Time   `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
@@ -269,8 +269,8 @@ func (v Volume) IndexStatus() string {
 			phase = "idle"
 		}
 		result = fmt.Sprintf("%s, %d folders", phase, v.Index.Folders)
-		if (v.Index.Mode == "objects" || v.Index.Mode == "metadata") && (v.Index.Status == IndexStatusReady || v.Index.Files > 0) {
-			result += fmt.Sprintf(", %d files", v.Index.Files)
+		if (v.Index.Mode == "objects" || v.Index.Mode == "metadata") && (v.Index.Status == IndexStatusReady || v.Index.Objects > 0) {
+			result += fmt.Sprintf(", %d objects", v.Index.Objects)
 		}
 		if task := v.Index.Metadata; task != nil {
 			result += fmt.Sprintf(", %d indexed", task.Indexed)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -495,13 +496,13 @@ func testState(t *testing.T, s store.Store) {
 
 	// Its state is stored, of each volume
 	started := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Files: 34, Mode: "objects", Phase: schema.IndexPhaseIndexing, Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
+	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Objects: 34, Mode: "objects", Phase: schema.IndexPhaseIndexing, Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
 	require.NoError(t, s.SetState(ctx, "media", want))
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
 	assert.Equal(t, want.Status, state.Status)
 	assert.Equal(t, want.Folders, state.Folders)
-	assert.Equal(t, want.Files, state.Files)
+	assert.Equal(t, want.Objects, state.Objects)
 	assert.Equal(t, want.Mode, state.Mode)
 	assert.Equal(t, want.Phase, state.Phase)
 	assert.True(t, want.Started.Equal(state.Started))
@@ -927,6 +928,27 @@ func testListType(t *testing.T, s store.Store) {
 			require.NoError(t, err)
 			assert.Equal(t, uint64(len(want)), count, "%q recursive=%v is counted", kind, recursive)
 		}
+	}
+
+	// A listing of objects is without folders, of their keys, including a
+	// folder of a type of its own
+	for _, recursive := range []bool{true, false} {
+		want := []string{}
+		for _, object := range all {
+			if key := store.Key(object); (recursive || store.ParentKey(key) == "/") && !strings.HasSuffix(key, "/") {
+				want = append(want, key)
+			}
+		}
+		objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Objects: true})
+		require.NoError(t, err)
+		assert.Equal(t, want, keys(objects), "objects recursive=%v", recursive)
+		assert.NotContains(t, keys(objects), "/g/", "a folder of a type of its own isn't an object")
+		count, err := s.CountObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Objects: true})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(len(want)), count, "objects recursive=%v are counted", recursive)
+		count, err = s.CountObjects(ctx, "media", store.ListRequest{Parent: "/", Recursive: recursive, Objects: true, Type: "image"})
+		require.NoError(t, err)
+		assert.NotZero(t, count, "objects of a type, recursive=%v", recursive)
 	}
 }
 

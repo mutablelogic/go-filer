@@ -15,12 +15,12 @@ export interface Volume {
 
 // VolumeIndex is a volume's index, when it's indexed: what's indexed, such
 // as folders, or objects, or metadata, how far, and how many folders and
-// files the last scan indexed, which are left out when there are none
+// objects it has, which are left out when there are none
 export interface VolumeIndex {
     mode: string;
     status?: string;
     folders?: number;
-    files?: number;
+    objects?: number;
     error?: string;
 }
 
@@ -168,16 +168,16 @@ export function volumeScheme(volume: Volume): string {
     }
 }
 
-// volumeObjects returns how many objects a volume's index has, which are
-// its files, or undefined, when it isn't known (see volumeObjectsUnknown).
+// volumeObjects returns how many objects a volume's index has, without its
+// folders, or undefined, when it isn't known (see volumeObjectsUnknown).
 // The count is left out when it's zero, once the index is ready, and when
 // it isn't counted yet, such as before it's scanned.
 export function volumeObjects(volume: Volume): number | undefined {
     const index = volume.index;
     if (!index || index.mode === 'folders') {
         return undefined;
-    } else if (index.files !== undefined) {
-        return index.files;
+    } else if (index.objects !== undefined) {
+        return index.objects;
     }
     return index.status === 'ready' ? 0 : undefined;
 }

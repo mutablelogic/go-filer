@@ -166,6 +166,8 @@ func (self *Indexer) apply(ctx context.Context, event schema.Event) error {
 // lease has passed.
 func (self *Indexer) work(ctx context.Context) {
 	retry := self.retry
+	var recounted time.Time
+	var uncounted bool
 	for {
 		claimed, err := self.store.Claim(ctx, self.name, kinds, workBatch, workLease)
 		if ctx.Err() != nil {
@@ -180,6 +182,10 @@ func (self *Indexer) work(ctx context.Context) {
 		}
 		retry = self.retry
 		if len(claimed) == 0 {
+			if uncounted {
+				self.recount(context.WithoutCancel(ctx))
+				uncounted, recounted = false, time.Now()
+			}
 			if !self.idle(ctx, workIdle) {
 				return
 			}
@@ -204,6 +210,18 @@ func (self *Indexer) work(ctx context.Context) {
 		}
 		if err := self.store.Done(context.WithoutCancel(ctx), self.name, done...); err != nil {
 			self.failed(ctx, err)
+		}
+
+		// The files which changed, while it's watched, are counted, of the
+		// changes, and the rescans of their folders, as a scan of the whole
+		// volume counts them only when it's done, at most every
+		// recountInterval, and once there's no more work
+		if len(done) > 0 {
+			uncounted = true
+			if time.Since(recounted) >= recountInterval {
+				self.recount(context.WithoutCancel(ctx))
+				uncounted, recounted = false, time.Now()
+			}
 		}
 
 		// The changes are sent to the watchers again, once they're indexed,
@@ -297,21 +315,67 @@ func (self *Indexer) fail(err error) {
 	}
 }
 
+// recount sets how many files the index's state has, as the index has
+// now, once work is done, such as the changes which are watched, while
+// it's ready, and isn't scanned, of a volume whose files are indexed. Its
+// files are counted of their keys, as a folder can have a type of its own.
+func (self *Indexer) recount(ctx context.Context) {
+	if !self.mode.Files() {
+		return
+	}
+	idle := func(state *schema.IndexState) bool {
+		return state.Status == schema.IndexStatusReady && state.Phase == schema.IndexPhaseIdle
+	}
+	if state, err := self.store.State(ctx, self.name); err != nil || !idle(&state) {
+		return
+	}
+	files, err := self.store.CountObjects(ctx, self.name, store.ListRequest{Parent: "/", Recursive: true, Objects: true})
+	if err != nil {
+		return
+	}
+	_ = self.updateState(ctx, func(state *schema.IndexState) bool {
+		if !idle(state) || state.Objects == files {
+			return false
+		}
+		state.Objects = files
+		return true
+	})
+}
+
 // failed records why the index's scan, or watch, failed
 func (self *Indexer) failed(ctx context.Context, err error) {
 	// It's logged as a warning when it's why it failed, for the first time,
 	// rather than of each attempt, such as while its backend is unavailable,
 	// as its state says why it last failed, until a rescan clears it
-	state, e := self.store.State(ctx, self.name)
-	if e == nil && state.Error == err.Error() {
-		self.log().DebugContext(ctx, "indexing failed, again", "error", err.Error())
-		return
-	}
-	self.log().WarnContext(ctx, "indexing failed", "error", err.Error())
-	if e == nil {
+	again := false
+	_ = self.updateState(ctx, func(state *schema.IndexState) bool {
+		if again = state.Error == err.Error(); again {
+			return false
+		}
 		state.Error = err.Error()
-		_ = self.store.SetState(ctx, self.name, state)
+		return true
+	})
+	if again {
+		self.log().DebugContext(ctx, "indexing failed, again", "error", err.Error())
+	} else {
+		self.log().WarnContext(ctx, "indexing failed", "error", err.Error())
 	}
+}
+
+// updateState reads the index's state, and writes it, when the function
+// changes it, which it returns, while no other change of it is made, so a
+// change of one of its fields isn't written over of another's, which was
+// read before it
+func (self *Indexer) updateState(ctx context.Context, fn func(*schema.IndexState) bool) error {
+	self.statemu.Lock()
+	defer self.statemu.Unlock()
+	state, err := self.store.State(ctx, self.name)
+	if err != nil {
+		return err
+	} else if !fn(&state) {
+		return nil
+	}
+	return self.store.SetState(ctx, self.name, state)
 }
 
 // log returns the logger which Run was given, of the volume, or the
