@@ -41,6 +41,12 @@
 
 
 
+        /* The sidebar's pages are above the player, while something is
+           played */
+        cds-side-nav:has(gs-media-player[playing]) cds-side-nav-items {
+            margin-bottom: calc(8rem + 2px);
+        }
+
         gs-server-status {
             position: absolute;
             right: 0;
@@ -414,6 +420,7 @@
     <div class="cds--g100">
         <gs-header></gs-header>
         <gs-side-nav>
+            <gs-media-player></gs-media-player>
             <gs-server-status></gs-server-status>
         </gs-side-nav>
     </div>

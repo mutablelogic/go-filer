@@ -15,6 +15,7 @@ import { NavController } from '@mutablelogic/go-server/nav';
 import '@mutablelogic/go-server/nav/view';
 import { NotificationController } from '@mutablelogic/go-server/notification';
 import '@mutablelogic/go-server/notification/view';
+import '@mutablelogic/go-server/player/view';
 import { Router } from '@mutablelogic/go-server/router';
 
 // go-filer's modules

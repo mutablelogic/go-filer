@@ -2,12 +2,16 @@
 // tabs: Metadata, what it is, its size and when it changed, and its
 // metadata, of each namespace, Artwork, of a file whose metadata hints it
 // has artwork, and Preview, of one whose content can be read as Markdown.
-// Download downloads it, of each tab.
+// Download downloads it, of each tab, and Play plays audio, or video, in
+// the sidebar's player.
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import type { Client } from '@mutablelogic/go-server/api';
 import { PanelController, type PanelAction, type PanelTab } from '@mutablelogic/go-server/panel';
 import '@mutablelogic/go-server/panel/view';
+import { play, playable } from '@mutablelogic/go-server/player';
+import Download16 from '@carbon/icons/es/download/16.js';
+import Play16 from '@carbon/icons/es/play/16.js';
 import { objectURL } from '../filer/httpclient.ts';
 import { metaValue, MetadataNamespace, objectTitle, objectType, type FilerObject, type Meta } from '../filer/schema.ts';
 import { formatSize, formatTime } from './view.ts';
@@ -121,15 +125,24 @@ export class ObjectPanelElement extends LitElement {
         }
     }
 
-    // actions are Download, which leaves the panel open
+    // actions are Play, of audio, or video, and Download, which leave the
+    // panel open
     private actions(object: FilerObject): PanelAction[] {
-        return [{
-            label: 'Download', kind: 'primary', close: false,
-            run: () => {
-                if (this.client) {
-                    window.open(objectURL(this.client, object.name, object.path), '_blank', 'noopener');
-                }
-            },
+        const client = this.client;
+        if (!client) {
+            return [];
+        }
+        const url = objectURL(client, object.name, object.path);
+        const download: PanelAction = {
+            label: 'Download', kind: playable(object.type) ? 'secondary' : 'primary', icon: Download16, close: false,
+            run: () => { window.open(url, '_blank', 'noopener'); },
+        };
+        if (!playable(object.type)) {
+            return [download];
+        }
+        return [download, {
+            label: 'Play', kind: 'primary', icon: Play16, close: false,
+            run: () => play({ url, name: objectTitle(object), type: object.type }, this),
         }];
     }
 
