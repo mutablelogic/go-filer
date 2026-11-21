@@ -110,29 +110,41 @@
         }
 
         .gf-indexing {
-            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
         }
 
-        .gf-indexing td {
-            vertical-align: middle;
+        .gf-indexing-volume h3 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 300;
+            line-height: 1.75rem;
         }
 
-        .gf-indexing-meter {
-            width: 70%;
-            min-width: 16rem;
+        .gf-indexing-volume h3 a {
+            color: var(--cds-text-primary);
+            text-decoration: none;
         }
 
-        .gf-indexing td.gf-indexing-number,
-        .gf-indexing th.gf-indexing-number .cds--table-header-label {
-            text-align: right;
+        .gf-indexing-volume h3 a:hover {
+            text-decoration: underline;
         }
 
-        .gf-indexing td.gf-indexing-meter {
-            padding-block: 1rem;
+        .gf-indexing-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin: 0.25rem 0 0.5rem;
         }
 
-        .gf-indexing-label {
-            font-weight: 600;
+        .gf-indexing-tags cds-tag {
+            margin: 0;
+        }
+
+        .gf-indexing-unknown {
+            color: var(--cds-text-secondary);
+            font-size: 0.875rem;
         }
 
         /* A volume's page fills the window, beneath its header, with the

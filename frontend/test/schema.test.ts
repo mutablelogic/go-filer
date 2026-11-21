@@ -64,13 +64,15 @@ test('volumeNoun', () => {
 });
 
 test('volumeIndexing', () => {
-    // Of the task which indexes their metadata, or all of them without one
+    // Of the task which indexes their metadata, whose count of those it's
+    // done has those which failed, or all of them without one
     const of = (index: Volume['index']) => volumeIndexing(volume('file://v/tmp', index));
-    assert.deepEqual(of({ mode: 'metadata', status: 'ready', objects: 10, metadata: { indexed: 7, queued: 3 } }), { indexed: 7, unindexed: 3 });
-    assert.deepEqual(of({ mode: 'metadata', status: 'ready', objects: 10, metadata: {} }), { indexed: 0, unindexed: 10 });
-    assert.deepEqual(of({ mode: 'metadata', status: 'ready', objects: 10, metadata: { indexed: 12 } }), { indexed: 10, unindexed: 0 }, 'at most its objects');
-    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 10 }), { indexed: 10, unindexed: 0 });
-    assert.deepEqual(of({ mode: 'objects', status: 'ready' }), { indexed: 0, unindexed: 0 });
+    assert.deepEqual(of({ mode: 'metadata', status: 'ready', objects: 10, metadata: { indexed: 7, queued: 3 } }), { unindexed: 3, indexed: 7, failed: 0 });
+    assert.deepEqual(of({ mode: 'metadata', status: 'ready', objects: 10, metadata: { indexed: 7, failed: 2, queued: 3 } }), { unindexed: 3, indexed: 5, failed: 2 });
+    assert.deepEqual(of({ mode: 'metadata', status: 'ready', objects: 10, metadata: {} }), { unindexed: 10, indexed: 0, failed: 0 });
+    assert.deepEqual(of({ mode: 'metadata', status: 'ready', objects: 10, metadata: { indexed: 12, failed: 20 } }), { unindexed: 0, indexed: 0, failed: 10 }, 'at most its objects');
+    assert.deepEqual(of({ mode: 'objects', status: 'ready', objects: 10 }), { unindexed: 0, indexed: 10, failed: 0 });
+    assert.deepEqual(of({ mode: 'objects', status: 'ready' }), { unindexed: 0, indexed: 0, failed: 0 });
     assert.equal(of({ mode: 'folders', status: 'ready', folders: 3 }), undefined);
     assert.equal(of({ mode: 'objects' }), undefined);
     assert.equal(of(undefined), undefined);

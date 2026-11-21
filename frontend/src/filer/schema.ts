@@ -36,10 +36,12 @@ export interface TaskState {
     error?: string;
 }
 
-// VolumeIndexing is how many of a volume's objects are indexed, and aren't
+// VolumeIndexing is how many of a volume's objects aren't indexed, are,
+// and which it failed to index too often, which are given up on
 export interface VolumeIndexing {
-    indexed: number;
     unindexed: number;
+    indexed: number;
+    failed: number;
 }
 
 // Backend is a type of backend, of the scheme of its volumes' URLs
@@ -218,9 +220,10 @@ export function volumeObjectsUnknown(volume: Volume): string {
     return "It hasn't been indexed yet";
 }
 
-// volumeIndexing returns how many of a volume's objects are indexed, of
-// the task which indexes their metadata, when it has one, and aren't, or
-// all of them, when it hasn't one, or undefined, when how many objects it
+// volumeIndexing returns how many of a volume's objects aren't indexed,
+// are, and failed, of the task which indexes their metadata, whose count
+// of those it's done has those which failed, when it has one, or all of
+// them indexed, when it hasn't one, or undefined, when how many objects it
 // has isn't known
 export function volumeIndexing(volume: Volume): VolumeIndexing | undefined {
     const objects = volumeObjects(volume);
@@ -228,8 +231,12 @@ export function volumeIndexing(volume: Volume): VolumeIndexing | undefined {
         return undefined;
     }
     const task = volume.index?.metadata;
-    const indexed = task ? Math.min(task.indexed ?? 0, objects) : objects;
-    return { indexed, unindexed: objects - indexed };
+    if (!task) {
+        return { unindexed: 0, indexed: objects, failed: 0 };
+    }
+    const done = Math.min(task.indexed ?? 0, objects);
+    const failed = Math.min(task.failed ?? 0, done);
+    return { unindexed: objects - done, indexed: done - failed, failed };
 }
 
 // volumeStatus returns how a volume's index is: Offline, or Not mounted,

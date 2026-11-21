@@ -18,9 +18,9 @@ export interface MeterGroup {
 
 export const MeterTag = 'gf-meter';
 
-// MeterHeight is a meter's height, of its title, its total, its bar, and its
-// legend, as its chart has none of its own, of a parent of no height
-const MeterHeight = '128px';
+// MeterHeight is a meter's height, of its total, its bar, and its legend,
+// as its chart has none of its own, of a parent of no height
+const MeterHeight = '88px';
 
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
@@ -31,12 +31,17 @@ const MeterHeight = '128px';
 export class MeterElement extends LitElement {
     static override properties = {
         groups: { attribute: false },
+        colors: { attribute: false },
         total: { type: Number },
         unit: { type: String },
         label: { type: String },
     };
 
+    // groups are in the order of the bar, and its legend, and colors are
+    // their colours, of their groups, such as Carbon's, and label is what
+    // the chart is, which a screen reader says, as it has no title
     declare groups: readonly MeterGroup[];
+    declare colors: Readonly<Record<string, string>>;
     declare total: number;
     declare unit: string;
     declare label: string;
@@ -45,6 +50,7 @@ export class MeterElement extends LitElement {
     constructor() {
         super();
         this.groups = [];
+        this.colors = {};
         this.total = 0;
         this.unit = '';
         this.label = '';
@@ -74,21 +80,22 @@ export class MeterElement extends LitElement {
         if (changed.has('groups')) {
             this.chart.model.setData(data);
         }
-        if (changed.has('total') || changed.has('unit') || changed.has('label')) {
+        if (changed.has('total') || changed.has('unit') || changed.has('label') || changed.has('colors') || changed.has('groups')) {
             this.chart.model.setOptions(options);
         }
     }
 
     // options are the chart's: proportional, of the total, in units, of its
-    // height, without a toolbar, or animations, as it's changed while it's
-    // indexed
+    // height, of the groups' colours, and their order, without a title, a
+    // toolbar, or animations, as it's changed while it's indexed
     private options(): MeterChartOptions {
         return {
-            title: this.label,
             height: MeterHeight,
             animations: false,
             toolbar: { enabled: false },
             accessibility: { svgAriaLabel: this.label },
+            color: { scale: { ...this.colors } },
+            legend: { order: this.groups.map((g) => g.group), clickable: false },
             meter: { proportional: { total: this.total, unit: this.unit } },
         } as MeterChartOptions;
     }

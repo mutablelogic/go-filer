@@ -118,39 +118,36 @@ export class VolumesElement extends LitElement {
         `;
     }
 
-    // indexingView is each volume's objects which are indexed, and aren't, as
-    // a meter, titled of the volume, of how many it has, with how many
-    // folders it has, and how its index is
+    // indexingView is a section of each volume: its label, as a heading, and
+    // its status, when it isn't idle, and how many folders and objects it
+    // has, as tags, beneath it, and a meter of its objects which are
+    // indexed, which aren't, and which failed, of how many it has
     private indexingView(volumes: readonly Volume[]): TemplateResult {
-        return html`
-            <table class="cds--data-table cds--data-table--lg gf-indexing">
-                <thead>
-                    <tr>
-                        <th class="gf-indexing-meter"><div class="cds--table-header-label">Indexing</div></th>
-                        <th class="gf-indexing-number"><div class="cds--table-header-label">Folders</div></th>
-                        <th><div class="cds--table-header-label">Status</div></th>
-                    </tr>
-                </thead>
-                <tbody>${repeat(volumes, (volume) => volume.name, (volume) => {
-                    const indexing = volumeIndexing(volume);
-                    const total = indexing ? indexing.indexed + indexing.unindexed : 0;
-                    const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
-                    return html`
-                        <tr>
-                            <td class="gf-indexing-meter">${indexing ? html`
-                                <gf-meter .groups=${[{ group: 'Indexed', value: indexing.indexed }, { group: 'Unindexed', value: indexing.unindexed }]}
-                                    total=${total} unit=${volumeNoun(volume, total)} label=${volumeLabel(volume)}></gf-meter>
-                            ` : html`
-                                <p class="gf-indexing-label">${volumeLabel(volume)}</p>
-                                <p title=${volumeObjectsUnknown(volume)}>–</p>
-                            `}</td>
-                            <td class="gf-indexing-number">${volume.index?.folders !== undefined ? volume.index.folders.toLocaleString() : '–'}</td>
-                            <td title=${error ?? ''} class=${error ? 'gf-volume-tile-error' : ''}>${volumeStatus(volume)}</td>
-                        </tr>
-                    `;
-                })}</tbody>
-            </table>
-        `;
+        return html`<div class="gf-indexing">${repeat(volumes, (volume) => volume.name, (volume) => {
+            const indexing = volumeIndexing(volume);
+            const objects = volumeObjects(volume);
+            const folders = volume.index?.folders;
+            const status = volumeStatus(volume);
+            const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
+            return html`
+                <section class="gf-indexing-volume">
+                    <h3><a href=${volumeHref(volume.name)} title=${volumeTitle(volume, this.controller?.backends)}>${volumeLabel(volume)}</a></h3>
+                    <div class="gf-indexing-tags">
+                        ${status !== 'Ready' ? html`<cds-tag size="sm" type=${statusTagType(status)} title=${error ?? ''}>${status}</cds-tag>` : nothing}
+                        ${folders !== undefined ? html`<cds-tag size="sm" type="cool-gray">${folders.toLocaleString()} ${folders === 1 ? 'folder' : 'folders'}</cds-tag>` : nothing}
+                        ${objects !== undefined ? html`<cds-tag size="sm" type="cool-gray">${objects.toLocaleString()} ${volumeNoun(volume, objects)}</cds-tag>` : nothing}
+                    </div>
+                    ${indexing ? html`
+                        <gf-meter .groups=${[
+                            { group: 'Indexed', value: indexing.indexed },
+                            { group: 'Unindexed', value: indexing.unindexed },
+                            { group: 'Failed', value: indexing.failed },
+                        ]} .colors=${IndexingColors} total=${objects ?? 0} unit=${volumeNoun(volume, objects ?? 0)}
+                            label=${`${volumeLabel(volume)}: indexing`}></gf-meter>
+                    ` : status === 'Ready' ? html`<p class="gf-indexing-unknown">${volumeObjectsUnknown(volume)}</p>` : nothing}
+                </section>
+            `;
+        })}</div>`;
     }
 
     // tileView is a volume's tile, which goes to its page: its label, and
@@ -447,6 +444,26 @@ function volumeHref(name: string): string {
 // folderHref returns the link of a folder of a volume
 function folderHref(name: string, path: string): string {
     return '#' + [VolumeRoute, name, ...path.split('/').filter((e) => e)].map(encodeURIComponent).join('/');
+}
+
+// IndexingColors are the colours of a meter's objects which are indexed,
+// which aren't, and which failed, of Carbon's blue 60, gray 30 and red 60
+const IndexingColors = { Indexed: '#0f62fe', Unindexed: '#c6c6c6', Failed: '#da1e28' };
+
+// statusTagType returns the colour of the tag of a volume's status, which
+// isn't idle: blue, while it's scanned, or indexed, red, when it failed, or
+// is offline, and gray, otherwise
+function statusTagType(status: string): string {
+    switch (status) {
+        case 'Scanning':
+        case 'Indexing':
+            return 'blue';
+        case 'Failed':
+        case 'Offline':
+            return 'red';
+        default:
+            return 'gray';
+    }
 }
 
 // TagTypes are the colours of the backends' tags, in the order of the
