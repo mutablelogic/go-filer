@@ -147,7 +147,7 @@ func (req ObjectCountRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, e
 }
 
 // listWhere returns the condition of the objects of a listing, of a folder,
-// or beneath it, and of a type, which binds its values
+// or beneath it, of a type, and of files only, which binds its values
 func listWhere(bind *sqlite.Bind, req store.ListRequest) string {
 	var where string
 	if req.Recursive {
@@ -155,6 +155,11 @@ func listWhere(bind *sqlite.Bind, req store.ListRequest) string {
 		where = "key > " + bind.Set("lower", lower) + " AND key < " + bind.Set("upper", upper)
 	} else {
 		where = "parent = " + bind.Set("parent", req.Parent)
+	}
+
+	// A folder's key ends with a "/", whatever its type
+	if req.Files {
+		where += " AND key NOT GLOB '*/'"
 	}
 
 	// A media type is the object's, and a major type is the start of it,

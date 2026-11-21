@@ -47,6 +47,11 @@ type Indexer struct {
 	// isn't reconciled with two listings at once
 	mu sync.Mutex
 
+	// statemu serialises changes to the index's state, of its worker, its watch,
+	// and its tasks, each of which reads it, and writes it, so a change of
+	// one isn't written over of another's (see updateState)
+	statemu sync.Mutex
+
 	// The calls to WatchObjects, which are sent the backend's changes, once
 	// they're indexed, so the backend is watched once
 	smu      sync.Mutex
@@ -93,6 +98,10 @@ const (
 	workBatch = 100
 	workLease = time.Minute
 	workIdle  = time.Second
+
+	// recountInterval is the most often the files of the index are counted,
+	// while its work is done, which they are once it's done, too
+	recountInterval = 5 * time.Second
 )
 
 // kinds are the kinds of work which the indexer does
@@ -481,13 +490,12 @@ type tree struct {
 // it's of what failed, or after it, so the error is of this scan, or later.
 func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 	whole := root == "/"
-	state, err := self.store.State(ctx, self.name)
-	if err != nil {
-		return err
-	}
-	if !whole && state.Error != "" {
-		state.Error = ""
-		if err := self.store.SetState(ctx, self.name, state); err != nil {
+	if !whole {
+		if err := self.updateState(ctx, func(state *schema.IndexState) bool {
+			changed := state.Error != ""
+			state.Error = ""
+			return changed
+		}); err != nil {
 			return err
 		}
 	}
@@ -496,30 +504,39 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 		// A volume which is ready is listed from its index while it's
 		// scanned again, and keeps the counts of its last scan until it's
 		// scanned, so they aren't of a scan in progress, and otherwise its
-		// progress is the folders it's scanned, and the files it's stored
-		if state.Status != schema.IndexStatusReady {
-			state.Status, state.Folders, state.Files, state.Mode = schema.IndexStatusScanning, 0, 0, ""
+		// progress is the folders it's scanned, and the files it's stored.
+		// It's scanning, and then indexing, of its files, and idle, once
+		// it's done, or it fails, so it isn't of a scan which isn't.
+		ready := false
+		if err := self.updateState(ctx, func(state *schema.IndexState) bool {
+			if ready = state.Status == schema.IndexStatusReady; !ready {
+				state.Status, state.Folders, state.Files, state.Mode = schema.IndexStatusScanning, 0, 0, ""
+			}
+			state.Started, state.Error, state.Phase = time.Now(), "", schema.IndexPhaseScanning
+			return true
+		}); err != nil {
+			return err
+		}
+		if !ready {
 			progress = func(folders int) {
-				state.Folders = uint64(folders)
-				_ = self.store.SetState(ctx, self.name, state)
+				_ = self.updateState(ctx, func(state *schema.IndexState) bool {
+					state.Folders = uint64(folders)
+					return true
+				})
 			}
 			stored = func(files int) {
-				state.Files = uint64(files)
-				_ = self.store.SetState(ctx, self.name, state)
+				_ = self.updateState(ctx, func(state *schema.IndexState) bool {
+					state.Files = uint64(files)
+					return true
+				})
 			}
-		}
-		// It's scanning, and then indexing, of its files, and idle, once
-		// it's done, or it fails, so it isn't of a scan which isn't
-		state.Started, state.Error, state.Phase = time.Now(), "", schema.IndexPhaseScanning
-		if err := self.store.SetState(ctx, self.name, state); err != nil {
-			return err
 		}
 		defer func() {
 			if err != nil {
-				if state, e := self.store.State(context.WithoutCancel(ctx), self.name); e == nil {
+				_ = self.updateState(context.WithoutCancel(ctx), func(state *schema.IndexState) bool {
 					state.Phase = schema.IndexPhaseIdle
-					_ = self.store.SetState(context.WithoutCancel(ctx), self.name, state)
-				}
+					return true
+				})
 			}
 		}()
 	}
@@ -570,8 +587,10 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 		return err
 	}
 	if whole {
-		state.Phase = schema.IndexPhaseIndexing
-		if err := self.store.SetState(ctx, self.name, state); err != nil {
+		if err := self.updateState(ctx, func(state *schema.IndexState) bool {
+			state.Phase = schema.IndexPhaseIndexing
+			return true
+		}); err != nil {
 			return err
 		}
 	}
@@ -612,8 +631,10 @@ func (self *Indexer) scan(ctx context.Context, root string) (err error) {
 		}
 	}
 	if whole {
-		state.Status, state.Folders, state.Files, state.Mode, state.Phase, state.Scanned = schema.IndexStatusReady, uint64(len(l.folders)+1), uint64(done), string(self.mode), schema.IndexPhaseIdle, time.Now()
-		return self.store.SetState(ctx, self.name, state)
+		return self.updateState(ctx, func(state *schema.IndexState) bool {
+			state.Status, state.Folders, state.Files, state.Mode, state.Phase, state.Scanned = schema.IndexStatusReady, uint64(len(l.folders)+1), uint64(done), string(self.mode), schema.IndexPhaseIdle, time.Now()
+			return true
+		})
 	}
 	return nil
 }
