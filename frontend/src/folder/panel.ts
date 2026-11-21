@@ -1,14 +1,22 @@
-// The panel of a file, which is chosen of a folder's objects: what it is,
-// its size and when it changed, and its metadata, of each namespace, and
-// Download, which downloads it
+// The panel of a file, which is chosen of a folder's objects, of three
+// tabs: Metadata, what it is, its size and when it changed, and its
+// metadata, of each namespace, Artwork, of a file whose metadata hints it
+// has artwork, and Preview, of one whose content can be read as Markdown.
+// Download downloads it, of each tab.
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import type { Client } from '@mutablelogic/go-server/api';
-import { PanelController, type PanelAction } from '@mutablelogic/go-server/panel';
+import { PanelController, type PanelAction, type PanelTab } from '@mutablelogic/go-server/panel';
 import '@mutablelogic/go-server/panel/view';
 import { objectURL } from '../filer/httpclient.ts';
-import { objectTitle, objectType, type FilerObject, type Meta } from '../filer/schema.ts';
+import { metaValue, MetadataNamespace, objectTitle, objectType, type FilerObject, type Meta } from '../filer/schema.ts';
 import { formatSize, formatTime } from './view.ts';
+
+///////////////////////////////////////////////////////////////////////////////
+// TYPES
+
+// ObjectTab is a tab of a file's panel
+export type ObjectTab = 'metadata' | 'artwork' | 'preview';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -26,6 +34,12 @@ const FirstNamespaces = ['dc', 'metadata'];
 const reTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 const reLink = /^https?:\/\//;
 
+// The key of a file's hints, of what's read of it next, and the hints of
+// its artwork, and its content, as Markdown, of go-metadata
+const HintKey = 'hint';
+const HintArtwork = 'artwork';
+const HintMarkdown = 'markdown';
+
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
 
@@ -34,6 +48,7 @@ export class ObjectPanelElement extends LitElement {
     static override properties = {
         client: { attribute: false },
         object: { state: true },
+        tab: { state: true },
     };
 
     // client is the server's, of which a file is downloaded, and object is
@@ -41,10 +56,14 @@ export class ObjectPanelElement extends LitElement {
     declare client?: Client;
     declare private object?: FilerObject;
 
+    // tab is the tab which is chosen
+    declare private tab?: ObjectTab;
+
     private readonly panel = new PanelController<string>({ closable: true });
 
     constructor() {
         super();
+        this.panel.subscribe((state) => { this.tab = state.tab as ObjectTab | undefined; });
         this.panel.onClose(() => {
             this.object = undefined;
             this.dispatchEvent(new CustomEvent(ObjectPanelClosed, { bubbles: true, composed: true }));
@@ -55,11 +74,14 @@ export class ObjectPanelElement extends LitElement {
         return this;
     }
 
-    // open opens the panel of the file
+    // open opens the panel of the file, of the tab which is chosen, when the
+    // file has it, or else of its metadata
     open(object: FilerObject) {
         this.object = object;
+        const tabs = this.tabs(object);
+        const tab = tabs.find((t) => t.value === this.tab && !t.disabled)?.value ?? 'metadata';
         this.panel.setHeader({ title: objectTitle(object), subtitle: `${object.name}${object.path}` });
-        this.panel.setActions(this.actions(object));
+        this.panel.setTabs(tabs, tab);
         this.panel.open(`${object.name}${object.path}`);
     }
 
@@ -72,7 +94,31 @@ export class ObjectPanelElement extends LitElement {
 
     override render() {
         const object = this.object;
-        return html`<gs-panel .controller=${this.panel}>${object ? this.detailsView(object) : nothing}</gs-panel>`;
+        return html`<gs-panel .controller=${this.panel}>${object ? this.tabView(object) : nothing}</gs-panel>`;
+    }
+
+    // tabs are Metadata, Artwork, of a file whose metadata hints it has
+    // artwork, and Preview, of one whose content can be read as Markdown,
+    // each of Download
+    private tabs(object: FilerObject): PanelTab[] {
+        const actions = this.actions(object);
+        return [
+            { value: 'metadata', label: 'Metadata', actions },
+            { value: 'artwork', label: 'Artwork', disabled: !hinted(object, HintArtwork), actions },
+            { value: 'preview', label: 'Preview', disabled: !hinted(object, HintMarkdown), actions },
+        ];
+    }
+
+    // tabView is the tab which is chosen: the file's metadata, or its
+    // artwork, or its preview, which are empty, for now
+    private tabView(object: FilerObject): TemplateResult | typeof nothing {
+        switch (this.tab) {
+            case 'artwork':
+            case 'preview':
+                return nothing;
+            default:
+                return this.detailsView(object);
+        }
     }
 
     // actions are Download, which leaves the panel open
@@ -114,6 +160,13 @@ export class ObjectPanelElement extends LitElement {
 
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
+
+// hinted returns whether a file's metadata hints the hint, such as that it
+// has artwork
+function hinted(object: FilerObject, hint: string): boolean {
+    const hints = metaValue(object, MetadataNamespace, HintKey);
+    return Array.isArray(hints) && hints.includes(hint);
+}
 
 // metaNamespaces returns the metadata of each namespace, those of
 // FirstNamespaces first, and the others of their names
