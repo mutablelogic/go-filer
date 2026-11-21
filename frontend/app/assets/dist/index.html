@@ -85,6 +85,30 @@
             margin-bottom: 0.5rem;
         }
 
+        /* A volume's details, in its panel's View tab */
+        .gf-volume-details {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            gap: 0.75rem 1.5rem;
+            margin: 0;
+            font-size: 0.875rem;
+        }
+
+        .gf-volume-details dt {
+            color: var(--cds-text-secondary);
+        }
+
+        .gf-volume-details dd {
+            margin: 0;
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .gf-volume-form[hidden],
+        gf-volume-form[hidden] {
+            display: none;
+        }
+
         .gf-volume-form-heading {
             margin: 0.5rem 0 -0.5rem;
             font-size: 0.875rem;

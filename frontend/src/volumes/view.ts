@@ -30,10 +30,7 @@ import '@carbon/web-components/es/components/tag/tag.js';
 import '@carbon/web-components/es/components/tabs/index.js';
 import '../chart/meter.ts';
 import '@carbon/web-components/es/components/icon-button/index.js';
-import '@mutablelogic/go-server/panel/view';
-import { PanelController } from '@mutablelogic/go-server/panel';
-import { updateVolume } from '../filer/httpclient.ts';
-import './edit.ts';
+import './panel.ts';
 import { alertView } from '../alert/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -60,26 +57,19 @@ export class VolumesElement extends LitElement {
         notifications: { attribute: false },
         volumes: { state: true },
         tab: { state: true },
-        editing: { state: true },
     };
 
     // controller keeps the volumes, notifications are told why a volume
-    // can't be saved, and tab is the tab of their stats which is shown,
+    // can't be changed, of its panel, and tab is the tab of their stats which is shown,
     // beneath their tiles
     declare controller?: VolumesController;
     declare notifications?: NotificationController;
     declare private volumes?: readonly Volume[];
     declare private tab: StatsTab;
 
-    // panel is of the volume which is edited, of its name
-    private readonly panel = new PanelController<string>({ closable: true });
-    declare private editing?: string;
-
     constructor() {
         super();
         this.tab = 'objects';
-        this.panel.subscribe((state) => { this.editing = state.open ? state.item : undefined; });
-        this.panel.onError((error) => this.notifications?.error("The volume couldn't be saved", error));
     }
     private unsubscribe?: () => void;
 
@@ -118,40 +108,13 @@ export class VolumesElement extends LitElement {
                 .icon=${VolumesIcon}></gs-page-header>
             ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
             ${volumes?.length ? this.statsView(volumes) : nothing}
-            <gs-panel .controller=${this.panel}>
-                <gf-volume-form .volume=${this.editing ? volumes?.find((v) => v.name === this.editing) : undefined}></gf-volume-form>
-            </gs-panel>
+            <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
         `;
     }
 
-    // edit opens the panel of a volume's options, whose Save button saves
-    // those which are changed, and closes it, unless they can't be
+    // edit opens the panel of a volume, of its Edit tab
     private edit(volume: Volume) {
-        const backend = volumeBackend(volume, this.controller?.backends);
-        this.panel.setHeader({ title: volumeLabel(volume), subtitle: backend ? `${volume.name} · ${backend}` : volume.name });
-        this.panel.setActions([
-            { label: 'Cancel', kind: 'secondary' },
-            { label: 'Save', kind: 'primary', run: () => this.save(volume.name) },
-        ]);
-        this.panel.open(volume.name);
-    }
-
-    // save saves the options of the volume which are changed, of its form,
-    // and loads the volumes again, rather than only once they change, as an
-    // app needn't follow their changes. The panel can't be closed meanwhile,
-    // so a save which ends doesn't close the panel of another volume.
-    private async save(name: string) {
-        const patch = this.querySelector('gf-volume-form')?.patch() ?? {};
-        if (Object.keys(patch).length === 0 || !this.controller) {
-            return;
-        }
-        this.panel.setClosable(false);
-        try {
-            await updateVolume(this.controller.client, name, patch);
-            await this.controller.reload();
-        } finally {
-            this.panel.setClosable(true);
-        }
+        this.querySelector('gf-volume-panel')?.open(volume, 'edit');
     }
 
     // statsView is the tabs of the volumes' stats, of which the one which is
