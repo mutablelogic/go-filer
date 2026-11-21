@@ -168,7 +168,8 @@ export class VolumePanelElement extends LitElement {
         }
     }
 
-    // viewView is the volume's details
+    // viewView is the volume's details, and what unmounting it does, of its
+    // actions
     private viewView(volume: Volume): TemplateResult {
         const options = volumeOptions(volume);
         const objects = volumeObjects(volume);
@@ -190,6 +191,7 @@ export class VolumePanelElement extends LitElement {
                 ${rows.map(([key, value]) => html`<dt>${key}</dt><dd>${value}</dd>`)}
                 ${error ? html`<dt>Error</dt><dd class="gf-volume-tile-error">${error}</dd>` : nothing}
             </dl>
+            <p class="gf-volume-view-note">A volume can be unmounted to exclude it from search and browsing.</p>
         `;
     }
 
