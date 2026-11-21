@@ -335,10 +335,24 @@
             z-index: 1;
         }
 
+        /* A file's name is a button, which chooses it, of its row's click,
+           and of the keyboard, which reads as its name */
         .gf-file-view-name {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
+            padding: 0;
+            border: 0;
+            background: none;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .gf-file-view-name:focus-visible {
+            outline: 2px solid var(--cds-focus, #0f62fe);
+            outline-offset: 2px;
         }
 
         .gf-file-view-type {

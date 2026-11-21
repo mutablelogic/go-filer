@@ -25,7 +25,7 @@ import TaskIcon from '@carbon/icons/es/task/16.js';
 import DataBaseIcon from '@carbon/icons/es/data--base/16.js';
 import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
-import { FolderController } from '../folder/controller.ts';
+import { FolderController, type FolderState } from '../folder/controller.ts';
 import { baseName, objectTitle, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
@@ -317,6 +317,25 @@ export class VolumeElement extends LitElement {
         const folder = this.folder;
         if (folder && this.changes) {
             this.unsubscribe.push(this.changes.subscribe({ schema: ObjectChangeSchema }, (change) => folder.change(change)));
+        }
+        if (folder) {
+            this.unsubscribe.push(folder.subscribe((state) => this.follow(state)));
+        }
+    }
+
+    // follow shows the file whose panel is open as its folder is loaded
+    // again, such as once it's changed, or closes the panel, once it isn't
+    // in its folder, when all of the folder is loaded, or the folder closes
+    private follow(state: FolderState) {
+        const panel = this.querySelector('gf-object-panel');
+        if (!this.selected || !panel || state.loading || state.failed) {
+            return;
+        }
+        const object = state.objects?.find((o) => o.path === this.selected);
+        if (object) {
+            panel.refresh(object);
+        } else if (!state.volume || !state.more) {
+            panel.close();
         }
     }
 

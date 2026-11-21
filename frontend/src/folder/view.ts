@@ -2,7 +2,8 @@
 // as the tree has those, as a table of their names, types, sizes and when
 // they were changed, which loads more as it's scrolled, in the element it's in,
 // which scrolls. A row which is clicked is chosen, which is an event of
-// its object, and is shown chosen, of its path, as selected.
+// its object, and is shown chosen, of its path, as selected. Its name is a
+// button, so it's chosen of the keyboard, too.
 
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
@@ -127,7 +128,7 @@ export class FileViewElement extends LitElement {
                     ${repeat(state.objects, (object) => object.path, (object) => html`
                         <tr class=${object.path === this.selected ? 'cds--data-table--selected' : ''} @click=${() => this.choose(object)}>
                             <td>
-                                <span class="gf-file-view-name" title=${object.path}>${fileIcon}<span>${objectTitle(object)}</span></span>
+                                <button type="button" class="gf-file-view-name" title=${object.path}>${fileIcon}<span>${objectTitle(object)}</span></button>
                             </td>
                             <td class="gf-file-view-type" title=${object.type ?? ''}>${objectType(object)}</td>
                             <td class="gf-file-view-size">${formatSize(object.size)}</td>

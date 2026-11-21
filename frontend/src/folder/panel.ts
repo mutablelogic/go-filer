@@ -89,6 +89,20 @@ export class ObjectPanelElement extends LitElement {
         this.panel.open(`${object.name}${object.path}`);
     }
 
+    // refresh shows the file again, as it is now, such as once its folder
+    // is loaded again, of the tab which is chosen, when it still has it,
+    // without opening the panel, when it's closed
+    refresh(object: FilerObject) {
+        if (!this.object) {
+            return;
+        }
+        this.object = object;
+        const tabs = this.tabs(object);
+        const tab = tabs.find((t) => t.value === this.tab && !t.disabled)?.value ?? 'metadata';
+        this.panel.setHeader({ title: objectTitle(object), subtitle: `${object.name}${object.path}` });
+        this.panel.setTabs(tabs, tab);
+    }
+
     // close closes the panel, when it's open
     close() {
         if (this.object) {
@@ -135,7 +149,7 @@ export class ObjectPanelElement extends LitElement {
         const url = objectURL(client, object.name, object.path);
         const download: PanelAction = {
             label: 'Download', kind: playable(object.type) ? 'secondary' : 'primary', icon: Download16, close: false,
-            run: () => { window.open(url, '_blank', 'noopener'); },
+            run: () => { window.open(objectURL(client, object.name, object.path, true), '_blank', 'noopener'); },
         };
         if (!playable(object.type)) {
             return [download];
