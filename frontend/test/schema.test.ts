@@ -52,6 +52,10 @@ test('volumeNoun', () => {
         ['gdrive://drive', 'file', 'files'],
         ['gcontacts://contacts', 'contact', 'contacts'],
         ['other://x', 'object', 'objects'],
+        // Of a scheme which is a property of every object, too
+        ['constructor://x', 'object', 'objects'],
+        ['tostring://x', 'object', 'objects'],
+        ['__proto__://x', 'object', 'objects'],
     ]) {
         assert.equal(volumeNoun(volume(url), 1), one, url);
         assert.equal(volumeNoun(volume(url), 0), many, url);

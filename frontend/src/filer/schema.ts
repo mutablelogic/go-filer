@@ -203,20 +203,20 @@ export function volumeObjectsUnknown(volume: Volume): string {
 // ObjectNouns are what a backend's objects are called, of its scheme, in
 // the singular and the plural, such as the events of a calendar, rather
 // than objects
-const ObjectNouns: Record<string, [string, string]> = {
-    file: ['file', 'files'],
-    gcalendar: ['event', 'events'],
-    gcontacts: ['contact', 'contacts'],
-    gdrive: ['file', 'files'],
-    gtasks: ['task', 'tasks'],
-    rss: ['item', 'items'],
-};
+const ObjectNouns = new Map<string, [string, string]>([
+    ['file', ['file', 'files']],
+    ['gcalendar', ['event', 'events']],
+    ['gcontacts', ['contact', 'contacts']],
+    ['gdrive', ['file', 'files']],
+    ['gtasks', ['task', 'tasks']],
+    ['rss', ['item', 'items']],
+]);
 
 // volumeNoun returns what a volume's objects are called, of its backend, of
 // a count of them, such as "event", or "events", or else "object", or
 // "objects"
 export function volumeNoun(volume: Volume, count: number): string {
-    const [one, many] = ObjectNouns[volumeScheme(volume)] ?? ['object', 'objects'];
+    const [one, many] = ObjectNouns.get(volumeScheme(volume)) ?? ['object', 'objects'];
     return count === 1 ? one : many;
 }
 
