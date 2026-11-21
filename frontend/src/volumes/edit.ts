@@ -5,7 +5,7 @@
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import type { Volume } from '../filer/schema.ts';
-import { IndexModes, isMany, volumeOptions, volumePatch, type VolumeOptions, type VolumePatch } from './options.ts';
+import { IndexModes, indexDescription, isMany, volumeOptions, volumePatch, type VolumeOptions, type VolumePatch } from './options.ts';
 import '@carbon/web-components/es/components/text-input/index.js';
 import '@carbon/web-components/es/components/textarea/index.js';
 import '@carbon/web-components/es/components/content-switcher/index.js';
@@ -87,6 +87,7 @@ export class VolumeFormElement extends LitElement {
                         @cds-content-switcher-selected=${(event: CustomEvent<{ item: HTMLElement & { value: string } }>) => this.set({ index: event.detail.item.value })}>
                         ${IndexModes.map((mode) => html`<cds-content-switcher-item value=${mode.value} ?disabled=${mode.disabled}>${mode.label}</cds-content-switcher-item>`)}
                     </cds-content-switcher>
+                    <p class="gf-volume-form-helper">${indexDescription(edited.index)}</p>
                 </div>
             </div>
             <div class="gf-volume-form" ?hidden=${this.section !== 'options'}>
