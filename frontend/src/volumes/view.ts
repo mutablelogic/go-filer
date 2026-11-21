@@ -149,13 +149,11 @@ export class VolumesElement extends LitElement {
         return html`<div class="gf-indexing">${repeat(volumes, (volume) => `${tab}:${volume.name}`, (volume) => {
             const objects = volumeObjects(volume);
             const folders = volume.index?.folders;
-            const status = volumeStatus(volume);
-            const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
             return html`
                 <section class="gf-indexing-volume">
                     <h3><a href=${volumeHref(volume.name)} title=${volumeTitle(volume, this.controller?.backends)}>${volumeLabel(volume)}</a></h3>
                     <div class="gf-indexing-tags">
-                        ${status !== 'Ready' ? html`<cds-tag size="sm" type=${statusTagType(status)} title=${statusTitle(volume, status, error)}>${status}</cds-tag>` : nothing}
+                        ${statusTag(volume)}
                         ${folders !== undefined ? html`<cds-tag size="sm" type="cool-gray">${folders.toLocaleString()} ${folders === 1 ? 'folder' : 'folders'}</cds-tag>` : nothing}
                         ${objects !== undefined ? html`<cds-tag size="sm" type="cool-gray">${objects.toLocaleString()} ${volumeNoun(volume, objects)}</cds-tag>` : nothing}
                     </div>
@@ -327,12 +325,18 @@ export class VolumeElement extends LitElement {
             <gs-page-header
                 heading=${folder ? objectTitle(folder) : baseName(path) || (volume ? volumeLabel(volume) : name)}
                 subtitle=${`${name}${path === '/' ? '' : path}`}
-                .icon=${path === '/' ? VolumesIcon : FolderIcon}></gs-page-header>
+                .icon=${path === '/' ? VolumesIcon : FolderIcon}>
+                ${volume ? html`<div class="gf-volume-header-status">${statusTag(volume, 'md')}</div>` : nothing}
+            </gs-page-header>
         `;
         if (!volume) {
             return html`${header}<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
         } else if (!volume.mounted) {
-            return html`${header}${alertView('error', "This volume isn't mounted", volume.error)}`;
+            // One which is unmounted is, of its own, so it isn't an error,
+            // which its tag says, too
+            return volumeStatus(volume) === 'Unmounted'
+                ? html`${header}<p class="gf-empty">This volume is unmounted, so its files aren't shown until it's mounted again</p>`
+                : html`${header}${alertView('error', "This volume isn't mounted", volume.error)}`;
         }
         return html`
             ${header}
@@ -521,15 +525,26 @@ function indexingDescriptions(volume: Volume): Record<string, string> {
     };
 }
 
+// statusTag returns a tag of a volume's status, when it isn't Ready, whose
+// title says why, when it's pointed at, or nothing
+export function statusTag(volume: Volume, size: 'sm' | 'md' = 'sm'): TemplateResult | typeof nothing {
+    const status = volumeStatus(volume);
+    if (status === 'Ready') {
+        return nothing;
+    }
+    const error = volume.error || volume.index?.error || volume.index?.metadata?.error;
+    return html`<cds-tag size=${size} type=${statusTagType(status)} title=${statusTitle(volume, status, error)}>${status}</cds-tag>`;
+}
+
 // statusTagType returns the colour of the tag of a volume's status, which
-// isn't idle: blue, while it's scanned, or indexed, red, when it failed, or
-// is offline, and gray, otherwise
+// isn't idle: blue, while it's scanned, or indexed, red, when indexing it
+// failed, or it's offline, and gray, otherwise
 function statusTagType(status: string): string {
     switch (status) {
         case 'Scanning':
         case 'Indexing':
             return 'blue';
-        case 'Failed':
+        case 'Indexing error':
         case 'Offline':
             return 'red';
         default:
@@ -539,10 +554,16 @@ function statusTagType(status: string): string {
 
 // statusTitle returns why a volume's status is what it is, which its tag
 // says when it's pointed at: that it isn't searched, when it isn't
-// indexed, or why it failed, or why how many objects it has isn't known
+// indexed, that it's unmounted, or why it failed, or why how many objects
+// it has isn't known
 function statusTitle(volume: Volume, status: string, error?: string): string {
-    if (status === 'Not indexed') {
-        return "It isn't indexed, and therefore not searched";
+    switch (status) {
+        case 'Not indexed':
+            return "It isn't indexed, and therefore not searched";
+        case 'Unmounted':
+            return "It's unmounted, so it isn't watched, or searched, until it's mounted again";
+        case 'Not mounted':
+            return error || "It hasn't been mounted yet";
     }
     return error || volumeObjectsUnknown(volume);
 }

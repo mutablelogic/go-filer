@@ -242,17 +242,18 @@ export function volumeIndexing(volume: Volume): VolumeIndexing | undefined {
     return { unindexed: objects - done, indexed: done - failed, failed };
 }
 
-// volumeStatus returns how a volume's index is: Offline, when its backend
-// failed, whether it's mounted or not, Not mounted, Not indexed, Scanning,
-// or Indexing, while its files, or their metadata, are, Failed, when its
-// last scan, or its watch, failed, which clears its phase, but not its
-// status, or Ready, or Not indexed yet, when it hasn't been scanned
+// volumeStatus returns how a volume is: Offline, when its backend failed,
+// whether it's mounted or not, Unmounted, when it's unmounted, Not mounted,
+// when it's to be, but isn't yet, Not indexed, Scanning, or Indexing, while
+// its files, or their metadata, are, Indexing error, when its last scan, or
+// its watch, failed, which clears its phase, but not its status, or Ready,
+// or Not indexed yet, when it hasn't been scanned
 export function volumeStatus(volume: Volume): string {
     const index = volume.index;
     if (volume.error) {
         return 'Offline';
     } else if (!volume.mounted) {
-        return 'Not mounted';
+        return volume.enabled ? 'Not mounted' : 'Unmounted';
     } else if (!index) {
         return 'Not indexed';
     } else if (index.phase === 'scanning') {
@@ -260,7 +261,7 @@ export function volumeStatus(volume: Volume): string {
     } else if (index.phase === 'indexing') {
         return 'Indexing';
     } else if (index.error) {
-        return 'Failed';
+        return 'Indexing error';
     } else if (index.status === 'scanning') {
         return 'Scanning';
     } else if ((index.metadata?.queued ?? 0) > 0) {
@@ -272,10 +273,10 @@ export function volumeStatus(volume: Volume): string {
 }
 
 // volumeIndexFailure returns why a volume's index failed, while its status
-// is Failed, such as when its last scan, or its watch, failed, and it isn't
+// is Indexing error, such as when its last scan, or its watch, failed, and it isn't
 // scanned, or indexed, again, or "", otherwise, such as once it's indexed
 export function volumeIndexFailure(volume: Volume): string {
-    return volumeStatus(volume) === 'Failed' ? volume.index?.error ?? '' : '';
+    return volumeStatus(volume) === 'Indexing error' ? volume.index?.error ?? '' : '';
 }
 
 // VolumeKind is a kind of a volume's objects, as it's shown, and how many

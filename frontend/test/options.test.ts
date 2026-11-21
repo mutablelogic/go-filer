@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Volume } from '../src/filer/schema.ts';
-import { volumeOptions, volumePatch, volumeWritable, type VolumeOptions } from '../src/volumes/options.ts';
+import { indexDescription, volumeOptions, volumePatch, volumeWritable, type VolumeOptions } from '../src/volumes/options.ts';
 
 // volume returns a mounted volume of a URL
 function volume(url: string): Volume {
@@ -52,4 +52,11 @@ test('volumePatch', () => {
     assert.deepEqual(volumePatch(spaced, { ...spaced, others: [['q', [' x ']], ['skip', ['^ ']]] }), { skip: ['^ '] });
     // A volume which can't be writable doesn't change it
     assert.deepEqual(volumePatch({ ...from, readonly: undefined }, { ...from, readonly: undefined }), {});
+});
+
+test('indexDescription', () => {
+    assert.equal(indexDescription('none'), 'The volume is not searchable');
+    assert.equal(indexDescription('metadata'), 'Additional metadata is added to improve searchability');
+    assert.equal(indexDescription('folders'), 'Only its folders are indexed');
+    assert.equal(indexDescription('other'), '');
 });

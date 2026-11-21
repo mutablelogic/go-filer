@@ -85,6 +85,14 @@
             margin-bottom: 0.5rem;
         }
 
+        /* What the choice of a field is, beneath it, as Carbon's helper text */
+        .gf-volume-form-helper {
+            margin: 0.25rem 0 0;
+            color: var(--cds-text-helper);
+            font-size: 0.75rem;
+            line-height: 1rem;
+        }
+
         /* A volume's details, in its panel's View tab */
         .gf-volume-details {
             display: grid;
@@ -109,11 +117,6 @@
             display: none;
         }
 
-        .gf-volume-form-heading {
-            margin: 0.5rem 0 -0.5rem;
-            font-size: 0.875rem;
-            font-weight: 600;
-        }
 
         .gf-volume-tile cds-tag {
             margin: 0 0 0.75rem;
@@ -208,6 +211,18 @@
             margin: 0.5rem 0 0;
             color: var(--cds-text-secondary);
             font-size: 0.875rem;
+        }
+
+        /* A volume's status, beside its page's title */
+        .gf-volume-header-status {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0 1rem;
+        }
+
+        .gf-volume-header-status cds-tag {
+            margin: 0;
         }
 
         /* A volume's page fills the window, beneath its header, with the

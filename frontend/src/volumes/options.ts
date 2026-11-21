@@ -26,6 +26,7 @@ export type VolumePatch = Record<string, string | boolean | string[] | null>;
 export interface IndexMode {
     value: string;
     label: string;
+    description: string;
     disabled?: boolean;
 }
 
@@ -41,12 +42,21 @@ export const OptIndex = 'index';
 // Metadata, of their metadata, too, and Artwork and Content, which are to
 // come. A volume of folders, which isn't one of them, has none chosen.
 export const IndexModes: readonly IndexMode[] = [
-    { value: 'none', label: 'Off' },
-    { value: 'objects', label: 'On' },
-    { value: 'metadata', label: 'Metadata' },
-    { value: 'artwork', label: 'Artwork', disabled: true },
-    { value: 'content', label: 'Content', disabled: true },
+    { value: 'none', label: 'Off', description: 'The volume is not searchable' },
+    { value: 'objects', label: 'On', description: "The volume's objects will be indexed for searching" },
+    { value: 'metadata', label: 'Metadata', description: 'Additional metadata is added to improve searchability' },
+    { value: 'artwork', label: 'Artwork', description: 'Artwork for each object is also added', disabled: true },
+    { value: 'content', label: 'Content', description: "The object's file content (where available) is also used for search", disabled: true },
 ];
+
+// FoldersDescription is what a volume of folders is, whose mode isn't one of
+// IndexModes
+const FoldersDescription = 'Only its folders are indexed';
+
+// indexDescription returns what a way a volume is indexed is, of its value
+export function indexDescription(value: string): string {
+    return IndexModes.find((mode) => mode.value === value)?.description ?? (value === 'folders' ? FoldersDescription : '');
+}
 
 // ManyOptions are the options which have many values, of a list, even when
 // they have one, or none
