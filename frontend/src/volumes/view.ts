@@ -16,13 +16,15 @@ import VolumesIcon from '@carbon/icons/es/data--base/32.js';
 import FolderIcon from '@carbon/icons/es/folder/32.js';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeLabel, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeObjects, volumeLabel, volumeScheme, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
 import '@mutablelogic/go-server/page/view';
 import '../tree/view.ts';
 import '../folder/view.ts';
+import '@carbon/web-components/es/components/tile/clickable-tile.js';
+import '@carbon/web-components/es/components/tag/tag.js';
 import { alertView } from '../alert/view.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -84,13 +86,22 @@ export class VolumesElement extends LitElement {
             <gs-page-header heading="Volumes"
                 subtitle=${volumes ? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` : 'Loading…'}
                 .icon=${VolumesIcon}></gs-page-header>
-            ${volumes ? html`<ul class="gf-volumes">${repeat(volumes, (volume) => volume.name, (volume) => html`
-                <li>
-                    <a href=${volumeHref(volume.name)} title=${volumeTitle(volume, this.controller?.backends)}>${volumeLabel(volume)}</a>
-                    <span title=${volume.url}>${volume.url}</span>
-                    ${volumeState(volume)}
-                </li>
-            `)}</ul>` : nothing}
+            ${volumes ? html`<div class="gf-volume-tiles">${repeat(volumes, (volume) => volume.name, (volume) => this.tileView(volume))}</div>` : nothing}
+        `;
+    }
+
+    // tileView is a volume's tile, which goes to its page: its label, and
+    // its name, its backend, as a tag, and how many objects it has
+    private tileView(volume: Volume): TemplateResult {
+        const backends = this.controller?.backends;
+        const backend = volumeBackend(volume, backends);
+        return html`
+            <cds-clickable-tile class="gf-volume-tile" href=${volumeHref(volume.name)} title=${volumeTitle(volume, backends)}>
+                ${backend ? html`<cds-tag size="sm" type=${tagType(volume, backends)}>${backend}</cds-tag>` : nothing}
+                <h3 class="gf-volume-tile-label">${volumeLabel(volume)}</h3>
+                <p class="gf-volume-tile-name">${volume.name}</p>
+                ${tileCount(volume)}
+            </cds-clickable-tile>
         `;
     }
 }
@@ -375,10 +386,30 @@ function folderHref(name: string, path: string): string {
     return '#' + [VolumeRoute, name, ...path.split('/').filter((e) => e)].map(encodeURIComponent).join('/');
 }
 
-// volumeState returns why a volume isn't mounted, or its error, or nothing
-function volumeState(volume: Volume): TemplateResult | typeof nothing {
-    if (volume.error) {
-        return html`<em>${volume.error}</em>`;
+// TagTypes are the colours of the backends' tags, in the order of the
+// backends, so each backend has its own, while there are enough
+const TagTypes = ['blue', 'teal', 'purple', 'magenta', 'cyan', 'green', 'warm-gray', 'red'];
+
+// tagType returns the colour of the tag of a volume's backend
+function tagType(volume: Volume, backends: readonly Backend[] = []): string {
+    const i = backends.findIndex((backend) => backend.scheme === volumeScheme(volume));
+    return i < 0 ? 'cool-gray' : TagTypes[i % TagTypes.length];
+}
+
+// tileCount returns how many objects a volume has, of a tile, or "–", when
+// they aren't indexed, and that it's offline, when it is
+function tileCount(volume: Volume): TemplateResult {
+    if (!volume.mounted) {
+        return html`<p class="gf-volume-tile-state gf-volume-tile-error">${volume.error ? 'Offline' : 'Not mounted'}</p>`;
     }
-    return volume.mounted ? nothing : html`<em>Not mounted</em>`;
+    const objects = volumeObjects(volume);
+    const title = objects === undefined
+        ? (volume.index ? 'Only its folders are indexed' : "It isn't indexed")
+        : `${objects.toLocaleString()} ${objects === 1 ? 'object' : 'objects'}`;
+    return html`
+        <p class="gf-volume-tile-count" title=${title}>
+            <strong>${objects === undefined ? '–' : objects.toLocaleString()}</strong>
+            ${volume.error ? html`<span class="gf-volume-tile-error">Offline</span>` : nothing}
+        </p>
+    `;
 }
