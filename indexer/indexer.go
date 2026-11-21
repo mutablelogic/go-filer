@@ -112,11 +112,14 @@ func New(name string, backend gofiler.Filer, s store.Store, opts ...Opt) (*Index
 	case s == nil:
 		return nil, gofiler.ErrBadParameter.With("an indexer needs a store")
 	}
-	self := &Indexer{Filer: backend, name: name, store: s}
+	// Its store is revised once it's written, of the indexer, or its queue
+	// (see Revision)
+	revised := &revised{Store: s}
+	self := &Indexer{Filer: backend, name: name, store: revised}
 	if err := self.opt.apply(opts); err != nil {
 		return nil, err
 	}
-	self.queue = newQueue(s, name, self.debounce, self.rescanMin)
+	self.queue = newQueue(revised, name, self.debounce, self.rescanMin)
 	return self, nil
 }
 
