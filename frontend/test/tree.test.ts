@@ -254,6 +254,26 @@ test('VolumesController', async (t) => {
         assert.equal(now, 3);
     });
 
+    await t.test('changes which come while they load, load them once more', async () => {
+        const { client } = fakeServer({ media: {}, music: {} });
+        let loads = 0;
+        const inner = client.fetch!;
+        client.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            loads++;
+            return inner(input, init);
+        }) as typeof fetch;
+        const controller = new VolumesController(client);
+        for (let i = 0; i < 5; i++) {
+            controller.change({ action: 'update', schema: 'registry', table: 'volume', row: i % 2 ? 'media' : 'music' });
+        }
+        await settle();
+        assert.equal(loads, 2);
+        assert.equal(controller.volumes?.length, 2);
+        controller.change();
+        await settle();
+        assert.equal(loads, 3);
+    });
+
     await t.test("an error, when they can't be loaded", async () => {
         const client: Client = { base: 'http://localhost/api', fetch: (async () => new Response('{"code":500}', { status: 500 })) as typeof fetch };
         const errors: string[] = [];

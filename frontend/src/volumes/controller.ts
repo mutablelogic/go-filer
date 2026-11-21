@@ -25,6 +25,11 @@ export class VolumesController {
     private backendList?: Backend[];
     private load = 0;
 
+    // Whether changes are loading the volumes, and whether another change
+    // came meanwhile, so they're loaded once more, rather than of each
+    private changing = false;
+    private changedAgain = false;
+
     private readonly listeners = new Set<VolumesListener>();
     private errorFn?: (title: string, error: unknown) => void;
 
@@ -65,11 +70,27 @@ export class VolumesController {
     }
 
     // change loads the volumes again, when a change is of them, or when
-    // changes may have been missed, without one
+    // changes may have been missed, without one, and those which come while
+    // they're loaded load them once more, after, such as those of each
+    // volume whose index's state changed
     change(change?: Change) {
-        if (!change || VolumeFilters.some((filter) => filter.schema === change.schema && filter.table === change.table)) {
-            void this.reload();
+        if (change && !VolumeFilters.some((filter) => filter.schema === change.schema && filter.table === change.table)) {
+            return;
+        } else if (this.changing) {
+            this.changedAgain = true;
+            return;
         }
+        this.changing = true;
+        void (async () => {
+            try {
+                do {
+                    this.changedAgain = false;
+                    await this.reload();
+                } while (this.changedAgain);
+            } finally {
+                this.changing = false;
+            }
+        })();
     }
 
     // reload loads the volumes, of which only the latest load is kept
