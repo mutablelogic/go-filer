@@ -64,6 +64,26 @@ export function objectURL(client: Client, name: string, path: string, download =
     return url.href;
 }
 
+// MarkdownPart is the start of a file's content, as Markdown, and whether
+// there's more of it, which isn't shown
+export interface MarkdownPart {
+    text: string;
+    more: boolean;
+}
+
+// readMarkdown returns the start of a file's content, as Markdown, such as a
+// PDF's, which the server reads it as, or undefined, when it can't be read
+// as Markdown
+export async function readMarkdown(client: Client, name: string, path: string, signal?: AbortSignal): Promise<MarkdownPart | undefined> {
+    const response = await (client.fetch ?? fetch)(objectURL(client, name, path), { headers: { Accept: 'text/markdown' }, signal });
+    if (response.status === 406) {
+        return undefined;
+    } else if (!response.ok) {
+        throw new Error(`The file couldn't be read: ${response.status} ${response.statusText}`);
+    }
+    return { text: await response.text(), more: response.headers.has('X-Markdown-Next') };
+}
+
 // listObjects returns a page of the objects of a volume's folder, which is
 // its root by default. A folder's path is listed with a "/" after it, so a
 // bucket's object of the same name isn't listed instead.
