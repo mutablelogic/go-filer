@@ -77,5 +77,9 @@
         "esbuild": "^0.25.12",
         "lit": "^3.3.3",
         "typescript": "^5.9.3"
+    },
+    "dependencies": {
+        "dompurify": "^3.4.17",
+        "marked": "^18.1.3"
     }
 }

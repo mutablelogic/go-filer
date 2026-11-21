@@ -15,6 +15,7 @@ import Play16 from '@carbon/icons/es/play/16.js';
 import { objectURL } from '../filer/httpclient.ts';
 import { metaValue, MetadataNamespace, objectTitle, objectType, type FilerObject, type Meta } from '../filer/schema.ts';
 import { formatSize, formatTime } from './view.ts';
+import './preview.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
@@ -128,12 +129,14 @@ export class ObjectPanelElement extends LitElement {
     }
 
     // tabView is the tab which is chosen: the file's metadata, or its
-    // artwork, or its preview, which are empty, for now
+    // artwork, which is empty, for now, or its preview, of its content, as
+    // Markdown
     private tabView(object: FilerObject): TemplateResult | typeof nothing {
         switch (this.tab) {
             case 'artwork':
-            case 'preview':
                 return nothing;
+            case 'preview':
+                return html`<gf-object-preview .client=${this.client} .object=${object}></gf-object-preview>`;
             default:
                 return this.detailsView(object);
         }
