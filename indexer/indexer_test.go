@@ -12,12 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"slices"
 	"time"
 
 	// Packages
@@ -1821,4 +1821,53 @@ func Test_WatchIndexedDeleted(t *testing.T) {
 			t.Fatal("the folder wasn't deleted again once it was indexed")
 		}
 	}
+}
+
+func Test_WatchedFileCount(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	s := newStore(t)
+	i, err := indexer.New("media", backend, s, indexer.WithMode(indexer.ModeObjects), indexer.WithDebounce(0), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	fileCount := func() uint64 {
+		state, err := i.State(context.Background())
+		require.NoError(t, err)
+		return state.Files
+	}
+	assert.Equal(t, uint64(2), fileCount(), "of its scan")
+
+	// The files which are added, and deleted, while it's watched, are
+	// counted, as they're indexed, without it being scanned again
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "w.txt"), []byte("w"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "d"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "d", "v.txt"), []byte("v"), 0o644))
+	require.Eventually(t, func() bool { return fileCount() == 4 }, 10*time.Second, 10*time.Millisecond, "the files which are added")
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "a")))
+	require.Eventually(t, func() bool { return fileCount() == 3 }, 10*time.Second, 10*time.Millisecond, "the files of a folder which is removed")
+	state, err := i.State(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, schema.IndexStatusReady, state.Status)
+	assert.Equal(t, schema.IndexPhaseIdle, state.Phase)
+}
+
+func Test_WatchedFileCountFolders(t *testing.T) {
+	if !fsevents.Supported() {
+		t.Skip(fsevents.ErrNotSupported)
+	}
+	backend, dir := newBackend(t)
+	s := newStore(t)
+
+	// Of an index of folders, its files aren't counted
+	i, err := indexer.New("media", backend, s, indexer.WithDebounce(0), indexer.WithRescanInterval(time.Hour))
+	require.NoError(t, err)
+	run(t, i)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "d"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "w.txt"), []byte("w"), 0o644))
+	require.Eventually(t, func() bool { return slices.Contains(folders(t, i, "/", true), "/d") }, 10*time.Second, 10*time.Millisecond)
+	state, err := i.State(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, state.Files)
 }

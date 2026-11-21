@@ -206,6 +206,13 @@ func (self *Indexer) work(ctx context.Context) {
 			self.failed(ctx, err)
 		}
 
+		// The files which changed, while it's watched, are counted, of the
+		// changes, and the rescans of their folders, as a scan of the whole
+		// volume counts them only when it's done
+		if len(done) > 0 {
+			self.recount(context.WithoutCancel(ctx))
+		}
+
 		// The changes are sent to the watchers again, once they're indexed,
 		// as they were sent before, so a watcher which listed what changed
 		// then may have the listing from before
@@ -294,6 +301,31 @@ func (self *Indexer) fail(err error) {
 		case w.failed <- err:
 		default:
 		}
+	}
+}
+
+// recount sets how many files the index's state has, as the index has
+// now, once work is done, such as the changes which are watched, while
+// it's ready, and isn't scanned, of a volume whose files are indexed
+func (self *Indexer) recount(ctx context.Context) {
+	if !self.mode.Files() {
+		return
+	}
+	state, err := self.store.State(ctx, self.name)
+	if err != nil || state.Status != schema.IndexStatusReady || state.Phase != schema.IndexPhaseIdle {
+		return
+	}
+	objects, err := self.store.CountObjects(ctx, self.name, store.ListRequest{Parent: "/", Recursive: true})
+	if err != nil {
+		return
+	}
+	folders, err := self.store.CountObjects(ctx, self.name, store.ListRequest{Parent: "/", Recursive: true, Type: schema.DirectoryType})
+	if err != nil || folders > objects {
+		return
+	}
+	if files := objects - folders; files != state.Files {
+		state.Files = files
+		_ = self.store.SetState(ctx, self.name, state)
 	}
 }
 
