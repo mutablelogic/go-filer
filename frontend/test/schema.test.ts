@@ -81,6 +81,7 @@ test('volumeIndexing', () => {
 test('volumeStatus', () => {
     const of = (index: Volume['index'], mounted = true, error?: string) => volumeStatus({ ...volume('file://v/tmp', index), mounted, error });
     assert.equal(of(undefined, false), 'Not mounted');
+    assert.equal(volumeStatus({ ...volume('file://v/tmp'), mounted: false, enabled: false }), 'Unmounted');
     assert.equal(of(undefined, false, 'down'), 'Offline');
     assert.equal(of({ mode: 'objects', status: 'ready' }, true, 'down'), 'Offline', 'mounted, of an index, while its backend is offline');
     assert.equal(of(undefined), 'Not indexed');
@@ -90,10 +91,10 @@ test('volumeStatus', () => {
     assert.equal(of({ mode: 'metadata', status: 'ready', metadata: { queued: 4 } }), 'Indexing');
     assert.equal(of({ mode: 'objects', status: 'ready', phase: 'scanning' }), 'Scanning', 'again');
     assert.equal(of({ mode: 'objects', status: 'ready' }), 'Ready');
-    assert.equal(of({ mode: 'objects', status: 'scanning', error: 'it failed' }), 'Failed', 'its first scan failed, which cleared its phase');
-    assert.equal(of({ mode: 'objects', status: 'ready', error: 'it failed' }), 'Failed', 'a scan again, or its watch, failed');
-    assert.equal(of({ mode: 'metadata', status: 'ready', error: 'it failed', metadata: { queued: 4 } }), 'Failed');
-    assert.equal(of({ mode: 'objects', error: 'it failed' }), 'Failed');
+    assert.equal(of({ mode: 'objects', status: 'scanning', error: 'it failed' }), 'Indexing error', 'its first scan failed, which cleared its phase');
+    assert.equal(of({ mode: 'objects', status: 'ready', error: 'it failed' }), 'Indexing error', 'a scan again, or its watch, failed');
+    assert.equal(of({ mode: 'metadata', status: 'ready', error: 'it failed', metadata: { queued: 4 } }), 'Indexing error');
+    assert.equal(of({ mode: 'objects', error: 'it failed' }), 'Indexing error');
     assert.equal(of({ mode: 'objects' }), 'Not indexed yet');
 });
 
@@ -134,7 +135,7 @@ test('volumeKinds', () => {
 
 test('volumeIndexFailure', () => {
     const of = (index: Volume['index'], error?: string) => volumeIndexFailure({ ...volume('file://v/tmp', index), error });
-    // Why its index failed, while it's Failed
+    // Why its index failed, while it's an Indexing error
     assert.equal(of({ mode: 'objects', status: 'ready', error: 'it failed' }), 'it failed');
     assert.equal(of({ mode: 'objects', status: 'scanning', error: 'it failed' }), 'it failed');
     // Not while it's scanned, or indexed, again, nor once it's ready, nor

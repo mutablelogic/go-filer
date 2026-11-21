@@ -172,7 +172,7 @@ export class VolumePanelElement extends LitElement {
             ['Description', options.description || '–'],
             ['Name', volume.name],
             ['Backend', volumeBackend(volume, this.controller?.backends) || '–'],
-            ['Status', volume.mounted ? volumeStatus(volume) : volume.enabled || volume.error ? volumeStatus(volume) : 'Unmounted'],
+            ['Status', volumeStatus(volume)],
             ['Access', options.readonly === undefined ? 'Read only' : options.readonly ? 'Read only' : 'Writable'],
             ['Index', mode],
             ['Folders', volume.index?.folders?.toLocaleString() ?? '–'],
