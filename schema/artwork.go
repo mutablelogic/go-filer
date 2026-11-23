@@ -32,16 +32,6 @@ type Artwork struct {
 	CreatedAt time.Time `json:"created_at,omitzero" readonly:"" help:"When it was first stored"`
 }
 
-// ArtworkRef is artwork which an object links to, without its data, which
-// is got of its hash: its context, its type, and its size, in pixels
-type ArtworkRef struct {
-	Hash    string `json:"hash" help:"The SHA-256 hash of its context and data, in hex, which its data is got of"`
-	Context string `json:"context" help:"What it is of the object, such as cover, back or thumbnail" example:"cover"`
-	Type    string `json:"type" help:"Its content type, such as image/jpeg" example:"image/jpeg"`
-	Width   uint   `json:"width" help:"Its width, in pixels" example:"512"`
-	Height  uint   `json:"height" help:"Its height, in pixels" example:"512"`
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
 
@@ -73,10 +63,6 @@ func (a ArtworkMeta) Hash() string {
 
 func (a ArtworkMeta) String() string {
 	a.Data = nil
-	return types.Stringify(a)
-}
-
-func (a ArtworkRef) String() string {
 	return types.Stringify(a)
 }
 

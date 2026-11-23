@@ -1692,14 +1692,14 @@ func testObjectArtwork(t *testing.T, s store.Store) {
 	assert.Equal(t, []string{"cover"}, set("media", "/music/b.mp3", artwork("cover", "a")))
 	assert.Empty(t, contexts("media", "/music"), "an object which links to none")
 
-	// An object, and a listing of it, has the artwork it links to, of its
-	// hash, context, type and size, without its data, in the order of
-	// their contexts, and one which links to none has none
+	// An object, and a listing of it, has the artwork it links to, as
+	// ObjectArtwork returns it, without its data, in the order of their
+	// contexts, and one which links to none has none
 	linked, err := s.ObjectArtwork(ctx, "media", "/music/a.mp3")
 	require.NoError(t, err)
-	want := make([]schema.ArtworkRef, 0, len(linked))
+	want := make([]schema.Artwork, 0, len(linked))
 	for _, a := range linked {
-		want = append(want, schema.ArtworkRef{Hash: a.Hash, Context: a.Context, Type: a.Type, Width: a.Width, Height: a.Height})
+		want = append(want, *a)
 	}
 	object, err := s.GetObject(ctx, "media", "/music/a.mp3")
 	require.NoError(t, err)

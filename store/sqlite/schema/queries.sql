@@ -107,7 +107,7 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
   FROM object_event WHERE object_event.volume = object.volume AND object_event.object = object.key
 ), (
   SELECT json_group_array(json_object('hash', artwork.hash, 'context', artwork.context, 'type', artwork.type,
-    'width', artwork.width, 'height', artwork.height) ORDER BY artwork.context, artwork.hash)
+    'width', artwork.width, 'height', artwork.height, 'size', length(artwork.data), 'created_at', artwork.created_at) ORDER BY artwork.context, artwork.hash)
   FROM object_artwork JOIN artwork ON artwork.hash = object_artwork.hash
   WHERE object_artwork.volume = object.volume AND object_artwork.object = object.key
 )
@@ -133,7 +133,7 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
   FROM object_event WHERE object_event.volume = object.volume AND object_event.object = object.key
 ), (
   SELECT json_group_array(json_object('hash', artwork.hash, 'context', artwork.context, 'type', artwork.type,
-    'width', artwork.width, 'height', artwork.height) ORDER BY artwork.context, artwork.hash)
+    'width', artwork.width, 'height', artwork.height, 'size', length(artwork.data), 'created_at', artwork.created_at) ORDER BY artwork.context, artwork.hash)
   FROM object_artwork JOIN artwork ON artwork.hash = object_artwork.hash
   WHERE object_artwork.volume = object.volume AND object_artwork.object = object.key
 )
