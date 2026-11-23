@@ -100,14 +100,22 @@ export class ObjectDeleteElement extends LitElement {
                 }
                 const failed: FilerObject[] = [];
                 let reason = '';
-                for (const object of this.objects) {
-                    try {
-                        await deleteObject(client, object.name, object.path);
-                        this.deleted = true;
-                    } catch (error) {
-                        failed.push(object);
-                        reason ||= error instanceof Error ? error.message : String(error);
+
+                // It can't be closed while they're deleted, so whether they
+                // were is known once it's closed
+                this.panel.setClosable(false);
+                try {
+                    for (const object of this.objects) {
+                        try {
+                            await deleteObject(client, object.name, object.path);
+                            this.deleted = true;
+                        } catch (error) {
+                            failed.push(object);
+                            reason ||= error instanceof Error ? error.message : String(error);
+                        }
                     }
+                } finally {
+                    this.panel.setClosable(true);
                 }
                 if (failed.length === 0) {
                     this.panel.close();

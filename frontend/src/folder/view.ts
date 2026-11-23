@@ -151,6 +151,12 @@ export class FileViewElement extends LitElement {
     private watch() {
         this.unsubscribe?.();
         this.unsubscribe = this.controller?.subscribe((state) => {
+            // Rows which are selected are of their folder, whose paths are
+            // their keys, so they're deselected of another, but not as more
+            // are loaded, or it's loaded again
+            if (this.state && (state.volume !== this.state.volume || state.path !== this.state.path)) {
+                this.querySelector('gs-table')?.clearSelection();
+            }
             const chosen = state.selected;
             if (chosen && chosen !== this.state?.selected && chosen.path !== this.selected) {
                 this.dispatchEvent(new CustomEvent<FilerObject>(FileViewSelected, { detail: chosen, bubbles: true, composed: true }));

@@ -62,10 +62,15 @@ export class ObjectUploadElement extends LitElement {
     private added?: () => void;
     private readonly panel = new PanelController<string>({ closable: true });
 
+    // session is of each time the panel is opened, and closed, so what's
+    // read, or uploaded, of one before, isn't of this one
+    private session = 0;
+
     constructor() {
         super();
         this.chosen = [];
         this.overwrite = false;
+        this.panel.onClose(() => { this.session++; });
     }
 
     protected override createRenderRoot() {
@@ -75,6 +80,7 @@ export class ObjectUploadElement extends LitElement {
     // open opens the panel of the volume's folder, and calls the function
     // once files are added to it
     open(volume: string, folder: string, added?: () => void) {
+        this.session++;
         this.volume = volume;
         this.folder = folder;
         this.added = added;
@@ -146,9 +152,18 @@ export class ObjectUploadElement extends LitElement {
         }
         event.preventDefault();
         event.stopPropagation();
+        const session = this.session;
         void Promise.all(entries.map((entry) => entryFiles(entry, ''))).then(
-            (files) => this.add(files.flat()),
-            (error) => { this.error = `The folder couldn't be read: ${error instanceof Error ? error.message : String(error)}`; },
+            (files) => {
+                if (session === this.session) {
+                    this.add(files.flat());
+                }
+            },
+            (error) => {
+                if (session === this.session) {
+                    this.error = `The folder couldn't be read: ${error instanceof Error ? error.message : String(error)}`;
+                }
+            },
         );
     }
 
@@ -185,18 +200,30 @@ export class ObjectUploadElement extends LitElement {
         }
         this.chosen = this.chosen.map((c) => (c.state === 'edit' ? { ...c, state: 'uploading', skipped: undefined } : c));
         this.error = undefined;
+
+        // What's uploaded is of this session, and once it's done, its
+        // folder is loaded again, whether or not the panel is open, or of
+        // another folder, which isn't changed of it
+        const session = this.session;
+        const added = this.added;
         try {
             const result = await uploadObjects(client, this.volume, this.folder, pending.map((c) => ({ file: c.file, path: c.path })), this.overwrite);
+            if (result.body.length) {
+                added?.();
+            }
+            if (session !== this.session) {
+                return;
+            }
             const folder = this.folder === '/' ? '' : this.folder;
             const skipped = new Map((result.skipped ?? []).map((s) => [s.path, s]));
             this.chosen = this.chosen.map((c) => {
                 const s = skipped.get(`${folder}/${c.path}`);
                 return c.state === 'uploading' ? (s ? { ...c, state: 'edit', skipped: s } : { ...c, state: 'complete' }) : c;
             });
-            if (result.body.length) {
-                this.added?.();
-            }
         } catch (error) {
+            if (session !== this.session) {
+                return;
+            }
             this.chosen = this.chosen.map((c) => (c.state === 'uploading' ? { ...c, state: 'edit' } : c));
             this.error = error instanceof Error ? error.message : String(error);
         }
