@@ -8,7 +8,7 @@
 package webcal
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -23,7 +23,6 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	schema "github.com/mutablelogic/go-filer/schema"
 	store "github.com/mutablelogic/go-filer/store"
-	ical "github.com/mutablelogic/go-metadata/pkg/ical"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -56,7 +55,7 @@ var _ gofiler.Filer = (*Filer)(nil)
 // and when it was last modified, of its headers, and saves it, as it's
 // read, in the volume's cache, of them
 type feed struct {
-	calendar           *ical.Calendar
+	source             *source
 	etag, lastModified string
 	ctx                context.Context
 	cache              gofiler.CacheStore
@@ -334,10 +333,13 @@ func (self *Filer) WatchObjects(ctx context.Context, ch chan<- schema.Event) err
 			return ctx.Err()
 		case <-timer.C:
 		}
-		after, changed, err := self.fetch(ctx, "watch", "/")
+		// The events are compared with those this watch last sent, rather
+		// than of whether the feed was modified, as a read, or a listing,
+		// may have fetched it since, so a 304 is of events which changed
+		after, err := self.fetch(ctx, "watch", "/")
 		if err != nil {
 			return err
-		} else if !changed {
+		} else if after == before {
 			continue
 		}
 		for _, event := range changes(before, after) {
@@ -380,13 +382,14 @@ func (self *Filer) list(ctx context.Context, op, path string) (*events, error) {
 	return events, err
 }
 
-// fetch fetches the feed, and returns its events, and whether they changed,
-// which they didn't when it isn't modified
-func (self *Filer) fetch(ctx context.Context, op, path string) (*events, bool, error) {
+// fetch fetches the feed, and returns its events, which are those it had,
+// when it isn't modified
+func (self *Filer) fetch(ctx context.Context, op, path string) (*events, error) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	self.restoreLocked(ctx)
-	return self.fetchLocked(ctx, op, path)
+	events, _, err := self.fetchLocked(ctx, op, path)
+	return events, err
 }
 
 // restoreLocked gets the feed which was saved in the volume's cache, such as
@@ -405,13 +408,17 @@ func (self *Filer) restoreLocked(ctx context.Context) {
 		return
 	}
 	defer entry.Close()
-	calendar, err := ical.Decode(entry)
-	if err != nil || calendar == nil {
+	data, err := io.ReadAll(io.LimitReader(entry, maxFeed+1))
+	if err != nil || len(data) > maxFeed {
+		return
+	}
+	src, err := parseFeed(data)
+	if err != nil {
 		return
 	}
 	meta := entry.Meta()
 	self.etag, self.lastModified = meta.Version, meta.Values[lastModifiedValue]
-	self.events, self.fetched = newEvents(calendar), entry.Stored()
+	self.events, self.fetched = newEvents(src), entry.Stored()
 	self.baseline = self.events
 
 	// It was last checked when it was saved, or, of a 304, after
@@ -446,11 +453,11 @@ func (self *Filer) fetchLocked(ctx context.Context, op, path string) (*events, b
 		return self.events, false, nil
 	} else if err != nil {
 		return nil, false, fetchError(op, path, self.feed.String(), err)
-	} else if response.calendar == nil {
+	} else if response.source == nil {
 		return nil, false, gofiler.ErrBadParameter.Withf("%s %s: %s isn't a calendar", op, path, self.feed.String())
 	}
 	self.etag, self.lastModified = response.etag, response.lastModified
-	self.events, self.fetched = newEvents(response.calendar), self.now()
+	self.events, self.fetched = newEvents(response.source), self.now()
 	self.checkedLocked(ctx)
 	return self.events, true, nil
 }
@@ -462,78 +469,30 @@ func (self *Filer) named(object *schema.Object) *schema.Object {
 	return &result
 }
 
-// Unmarshal decodes a response, as a calendar, and saves it, as it's read,
-// in the volume's cache, of its entity tag, and when it was last modified,
-// once it's all read, unless it can't be decoded, so the one which was saved
-// is kept. The cache is never the only copy, so a feed which can't be saved
-// is decoded, as it would be without it. A response which isn't a calendar,
-// of its first line, such as a page of HTML, is an error.
+// Unmarshal reads a response, of up to maxFeed octets, as a calendar, and
+// saves it in the volume's cache, of its entity tag, and when it was last
+// modified, once it's read, and is a calendar which isn't cut off, so the
+// one which was saved is kept otherwise. The cache is never the only copy,
+// so a feed which can't be saved is read, as it would be without it.
 func (f *feed) Unmarshal(header http.Header, r io.Reader) error {
 	f.etag, f.lastModified = header.Get("ETag"), header.Get("Last-Modified")
-	pr, pw := io.Pipe()
-	saved := make(chan struct{})
-	go func() {
-		defer close(saved)
-		meta := gofiler.CacheMeta{Version: f.etag, Values: map[string]string{lastModifiedValue: f.lastModified}}
-		entry, err := f.cache.Put(f.ctx, feedKey, 0, meta, pr)
-		if err == nil {
-			entry.Close()
-		}
-		pr.CloseWithError(err)
-	}()
-	w := &bestEffort{w: pw}
-	br := bufio.NewReader(r)
-	err := calendarStart(br)
-	var calendar *ical.Calendar
-	if err == nil {
-		calendar, err = ical.Decode(io.TeeReader(br, w))
+	data, err := io.ReadAll(io.LimitReader(r, maxFeed+1))
+	if err == nil && len(data) > maxFeed {
+		err = fmt.Errorf("it's more than %d MiB", maxFeed>>20)
 	}
+	var src *source
 	if err == nil {
-		// The rest of the response, after the calendar
-		_, err = io.Copy(w, br)
+		src, err = parseFeed(data)
 	}
 	if err != nil {
-		// Wrapped, so an error which is io.EOF, such as of an empty response,
-		// isn't the end of what's saved, which would replace the feed which
-		// was saved with it
-		pw.CloseWithError(fmt.Errorf("the calendar can't be read: %w", err))
-		<-saved
 		return gofiler.ErrBadParameter.Withf("the calendar can't be read: %v", err)
 	}
-	pw.Close()
-	<-saved
-	f.calendar = calendar
-	return nil
-}
-
-// calendarStart returns an error unless a feed starts as a calendar does,
-// of BEGIN:VCALENDAR, after a byte order mark, and spaces, so a page, such
-// as of a sign-in, or an empty response, isn't an empty calendar. It peeks,
-// so what's decoded, and saved, is the feed, as it is.
-func calendarStart(r *bufio.Reader) error {
-	start, _ := r.Peek(64)
-	if !strings.HasPrefix(strings.ToUpper(strings.TrimLeft(strings.TrimPrefix(string(start), "\xef\xbb\xbf"), " \t\r\n")), beginCalendar) {
-		return fmt.Errorf("it isn't an iCalendar")
+	meta := gofiler.CacheMeta{Version: f.etag, Values: map[string]string{lastModifiedValue: f.lastModified}}
+	if entry, err := f.cache.Put(f.ctx, feedKey, 0, meta, bytes.NewReader(data)); err == nil {
+		entry.Close()
 	}
+	f.source = src
 	return nil
-}
-
-const beginCalendar = "BEGIN:VCALENDAR"
-
-// bestEffort writes to a writer, until it can't, after which it discards
-// what it's written, so what reads, and writes to it, isn't stopped
-type bestEffort struct {
-	w      io.Writer
-	failed bool
-}
-
-func (b *bestEffort) Write(p []byte) (int, error) {
-	if !b.failed {
-		if _, err := b.w.Write(p); err != nil {
-			b.failed = true
-		}
-	}
-	return len(p), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

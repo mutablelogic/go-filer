@@ -41,9 +41,9 @@ type events struct {
 // event is an event of a feed, of its UID, with the changes to the times it
 // repeats, of their RECURRENCE-IDs
 type event struct {
-	key        string        // its UID, or a hash of it, when it has none
-	components []*ical.Event // the event, then its changes, in the order of when they were to start
-	start      ical.Time     // when it starts, or first does, or zero
+	key        string      // its UID, or a hash of it, when it has none
+	components []component // the event, then its changes, in the order of when they were to start
+	start      ical.Time   // when it starts, or first does, or zero
 	title      string
 }
 
@@ -66,31 +66,26 @@ const (
 
 	// ext is the extension of an event's file
 	ext = ".ics"
-
-	// ProdID is the product which writes an event's iCalendar
-	ProdID = "-//mutablelogic//go-filer//EN"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
-// newEvents returns the events of a calendar, as files, at their days'
-// paths, of the folders of their years and months, of when they start, or
-// first do, or a task is due, in their own zones, and those which have
-// none, of the folder undated. An event's file is its iCalendar, of it, and
-// its changes to the times it repeats, which have its UID. Events of the
-// same title and day are told apart by a number, in the order of their
-// UIDs.
-func newEvents(calendar *ical.Calendar) *events {
-	self := &events{title: strings.TrimSpace(calendar.Name), objects: make(map[string]*schema.Object), content: make(map[string]string), keys: make(map[string]string)}
+// newEvents returns the events of a feed, as files, at their days' paths,
+// of the folders of their years and months, of when they start, or first
+// do, or a task is due, in their own zones, and those which have none, of
+// the folder undated. An event's file is its iCalendar, of its lines, and
+// those of its changes to the times it repeats, which have its UID. Events
+// of the same title and day are told apart by a number, in the order of
+// their UIDs.
+func newEvents(src *source) *events {
+	self := &events{title: src.name, objects: make(map[string]*schema.Object), content: make(map[string]string), keys: make(map[string]string)}
 	self.dir("/")
 
 	// The events, of their UIDs, with their changes
 	byKey := make(map[string]*event)
-	for _, e := range calendar.Events {
-		if e == nil {
-			continue
-		}
+	for _, c := range src.components {
+		e := c.event
 		key := strings.TrimSpace(e.UID)
 		if key == "" {
 			key = "event-" + hash(e.Summary, e.Start.Time.String(), e.Due.Time.String())
@@ -100,24 +95,24 @@ func newEvents(calendar *ical.Calendar) *events {
 			ev = &event{key: key}
 			byKey[key] = ev
 		}
-		ev.components = append(ev.components, e)
+		ev.components = append(ev.components, c)
 	}
 	list := slices.SortedFunc(maps.Values(byKey), func(a, b *event) int { return strings.Compare(a.key, b.key) })
 	for _, ev := range list {
 		// The event, which isn't a change, is first, then its changes, of
 		// when they were to start
-		slices.SortStableFunc(ev.components, func(a, b *ical.Event) int {
+		slices.SortStableFunc(ev.components, func(a, b component) int {
 			switch {
-			case a.RecurrenceID.IsZero() != b.RecurrenceID.IsZero():
-				if a.RecurrenceID.IsZero() {
+			case a.event.RecurrenceID.IsZero() != b.event.RecurrenceID.IsZero():
+				if a.event.RecurrenceID.IsZero() {
 					return -1
 				}
 				return 1
 			default:
-				return a.RecurrenceID.Time.Compare(b.RecurrenceID.Time)
+				return a.event.RecurrenceID.Time.Compare(b.event.RecurrenceID.Time)
 			}
 		})
-		first := ev.components[0]
+		first := ev.components[0].event
 		ev.title = strings.Join(strings.Fields(first.Summary), " ")
 		ev.start = first.Start
 		if ev.start.IsZero() {
@@ -139,7 +134,7 @@ func newEvents(calendar *ical.Calendar) *events {
 			name = fmt.Sprintf("%s%s-%d%s", folder, base, n, ext)
 		}
 		taken[name] = true
-		self.file(name, ev, calendar)
+		self.file(name, ev, src)
 		self.keys[ev.key] = name
 	}
 	self.paths = slices.Sorted(maps.Keys(self.objects))
@@ -166,43 +161,45 @@ func (self *events) dir(p string) {
 	}
 }
 
-// file adds an event, as its iCalendar, at the path, with its folders. Its
-// DTSTAMP is when it was last modified, or created, or else the feed's,
-// which many feeds set to when they're fetched, so its entity tag, which is
-// of its iCalendar, isn't of the feed's DTSTAMP, and an event which didn't
-// change isn't updated.
-func (self *events) file(p string, ev *event, calendar *ical.Calendar) {
+// file adds an event, as its iCalendar, at the path, with its folders: the
+// calendar's properties, the time zones its times are in, and its lines,
+// and those of its changes, as they are, apart from DTSTAMP, which is when
+// it was last modified, or created, or else the feed's. Many feeds set it to
+// when they're fetched, so the event's entity tag is of its iCalendar
+// without it, and an event which didn't change isn't updated.
+func (self *events) file(p string, ev *event, src *source) {
 	self.dir(path.Dir(p) + "/")
-	cal := &ical.Calendar{ProdID: ProdID, Name: calendar.Name, TZ: calendar.TZ}
+	var lines, hashed []line
 	var modified time.Time
-	var stamped bool
-	for _, e := range ev.components {
-		c := *e
-		c.Stamp = c.Modified
-		if c.Stamp.IsZero() {
-			c.Stamp = c.Created
+	cal := &ical.Calendar{Name: src.name, TZ: src.tz}
+	for _, c := range ev.components {
+		stamp := c.event.Modified
+		if stamp.IsZero() {
+			stamp = c.event.Created
 		}
-		if c.Stamp.After(modified) {
-			modified = c.Stamp
+		if stamp.After(modified) {
+			modified = stamp
 		}
-		stamped = stamped || (c.Stamp.IsZero() && !e.Stamp.IsZero())
-		cal.Events = append(cal.Events, &c)
-	}
-	data, _ := cal.MarshalText()
-	sum := sha256.Sum256(data)
-	if stamped {
-		for i, e := range ev.components {
-			if cal.Events[i].Stamp.IsZero() {
-				cal.Events[i].Stamp = e.Stamp
+		for _, l := range c.lines {
+			if l.name != "DTSTAMP" {
+				lines, hashed = append(lines, l), append(hashed, l)
+			} else if stamp.IsZero() {
+				lines = append(lines, l)
+			} else {
+				text := "DTSTAMP:" + stamp.UTC().Format("20060102T150405Z")
+				lines = append(lines, line{name: l.name, text: text, physical: []string{text}})
 			}
 		}
-		data, _ = cal.MarshalText()
+		cal.Events = append(cal.Events, c.event)
 	}
+	zones := src.tzids(lines)
+	data := src.calendar(zones, lines)
+	sum := sha256.Sum256(src.calendar(zones, hashed))
 	content := string(data)
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Path: p},
 		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ETag: types.Ptr(hex.EncodeToString(sum[:16])), ModTime: modified},
-		ObjectMeta: schema.ObjectMeta{ContentType: cal.ContentType(), Meta: meta(ev, calendar)},
+		ObjectMeta: schema.ObjectMeta{ContentType: cal.ContentType(), Meta: meta(ev, src.name)},
 	}
 	self.objects[p], self.content[p] = object, content
 }
@@ -273,7 +270,7 @@ func (self *objectList) Close() error {
 // meta returns the metadata of an event which its iCalendar doesn't have,
 // as the backend's: its title, as dc:title, so it has one when it isn't
 // enriched, its UID, and the calendar's name
-func meta(ev *event, calendar *ical.Calendar) []schema.Meta {
+func meta(ev *event, calendar string) []schema.Meta {
 	var result []schema.Meta
 	add := func(ns, key, value string) {
 		if value == "" {
@@ -284,10 +281,10 @@ func meta(ev *event, calendar *ical.Calendar) []schema.Meta {
 		}
 	}
 	add("dc", "title", ev.title)
-	if uid := strings.TrimSpace(ev.components[0].UID); uid != "" {
+	if uid := strings.TrimSpace(ev.components[0].event.UID); uid != "" {
 		add("dc", "identifier", uid)
 	}
-	add(Scheme, "calendar", strings.TrimSpace(calendar.Name))
+	add(Scheme, "calendar", calendar)
 	return result
 }
 

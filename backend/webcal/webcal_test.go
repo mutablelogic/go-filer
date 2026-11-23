@@ -386,3 +386,103 @@ func Test_FeedRestart(t *testing.T) {
 	assert.Equal(t, int32(1), full.Load())
 	assert.GreaterOrEqual(t, notModified.Load(), int32(1), "it's fetched of its entity tag")
 }
+
+// zonedICS is a feed with a time zone of its own, which an event is in, and
+// another, which none is in, and an event with extra dates, and an alarm,
+// which aren't decoded, so they're kept as they are
+const zonedICS = "BEGIN:VCALENDAR\r\n" +
+	"VERSION:2.0\r\n" +
+	"PRODID:-//Example//Feed//EN\r\n" +
+	"X-WR-CALNAME:Club\r\n" +
+	"BEGIN:VTIMEZONE\r\n" +
+	"TZID:Club Time\r\n" +
+	"BEGIN:STANDARD\r\n" +
+	"DTSTART:19700101T000000\r\n" +
+	"TZOFFSETFROM:+0100\r\n" +
+	"TZOFFSETTO:+0100\r\n" +
+	"END:STANDARD\r\n" +
+	"END:VTIMEZONE\r\n" +
+	"BEGIN:VTIMEZONE\r\n" +
+	"TZID:Unused\r\n" +
+	"BEGIN:STANDARD\r\n" +
+	"DTSTART:19700101T000000\r\n" +
+	"TZOFFSETFROM:+0200\r\n" +
+	"TZOFFSETTO:+0200\r\n" +
+	"END:STANDARD\r\n" +
+	"END:VTIMEZONE\r\n" +
+	"BEGIN:VEVENT\r\n" +
+	"UID:practice@example.com\r\n" +
+	"DTSTAMP:@NOW@\r\n" +
+	"DTSTART;TZID=\"Club Time\":20261105T180000\r\n" +
+	"RDATE;TZID=\"Club Time\":20261112T180000\r\n" +
+	"SUMMARY:Practice\r\n" +
+	"DESCRIPTION:A long description which is folded\r\n" +
+	"  over two lines\r\n" +
+	"BEGIN:VALARM\r\n" +
+	"ACTION:DISPLAY\r\n" +
+	"TRIGGER:-PT15M\r\n" +
+	"END:VALARM\r\n" +
+	"END:VEVENT\r\n" +
+	"END:VCALENDAR\r\n"
+
+// Test_FeedSource tests an event is its lines, as they are, with the time
+// zones it's in, apart from its DTSTAMP, and a change to what isn't
+// decoded, such as its extra dates, is a change of it
+func Test_FeedSource(t *testing.T) {
+	body := feed(zonedICS)
+	server, _, _ := newFeed(t, body)
+	f, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1ms"}}), testCache())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/2026/", "/2026/2026-11/", "/2026/2026-11/05-practice.ics"}, list(t, f, "/", true))
+	object, content := read(t, f, "/2026/2026-11/05-practice.ics")
+	for _, want := range []string{
+		"X-WR-CALNAME:Club\r\n",
+		"BEGIN:VTIMEZONE\r\nTZID:Club Time\r\n",
+		"RDATE;TZID=\"Club Time\":20261112T180000\r\n",
+		"DESCRIPTION:A long description which is folded\r\n  over two lines\r\n",
+		"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\n",
+	} {
+		assert.Contains(t, content, want)
+	}
+	assert.NotContains(t, content, "TZID:Unused", "a time zone which it isn't in")
+	assert.True(t, strings.HasPrefix(content, "BEGIN:VCALENDAR\r\n") && strings.HasSuffix(content, "END:VCALENDAR\r\n"))
+	cal, err := ical.Decode(strings.NewReader(content))
+	require.NoError(t, err)
+	require.Len(t, cal.Events, 1)
+	assert.Equal(t, "A long description which is folded over two lines", cal.Events[0].Description)
+
+	// Its extra dates change, which is a change of its entity tag
+	changed := strings.Replace(zonedICS, "20261112T180000", "20261119T180000", 1)
+	body.Store(&changed)
+	time.Sleep(5 * time.Millisecond)
+	updated, err := f.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}})
+	require.NoError(t, err)
+	assert.NotEqual(t, types.Value(object.ETag), types.Value(updated.ETag))
+}
+
+// Test_FeedTruncated tests a feed which is cut off, or whose components
+// don't end as they began, isn't a calendar, and the feed which was saved
+// is kept
+func Test_FeedTruncated(t *testing.T) {
+	body := feed(calendarICS)
+	server, _, _ := newFeed(t, body)
+	cache := testCache()
+	_, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache)
+	require.NoError(t, err)
+	for _, bad := range []string{
+		"BEGIN:VCALENDAR\r\n",
+		calendarICS[:strings.Index(calendarICS, "UID:boxing")],
+		strings.TrimSuffix(calendarICS, "END:VCALENDAR\r\n"),
+		strings.Replace(calendarICS, "END:VEVENT\r\nBEGIN:VEVENT\r\nUID:boxing", "END:VTODO\r\nBEGIN:VEVENT\r\nUID:boxing", 1),
+		"BEGIN:VEVENT\r\nEND:VEVENT\r\n",
+	} {
+		body.Store(&bad)
+		_, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), testCache())
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
+		_, err = open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1ns"}}), cache)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad)
+	}
+	f, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache)
+	require.NoError(t, err, "the feed which was saved is read")
+	assert.Contains(t, list(t, f, "/", true), "/2026/2026-12/25-holiday-2.ics")
+}

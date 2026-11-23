@@ -230,14 +230,16 @@ A volume of an iCalendar feed's events, read-only, such as a calendar's "Subscri
   * A repeating event is one file, at its first start, with its changed occurrences (their `RECURRENCE-ID`s).
   * Events without a start, such as a task that isn't due, are in `/undated/`.
   * Events of the same title and day are numbered, in the order of their UIDs.
-* **Content:** each event is an iCalendar of it, with the calendar's name and zone. Its `DTSTAMP` is its `LAST-MODIFIED` or `CREATED`, or else the feed's, which isn't part of its ETag. Many feeds stamp every event with the time they're fetched, so this keeps unchanged events from being updated.
+* **Content:** each event is an iCalendar of the feed's own lines: the calendar's properties, the `VTIMEZONE`s its times use, and the event's lines, with its changed occurrences and alarms. Nothing is re-encoded, so properties go-metadata doesn't decode, such as `RDATE`, are kept.
+  * Its `DTSTAMP` is its `LAST-MODIFIED` or `CREATED`, or else the feed's, and isn't part of its ETag. Many feeds stamp every event with the time they're fetched, so this keeps unchanged events from being updated.
+  * go-metadata decodes the events only for their paths and metadata.
 * **Metadata:** `dc:title`, `dc:identifier` (its UID) and `webcal:calendar` (the calendar's name). The rest is go-metadata's, from the iCalendar.
 * **Options:**
   * `refresh_interval`: how long a fetched feed is kept, and how often it's polled. `5m` by default.
   * `description`: by default, the calendar's name (`X-WR-CALNAME`), or its URL.
 * **Watching:**
   * The feed is polled at that interval, with its last ETag and Last-Modified, so an unchanged feed is a 304, not downloaded again.
-  * Changes are sent by the events' UIDs: new, gone and changed events, and events whose title or day changed, as for RSS.
+  * Changes are sent by the events' UIDs: new, gone and changed events, and events whose title or day changed, as for RSS. They're of the events the watch last sent, so a feed that a read fetched between polls is still sent.
   * Folders are created and deleted as events appear in, and leave, their months.
 * **Cache:** as for RSS: the feed's body is saved in the volume's cache, with its ETag and Last-Modified, so a restart doesn't fetch it again until it would have been.
-* **Errors:** a feed that isn't found, or isn't an iCalendar (such as a sign-in page), is `ErrBadParameter`. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.
+* **Errors:** a feed that isn't found, or isn't an iCalendar (such as a sign-in page), is `ErrBadParameter`, as is one that's cut off, or whose components don't end as they began, so it doesn't replace the saved feed. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.
