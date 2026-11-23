@@ -96,9 +96,12 @@ type ObjectStore interface {
 type MetadataStore interface {
 	// SetMetadata replaces what a task found of the object of the volume of
 	// the key, of the source, which is the task's kind, such as metadata: its
-	// metadata, the shapes of where it is, and the times of its events, or
-	// returns ErrNotFound when the object isn't indexed, or ErrBadParameter
-	// when a shape, or an occurrence, isn't valid. A shape, or occurrence,
+	// metadata, the shapes of where it is, the times of its events, and its
+	// artwork, which is stored, and replaces the artwork it links to, in the
+	// same transaction (see gofiler.ArtworkStore), or returns ErrNotFound
+	// when the object isn't indexed, ErrBadParameter when a shape, an
+	// occurrence, or artwork, isn't valid, or ErrConflict when artwork of
+	// the same hash is stored of another type, or size. A shape, or occurrence,
 	// which is the same as another is stored once. When of isn't nil,
 	// it's of the version of the object which the task read, its
 	// attributes, so a task which is superseded, as the object changed
@@ -107,8 +110,8 @@ type MetadataStore interface {
 	SetMetadata(ctx context.Context, volume, key, source string, of *schema.ObjectAttr, found schema.TaskMeta) error
 
 	// DeleteMetadata removes the metadata of the source, a task's kind, of
-	// every object of the volume, and its shapes, and events, and the state of
-	// its task: its work, and
+	// every object of the volume, and its shapes, events, and links to its
+	// artwork, and the state of its task: its work, and
 	// the revisions it was done of, so it's done of every file again, when
 	// it's done again, such as when a volume isn't enriched any more
 	DeleteMetadata(ctx context.Context, volume, source string) error

@@ -37,12 +37,13 @@ type When struct {
 }
 
 // TaskMeta is what a task found of an object: its metadata, which a read
-// of it merges with the backend's, the shapes of where it is, and the times
-// of its events
+// of it merges with the backend's, the shapes of where it is, the times of
+// its events, and its artwork, which replaces the artwork it links to
 type TaskMeta struct {
-	Meta   []Meta
-	Geo    []geo.Geometry
-	Events []Occurrence
+	Meta    []Meta
+	Geo     []geo.Geometry
+	Events  []Occurrence
+	Artwork []ArtworkMeta
 }
 
 ////////////////////////////////////////////////////////////////////////////////

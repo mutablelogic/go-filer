@@ -45,8 +45,9 @@ var _ indexer.Task = (*Metadata)(nil).Enrich
 var identifier = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 // skipped are the namespaces of go-metadata which aren't metadata of a
-// file: its content, as Markdown, which a content task reads
-var skipped = map[string]bool{gometadata.MarkdownNamespace: true}
+// file: its content, as Markdown, which a content task reads, and its
+// artwork, which is stored as artwork (see artwork)
+var skipped = map[string]bool{gometadata.MarkdownNamespace: true, gometadata.ArtworkNamespace: true}
 
 ////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
@@ -65,9 +66,11 @@ func New(opts ...Opt) (*Metadata, error) {
 // PUBLIC METHODS
 
 // Enrich reads the file of the backend, and stores its metadata, of
-// go-metadata, in the store, which replaces what was found of it before. A
-// file whose type no handler reads has the metadata of its name, such as
-// its title. It's an indexer.Task, of indexer.WithMetadataTask.
+// go-metadata, in the store, which replaces what was found of it before,
+// and its artwork, such as an album's cover, or a thumbnail, when the
+// store's volume is enriched with its artwork, of the same read. A file
+// whose type no handler reads has the metadata of its name, such as its
+// title. It's an indexer.Task, of indexer.WithMetadataTask.
 func (self *Metadata) Enrich(ctx context.Context, backend gofiler.Filer, store indexer.MetadataStore, object *schema.Object) (err error) {
 	ctx, end := otel.StartSpan(self.tracer, ctx, "metadata.Enrich", attribute.String("volume", object.Name), attribute.String("path", object.Path))
 	defer func() { end(err) }()
@@ -82,12 +85,16 @@ func (self *Metadata) Enrich(ctx context.Context, backend gofiler.Filer, store i
 	var entries []gometadata.Metadata
 	var extractErr error
 	if err := read(ctx, func(r io.Reader) error {
-		_, entries, extractErr = gometadata.Extract(ctx, withName(r, path.Base(file.Path)), self.extractOpts(file)...)
+		_, entries, extractErr = gometadata.Extract(ctx, withName(r, path.Base(file.Path)), self.extractOpts(file, store.Artwork())...)
 		return nil
 	}); err != nil {
 		return err
 	}
-	if err := store.SetMetadata(ctx, object.Path, schema.TaskMeta{Meta: meta(entries), Geo: shapes(entries), Events: occurrences(entries)}); err != nil {
+	found := schema.TaskMeta{Meta: meta(entries), Geo: shapes(entries), Events: occurrences(entries)}
+	if store.Artwork() {
+		found.Artwork = artwork(entries)
+	}
+	if err := store.SetMetadata(ctx, object.Path, found); err != nil {
 		return err
 	} else if extractErr != nil && !isNotImplemented(extractErr) {
 		if errors.Is(extractErr, gometadata.ErrBadParameter) {
@@ -102,9 +109,14 @@ func (self *Metadata) Enrich(ctx context.Context, backend gofiler.Filer, store i
 // PRIVATE METHODS
 
 // extractOpts returns the options of go-metadata of a file: of the task,
-// and the file's type, when it's known
-func (self *Metadata) extractOpts(file *schema.Object) []gometadata.Option {
+// the file's type, when it's known, and its artwork, as well as all of its
+// metadata, when it's asked for, which go-metadata only finds then, as it's
+// slow to
+func (self *Metadata) extractOpts(file *schema.Object, artwork bool) []gometadata.Option {
 	opts := append([]gometadata.Option(nil), self.opts...)
+	if artwork {
+		opts = append(opts, gometadata.WithNamespace(gometadata.MetadataNamespace, gometadata.ArtworkNamespace))
+	}
 	if file.ContentType != "" && file.ContentType != "application/octet-stream" {
 		opts = append(opts, gometadata.WithContentType(file.ContentType))
 	}

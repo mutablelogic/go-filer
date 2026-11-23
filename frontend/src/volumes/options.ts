@@ -45,14 +45,15 @@ export const AccessDescriptions = {
     writable: 'Objects can be uploaded or deleted, and additional actions may be available',
 };
 
-// IndexModes are the ways a volume is indexed: Off, On, of its files, and
-// Metadata, of their metadata, too, and Artwork and Content, which are to
-// come. A volume of folders, which isn't one of them, has none chosen.
+// IndexModes are the ways a volume is indexed: Off, On, of its files,
+// Metadata, of their metadata, too, Artwork, of their artwork, too, and
+// Content, which is to come. A volume of folders, which isn't one of them,
+// has none chosen.
 export const IndexModes: readonly IndexMode[] = [
     { value: 'none', label: 'Off', description: 'The volume is not searchable' },
     { value: 'objects', label: 'On', description: "The volume's objects will be indexed for searching" },
     { value: 'metadata', label: 'Metadata', description: 'Additional metadata is added to improve searchability' },
-    { value: 'artwork', label: 'Artwork', description: 'Artwork for each object is also added', disabled: true },
+    { value: 'artwork', label: 'Artwork', description: 'Artwork for each object is also added' },
     { value: 'content', label: 'Content', description: "The object's file content (where available) is also used for search", disabled: true },
 ];
 

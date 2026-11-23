@@ -33,19 +33,34 @@ func (self *Indexer) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 	self.logger.Store(logger.With("volume", self.name))
 
+	// What the volume's files were enriched with is reconciled with its
+	// mode, before its workers start, so a scan, or a task, doesn't record
+	// its mode, or enrich a file, of what's out of date, and it's tried
+	// again until it is
+	retry := self.retry
+	for {
+		err := self.reconcile(ctx)
+		if err == nil {
+			break
+		} else if ctx.Err() != nil {
+			return nil
+		}
+		self.failed(ctx, err)
+		self.fail(err)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(retry):
+		}
+		retry = min(retry*2, maxRetry)
+	}
+
 	// The worker of the index, and the workers of the tasks, apart from it,
 	// which are waited for once it's cancelled
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	workers.Go(func() { self.work(ctx) })
-	if self.mode.Level() < ModeMetadata.Level() {
-		// A volume which isn't enriched doesn't keep what it was enriched
-		// with, of when it was, so it's enriched of every file again, when it
-		// is again
-		if err := self.store.DeleteMetadata(ctx, self.name, string(store.KindMetadata)); err != nil {
-			self.failed(ctx, err)
-		}
-	} else if self.tasked() {
+	if self.mode.Level() >= ModeMetadata.Level() && self.tasked() {
 		// The files which are indexed, and not enriched, such as those of a
 		// volume whose files were indexed, which is enriched now, are queued
 		// at once, rather than once it's scanned again, as their revisions are
@@ -62,7 +77,7 @@ func (self *Indexer) Run(ctx context.Context, logger *slog.Logger) error {
 		cancel()
 		workers.Wait()
 	}()
-	retry := self.retry
+	retry = self.retry
 	for {
 		err := self.watch(ctx)
 		if ctx.Err() != nil {
@@ -420,4 +435,58 @@ func (self *Indexer) indexed(ctx context.Context, work []store.Work) []schema.Ev
 		result = append(result, event)
 	}
 	return result
+}
+
+// enrichment returns what a volume's files are enriched with, of its mode,
+// by the metadata task: metadata, or artwork, or nothing
+func (self *Indexer) enrichment() string {
+	switch {
+	case self.mode.Level() < ModeMetadata.Level():
+		return ""
+	case self.mode.Level() < ModeArtwork.Level():
+		return string(ModeMetadata)
+	default:
+		return string(ModeArtwork)
+	}
+}
+
+// reconcile removes what was found of the volume's files, so they're
+// enriched again, when they were enriched with something else than its mode
+// says, such as with artwork, or without it, or aren't enriched any more,
+// and then records what they're enriched with, of its state, which a scan
+// doesn't change. A volume whose mode enriches its files, without a task to,
+// is left as it is.
+func (self *Indexer) reconcile(ctx context.Context) error {
+	want := self.enrichment()
+	if want != "" && !self.tasked() {
+		return nil
+	}
+	state, err := self.store.State(ctx, self.name)
+	if err != nil {
+		return err
+	} else if state.Enriched == want && want != "" {
+		return nil
+	}
+
+	// A volume which isn't enriched doesn't keep what it was enriched
+	// with, of when it was, so it's enriched of every file again, when it
+	// is again, and it's removed before what it's enriched with is
+	// recorded, so it's removed again, when it isn't recorded
+	if want == "" || state.Enriched != "" {
+		if err := self.store.DeleteMetadata(ctx, self.name, string(store.KindMetadata)); err != nil {
+			return err
+		}
+	}
+	err = self.updateState(ctx, func(state *schema.IndexState) bool {
+		if state.Enriched == want {
+			return false
+		}
+		state.Enriched = want
+		return true
+	})
+	if errors.Is(err, gofiler.ErrNotFound) {
+		// A volume which isn't stored has no state of it
+		return nil
+	}
+	return err
 }

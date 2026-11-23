@@ -23,15 +23,15 @@ DELETE FROM volume WHERE name = @name RETURNING name, url, enabled, created_at, 
 
 -- volume.state
 -- Its state, whose NULLs are its zero values
-SELECT coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coalesce(scan_mode, ''), coalesce(phase, ''), index_started, index_timestamp, coalesce(error, '')
+SELECT coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coalesce(scan_mode, ''), coalesce(enriched, ''), coalesce(phase, ''), index_started, index_timestamp, coalesce(error, '')
 FROM volume WHERE name = @name;
 
 -- volume.set_state
 UPDATE volume SET
-  status = nullif(@status, ''), folders = nullif(@folders, 0), files = nullif(@files, 0), scan_mode = nullif(@mode, ''), phase = nullif(@phase, ''),
+  status = nullif(@status, ''), folders = nullif(@folders, 0), files = nullif(@files, 0), scan_mode = nullif(@mode, ''), enriched = nullif(@enriched, ''), phase = nullif(@phase, ''),
   index_started = @started, index_timestamp = @scanned, error = nullif(@error, '')
 WHERE name = @name
-RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coalesce(scan_mode, ''), coalesce(phase, ''), index_started, index_timestamp, coalesce(error, '');
+RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coalesce(scan_mode, ''), coalesce(enriched, ''), coalesce(phase, ''), index_started, index_timestamp, coalesce(error, '');
 
 -- object.put
 -- An object, which replaces the one of its key, and its metadata, of a JSON
@@ -458,3 +458,8 @@ DELETE FROM object_artwork WHERE volume = @volume AND object = @key RETURNING ha
 -- object_artwork.insert
 -- A link of an object to artwork
 INSERT INTO object_artwork (volume, object, hash) VALUES (@volume, @key, @hash) RETURNING hash;
+
+-- object_artwork.delete_volume
+-- The links of the objects of a volume, as what a task found of them is
+-- removed
+DELETE FROM object_artwork WHERE volume = @volume;

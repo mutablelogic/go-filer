@@ -141,14 +141,15 @@ type TaskState struct {
 
 // IndexState is the state of a volume's index
 type IndexState struct {
-	Status  IndexStatus `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
-	Folders uint64      `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
-	Objects uint64      `json:"objects,omitempty" help:"How many objects, without folders, the index has, of the last scan, and the changes since, of a volume whose objects are indexed"`
-	Mode    string      `json:"mode,omitempty" help:"What the last scan which finished indexed: folders, or objects"`
-	Phase   IndexPhase  `json:"phase,omitempty" help:"What the scan in progress is doing: scanning, when it's listed, or indexing, when its files are stored, or empty, when it's idle"`
-	Started time.Time   `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
-	Scanned time.Time   `json:"scanned,omitzero" help:"When the last scan which finished did"`
-	Error   string      `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`
+	Status   IndexStatus `json:"status,omitempty" help:"How far it's indexed: scanning, or ready, or empty, when it hasn't been yet"`
+	Folders  uint64      `json:"folders,omitempty" help:"How many folders the scan in progress, or the last, has indexed"`
+	Objects  uint64      `json:"objects,omitempty" help:"How many objects, without folders, the index has, of the last scan, and the changes since, of a volume whose objects are indexed"`
+	Mode     string      `json:"mode,omitempty" help:"What the last scan which finished indexed: folders, or objects"`
+	Enriched string      `json:"enriched,omitempty" help:"What the files were enriched with, by the metadata task: metadata, or artwork, or empty, when they weren't"`
+	Phase    IndexPhase  `json:"phase,omitempty" help:"What the scan in progress is doing: scanning, when it's listed, or indexing, when its files are stored, or empty, when it's idle"`
+	Started  time.Time   `json:"started,omitzero" help:"When the scan in progress, or the last, started"`
+	Scanned  time.Time   `json:"scanned,omitzero" help:"When the last scan which finished did"`
+	Error    string      `json:"error,omitempty" help:"Why the last scan, or the watch, failed"`
 }
 
 // IndexStatus is how far a volume is indexed
@@ -272,7 +273,7 @@ func (v Volume) IndexStatus() string {
 			phase = "idle"
 		}
 		result = fmt.Sprintf("%s, %d folders", phase, v.Index.Folders)
-		if (v.Index.Mode == "objects" || v.Index.Mode == "metadata") && (v.Index.Status == IndexStatusReady || v.Index.Objects > 0) {
+		if (v.Index.Mode == "objects" || v.Index.Mode == "metadata" || v.Index.Mode == "artwork") && (v.Index.Status == IndexStatusReady || v.Index.Objects > 0) {
 			result += fmt.Sprintf(", %d objects", v.Index.Objects)
 		}
 		if task := v.Index.Metadata; task != nil {

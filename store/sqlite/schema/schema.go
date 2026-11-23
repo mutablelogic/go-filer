@@ -16,7 +16,7 @@ import (
 // GLOBALS
 
 // Version is the version of the schema, of the database's user_version
-const Version = 20
+const Version = 21
 
 var (
 	//go:embed objects.sql
@@ -147,6 +147,22 @@ func Create(ctx context.Context, conn sqlite.Conn) error {
 		// is created with
 		if version >= 6 && version < 17 {
 			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_17").Exec(ctx, `ALTER TABLE object_state ADD COLUMN trace TEXT`); err != nil {
+				return err
+			}
+		}
+		// Version 21's volumes have what their files were enriched with,
+		// which a volume of version 1 to 20 is added, as metadata, as its
+		// files weren't enriched with artwork then, so a volume which is
+		// enriched with it now is enriched again, and one which isn't
+		// enriched removes what it was, once, or as NULL, before version
+		// 11, whose metadata was the backend's
+		if version >= 1 && version < 21 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_21").Exec(ctx, `ALTER TABLE volume ADD COLUMN enriched TEXT`); err != nil {
+				return err
+			}
+		}
+		if version >= 11 && version < 21 {
+			if err := conn.With(sqlite.TraceSpanNameArg, "schema.migrate_21").Exec(ctx, `UPDATE volume SET enriched = 'metadata'`); err != nil {
 				return err
 			}
 		}

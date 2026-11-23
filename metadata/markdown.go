@@ -39,7 +39,7 @@ func (self *Metadata) Markdown(ctx context.Context, r io.Reader, file *schema.Ob
 	ctx, end := otel.StartSpan(self.tracer, ctx, "metadata.Markdown", attribute.String("volume", file.Name), attribute.String("path", file.Path))
 	defer func() { end(err) }()
 
-	opts := append(self.extractOpts(file), gometadata.WithNamespace(gometadata.MarkdownNamespace), gometadata.WithRange(fmt.Sprintf("0:%d", markdownPart)))
+	opts := append(self.extractOpts(file, false), gometadata.WithNamespace(gometadata.MarkdownNamespace), gometadata.WithRange(fmt.Sprintf("0:%d", markdownPart)))
 	_, entries, extractErr := gometadata.Extract(ctx, withName(r, path.Base(file.Path)), opts...)
 	var result *schema.Markdown
 	for _, entry := range entries {

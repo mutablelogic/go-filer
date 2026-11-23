@@ -49,6 +49,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("Tasks", func(t *testing.T) { testTasks(t, withVolumes(t, newStore(t))) })
 	t.Run("Artwork", func(t *testing.T) { testArtwork(t, withVolumes(t, newStore(t))) })
 	t.Run("ObjectArtwork", func(t *testing.T) { testObjectArtwork(t, withVolumes(t, newStore(t))) })
+	t.Run("TaskArtwork", func(t *testing.T) { testTaskArtwork(t, withVolumes(t, newStore(t))) })
 	t.Run("Geo", func(t *testing.T) { testGeo(t, withVolumes(t, newStore(t))) })
 	t.Run("Changed", func(t *testing.T) { testChanged(t, withVolumes(t, newStore(t))) })
 	t.Run("Events", func(t *testing.T) { testEvents(t, withVolumes(t, newStore(t))) })
@@ -499,7 +500,7 @@ func testState(t *testing.T, s store.Store) {
 
 	// Its state is stored, of each volume
 	started := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Objects: 34, Mode: "objects", Phase: schema.IndexPhaseIndexing, Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
+	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Objects: 34, Mode: "objects", Enriched: "artwork", Phase: schema.IndexPhaseIndexing, Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
 	require.NoError(t, s.SetState(ctx, "media", want))
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
@@ -1727,4 +1728,55 @@ func testObjectArtwork(t *testing.T, s store.Store) {
 	n, err = s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
+}
+
+func testTaskArtwork(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), file("/a.mp3"), file("/b.mp3")))
+	contexts := func(key string) []string {
+		t.Helper()
+		artwork, err := s.ObjectArtwork(ctx, "media", key)
+		require.NoError(t, err)
+		result := []string{}
+		for _, a := range artwork {
+			result = append(result, a.Context)
+		}
+		return result
+	}
+
+	// A task's artwork is stored, and linked to, with its metadata, and
+	// replaces what it found before, which is none, when it found none
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.mp3", "metadata", nil, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("thumbnail", "a"), artwork("cover", "a")}}))
+	assert.Equal(t, []string{"cover", "thumbnail"}, contexts("/a.mp3"))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.mp3", "metadata", nil, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("cover", "b")}}))
+	assert.Equal(t, []string{"cover"}, contexts("/a.mp3"))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.mp3", "metadata", nil, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("cover", "b")}}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.mp3", "metadata", nil, schema.TaskMeta{}))
+	assert.Empty(t, contexts("/a.mp3"))
+
+	// Artwork which isn't valid isn't stored, nor is the metadata
+	err := s.SetMetadata(ctx, "media", "/b.mp3", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"B"`)}}, Artwork: []schema.ArtworkMeta{artwork("cover", "c"), artwork("cover", "d")}})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	object, err := s.GetObject(ctx, "media", "/b.mp3")
+	require.NoError(t, err)
+	assert.Empty(t, object.Meta)
+	assert.Equal(t, []string{"cover"}, contexts("/b.mp3"))
+
+	// A task which read a version of the file which changed since doesn't
+	// replace its links
+	read := object.ObjectAttr
+	changed := file("/b.mp3")
+	changed.ETag = &[]string{"v2"}[0]
+	require.NoError(t, s.PutObject(ctx, "media", changed))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.mp3", "metadata", nil, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("back", "b")}}))
+	err = s.SetMetadata(ctx, "media", "/b.mp3", "metadata", &read, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("cover", "z")}})
+	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
+	assert.Equal(t, []string{"back"}, contexts("/b.mp3"))
+
+	// The links of a volume whose task's metadata is deleted are too
+	require.NoError(t, s.DeleteMetadata(ctx, "media", "metadata"))
+	assert.Empty(t, contexts("/b.mp3"))
+	n, err := s.DeleteUnlinkedArtwork(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 4, n)
 }

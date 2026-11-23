@@ -66,11 +66,12 @@ func WithRescanInterval(interval time.Duration) Opt {
 
 // WithMode sets what's indexed, which is ModeFolders, by default, or
 // ModeObjects, of the files too, or ModeMetadata, of the files, which are
-// enriched with their metadata, when a task is set (see WithMetadataTask)
+// enriched with their metadata, when a task is set (see WithMetadataTask),
+// or ModeArtwork, which are enriched with their artwork too
 func WithMode(mode Mode) Opt {
 	return func(o *opt) error {
-		if mode != ModeFolders && mode != ModeObjects && mode != ModeMetadata {
-			return gofiler.ErrBadParameter.Withf("an indexer's mode is %s, %s or %s, not %q", ModeFolders, ModeObjects, ModeMetadata, mode)
+		if mode != ModeFolders && mode != ModeObjects && mode != ModeMetadata && mode != ModeArtwork {
+			return gofiler.ErrBadParameter.Withf("an indexer's mode is %s, %s, %s or %s, not %q", ModeFolders, ModeObjects, ModeMetadata, ModeArtwork, mode)
 		}
 		o.mode = mode
 		return nil
