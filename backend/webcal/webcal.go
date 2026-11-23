@@ -506,24 +506,13 @@ func (f *feed) Unmarshal(header http.Header, r io.Reader) error {
 	return nil
 }
 
-// calendarStart skips the spaces, and a byte order mark, which a feed can
-// start with, which go-metadata's decoder doesn't, and returns an error
-// unless it then starts as a calendar does, of BEGIN:VCALENDAR, so a page,
-// such as of a sign-in, or an empty response, isn't an empty calendar
+// calendarStart returns an error unless a feed starts as a calendar does,
+// of BEGIN:VCALENDAR, after a byte order mark, and spaces, so a page, such
+// as of a sign-in, or an empty response, isn't an empty calendar. It peeks,
+// so what's decoded, and saved, is the feed, as it is.
 func calendarStart(r *bufio.Reader) error {
-	if bom, err := r.Peek(3); err == nil && string(bom) == "\xef\xbb\xbf" {
-		r.Discard(3)
-	}
-	for {
-		b, err := r.Peek(1)
-		if err != nil {
-			return fmt.Errorf("it isn't an iCalendar")
-		} else if b[0] != ' ' && b[0] != '\t' && b[0] != '\r' && b[0] != '\n' {
-			break
-		}
-		r.Discard(1)
-	}
-	if begin, err := r.Peek(len(beginCalendar)); err != nil || !strings.EqualFold(string(begin), beginCalendar) {
+	start, _ := r.Peek(64)
+	if !strings.HasPrefix(strings.ToUpper(strings.TrimLeft(strings.TrimPrefix(string(start), "\xef\xbb\xbf"), " \t\r\n")), beginCalendar) {
 		return fmt.Errorf("it isn't an iCalendar")
 	}
 	return nil
