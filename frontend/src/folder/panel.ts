@@ -79,12 +79,13 @@ export class ObjectPanelElement extends LitElement {
         return this;
     }
 
-    // open opens the panel of the file, of the tab which is chosen, when the
-    // file has it, or else of its metadata
-    open(object: FilerObject) {
+    // open opens the panel of the file, of the tab, or else of the tab which
+    // is chosen, when the file has it, or else of its metadata
+    open(object: FilerObject, chosen?: ObjectTab) {
         this.object = object;
         const tabs = this.tabs(object);
-        const tab = tabs.find((t) => t.value === this.tab && !t.disabled)?.value ?? 'metadata';
+        const tab = tabs.find((t) => t.value === (chosen ?? this.tab) && !t.disabled)?.value
+            ?? tabs.find((t) => t.value === this.tab && !t.disabled)?.value ?? 'metadata';
         this.panel.setHeader({ title: objectTitle(object), subtitle: `${object.name}${object.path}` });
         this.panel.setTabs(tabs, tab);
         this.panel.open(`${object.name}${object.path}`);
@@ -121,17 +122,9 @@ export class ObjectPanelElement extends LitElement {
     // each of Download
     private tabs(object: FilerObject): PanelTab[] {
         const actions = this.actions(object);
-        const tabs: PanelTab[] = [{ value: 'metadata', label: 'Metadata', actions }];
-        if (object.artwork?.length) {
-            tabs.push({ value: 'artwork', label: 'Artwork', actions });
-        }
-        if (object.geo?.length) {
-            tabs.push({ value: 'map', label: 'Map', actions });
-        }
-        if (object.events?.length) {
-            tabs.push({ value: 'events', label: 'Events', actions });
-        }
-        tabs.push({ value: 'preview', label: 'Preview', disabled: !hinted(object, HintMarkdown), actions });
+        const shown = objectTabs(object);
+        const tabs: PanelTab[] = shown.filter((t) => t.value !== 'preview').map((t) => ({ ...t, actions }));
+        tabs.push({ value: 'preview', label: 'Preview', disabled: !shown.some((t) => t.value === 'preview'), actions });
         return tabs;
     }
 
@@ -233,6 +226,26 @@ export class ObjectPanelElement extends LitElement {
 // countOf returns how many there are of a noun, such as 2 events
 function countOf(count: number, noun: string): string {
     return `${count.toLocaleString()} ${count === 1 ? noun : noun + 's'}`;
+}
+
+// objectTabs returns the tabs of a file's panel which it has: Metadata,
+// and Artwork, Map and Events, of a file which has them, and Preview, of
+// one whose content can be read as Markdown
+export function objectTabs(object: FilerObject): { value: ObjectTab; label: string }[] {
+    const tabs: { value: ObjectTab; label: string }[] = [{ value: 'metadata', label: 'Metadata' }];
+    if (object.artwork?.length) {
+        tabs.push({ value: 'artwork', label: 'Artwork' });
+    }
+    if (object.geo?.length) {
+        tabs.push({ value: 'map', label: 'Map' });
+    }
+    if (object.events?.length) {
+        tabs.push({ value: 'events', label: 'Events' });
+    }
+    if (hinted(object, HintMarkdown)) {
+        tabs.push({ value: 'preview', label: 'Preview' });
+    }
+    return tabs;
 }
 
 // hinted returns whether a file's metadata hints the hint, such as that it
