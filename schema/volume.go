@@ -167,8 +167,10 @@ type VolumeList struct {
 // Backend is a type of backend, of the scheme of its volumes' URLs, such as
 // file, and what it is
 type Backend struct {
-	Scheme      string `json:"scheme" help:"Scheme of the URLs of its volumes, such as file"`
-	Description string `json:"description,omitempty" help:"What it is, such as Server filesystem"`
+	Scheme      string     `json:"scheme" help:"Scheme of the URLs of its volumes, such as file"`
+	Description string     `json:"description,omitempty" help:"What it is, such as Server filesystem"`
+	Icon        string     `json:"icon,omitempty" help:"Media type of its icon, such as image/svg+xml, which is GET /backend/{scheme}/icon, when it has one"`
+	Defaults    url.Values `json:"defaults,omitempty" help:"Options of its volumes which aren't set, such as readonly=true"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////

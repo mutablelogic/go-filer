@@ -21,7 +21,6 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	vcard "github.com/mutablelogic/go-metadata/pkg/vcard"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
@@ -37,8 +36,8 @@ import (
 type ContactFiler struct {
 	contactOpt
 	name   string
-	opts   gofiler.Opts     // Its credentials, and client options, which a clone is created with
-	cache  store.CacheStore // The volume's cache, which the registry owns
+	opts   gofiler.Opts       // Its credentials, and client options, which a clone is created with
+	cache  gofiler.CacheStore // The volume's cache, which the registry owns
 	tokens *tokens
 	client *httpclient.PeopleClient
 
@@ -112,7 +111,7 @@ var peopleEndpoint = httpclient.PeopleEndpoint
 // parameters are readonly, which is true by default, and, when it's false,
 // needs a sign-in which can write contacts, of the contact action, quota,
 // refresh_interval and credential, as a task filer's.
-func NewContactFiler(ctx context.Context, name string, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*ContactFiler, error) {
+func NewContactFiler(ctx context.Context, name string, params url.Values, cache gofiler.CacheStore, opts gofiler.Opts) (*ContactFiler, error) {
 	if cache == nil {
 		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
 	}

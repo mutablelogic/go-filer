@@ -21,7 +21,6 @@ import (
 	google "github.com/mutablelogic/go-filer/backend/google"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -1095,7 +1094,7 @@ func Test_CalendarListingCacheStale(t *testing.T) {
 	credentials := calendarCredentials(t, endpoint)
 	cache := testCache()
 	day := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
-	filer := func(cache store.CacheStore, now time.Time) *google.CalendarFiler {
+	filer := func(cache gofiler.CacheStore, now time.Time) *google.CalendarFiler {
 		t.Helper()
 		f, err := google.NewCalendarFiler(t.Context(), "calendar", url.Values{"quota": {"0"}, "window": {"40d"}, "refresh_interval": {"10ms"}}, cache, gofiler.Opts{Credentials: credentials})
 		require.NoError(t, err)

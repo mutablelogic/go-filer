@@ -9,7 +9,6 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-sqlite"
 )
 
@@ -20,7 +19,7 @@ import (
 type CacheEntry struct {
 	Id      int64
 	Key     string
-	Meta    store.CacheMeta
+	Meta    gofiler.CacheMeta
 	Size    int64
 	Stored  time.Time
 	Expires time.Time
@@ -43,7 +42,7 @@ type CacheChunk struct {
 type CacheCommit struct {
 	Id      int64
 	Key     string
-	Meta    store.CacheMeta
+	Meta    gofiler.CacheMeta
 	Size    int64
 	Now     time.Time
 	Expires time.Time

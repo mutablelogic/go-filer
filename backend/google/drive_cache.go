@@ -10,8 +10,8 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
-	store "github.com/mutablelogic/go-filer/store"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -117,7 +117,7 @@ func (self *DriveFiler) save(ctx context.Context, w *driveWatch, now bool) {
 		}
 		pw.Close()
 	}()
-	meta := store.CacheMeta{Version: token, Values: map[string]string{driveTreeFormatValue: driveTreeFormat, driveTreeRootValue: root, driveTreeGoneValue: string(gone)}}
+	meta := gofiler.CacheMeta{Version: token, Values: map[string]string{driveTreeFormatValue: driveTreeFormat, driveTreeRootValue: root, driveTreeGoneValue: string(gone)}}
 	entry, err := self.cache.Put(ctx, driveTreeKey+root, 0, meta, pr)
 	pr.CloseWithError(err)
 	self.mu.Lock()

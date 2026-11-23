@@ -16,7 +16,6 @@ import (
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
 	fsbackend "github.com/mutablelogic/go-filer/backend/fs"
-	store "github.com/mutablelogic/go-filer/store"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -35,15 +34,15 @@ func cacheFiles(t *testing.T, dir string) []string {
 }
 
 // putCache stores the content as the entry of the key
-func putCache(t *testing.T, cache store.CacheStore, key, content string) {
+func putCache(t *testing.T, cache gofiler.CacheStore, key, content string) {
 	t.Helper()
-	entry, err := cache.Put(t.Context(), key, 0, store.CacheMeta{}, strings.NewReader(content))
+	entry, err := cache.Put(t.Context(), key, 0, gofiler.CacheMeta{}, strings.NewReader(content))
 	require.NoError(t, err)
 	require.NoError(t, entry.Close())
 }
 
 // getCache returns the content of the entry of the key, or an error
-func getCache(t *testing.T, cache store.CacheStore, key string) (string, error) {
+func getCache(t *testing.T, cache gofiler.CacheStore, key string) (string, error) {
 	t.Helper()
 	entry, err := cache.Get(t.Context(), key)
 	if err != nil {
@@ -195,8 +194,8 @@ func Test_Registry_Cache(t *testing.T) {
 	dir, cacheDir := t.TempDir(), t.TempDir()
 	s := newStore(t)
 	var mu sync.Mutex
-	var caches []store.CacheStore
-	open := func(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+	var caches []gofiler.CacheStore
+	open := func(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		mu.Lock()
 		caches = append(caches, cache)
 		mu.Unlock()
@@ -206,14 +205,14 @@ func Test_Registry_Cache(t *testing.T) {
 		}
 		return example{Filer: b, u: u}, nil
 	}
-	last := func() store.CacheStore {
+	last := func() gofiler.CacheStore {
 		mu.Lock()
 		defer mu.Unlock()
 		require.NotEmpty(t, caches)
 		return caches[len(caches)-1]
 	}
 	newCached := func() *Registry {
-		r, err := New(context.Background(), WithDebounce(0), WithStore(s), WithCacheDir(cacheDir), WithBackend("cached", "Cached", open))
+		r, err := New(context.Background(), WithDebounce(0), WithStore(s), WithCacheDir(cacheDir), WithBackend(testBackend("cached", "Cached", open)))
 		require.NoError(t, err)
 		runRegistry(t, r)
 		return r

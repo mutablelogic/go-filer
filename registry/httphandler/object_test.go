@@ -734,3 +734,37 @@ func TestObjectGetMarkdown(t *testing.T) {
 	status, _, _ = getObject(t, plain, "object/media/a.txt", accept)
 	assert.Equal(t, http.StatusNotAcceptable, status)
 }
+
+func TestBackendIcon(t *testing.T) {
+	server, _ := newServer(t)
+
+	// A backend's icon is its image, of its media type, whose entity tag a
+	// browser keeps
+	status, header, body := getObject(t, server, "backend/file/icon", nil)
+	require.Equal(t, http.StatusOK, status, body)
+	assert.Equal(t, "image/svg+xml", header.Get("Content-Type"))
+	assert.Contains(t, body, "<svg")
+	assert.Contains(t, header.Get("Cache-Control"), "max-age=")
+	etag := header.Get("ETag")
+	require.NotEmpty(t, etag)
+	status, _, body = getObject(t, server, "backend/file/icon", http.Header{"If-None-Match": {etag}})
+	assert.Equal(t, http.StatusNotModified, status)
+	assert.Empty(t, body)
+
+	// The backends' list has the media type of each one's icon, and its
+	// defaults
+	status, _, body = getObject(t, server, "volume", nil)
+	require.Equal(t, http.StatusOK, status)
+	var list schema.VolumeList
+	require.NoError(t, json.Unmarshal([]byte(body), &list))
+	for _, backend := range list.Backends {
+		if backend.Scheme == "file" {
+			assert.Equal(t, "image/svg+xml", backend.Icon)
+			assert.Equal(t, "false", backend.Defaults.Get("readonly"))
+		}
+	}
+
+	// A scheme which isn't a backend's has none
+	status, _, _ = getObject(t, server, "backend/nope/icon", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+}

@@ -27,6 +27,7 @@ func RegisterHandlers(reg *registry.Registry, router *httprouter.Router) error {
 	router.Spec().AddTagGroup("Filer", "Volumes", "Objects", "Actions")
 	return errors.Join(
 		volumeHandlers(reg, router, documentation),
+		backendHandlers(reg, router, documentation),
 		objectHandlers(reg, router, documentation),
 		searchHandlers(reg, router, documentation),
 		actionHandlers(reg, router, documentation),

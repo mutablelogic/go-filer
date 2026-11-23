@@ -27,7 +27,6 @@ import (
 	google "github.com/mutablelogic/go-filer/backend/google"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	ical "github.com/mutablelogic/go-metadata/pkg/ical"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
@@ -1832,7 +1831,7 @@ func Test_TaskListActionWatched(t *testing.T) {
 
 // testCache returns a cache of a volume, in memory, as the registry passes
 // a volume's backend its own
-func testCache() store.CacheStore {
+func testCache() gofiler.CacheStore {
 	cache, err := sqlite.NewCacheStore(context.Background(), gosqlite.Memory)
 	if err != nil {
 		panic(err)

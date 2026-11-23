@@ -20,7 +20,6 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	rss "github.com/mutablelogic/go-filer/backend/rss"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	gosqlite "github.com/mutablelogic/go-sqlite"
@@ -332,7 +331,7 @@ func Test_FeedWatch(t *testing.T) {
 
 // testCache returns a cache of a volume, in memory, as the registry passes
 // a volume's backend its own
-func testCache() store.CacheStore {
+func testCache() gofiler.CacheStore {
 	cache, err := sqlite.NewCacheStore(context.Background(), gosqlite.Memory)
 	if err != nil {
 		panic(err)

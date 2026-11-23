@@ -15,7 +15,6 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	types "github.com/mutablelogic/go-server/pkg/types"
 	gosqlite "github.com/mutablelogic/go-sqlite"
@@ -135,7 +134,7 @@ func (c *caches) close() error {
 // clone. A cache whose identity is empty, such as that of a backend which is
 // created to check a volume's URL, is in memory. A volume's name, which a
 // cache's path is of, must be an identifier, so it's in the directory.
-func (c *caches) acquire(ctx context.Context, volume, id string) (store.CacheStore, func() error, func() func() error, error) {
+func (c *caches) acquire(ctx context.Context, volume, id string) (gofiler.CacheStore, func() error, func() func() error, error) {
 	if !types.IsIdentifier(volume) {
 		return nil, nil, nil, gofiler.ErrBadParameter.Withf("invalid volume name: %q", volume)
 	} else if id == "" {

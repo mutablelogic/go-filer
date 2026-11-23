@@ -64,6 +64,12 @@ export function objectURL(client: Client, name: string, path: string, download =
     return url.href;
 }
 
+// backendIconURL returns the URL of the icon of the backend of the scheme,
+// such as file, as the browser reaches it
+export function backendIconURL(client: Client, scheme: string): string {
+    return new URL(`${client.base.replace(/\/$/, '')}/backend/${encodeURIComponent(scheme)}/icon`, location.href).href;
+}
+
 // MarkdownPart is the start of a file's content, as Markdown, and whether
 // there's more of it, which isn't shown
 export interface MarkdownPart {

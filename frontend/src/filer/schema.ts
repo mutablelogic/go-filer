@@ -51,6 +51,11 @@ export interface VolumeIndexing {
 export interface Backend {
     scheme: string;
     description?: string;
+    // icon is the media type of its icon, such as image/svg+xml, when it has
+    // one, of backendIconURL, and defaults the options of a volume which
+    // aren't set, such as readonly=true
+    icon?: string;
+    defaults?: Record<string, string[]>;
 }
 
 // VolumeList is the volumes, in order of their names, and the backends

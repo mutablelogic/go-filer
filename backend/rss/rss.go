@@ -5,7 +5,7 @@
 // only, and is polled, at the feed's ttl, or its refresh interval, for the
 // changes to its items, of their guids. It's a backend which isn't built
 // into the registry, which a program adds with
-// registry.WithBackend(rss.Scheme, rss.Description, rss.Open).
+// registry.WithBackend(rss.Backend()).
 package rss
 
 import (
@@ -37,7 +37,7 @@ type Filer struct {
 	description string
 	refresh     time.Duration // the refresh interval of the option, or zero, when it isn't set
 	opts        gofiler.Opts
-	cache       store.CacheStore // the volume's cache, which the registry owns
+	cache       gofiler.CacheStore // the volume's cache, which the registry owns
 	client      *client.Client
 
 	mu           sync.Mutex
@@ -60,7 +60,7 @@ type feed struct {
 	*rss.Feed
 	etag, lastModified string
 	ctx                context.Context
-	cache              store.CacheStore
+	cache              gofiler.CacheStore
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -106,13 +106,13 @@ var options = map[string]bool{paramName: true, paramRefresh: true, paramReadonly
 // LIFECYCLE
 
 // Open creates the backend of the feed of the URL, rss://<name>/<host>/<path>,
-// whose name is its name option, or its host, which is a registry.Backend.
+// whose name is its name option, or its host, which its Backend opens.
 // The feed is https://<host>/<path>, or http, with insecure=true, with the
 // parameters of the URL's query which aren't the volume's options: name,
 // refresh_interval, readonly, insecure and description. The feed is fetched,
 // so one which can't be is an error, and is described of its title, unless
 // it has a description option.
-func Open(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+func Open(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 	if u == nil || u.Scheme != Scheme {
 		return nil, gofiler.ErrBadParameter.With("not a feed's url")
 	}
@@ -151,7 +151,7 @@ func Open(ctx context.Context, u *url.URL, cache store.CacheStore, opts gofiler.
 
 // New creates the backend of a feed, of its URL, the volume's options, its
 // refresh_interval, and its description, and its cache
-func New(ctx context.Context, name string, feed *url.URL, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*Filer, error) {
+func New(ctx context.Context, name string, feed *url.URL, params url.Values, cache gofiler.CacheStore, opts gofiler.Opts) (*Filer, error) {
 	if cache == nil {
 		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
 	} else if !types.IsIdentifier(name) {
@@ -448,7 +448,7 @@ func (self *Filer) restoreLocked(ctx context.Context) {
 // modified, in the volume's cache, so a restart fetches it again when it
 // would have been, which isn't an error when it can't
 func (self *Filer) checkedLocked(ctx context.Context) {
-	_ = store.PutCacheJSON(ctx, self.cache, checkedKey, 0, store.CacheMeta{}, self.fetched)
+	_ = store.PutCacheJSON(ctx, self.cache, checkedKey, 0, gofiler.CacheMeta{}, self.fetched)
 }
 
 // channelLocked sets the feed's ttl, of its channel, which must be locked
@@ -507,7 +507,7 @@ func (f *feed) Unmarshal(header http.Header, r io.Reader) error {
 	saved := make(chan struct{})
 	go func() {
 		defer close(saved)
-		meta := store.CacheMeta{Version: f.etag, Values: map[string]string{lastModifiedValue: f.lastModified}}
+		meta := gofiler.CacheMeta{Version: f.etag, Values: map[string]string{lastModifiedValue: f.lastModified}}
 		entry, err := f.cache.Put(f.ctx, feedKey, 0, meta, pr)
 		if err == nil {
 			entry.Close()

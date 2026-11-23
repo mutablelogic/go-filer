@@ -12,7 +12,6 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	rss "github.com/mutablelogic/go-rss"
 	gosqlite "github.com/mutablelogic/go-sqlite"
@@ -101,7 +100,7 @@ func mustChannel(t *testing.T, xml string) *rss.Channel {
 
 // memoryCache returns a cache of a volume, in memory, which is closed when
 // the test ends
-func memoryCache(t *testing.T) store.CacheStore {
+func memoryCache(t *testing.T) gofiler.CacheStore {
 	t.Helper()
 	cache, err := sqlite.NewCacheStore(t.Context(), gosqlite.Memory)
 	require.NoError(t, err)

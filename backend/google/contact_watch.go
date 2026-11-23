@@ -19,7 +19,6 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	vcard "github.com/mutablelogic/go-metadata/pkg/vcard"
 )
 
@@ -404,7 +403,7 @@ func (self *ContactFiler) saveContacts(ctx context.Context, w *contactWatch, now
 		}
 		pw.Close()
 	}()
-	meta := store.CacheMeta{Version: token, Values: map[string]string{driveTreeFormatValue: contactsFormat}}
+	meta := gofiler.CacheMeta{Version: token, Values: map[string]string{driveTreeFormatValue: contactsFormat}}
 	entry, err := self.cache.Put(ctx, contactsKey, 0, meta, pr)
 	pr.CloseWithError(err)
 	self.mu.Lock()
@@ -424,14 +423,14 @@ func (self *ContactFiler) saveContacts(ctx context.Context, w *contactWatch, now
 // which isn't needed, nor of the quota, as it isn't the API's.
 func (self *ContactFiler) photo(ctx context.Context, link string) *vcard.Photo {
 	hash := sha256.Sum256([]byte(link))
-	entry, err := self.cache.GetOrCreate(ctx, photoKey+hex.EncodeToString(hash[:16]), "", photoTTL, func(w io.Writer) (store.CacheMeta, error) {
+	entry, err := self.cache.GetOrCreate(ctx, photoKey+hex.EncodeToString(hash[:16]), "", photoTTL, func(w io.Writer) (gofiler.CacheMeta, error) {
 		mediaType, data, err := fetchPhoto(ctx, link)
 		if err != nil {
-			return store.CacheMeta{}, err
+			return gofiler.CacheMeta{}, err
 		} else if _, err := w.Write(data); err != nil {
-			return store.CacheMeta{}, err
+			return gofiler.CacheMeta{}, err
 		}
-		return store.CacheMeta{Values: map[string]string{photoType: mediaType}}, nil
+		return gofiler.CacheMeta{Values: map[string]string{photoType: mediaType}}, nil
 	})
 	if err != nil {
 		return nil
