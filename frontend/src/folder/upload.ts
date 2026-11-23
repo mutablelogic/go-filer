@@ -21,7 +21,7 @@ import '@carbon/web-components/es/components/layer/index.js';
 import { alertView } from '../alert/view.ts';
 import { uploadObjects } from '../filer/httpclient.ts';
 import type { ObjectSkipped } from '../filer/schema.ts';
-import { formatSize } from './format.ts';
+import { formatSize, skippedFirst } from './format.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
@@ -46,6 +46,10 @@ export const ObjectUploadTag = 'gf-object-upload';
 // at once, as it's read
 const MaxListed = 100;
 const BatchSize = 200;
+
+// FrameBudget is how long, in milliseconds, a folder is read, between the
+// page being drawn, at most
+const FrameBudget = 50;
 
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
@@ -146,7 +150,7 @@ export class ObjectUploadElement extends LitElement {
                             <input class="gf-object-upload-folder" type="file" webkitdirectory multiple hidden
                                 @change=${(event: Event) => this.chooseFolder(event.target as HTMLInputElement)}>
                         `}
-                        ${repeat(this.chosen.slice(0, MaxListed), (c) => c.path, (c) => html`
+                        ${repeat(skippedFirst(this.chosen, MaxListed), (c) => c.path, (c) => html`
                             <cds-file-uploader-item state=${c.state} ?invalid=${!!c.skipped}
                                 error-subject=${c.skipped ? (c.skipped.exists ? 'It exists' : "It wasn't added") : ''}
                                 error-body=${c.skipped?.reason ?? ''}
@@ -175,10 +179,11 @@ export class ObjectUploadElement extends LitElement {
             return nothing;
         }
         const size = this.chosen.reduce((total, c) => total + c.file.size, 0);
+        const skipped = this.chosen.filter((c) => c.skipped).length;
         const count = `${this.chosen.length.toLocaleString()} ${this.chosen.length === 1 ? 'file' : 'files'}, ${formatSize(size) || '0 B'}`;
         return html`
             <p class="gf-object-upload-summary">
-                ${more > 0 ? `and ${more.toLocaleString()} more, of ${count}` : count}${this.reading ? ' · Reading…' : ''}
+                ${more > 0 ? `and ${more.toLocaleString()} more, of ${count}` : count}${skipped ? ` · ${skipped.toLocaleString()} not added` : ''}${this.reading ? ' · Reading…' : ''}
             </p>
         `;
     }
@@ -220,15 +225,30 @@ export class ObjectUploadElement extends LitElement {
         const live = () => session === this.session;
         this.reading++;
         this.setAction();
+        // Batches are added together, once a frame's time is spent, rather
+        // than of each, so a tree of small folders isn't a frame of each
+        let pending: { file: File; path: string }[] = [];
+        let since = performance.now();
+        const flush = async () => {
+            this.add(pending);
+            pending = [];
+            await nextFrame();
+            since = performance.now();
+        };
         try {
             for (const entry of entries) {
                 for await (const batch of entryBatches(entry, '', live)) {
                     if (!live()) {
                         return;
                     }
-                    this.add(batch);
-                    await nextFrame();
+                    pending.push(...batch);
+                    if (pending.length >= BatchSize || performance.now() - since > FrameBudget) {
+                        await flush();
+                    }
                 }
+            }
+            if (live() && pending.length) {
+                this.add(pending);
             }
         } catch (error) {
             if (live()) {
