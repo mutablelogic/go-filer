@@ -108,3 +108,28 @@ type failingStore struct {
 func (failingStore) DeleteMetadata(context.Context, string, string) error {
 	return gofiler.ErrInternalServerError.With("it failed")
 }
+
+// Test_Sortable tests an index's listings can be sorted once its files are
+// indexed, of its last scan which finished, and not of its mode alone
+func Test_Sortable(t *testing.T) {
+	backend, err := fs.New("media", t.TempDir(), nil, gofiler.Opts{})
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+	s, err := sqlite.New(context.Background(), gosqlite.Memory)
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+	sortable := func(mode Mode, state schema.IndexState) bool {
+		t.Helper()
+		i, err := New("media", backend, s, WithMode(mode))
+		require.NoError(t, err)
+		return i.Sortable(state)
+	}
+	ready := func(mode Mode) schema.IndexState {
+		return schema.IndexState{Status: schema.IndexStatusReady, Mode: string(mode)}
+	}
+	assert.True(t, sortable(ModeObjects, ready(ModeObjects)))
+	assert.True(t, sortable(ModeArtwork, ready(ModeMetadata)))
+	assert.False(t, sortable(ModeObjects, ready(ModeFolders)), "raised to its files, which aren't scanned yet")
+	assert.False(t, sortable(ModeObjects, schema.IndexState{Status: schema.IndexStatusScanning}), "of its first scan")
+	assert.False(t, sortable(ModeFolders, ready(ModeObjects)), "lowered to its folders")
+}

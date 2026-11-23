@@ -52,6 +52,10 @@ export class FolderController {
     private volume?: string;
     private path?: string;
     private sorted?: Sort;
+
+    // opened is the volume which was last opened, which is kept once it's
+    // closed, so opening it again, such as its root, isn't another volume's
+    private opened?: string;
     private state: FolderState = { count: null, more: false, loading: false, failed: false };
     private readonly listeners = new Set<(state: FolderState) => void>();
     private errorFn?: (title: string, error: unknown) => void;
@@ -97,9 +101,10 @@ export class FolderController {
         if (volume === this.volume && path === this.path) {
             return Promise.resolve();
         }
-        const another = volume !== this.volume;
+        const another = volume !== this.opened;
         this.volume = volume;
         this.path = path;
+        this.opened = volume;
         if (another) {
             const sort = sortable ? readSort(volume) : undefined;
             if (!sameSort(sort, this.list.current.sort)) {

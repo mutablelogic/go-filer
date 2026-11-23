@@ -27,6 +27,7 @@ export interface VolumeIndex {
     error?: string;
     metadata?: TaskState;
     kinds?: Record<string, number>;
+    sortable?: boolean;
 }
 
 // TaskState is the work of a task of a volume's objects, such as indexing
@@ -479,15 +480,11 @@ export function objectFormat(object: FilerObject): string {
     return type.includes('/') && subtype.length <= MaxFormat ? subtype.toUpperCase() : '';
 }
 
-// The modes of a volume's index whose files are indexed, so its listings
-// can be sorted
-const FilesModes = ['objects', 'metadata', 'artwork'];
-
 // volumeSortable returns whether a volume's listings can be sorted, by the
-// server, of its index: when its files are indexed, and it's ready, of
-// its first scan
+// server, of its index, which says so once its files are indexed, of its
+// last scan which finished
 export function volumeSortable(volume: Volume): boolean {
-    return !!volume.index && FilesModes.includes(volume.index.mode) && volume.index.status === 'ready';
+    return volume.index?.sortable === true;
 }
 
 // volumeFileNames returns whether a volume's objects have file names, such

@@ -388,6 +388,14 @@ func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequ
 	return self.Filer.ListObjects(ctx, req)
 }
 
+// Sortable returns whether the index's listings can be sorted, of its
+// state: when its files are indexed, and its last scan which finished,
+// which isn't of a scan in progress, of a ready index, indexed them, so a
+// volume whose index is raised to its files isn't, until they're scanned
+func (self *Indexer) Sortable(state schema.IndexState) bool {
+	return self.mode.Files() && state.Status == schema.IndexStatusReady && Mode(state.Mode).Files()
+}
+
 // listSorted returns a listing of the index, of a folder's objects, in
 // the order of the request's sort, which the backend can't list them in.
 // It's of the index as it is, which can be behind the backend, while work
@@ -404,7 +412,7 @@ func (self *Indexer) listSorted(ctx context.Context, req schema.ListObjectsReque
 		return nil, gofiler.ErrNotImplemented.Withf("the objects of %q can't be sorted, as its files aren't indexed", self.name)
 	} else if state, err := self.store.State(ctx, self.name); err != nil {
 		return nil, err
-	} else if state.Status != schema.IndexStatusReady || !Mode(state.Mode).Files() {
+	} else if !self.Sortable(state) {
 		return nil, gofiler.ErrNotImplemented.Withf("the objects of %q can't be sorted until its files are indexed", self.name)
 	}
 	p, after := req.Path, req.StartAfter

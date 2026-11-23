@@ -126,6 +126,7 @@ func (v Volume) Description() string {
 type VolumeIndex struct {
 	Mode string `json:"mode" help:"What's indexed, such as folders"`
 	IndexState
+	Sortable bool              `json:"sortable,omitempty" help:"Whether its listings can be sorted, of its index, once its files are indexed, of its last scan which finished"`
 	Metadata *TaskState        `json:"metadata,omitempty" help:"The metadata of the files, which is indexed of each file, apart from scans, of index=metadata"`
 	Kinds    map[string]uint64 `json:"kinds,omitempty" help:"How many objects, without folders, are of each kind, of their metadata:kind, such as book, or else of their media type, such as text/plain, or of \"\", of neither, of a volume whose objects are indexed"`
 }

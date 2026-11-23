@@ -251,6 +251,13 @@ test('FolderController sort', async () => {
     await settle();
     await folder.loadMore();
     assert.deepEqual(queries, ['/api/object/media  ', '/api/object/media -size ', '/api/object/media -size /a/2']);
+
+    // Of the same volume, once it's closed, such as to find its root's
+    // folder, it's still sorted
+    folder.close();
+    await settle();
+    await folder.open('media', '/b', true);
+    assert.deepEqual(folder.list.current.sort, { key: 'size', direction: 'descending' });
     queries.length = 0;
     await folder.open('photos', '/');
     assert.equal(folder.list.current.sort, undefined);
@@ -284,6 +291,7 @@ test('FolderController remembers the sort of each volume', async () => {
         await folder.open('media', '/', true);
         folder.list.setSort({ key: 'modified', direction: 'descending' });
         await settle();
+
         assert.equal(storage.get('gf-file-view-sort:media'), JSON.stringify({ key: 'modified', direction: 'descending' }));
         await folder.open('photos', '/', true);
         await folder.open('media', '/', true);
@@ -311,11 +319,9 @@ test('FolderController remembers the sort of each volume', async () => {
 });
 
 test('volumeSortable', () => {
-    // A volume whose files are indexed, and ready
-    const volume = (mode: string, status?: string) => ({ name: 'v', url: 'file://v/tmp', enabled: true, mounted: true, index: { mode, status } });
-    assert.equal(volumeSortable(volume('objects', 'ready')), true);
-    assert.equal(volumeSortable(volume('artwork', 'ready')), true);
-    assert.equal(volumeSortable(volume('objects', 'scanning')), false);
-    assert.equal(volumeSortable(volume('folders', 'ready')), false);
-    assert.equal(volumeSortable({ name: 'v', url: 'file://v/tmp', enabled: true, mounted: true }), false);
+    // A volume whose index says it can be sorted
+    const volume = (index?: { mode: string; sortable?: boolean }) => ({ name: 'v', url: 'file://v/tmp', enabled: true, mounted: true, index });
+    assert.equal(volumeSortable(volume({ mode: 'objects', sortable: true })), true);
+    assert.equal(volumeSortable(volume({ mode: 'objects' })), false, 'until its files are scanned');
+    assert.equal(volumeSortable(volume()), false);
 });

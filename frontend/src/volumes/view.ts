@@ -341,7 +341,8 @@ export class VolumeElement extends LitElement {
 
     // follow shows the file whose panel is open as its folder is loaded
     // again, such as once it's changed, or closes the panel, once it isn't
-    // in its folder, when all of the folder is loaded, or the folder closes
+    // in its folder, when all of the folder is loaded, and not while it's
+    // loading, such as once it's sorted, or the folder closes
     private follow(state: FolderState) {
         const panel = this.querySelector('gf-object-panel');
         if (!this.selected || !panel || state.loading || state.failed) {
@@ -350,7 +351,7 @@ export class VolumeElement extends LitElement {
         const object = state.objects?.find((o) => o.path === this.selected);
         if (object) {
             panel.refresh(object);
-        } else if (!state.volume || !state.more) {
+        } else if (!state.volume || (state.objects !== undefined && !state.more)) {
             panel.close();
         }
     }
