@@ -229,7 +229,8 @@ test('fileViewColumns', () => {
     assert.deepEqual(visibleColumns(true), ['kind', 'size', 'modified']);
     assert.deepEqual(visibleColumns(true, ['modified', 'file']), ['file', 'modified']);
     assert.deepEqual(visibleColumns(false, ['file', 'format', 'size']), ['size']);
-    assert.deepEqual(visibleColumns(true, ['unknown']), []);
+    assert.deepEqual(visibleColumns(true, ['unknown']), ['kind', 'size', 'modified'], 'none are the defaults');
+    assert.deepEqual(visibleColumns(true, []), ['kind', 'size', 'modified']);
 });
 
 test('FolderController sort', async () => {

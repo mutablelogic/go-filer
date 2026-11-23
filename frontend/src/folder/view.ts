@@ -153,8 +153,10 @@ export class FileViewElement extends LitElement {
         if (!state?.volume || !controller) {
             return nothing;
         }
+        // The last column which is shown, other than Name, can't be hidden
         const settings: TableSetting[] = availableColumns(this.files).map((column) => ({
             key: column, label: columnLabel(column), checked: this.columns.includes(column),
+            disabled: this.columns.length === 1 && this.columns[0] === column,
         }));
         return html`
             <gs-table scrolls size="sm" class="gf-file-view-table" .controller=${controller.list} .columns=${this.tableColumns()}
@@ -200,7 +202,7 @@ export class FileViewElement extends LitElement {
 
     // show shows, or hides, a column, which is remembered, of the volume
     private show(column: FileViewColumn, shown: boolean) {
-        if (this.columns.includes(column) === shown) {
+        if (this.columns.includes(column) === shown || (!shown && this.columns.length === 1)) {
             return;
         }
         const chosen = shown ? [...this.columns, column] : this.columns.filter((c) => c !== column);

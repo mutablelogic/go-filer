@@ -48,10 +48,12 @@ export function availableColumns(files: boolean): FileViewColumn[] {
 }
 
 // visibleColumns returns the columns which are shown, in order, of those
-// which are chosen, which can be, or else the default ones
+// which are chosen, which can be, or else the default ones, of none, as a
+// column, other than Name, is always shown
 export function visibleColumns(files: boolean, chosen?: readonly string[]): FileViewColumn[] {
     const available = availableColumns(files);
-    return available.filter((column) => (chosen ?? DefaultColumns).includes(column));
+    const shown = available.filter((column) => (chosen ?? DefaultColumns).includes(column));
+    return shown.length ? shown : available.filter((column) => DefaultColumns.includes(column));
 }
 
 // columnLabel returns a column's label
