@@ -143,10 +143,15 @@ func (self *Registry) ListObjects(ctx context.Context, req schema.ListObjectsReq
 	}
 
 	// Only an indexer's listing can be sorted, of its index, which a volume
-	// which isn't indexed hasn't
-	if _, indexed := e.Filer.(*indexer.Indexer); req.Sort != "" && !indexed {
-		e.wg.Done()
-		return nil, gofiler.ErrNotImplemented.Withf("the objects of %q can't be sorted, as its files aren't indexed", req.Name)
+	// which isn't indexed hasn't, of a sort which is one
+	if req.Sort != "" {
+		if _, _, err := schema.ParseSort(req.Sort); err != nil {
+			e.wg.Done()
+			return nil, gofiler.ErrBadParameter.With(err)
+		} else if _, indexed := e.Filer.(*indexer.Indexer); !indexed {
+			e.wg.Done()
+			return nil, gofiler.ErrNotImplemented.Withf("the objects of %q can't be sorted, as its files aren't indexed", req.Name)
+		}
 	}
 	inner, err := e.ListObjects(ctx, req)
 	if err != nil {

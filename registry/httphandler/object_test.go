@@ -776,9 +776,11 @@ func TestBackendIcon(t *testing.T) {
 func TestObjectListSort(t *testing.T) {
 	ctx := context.Background()
 
-	// A volume whose files aren't indexed can't be sorted
+	// A volume whose files aren't indexed can't be sorted, of a sort which
+	// is one, and a sort which isn't is a bad request, whatever the volume
 	server, _ := newServer(t)
 	assert.Equal(t, http.StatusNotImplemented, get(t, server, "object/media?sort=size", nil))
+	assert.Equal(t, http.StatusBadRequest, get(t, server, "object/media?sort=colour", nil))
 
 	// A server of a volume whose files are indexed
 	dir := t.TempDir()
@@ -829,6 +831,12 @@ func TestObjectListSort(t *testing.T) {
 	assert.Equal(t, []string{"/b.txt", "/c.txt", "/d.txt", "/a.txt"}, sorted("size"))
 	assert.Equal(t, []string{"/a.txt", "/d.txt", "/c.txt", "/b.txt"}, sorted("-size"))
 	assert.Equal(t, []string{"/d.txt", "/c.txt", "/b.txt", "/a.txt"}, sorted("-name"))
+
+	// A file's path is the file, alone, and isn't a folder's
+	var file schema.ObjectList
+	require.Equal(t, http.StatusOK, get(t, indexed, "object/media?sort=-size&path=%2Fc.txt", &file))
+	assert.Equal(t, []string{"/c.txt"}, keys(file))
+	assert.Equal(t, http.StatusNotFound, get(t, indexed, "object/media?sort=-size&path=%2Fc.txt%2F", nil))
 
 	// A sort which isn't one is a bad request
 	assert.Equal(t, http.StatusBadRequest, get(t, indexed, "object/media?sort=colour", nil))

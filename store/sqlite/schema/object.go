@@ -171,12 +171,15 @@ func (req KindsRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) 
 
 // sortValues are the values of the objects of a listing which it's sorted
 // by, of each sort, which are of the object table's columns, and aren't
-// NULL, so they're compared
+// NULL, so they're compared. When an object was modified is stored as
+// text, of its time's offset, and its seconds' fractions, which isn't in
+// order, as text, so it's of its seconds since the epoch, to the
+// millisecond, of which those of the same are of their keys.
 var sortValues = map[string]string{
 	filer.SortTitle:    titleValue,
 	filer.SortKind:     kindValue,
 	filer.SortSize:     "coalesce(size, -1)",
-	filer.SortModified: "coalesce(modified_at, '')",
+	filer.SortModified: "coalesce(unixepoch(modified_at, 'subsec'), -1e15)",
 	filer.SortType:     "coalesce(media_type, '')",
 }
 

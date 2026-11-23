@@ -392,9 +392,10 @@ func (self *Indexer) ListObjects(ctx context.Context, req schema.ListObjectsRequ
 // the order of the request's sort, which the backend can't list them in.
 // It's of the index as it is, which can be behind the backend, while work
 // is queued, rather than the backend's, so a listing which is sorted isn't
-// of another order meanwhile. Returns ErrBadParameter of a sort which isn't
-// one, ErrNotImplemented when the volume's files aren't indexed, or aren't
-// yet, and ErrNotFound when the index hasn't the folder.
+// of another order meanwhile. A path of a file is the file, alone. Returns
+// ErrBadParameter of a sort which isn't one, ErrNotImplemented when the
+// volume's files aren't indexed, or aren't yet, and ErrNotFound when the
+// index hasn't the folder, or the file.
 func (self *Indexer) listSorted(ctx context.Context, req schema.ListObjectsRequest) (schema.ListObjectsIterator, error) {
 	order, descending, err := schema.ParseSort(req.Sort)
 	if err != nil {
@@ -413,7 +414,25 @@ func (self *Indexer) listSorted(ctx context.Context, req schema.ListObjectsReque
 	if after != "" && !strings.HasPrefix(after, "/") {
 		after = "/" + after
 	}
-	folder := store.FolderKey(p)
+
+	// A path which ends with "/" is a folder's, and otherwise a file's, of
+	// the index, which is listed alone, as it is without a sort, or else a
+	// folder's, so a file, and a folder, of the same path, which a bucket
+	// can have, are the file, and the folder of the path with a "/" after it
+	folder := p
+	if !strings.HasSuffix(p, "/") {
+		if file, err := self.store.GetObject(ctx, self.name, p); err == nil {
+			iter := &objectIterator{indexer: self, done: true, file: true}
+			if after == "" || p > after {
+				file.Name = self.name
+				iter.page = []*schema.Object{file}
+			}
+			return iter, nil
+		} else if !errors.Is(err, gofiler.ErrNotFound) {
+			return nil, err
+		}
+		folder = store.FolderKey(p)
+	}
 	if _, err := self.store.GetObject(ctx, self.name, folder); err != nil {
 		return nil, err
 	}

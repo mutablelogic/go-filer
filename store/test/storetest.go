@@ -1868,6 +1868,33 @@ func testListSort(t *testing.T, s store.Store) {
 	assert.Equal(t, []string{"/a/a.txt", "/a/b.jpg", "/a/c.mp3", "/a/d.png", "/a/sub"}, list(schema.SortName, false))
 	assert.Equal(t, []string{"/a/sub", "/a/d.png", "/a/c.mp3", "/a/b.jpg", "/a/a.txt"}, list("", true))
 
+	// Of when they were modified, in time, rather than as text, of their
+	// seconds' fractions, and their offsets, to the millisecond
+	berlin := time.FixedZone("CET", 60*60)
+	require.NoError(t, s.PutObject(ctx, "media", folder("/b"),
+		object("/b/whole", 1, 0, "text/plain"),
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/b/fraction"}, ObjectAttr: schema.ObjectAttr{Size: &[]int64{1}[0], ModTime: at.Add(100 * time.Millisecond)}},
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/b/offset"}, ObjectAttr: schema.ObjectAttr{Size: &[]int64{1}[0], ModTime: at.Add(50 * time.Millisecond).In(berlin)}},
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/b/earlier"}, ObjectAttr: schema.ObjectAttr{Size: &[]int64{1}[0], ModTime: at.Add(-time.Hour + time.Second).In(berlin)}}))
+	modified := func(descending bool) []string {
+		t.Helper()
+		result := []string{}
+		req := store.ListRequest{Parent: "/b/", Limit: 1, Sort: schema.SortModified, Descending: descending}
+		for range 10 {
+			page, err := s.ListObjects(ctx, "media", req)
+			require.NoError(t, err)
+			if len(page) == 0 {
+				return result
+			}
+			result = append(result, paths(page)...)
+			req.After = store.Key(page[0])
+		}
+		t.Fatal("the listing by modified doesn't end")
+		return nil
+	}
+	assert.Equal(t, []string{"/b/earlier", "/b/whole", "/b/offset", "/b/fraction"}, modified(false))
+	assert.Equal(t, []string{"/b/fraction", "/b/offset", "/b/whole", "/b/earlier"}, modified(true))
+
 	// After an object which isn't stored, there are none
 	page, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/a/", Sort: schema.SortSize, After: "/a/missing"})
 	require.NoError(t, err)
