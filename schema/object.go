@@ -59,8 +59,9 @@ type Object struct {
 	ObjectKey
 	ObjectMeta
 	ObjectAttr
-	Geo    []geo.Geometry `json:"geo,omitempty" readonly:"" help:"Where it is, such as where a photo was taken, of the shapes which its index found of it, of GeoJSON"`
-	Events []Occurrence   `json:"events,omitempty" readonly:"" help:"When its events are, such as a calendar's, of the times which its index found of it"`
+	Geo     []geo.Geometry `json:"geo,omitempty" readonly:"" help:"Where it is, such as where a photo was taken, of the shapes which its index found of it, of GeoJSON"`
+	Events  []Occurrence   `json:"events,omitempty" readonly:"" help:"When its events are, such as a calendar's, of the times which its index found of it"`
+	Artwork []ArtworkRef   `json:"artwork,omitempty" readonly:"" help:"Its artwork, such as an album's cover, or its thumbnails, which its index found of it, in the order of their contexts, without their data"`
 }
 
 // Create an object in the filesystem

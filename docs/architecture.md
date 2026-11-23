@@ -117,6 +117,7 @@ A `gofiler.ArtworkStore`, part of the index store, keeps artwork: images such as
 * **Its hash** is the SHA-256 of its context and data, so an image is kept once per context, however many objects link to it. `GetArtwork(hash, data)` returns it, with its data only when asked for.
 * **Storing and linking** are one transaction: `SetObjectArtwork(volume, key, artwork...)` stores each artwork, or finds the one already stored, and replaces the object's links, at most one per context. With none, it removes them. It returns the artwork by context. If any artwork isn't valid, or conflicts with stored artwork of the same hash but another type or size, nothing is stored or changed. `ObjectArtwork` lists an object's artwork.
 * **Links** are removed when their object is deleted, or changes (its ETag, size or modification time), like a task's metadata.
+* **On objects:** an object, as got, listed or found by search, has its artwork in `artwork` (`schema.ArtworkRef`): hash, context, type, width and height, by context, without the data. Its data is got by its hash.
 * **Cleanup:** the registry deletes artwork that no object links to, every hour.
 * **Stores:** SQLite keeps artwork in the index's database (`artwork` and `object_artwork`). Postgres doesn't yet.
 

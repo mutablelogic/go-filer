@@ -343,8 +343,8 @@ func (revisions *Revisions) Scan(row sqlite.Row) error {
 
 func (list *ObjectList) Scan(row sqlite.Row) error {
 	var object filer.Object
-	var key, meta, geo, events string
-	if err := row.Scan(&key, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta, &geo, &events); err != nil {
+	var key, meta, geo, events, artwork string
+	if err := row.Scan(&key, &object.ContentType, &object.Size, &object.ETag, &object.ModTime, &meta, &geo, &events, &artwork); err != nil {
 		return err
 	}
 	object.Path, object.IsDir = store.PathOf(key)
@@ -362,6 +362,11 @@ func (list *ObjectList) Scan(row sqlite.Row) error {
 		return err
 	} else if len(object.Events) == 0 {
 		object.Events = nil
+	}
+	if err := json.Unmarshal([]byte(artwork), &object.Artwork); err != nil {
+		return err
+	} else if len(object.Artwork) == 0 {
+		object.Artwork = nil
 	}
 	*list = append(*list, &object)
 	return nil
