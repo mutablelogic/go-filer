@@ -319,7 +319,7 @@ func Test_MigrateOutages(t *testing.T) {
 
 	db, err := ncruces.Open(ctx, path)
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(ctx, `ALTER TABLE object_state DROP COLUMN outages; ALTER TABLE object_state DROP COLUMN trace; PRAGMA user_version = 15;`))
+	require.NoError(t, db.Exec(ctx, `ALTER TABLE object_state DROP COLUMN outages; ALTER TABLE object_state DROP COLUMN trace; ALTER TABLE volume DROP COLUMN enriched; PRAGMA user_version = 15;`))
 	require.NoError(t, db.Close())
 
 	s, err = sqlite.New(ctx, path)

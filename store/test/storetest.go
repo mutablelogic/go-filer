@@ -500,7 +500,7 @@ func testState(t *testing.T, s store.Store) {
 
 	// Its state is stored, of each volume
 	started := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Objects: 34, Mode: "objects", Phase: schema.IndexPhaseIndexing, Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
+	want := schema.IndexState{Status: schema.IndexStatusReady, Folders: 12, Objects: 34, Mode: "objects", Enriched: "artwork", Phase: schema.IndexPhaseIndexing, Started: started, Scanned: started.Add(time.Minute), Error: "it failed"}
 	require.NoError(t, s.SetState(ctx, "media", want))
 	state, err = s.State(ctx, "media")
 	require.NoError(t, err)
