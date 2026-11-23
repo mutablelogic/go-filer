@@ -14,13 +14,15 @@
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
-import type { Column, TableAction, TableSetting, TableSettingChange, TableToolbarAction } from '@mutablelogic/go-server/list/view';
+import type { Column, TableAction, TableRowAction, TableSetting, TableSettingChange, TableToolbarAction } from '@mutablelogic/go-server/list/view';
+import { play, playable } from '@mutablelogic/go-server/player';
 import Add16 from '@carbon/icons/es/add/16.js';
 import TrashCan16 from '@carbon/icons/es/trash-can/16.js';
 import './delete.ts';
 import './upload.ts';
 import '@mutablelogic/go-server/list/view';
-import { artworkURL } from '../filer/httpclient.ts';
+import { artworkURL, objectURL } from '../filer/httpclient.ts';
+import { objectTabs, type ObjectTab } from './panel.ts';
 import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 import { availableColumns, columnLabel, ColumnSorts, ColumnWidths, DefaultColumns, NameSort, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
@@ -29,9 +31,16 @@ import { availableColumns, columnLabel, ColumnSorts, ColumnWidths, DefaultColumn
 // GLOBALS
 
 // FileViewTag is the element's tag, and FileViewSelected the event of an
-// object which is chosen
+// object which is chosen, and the tab of its panel, when one is
 export const FileViewTag = 'gf-file-view';
 export const FileViewSelected = 'gf-file-view-selected';
+
+// FileViewSelection is an object which is chosen, and the tab of its
+// panel, when one is
+export interface FileViewSelection {
+    object: FilerObject;
+    tab?: ObjectTab;
+}
 
 const fileIcon = iconLoader(FileIcon);
 
@@ -91,6 +100,10 @@ export class FileViewElement extends LitElement {
     declare private state?: FolderState;
 
     private unsubscribe?: () => void;
+
+    // tab is the tab of the panel of the object which is chosen next, of a
+    // row's menu, such as Artwork
+    private tab?: ObjectTab;
 
     constructor() {
         super();
@@ -158,9 +171,10 @@ export class FileViewElement extends LitElement {
                 this.querySelector('gs-table')?.clearSelection();
             }
             const chosen = state.selected;
-            if (chosen && chosen !== this.state?.selected && chosen.path !== this.selected) {
-                this.dispatchEvent(new CustomEvent<FilerObject>(FileViewSelected, { detail: chosen, bubbles: true, composed: true }));
+            if (chosen && chosen !== this.state?.selected && (chosen.path !== this.selected || this.tab)) {
+                this.chosen(chosen, this.tab);
             }
+            this.tab = undefined;
             this.state = state;
         });
     }
@@ -181,12 +195,63 @@ export class FileViewElement extends LitElement {
                 .settings=${settings} .countLabel=${countText} empty=${this.empty || 'No objects'}
                 .itemKey=${(object: FilerObject) => object.path}
                 .actions=${this.writable ? this.deleteActions : undefined}
+                .rowActions=${this.rowActions}
                 .toolbarActions=${this.writable ? this.addActions : undefined}
                 @gs-table-setting=${(event: CustomEvent<TableSettingChange>) => this.show(event.detail.key as FileViewColumn, event.detail.checked)}></gs-table>
             <gf-object-delete .client=${controller.client}></gf-object-delete>
             <gf-object-upload .client=${controller.client}></gf-object-upload>
         `;
     }
+
+    // chosen says the object is chosen, of the tab of its panel, when one is
+    private chosen(object: FilerObject, tab?: ObjectTab) {
+        this.dispatchEvent(new CustomEvent<FileViewSelection>(FileViewSelected, { detail: { object, tab }, bubbles: true, composed: true }));
+    }
+
+    // open chooses an object, of its row, which is shown chosen, of the tab
+    // of its panel, or says so again, when it's chosen already
+    private open(object: FilerObject, tab: ObjectTab) {
+        if (this.state?.selected?.path === object.path && this.selected === object.path) {
+            this.chosen(object, tab);
+            return;
+        }
+        this.tab = tab;
+        this.controller?.list.open(object);
+    }
+
+    // rowActions are the actions of a file, of its row's menu: the tabs of
+    // its panel which it has, such as Artwork, and Download, and Play, of
+    // audio, or video, and, of a writable volume, Delete, which asks to
+    // confirm, and loads the folder again
+    private readonly rowActions = (object: FilerObject): TableRowAction<FilerObject>[] => {
+        const client = this.controller?.client;
+        const actions: TableRowAction<FilerObject>[] = objectTabs(object).map((tab) => ({
+            label: tab.label, run: () => this.open(object, tab.value),
+        }));
+        if (client) {
+            actions.push({
+                label: 'Download', divider: true,
+                run: () => { window.open(objectURL(client, object.name, object.path, true), '_blank', 'noopener'); },
+            });
+            if (playable(object.type)) {
+                actions.push({
+                    label: 'Play',
+                    run: () => play({ url: objectURL(client, object.name, object.path), name: objectTitle(object), type: object.type }, this),
+                });
+            }
+        }
+        if (this.writable) {
+            actions.push({
+                label: 'Delete', danger: true, divider: true,
+                run: async () => {
+                    if (await this.querySelector('gf-object-delete')?.confirm([object])) {
+                        void this.controller?.reload();
+                    }
+                },
+            });
+        }
+        return actions;
+    };
 
     // addActions are Add, in the toolbar, which opens the panel which adds
     // files to the folder, which is loaded again, once they're added

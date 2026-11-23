@@ -33,6 +33,8 @@ import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
 import '@mutablelogic/go-server/page/view';
 import '../tree/view.ts';
+import type { FileViewSelection } from '../folder/view.ts';
+import type { ObjectTab } from '../folder/panel.ts';
 import '../folder/view.ts';
 import '../folder/panel.ts';
 import { apiLister, startFolder } from '../folder/start.ts';
@@ -481,16 +483,16 @@ export class VolumeElement extends LitElement {
                 <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected} ?files=${volumeFileNames(volume)} ?sortable=${volumeSortable(volume)}
                     ?writable=${volumeFileNames(volume) && volumeOptions(volume).readonly === false}
                     empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}
-                    @gf-file-view-selected=${(event: CustomEvent<FilerObject>) => this.select(event.detail)}></gf-file-view>
+                    @gf-file-view-selected=${(event: CustomEvent<FileViewSelection>) => this.select(event.detail.object, event.detail.tab)}></gf-file-view>
             </div>
         `;
     }
 
     // select opens the panel of the object which is chosen, which is shown
     // chosen, until it's closed
-    private select(object: FilerObject) {
+    private select(object: FilerObject, tab?: ObjectTab) {
         this.selected = object.path;
-        this.querySelector('gf-object-panel')?.open(object);
+        this.querySelector('gf-object-panel')?.open(object, tab);
     }
 
     // editActions are Edit Volume, which opens the volume's panel, of its
