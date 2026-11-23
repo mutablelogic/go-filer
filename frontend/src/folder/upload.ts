@@ -20,14 +20,15 @@ import '@carbon/web-components/es/components/layer/index.js';
 import { alertView } from '../alert/view.ts';
 import { uploadObjects } from '../filer/httpclient.ts';
 import type { ObjectSkipped } from '../filer/schema.ts';
-import { formatSize, skippedFirst } from './format.ts';
+import { formatSize, skippedFirst, uploadBatches } from './format.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
 
 // Chosen is a file which is chosen, of its path in the folder it's added
 // to, such as its name, or of a folder's, such as Photos/a.jpg, and, once
-// it's uploaded, whether it was, or was skipped, and why
+// it's uploaded, whether it was, or was skipped, and why, which is changed
+// in place, as its batch is uploaded
 interface Chosen {
     file: File;
     path: string;
@@ -46,6 +47,11 @@ export const ObjectUploadTag = 'gf-object-upload';
 const MaxListed = 100;
 const BatchSize = 200;
 
+// BatchFiles and BatchBytes are the most files, and bytes, which are
+// uploaded of one request, of which a file which is more is alone
+const BatchFiles = 50;
+const BatchBytes = 64 << 20;
+
 // FrameBudget is how long, in milliseconds, a folder is read, between the
 // page being drawn, at most
 const FrameBudget = 50;
@@ -58,6 +64,7 @@ export class ObjectUploadElement extends LitElement {
         client: { attribute: false },
         chosen: { state: true },
         reading: { state: true },
+        uploading: { state: true },
         overwrite: { state: true },
         error: { state: true },
     };
@@ -74,6 +81,10 @@ export class ObjectUploadElement extends LitElement {
     // reading is how many folders are being read, whose files are added
     // as they are
     declare private reading: number;
+
+    // uploading is how many of the files which are uploaded are done, of
+    // how many, while they're uploaded, a batch at a time
+    declare private uploading?: { done: number; total: number };
 
     private volume = '';
     private folder = '/';
@@ -167,25 +178,29 @@ export class ObjectUploadElement extends LitElement {
     }
 
     // summaryView says how many files are chosen, and their size, above
-    // those which are listed, and how many more there are, of more than are
-    // listed, and how many weren't added, and that a folder is being read,
-    // while it is
+    // those which are listed, or how many are added, of how many, while
+    // they're uploaded, how many weren't added, that a folder is being
+    // read, while it is, and that only the first are listed, of more
     private summaryView(): TemplateResult | typeof nothing {
-        if (this.chosen.length === 0 && !this.reading) {
+        const total = this.chosen.length;
+        if (total === 0 && !this.reading) {
             return nothing;
         }
-        const total = this.chosen.length;
-        const listed = Math.min(total, MaxListed);
-        const size = formatSize(this.chosen.reduce((sum, c) => sum + c.file.size, 0)) || '0 B';
         const skipped = this.chosen.filter((c) => c.skipped).length;
-        const summary = total > listed
-            ? `${files(listed)}, and ${(total - listed).toLocaleString()} more, of ${files(total)}, ${size}`
-            : `${files(total)}, ${size}`;
-        return html`
-            <p class="gf-object-upload-summary">
-                ${summary}${skipped ? ` · ${skipped.toLocaleString()} not added` : ''}${this.reading ? ' · Reading…' : ''}
-            </p>
-        `;
+        const parts = [
+            this.uploading ? `Adding ${this.uploading.done.toLocaleString()} of ${files(this.uploading.total)}` : files(total),
+            formatSize(this.chosen.reduce((sum, c) => sum + c.file.size, 0)) || '0 B',
+        ];
+        if (skipped) {
+            parts.push(`${skipped.toLocaleString()} not added`);
+        }
+        if (this.reading) {
+            parts.push('Reading…');
+        }
+        if (total > MaxListed) {
+            parts.push(`showing the first ${MaxListed}`);
+        }
+        return html`<p class="gf-object-upload-summary">${parts.join(' · ')}</p>`;
     }
 
     // add adds files which are dropped, or chosen, of their paths, other
@@ -287,38 +302,59 @@ export class ObjectUploadElement extends LitElement {
         if (!client || pending.length === 0) {
             return;
         }
-        this.chosen = this.chosen.map((c) => (c.state === 'edit' ? { ...c, state: 'uploading', skipped: undefined } : c));
+        for (const c of pending) {
+            c.state = 'uploading';
+            c.skipped = undefined;
+        }
+        this.uploading = { done: 0, total: pending.length };
         this.error = undefined;
+        this.chosen = [...this.chosen];
 
-        // What's uploaded is of this session, and once it's done, its
-        // folder is loaded again, whether or not the panel is open, or of
-        // another folder, which isn't changed of it
+        // What's uploaded is of this session, a batch at a time, and once
+        // each is, its folder is loaded again, whether or not the panel is
+        // open, or of another folder, which isn't changed of it, so what's
+        // uploaded is shown, and a batch which fails, or is cancelled,
+        // leaves those before it uploaded
         const session = this.session;
         const added = this.added;
+        const folder = this.folder === '/' ? '' : this.folder;
         const abort = new AbortController();
         this.abort = abort;
         try {
-            const result = await uploadObjects(client, this.volume, this.folder, pending.map((c) => ({ file: c.file, path: c.path })), this.overwrite, abort.signal);
-            if (result.body.length) {
-                added?.();
+            for (const batch of uploadBatches(pending, BatchFiles, BatchBytes)) {
+                const result = await uploadObjects(client, this.volume, this.folder, batch.map((c) => ({ file: c.file, path: c.path })), this.overwrite, abort.signal);
+                if (result.body.length) {
+                    added?.();
+                }
+                if (session !== this.session) {
+                    return;
+                }
+                const skipped = new Map((result.skipped ?? []).map((s) => [s.path, s]));
+                for (const c of batch) {
+                    const s = skipped.get(`${folder}/${c.path}`);
+                    c.state = s ? 'edit' : 'complete';
+                    c.skipped = s;
+                }
+                this.uploading = { done: this.uploading.done + batch.length, total: pending.length };
+                this.chosen = [...this.chosen];
             }
-            if (session !== this.session) {
-                return;
-            }
-            const folder = this.folder === '/' ? '' : this.folder;
-            const skipped = new Map((result.skipped ?? []).map((s) => [s.path, s]));
-            this.chosen = this.chosen.map((c) => {
-                const s = skipped.get(`${folder}/${c.path}`);
-                return c.state === 'uploading' ? (s ? { ...c, state: 'edit', skipped: s } : { ...c, state: 'complete' }) : c;
-            });
         } catch (error) {
             // An upload which is cancelled, as the panel is closed, isn't
-            // an error
+            // an error, and those which aren't uploaded can be again
             if (session !== this.session || abort.signal.aborted) {
                 return;
             }
-            this.chosen = this.chosen.map((c) => (c.state === 'uploading' ? { ...c, state: 'edit' } : c));
+            for (const c of this.chosen) {
+                if (c.state === 'uploading') {
+                    c.state = 'edit';
+                }
+            }
             this.error = error instanceof Error ? error.message : String(error);
+        } finally {
+            if (session === this.session) {
+                this.uploading = undefined;
+                this.chosen = [...this.chosen];
+            }
         }
         this.setAction();
     }
