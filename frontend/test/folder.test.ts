@@ -6,9 +6,11 @@ import { availableColumns, formatSize, formatTime, visibleColumns } from '../src
 import { objectFormat, objectKind, volumeFileNames, volumeSortable } from '../src/filer/schema.ts';
 
 // fakeServer is a volume's folders, of their objects' paths, whose listings
-// are paged, and counted, which records each listing's folder and start
+// are paged, and counted, which records each listing's folder and start,
+// and of which a folder which isn't there is 404, and one which fails 500
 function fakeServer(folders: Record<string, string[]>) {
     const listed: string[] = [];
+    const failing = new Set<string>();
     const client: Client = {
         base: 'http://localhost/api',
         fetch: (async (input: RequestInfo | URL) => {
@@ -17,7 +19,9 @@ function fakeServer(folders: Record<string, string[]>) {
             const after = url.searchParams.get('start_after') ?? '';
             listed.push(`${path}@${after}`);
             const objects = folders[path];
-            if (!objects) {
+            if (failing.has(path)) {
+                return new Response(JSON.stringify({ code: 500 }), { status: 500 });
+            } else if (!objects) {
                 return new Response(JSON.stringify({ code: 404 }), { status: 404 });
             }
             const limit = Number(url.searchParams.get('limit') ?? 100);
@@ -30,7 +34,7 @@ function fakeServer(folders: Record<string, string[]>) {
             }), { headers: { 'Content-Type': 'application/json' } });
         }) as typeof fetch,
     };
-    return { client, listed, folders };
+    return { client, listed, folders, failing };
 }
 
 test('FolderController', async (t) => {
@@ -121,12 +125,14 @@ test('FolderController', async (t) => {
     });
 
     await t.test("an error, when it can't be loaded, which can be tried again", async () => {
-        const { client, folders } = fakeServer({});
+        const { client, folders, failing } = fakeServer({});
         const errors: string[] = [];
         const folder = new FolderController(client).onError((title) => errors.push(title));
+        failing.add('/missing');
         await folder.open('media', '/missing');
         assert.deepEqual([folder.current.objects, folder.current.failed, folder.current.more], [[], true, true]);
         assert.equal(errors.length, 1);
+        failing.delete('/missing');
         folders['/missing'] = ['/missing/1'];
         await folder.loadMore();
         assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/missing/1']);
@@ -134,14 +140,13 @@ test('FolderController', async (t) => {
     });
 
     await t.test("more which can't be loaded are tried again, from where they couldn't be", async () => {
-        const { client, folders, listed } = fakeServer({ '/a': ['/a/1', '/a/2', '/a/3'] });
+        const { client, listed, failing } = fakeServer({ '/a': ['/a/1', '/a/2', '/a/3'] });
         const folder = new FolderController(client, { pageLimit: 2 });
         await folder.open('media', '/a');
-        const saved = folders['/a'];
-        delete folders['/a'];
+        failing.add('/a');
         await folder.loadMore();
         assert.deepEqual([folder.current.objects?.length, folder.current.failed, folder.current.more, folder.current.count], [2, true, true, null], "it's still more, and isn't counted");
-        folders['/a'] = saved;
+        failing.delete('/a');
         listed.length = 0;
         await folder.loadMore();
         assert.deepEqual(listed, ['/a@/a/2']);
@@ -159,6 +164,61 @@ test('FolderController', async (t) => {
         await reload;
         assert.deepEqual(listed, ['/a@'], 'only the reload');
         assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/a/1', '/a/2']);
+    });
+
+    await t.test("a folder which isn't there is gone, without an error", async () => {
+        const { client, folders } = fakeServer({ '/a': ['/a/1'] });
+        const errors: string[] = [];
+        const gone: string[] = [];
+        const folder = new FolderController(client)
+            .onError((title) => errors.push(title))
+            .onGone((volume, path) => gone.push(`${volume}${path}`));
+        await folder.open('media', '/a/b');
+        await settle();
+        assert.deepEqual(gone, ['media/a/b']);
+        assert.deepEqual([folder.current.objects, folder.current.failed, folder.current.more], [[], false, false]);
+        assert.deepEqual(errors, []);
+
+        // Once it's deleted, as it's loaded again, and not of the root
+        await folder.open('media', '/a');
+        delete folders['/a'];
+        await folder.reload();
+        await settle();
+        assert.deepEqual(gone, ['media/a/b', 'media/a']);
+        await folder.open('media', '/');
+        await settle();
+        assert.deepEqual(gone, ['media/a/b', 'media/a'], "the root isn't gone");
+        assert.equal(errors.length, 1, "the root's 404 is an error");
+    });
+
+    await t.test("a folder isn't gone of a response to when it was opened before", async () => {
+        // /a's first listing is 404, once it's let go, after /a is opened
+        // again, and loaded, which isn't gone
+        let release: (() => void) | undefined;
+        let first = true;
+        const client: Client = {
+            base: 'http://localhost/api',
+            fetch: (async (input: RequestInfo | URL) => {
+                const path = (new URL(String(input)).searchParams.get('path') ?? '/').replace(/(.)\/$/, '$1');
+                if (path === '/a' && first) {
+                    first = false;
+                    await new Promise<void>((resolve) => { release = resolve; });
+                    return new Response(JSON.stringify({ code: 404 }), { status: 404 });
+                }
+                return new Response(JSON.stringify({ name: 'media', count: 1, body: [{ name: 'media', path: `${path}/1` }] }), { headers: { 'Content-Type': 'application/json' } });
+            }) as typeof fetch,
+        };
+        const gone: string[] = [];
+        const folder = new FolderController(client).onGone((volume, path) => gone.push(`${volume}${path}`));
+        const stale = folder.open('media', '/a');
+        await settle();
+        const b = folder.open('media', '/b');
+        const a = folder.open('media', '/a');
+        release?.();
+        await Promise.all([stale, b, a]);
+        await settle();
+        assert.deepEqual(gone, []);
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/a/1']);
     });
 
     await t.test('a reload without a folder does nothing, and later reloads still do', async () => {

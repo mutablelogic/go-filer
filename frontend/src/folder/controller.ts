@@ -5,9 +5,12 @@
 // loads them again when they change, of the changes which are given to it,
 // keeping what's shown until they're loaded. The listing can't leave out
 // folders, so they're left out of its pages, of which more are loaded,
-// until one has an object, or there are no more.
+// until one has an object, or there are no more. A folder which isn't
+// there any more, such as once it's deleted, is said to be gone, rather
+// than that its objects couldn't be loaded, so what shows it can show
+// another.
 
-import type { Client } from '@mutablelogic/go-server/api';
+import { ApiError, type Client } from '@mutablelogic/go-server/api';
 import type { Change } from '@mutablelogic/go-server/broadcaster';
 import { ListController, type ListState, type Page, type Sort } from '@mutablelogic/go-server/list';
 import type { NotificationController } from '@mutablelogic/go-server/notification';
@@ -53,12 +56,18 @@ export class FolderController {
     private path?: string;
     private sorted?: Sort;
 
+    // opens is the generation of the folder which is opened, which changes
+    // each time one is, or it's closed, so a response to an earlier one
+    // doesn't say a folder is gone
+    private opens = 0;
+
     // opened is the volume which was last opened, which is kept once it's
     // closed, so opening it again, such as its root, isn't another volume's
     private opened?: string;
     private state: FolderState = { count: null, more: false, loading: false, failed: false };
     private readonly listeners = new Set<(state: FolderState) => void>();
     private errorFn?: (title: string, error: unknown) => void;
+    private goneFn?: (volume: string, path: string) => void;
 
     constructor(client: Client, options: FolderOptions = {}) {
         this.client = client;
@@ -93,6 +102,13 @@ export class FolderController {
         return this;
     }
 
+    // onGone calls the function with a folder which isn't there, other than
+    // a volume's root, such as once it's deleted, whose objects are none
+    onGone(fn: (volume: string, path: string) => void): this {
+        this.goneFn = fn;
+        return this;
+    }
+
     // open shows a folder, from its first page, unless it's shown, in the
     // order it's sorted, or, of another volume, in the order which was last
     // chosen of it, in the browser, when it can be sorted, or else of its
@@ -102,6 +118,7 @@ export class FolderController {
             return Promise.resolve();
         }
         const another = volume !== this.opened;
+        this.opens++;
         this.volume = volume;
         this.path = path;
         this.opened = volume;
@@ -148,6 +165,7 @@ export class FolderController {
         if (this.volume === undefined && this.path === undefined) {
             return;
         }
+        this.opens++;
         this.volume = undefined;
         this.path = undefined;
         void this.list.reset();
@@ -196,7 +214,7 @@ export class FolderController {
     // more, and whether there are more, in the order of the sort, when it's
     // sorted, by the server. Without a folder, there are none.
     private async page(after: FilerObject | undefined, limit: number, sort?: Sort): Promise<Page<FilerObject>> {
-        const { volume, path } = this;
+        const { volume, path, opens } = this;
         if (!volume || !path) {
             return { body: [], more: false };
         }
@@ -204,7 +222,25 @@ export class FolderController {
         const body: FilerObject[] = [];
         let next = after?.path;
         do {
-            const list = await listObjects(this.client, volume, { path, start_after: next, limit, sort: order });
+            let list;
+            try {
+                list = await listObjects(this.client, volume, { path, start_after: next, limit, sort: order });
+            } catch (error) {
+                // A folder which isn't there is gone, once, of the folder
+                // which is opened, rather than of one which was before, and
+                // has none
+                if (error instanceof ApiError && error.status === 404 && path !== '/') {
+                    if (opens === this.opens) {
+                        queueMicrotask(() => {
+                            if (opens === this.opens) {
+                                this.goneFn?.(volume, path);
+                            }
+                        });
+                    }
+                    return { body: [], more: false };
+                }
+                throw error;
+            }
             body.push(...list.body.filter((object) => !object.dir));
             next = list.next;
         } while (next && body.length === 0 && volume === this.volume && path === this.path);
