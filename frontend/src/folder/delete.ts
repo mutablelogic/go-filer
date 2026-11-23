@@ -1,6 +1,7 @@
 // The panel which deletes files of a writable volume, once it's confirmed:
-// which files, and that they're deleted from the volume's backend, such as
-// a folder, or a bucket, which can't be undone. confirm opens it, and
+// which files, of Carbon's contained list, each of which can be kept,
+// rather than deleted, and that they're deleted from the volume's backend,
+// such as a folder, or a bucket, which can't be undone. confirm opens it, and
 // resolves once they're deleted, or it's closed without them being.
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
@@ -8,6 +9,11 @@ import type { Client } from '@mutablelogic/go-server/api';
 import { PanelController, type PanelAction } from '@mutablelogic/go-server/panel';
 import '@mutablelogic/go-server/panel/view';
 import TrashCan16 from '@carbon/icons/es/trash-can/16.js';
+import Close16 from '@carbon/icons/es/close/16.js';
+import Document16 from '@carbon/icons/es/document/16.js';
+import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
+import '@carbon/web-components/es/components/contained-list/index.js';
+import '@carbon/web-components/es/components/icon-button/index.js';
 import { alertView } from '../alert/view.ts';
 import { deleteObject } from '../filer/httpclient.ts';
 import { objectFileName, type FilerObject } from '../filer/schema.ts';
@@ -17,8 +23,8 @@ import { objectFileName, type FilerObject } from '../filer/schema.ts';
 
 export const ObjectDeleteTag = 'gf-object-delete';
 
-// How many of the files are named, of more, which are counted
-const MaxNamed = 10;
+// How many of the files are listed, of more, which are counted
+const MaxNamed = 100;
 
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
@@ -46,6 +52,7 @@ export class ObjectDeleteElement extends LitElement {
         super();
         this.objects = [];
         this.panel.onClose(() => this.settle());
+        this.panel.subscribe(() => this.requestUpdate());
     }
 
     protected override createRenderRoot() {
@@ -59,8 +66,7 @@ export class ObjectDeleteElement extends LitElement {
         this.objects = [...objects];
         this.error = undefined;
         this.deleted = false;
-        const noun = objects.length === 1 ? 'file' : 'files';
-        this.panel.setHeader({ title: `Delete ${objects.length.toLocaleString()} ${noun}`, subtitle: objects[0]?.name ?? '' });
+        this.setHeader();
         this.panel.setActions([this.deleteAction()]);
         this.panel.open(objects.map((object) => object.path).join('\n'));
         return new Promise((resolve) => { this.resolve = resolve; });
@@ -77,14 +83,40 @@ export class ObjectDeleteElement extends LitElement {
         const more = this.objects.length - named.length;
         return html`
             <div class="gf-volume-form">
-                <p>${this.objects.length === 1 ? 'This file is' : 'These files are'} deleted from the volume, and its backend, such as its folder, or bucket, which can't be undone.</p>
-                <ul class="gf-object-delete-list">
-                    ${named.map((object) => html`<li title=${object.path}>${objectFileName(object)}</li>`)}
-                    ${more > 0 ? html`<li>and ${more.toLocaleString()} more</li>` : nothing}
-                </ul>
+                ${alertView('warning', 'Warning', 'Deleting from the volume cannot be undone')}
+                <cds-contained-list class="gf-object-delete-list" label=${noun(this.objects.length)} kind="on-page">
+                    ${named.map((object) => html`
+                        <cds-contained-list-item title=${object.path}>
+                            ${iconLoader(Document16, { slot: 'icon' })}
+                            ${objectFileName(object)}
+                            <cds-icon-button slot="action" kind="ghost" size="sm" align="left" ?disabled=${this.panel.running}
+                                @click=${() => this.keep(object)}>
+                                ${iconLoader(Close16, { slot: 'icon' })}
+                                <span slot="tooltip-content">Keep it</span>
+                            </cds-icon-button>
+                        </cds-contained-list-item>
+                    `)}
+                    ${more > 0 ? html`<cds-contained-list-item>and ${more.toLocaleString()} more</cds-contained-list-item>` : nothing}
+                </cds-contained-list>
                 ${this.error ? alertView('error', "Some files couldn't be deleted", this.error) : nothing}
             </div>
         `;
+    }
+
+    // keep keeps a file, rather than deleting it, and closes the panel once
+    // none are deleted
+    private keep(object: FilerObject) {
+        this.objects = this.objects.filter((o) => o !== object);
+        if (this.objects.length === 0) {
+            this.panel.close();
+            return;
+        }
+        this.setHeader();
+    }
+
+    // setHeader says how many files are deleted
+    private setHeader() {
+        this.panel.setHeader({ title: `Delete ${noun(this.objects.length)}`, subtitle: this.objects[0]?.name ?? '' });
     }
 
     // deleteAction is Delete, which deletes the files, one at a time, and
@@ -122,6 +154,7 @@ export class ObjectDeleteElement extends LitElement {
                     return;
                 }
                 this.objects = failed;
+                this.setHeader();
                 this.error = `${failed.length.toLocaleString()} of them: ${reason}`;
             },
         };
@@ -132,6 +165,11 @@ export class ObjectDeleteElement extends LitElement {
         this.resolve?.(this.deleted);
         this.resolve = undefined;
     }
+}
+
+// noun returns how many files there are, such as 2 files
+function noun(count: number): string {
+    return `${count.toLocaleString()} ${count === 1 ? 'file' : 'files'}`;
 }
 
 if (!customElements.get(ObjectDeleteTag)) {
