@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kindLabel, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeNoun, volumeObjects, volumeStatus, volumeObjectsUnknown, volumeScheme, type Volume } from '../src/filer/schema.ts';
+import { artworkLabel, kindLabel, objectArtwork, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeNoun, volumeObjects, volumeStatus, volumeObjectsUnknown, volumeScheme, type Artwork, type Volume } from '../src/filer/schema.ts';
 
 // volume returns a mounted volume of a URL, and its index
 function volume(url: string, index?: Volume['index']): Volume {
@@ -144,4 +144,28 @@ test('volumeIndexFailure', () => {
     assert.equal(of({ mode: 'objects', status: 'ready' }), '');
     assert.equal(of({ mode: 'objects', status: 'ready', error: 'it failed' }, 'down'), '');
     assert.equal(of(undefined), '');
+});
+
+// artwork returns artwork of a context
+function artwork(context: string): Artwork {
+    return { hash: context, context, type: 'image/jpeg', width: 512, height: 512 };
+}
+
+test('objectArtwork', () => {
+    // Its cover, before its thumbnail, before its photo, before others,
+    // of which its first, or none
+    const object = (...contexts: string[]) => ({ name: 'v', path: '/a', artwork: contexts.map(artwork) });
+    assert.equal(objectArtwork(object('back', 'cover', 'thumbnail'))?.context, 'cover');
+    assert.equal(objectArtwork(object('page0001', 'thumbnail'))?.context, 'thumbnail');
+    assert.equal(objectArtwork(object('back', 'photo'))?.context, 'photo');
+    assert.equal(objectArtwork(object('page0001', 'page0002'))?.context, 'page0001');
+    assert.equal(objectArtwork(object()), undefined);
+    assert.equal(objectArtwork({ name: 'v', path: '/a' }), undefined);
+});
+
+test('artworkLabel', () => {
+    assert.equal(artworkLabel(artwork('cover')), 'Cover');
+    assert.equal(artworkLabel(artwork('thumbnail-2')), 'Thumbnail 2');
+    assert.equal(artworkLabel(artwork('page0003')), 'Page 3');
+    assert.equal(artworkLabel(artwork('back_cover')), 'Back cover');
 });

@@ -368,6 +368,48 @@
             padding-bottom: 2rem;
         }
 
+        /* A file's artwork, in its panel, as a grid of images, each as
+           wide as it, of their own shapes, with what each is beneath */
+        .gf-object-artwork {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+            gap: 1.5rem 1rem;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .gf-object-artwork li {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            min-width: 0;
+        }
+
+        .gf-object-artwork a {
+            display: block;
+            outline-offset: 2px;
+        }
+
+        .gf-object-artwork img {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 16rem;
+            object-fit: contain;
+            background: var(--cds-layer-accent-01, #e0e0e0);
+        }
+
+        .gf-object-artwork-label {
+            font-size: 0.875rem;
+        }
+
+        .gf-object-artwork-detail {
+            color: var(--cds-text-secondary);
+            font-size: 0.75rem;
+            overflow-wrap: anywhere;
+        }
+
         /* The file view's header stays at the top, as it's scrolled */
         .gf-file-view-table {
             width: 100%;
@@ -397,6 +439,25 @@
             font: inherit;
             text-align: left;
             cursor: pointer;
+        }
+
+        /* A file's icon, or its artwork, in a box of the same size, so the
+           names line up, and artwork fills it, cut to a square */
+        .gf-file-view-icon {
+            display: inline-flex;
+            flex: none;
+            align-items: center;
+            justify-content: center;
+            width: 1.5rem;
+            height: 1.5rem;
+        }
+
+        .gf-file-view-icon img {
+            width: 100%;
+            height: 100%;
+            border-radius: 2px;
+            object-fit: cover;
+            background: var(--cds-layer-accent-01, #e0e0e0);
         }
 
         .gf-file-view-name:focus-visible {

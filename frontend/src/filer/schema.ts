@@ -84,8 +84,36 @@ export interface Meta {
     text?: string;
 }
 
+// Artwork is an image an object links to, such as an album's cover, or a
+// video's thumbnail, of its context, its type, its size, in pixels, and in
+// bytes, whose image is of its hash (see artworkURL)
+export interface Artwork {
+    hash: string;
+    context: string;
+    type: string;
+    width: number;
+    height: number;
+    size?: number;
+    created_at?: string;
+}
+
+// Occurrence is an event an object has, such as a calendar's, of its
+// times, which are a date, of an all-day event, or a time, in UTC, and the
+// zone of its times
+export interface Occurrence {
+    uid: string;
+    recurrence_id?: string;
+    kind: string;
+    title?: string;
+    start: string;
+    end?: string;
+    tz?: string;
+}
+
 // FilerObject is a file or a folder in a volume, of its path, which is
-// "/" for the root, and a folder's has no "/" after it
+// "/" for the root, and a folder's has no "/" after it, and what its index
+// found of it: where it is, as GeoJSON geometries, its events, and the
+// artwork it links to, in the order of their contexts
 export interface FilerObject {
     name: string;
     path: string;
@@ -95,6 +123,9 @@ export interface FilerObject {
     etag?: string;
     mtime?: string;
     dir?: boolean;
+    geo?: unknown[];
+    events?: Occurrence[];
+    artwork?: Artwork[];
 }
 
 // ObjectListQuery is the query of a listing: the folder, which is the root
@@ -131,6 +162,38 @@ export const FolderSubfolderCount = 'subfolder-count';
 // key, or undefined, when it has none
 export function metaValue(object: FilerObject, namespace: string, key: string): unknown {
     return object.meta?.find((m) => m.namespace === namespace && m.key === key)?.value;
+}
+
+// The contexts of artwork which show an object, best first, such as a
+// file's icon, before those of other contexts, such as a document's pages
+const ArtworkContexts = ['cover', 'thumbnail', 'photo'];
+
+// objectArtwork returns the artwork which shows an object best, of its
+// context, such as an album's cover, or a video's thumbnail, or else its
+// first, or undefined, when it has none
+export function objectArtwork(object: FilerObject): Artwork | undefined {
+    const rank = (a: Artwork) => {
+        const i = ArtworkContexts.indexOf(a.context);
+        return i < 0 ? ArtworkContexts.length : i;
+    };
+    let best: Artwork | undefined;
+    for (const a of object.artwork ?? []) {
+        if (!best || rank(a) < rank(best)) {
+            best = a;
+        }
+    }
+    return best;
+}
+
+// artworkLabel returns what artwork is of an object, of its context, such
+// as Cover, Thumbnail 2, or Page 3, of page0003
+export function artworkLabel(artwork: Artwork): string {
+    const page = /^page0*(\d+)$/.exec(artwork.context);
+    if (page) {
+        return `Page ${page[1]}`;
+    }
+    const words = artwork.context.split(/[-_]+/).filter(Boolean).join(' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 // subfolderCount returns how many subfolders a folder lists, or undefined,
