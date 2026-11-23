@@ -10,7 +10,10 @@ package webcal
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -91,13 +94,17 @@ const (
 	// feedKey is the key of the pointer to the feed in the volume's cache,
 	// whose version is its entity tag, and lastModifiedValue the value of
 	// when it was last modified, and checkedKey the key of when it was last
-	// fetched, or found not to be modified. The feed is of one of the keys
-	// feedKeyA, and feedKeyB, and a feed which is fetched is saved as the
-	// other, so the one which is read isn't replaced until it's read as a
-	// calendar, and generationValue is the value of which it is.
+	// fetched, or found not to be modified. Each feed which is fetched is
+	// saved of its own key, feedPrefix and its generation, which is never
+	// another's, so a feed which is read, of another filer of the cache too,
+	// such as a clone, is never replaced, and the pointer is of one only
+	// once it's read as a calendar. generationValue is the value of which it
+	// is. A feed is kept for feedTTL, so one which isn't deleted, such as of
+	// a restart, as it's saved, isn't kept, and one which is read after it,
+	// isn't there, so it's fetched again.
 	feedKey           = "feed"
-	feedKeyA          = "feed/a"
-	feedKeyB          = "feed/b"
+	feedPrefix        = "feed/"
+	feedTTL           = 7 * 24 * time.Hour
 	lastModifiedValue = "last-modified"
 	generationValue   = "generation"
 	checkedKey        = "feed-checked"
@@ -279,10 +286,14 @@ func (self *Filer) ReadObject(ctx context.Context, req schema.GetObjectRequest) 
 			return nil, nil, err
 		} else if object.IsDir {
 			return nil, nil, isDir("read", req.Path)
+		} else if err := notModified(object, req); err != nil {
+			return nil, nil, err
 		}
 		content, err = self.render(ctx, events, f)
 	}
-	if err != nil {
+	if isContext(err) {
+		return nil, nil, err
+	} else if err != nil {
 		return nil, nil, gofiler.ErrServiceUnavailable.Withf("read %s: %v", req.Path, err)
 	}
 	return func(ctx context.Context, fn func(io.Reader) error) error {
@@ -516,11 +527,8 @@ func (self *Filer) fetchLocked(ctx context.Context, op, path string) (*events, b
 	if self.events != nil && self.lastModified != "" {
 		opts = append(opts, client.OptReqHeader("If-Modified-Since", self.lastModified))
 	}
-	key := feedKeyA
-	if self.events != nil && self.events.key == feedKeyA {
-		key = feedKeyB
-	}
-	response := feed{ctx: ctx, cache: self.cache, key: key, generation: strconv.FormatInt(self.now().UnixNano(), 36)}
+	generation := newGeneration(self.now())
+	response := feed{ctx: ctx, cache: self.cache, key: feedPrefix + generation, generation: generation}
 	if err := self.client.DoWithContext(ctx, client.NewRequestEx(http.MethodGet, accept), &response, opts...); self.events != nil && isStatus(err, http.StatusNotModified) {
 		self.fetched = self.now()
 		self.checkedLocked(ctx)
@@ -530,13 +538,25 @@ func (self *Filer) fetchLocked(ctx context.Context, op, path string) (*events, b
 	} else if response.source == nil {
 		return nil, false, gofiler.ErrBadParameter.Withf("%s %s: %s isn't a calendar", op, path, self.feed.String())
 	}
+	previous := self.events
 	self.etag, self.lastModified = response.etag, response.lastModified
 	self.events, self.fetched = newEvents(response.source, response.key, response.generation), self.now()
 
 	// The feed is the one which was saved, of the pointer, which isn't an
-	// error when it can't be saved, as it's fetched again after a restart
+	// error when it can't be saved, as it's fetched again after a restart.
+	// The feeds which were, this filer's, and the pointer's, of another
+	// filer's, are deleted, once they're not read.
+	var was pointer
+	_, _ = store.GetCacheJSON(ctx, self.cache, feedKey, &was)
 	meta := gofiler.CacheMeta{Version: self.etag, Values: map[string]string{lastModifiedValue: self.lastModified}}
-	_ = store.PutCacheJSON(ctx, self.cache, feedKey, 0, meta, pointer{Key: response.key, Generation: response.generation})
+	if err := store.PutCacheJSON(ctx, self.cache, feedKey, 0, meta, pointer{Key: response.key, Generation: response.generation}); err == nil {
+		if strings.HasPrefix(was.Key, feedPrefix) && was.Key != response.key {
+			_ = self.cache.Delete(ctx, was.Key)
+		}
+	}
+	if previous != nil && previous.key != response.key && previous.key != was.Key {
+		_ = self.cache.Delete(ctx, previous.key)
+	}
 	self.checkedLocked(ctx)
 	return self.events, true, nil
 }
@@ -549,28 +569,43 @@ func (self *Filer) named(object *schema.Object) *schema.Object {
 }
 
 // Unmarshal saves a response, of up to maxFeed octets, in the volume's
-// cache, of the key which isn't the current feed's, as it's read, and reads
-// it, from there, as a calendar which isn't cut off. The feed isn't kept in
-// memory: its events' lines are read from there, when they're read. A
-// response which isn't a calendar is an error, and the current feed, of the
-// other key, is kept.
+// cache, of its own key, as it's read, and reads it, from there, as a
+// calendar which isn't cut off. The feed isn't kept in memory: its events'
+// lines are read from there, when they're read. A response which isn't a
+// calendar is an error, and is deleted, so the current feed is kept.
 func (f *feed) Unmarshal(header http.Header, r io.Reader) error {
 	f.etag, f.lastModified = header.Get("ETag"), header.Get("Last-Modified")
 	meta := gofiler.CacheMeta{Version: f.etag, Values: map[string]string{lastModifiedValue: f.lastModified, generationValue: f.generation}}
-	entry, err := f.cache.Put(f.ctx, f.key, 0, meta, io.LimitReader(r, maxFeed+1))
-	if err != nil {
+	entry, err := f.cache.Put(f.ctx, f.key, feedTTL, meta, io.LimitReader(r, maxFeed+1))
+	if isContext(err) {
+		return err
+	} else if err != nil {
 		return gofiler.ErrServiceUnavailable.Withf("the calendar can't be saved: %v", err)
 	}
 	defer entry.Close()
+	var src *source
 	if entry.Size() > maxFeed {
-		return gofiler.ErrBadParameter.Withf("the calendar can't be read: it's more than %d MiB", maxFeed>>20)
+		err = fmt.Errorf("it's more than %d MiB", maxFeed>>20)
+	} else {
+		src, err = parseFeed(entry)
 	}
-	src, err := parseFeed(entry)
 	if err != nil {
+		_ = f.cache.Delete(context.WithoutCancel(f.ctx), f.key)
+		if isContext(err) {
+			return err
+		}
 		return gofiler.ErrBadParameter.Withf("the calendar can't be read: %v", err)
 	}
 	f.source = src
 	return nil
+}
+
+// newGeneration returns which feed one is, of when it's fetched, and a
+// random number, so it's never another's, such as of a clone
+func newGeneration(now time.Time) string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return strconv.FormatInt(now.UnixNano(), 36) + "-" + hex.EncodeToString(b[:])
 }
 
 ////////////////////////////////////////////////////////////////////////////////

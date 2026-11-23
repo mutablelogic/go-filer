@@ -26,6 +26,7 @@ import (
 type source struct {
 	name, tz   string            // the calendar's name, and zone, of its properties
 	header     []byte            // the calendar's properties, as they are
+	version    bool              // the calendar's properties have its VERSION
 	zones      map[string][]byte // the VTIMEZONEs, of their TZIDs, as they are
 	components []component       // the VEVENTs and VTODOs, in the feed's order
 }
@@ -106,6 +107,9 @@ func parseFeed(r io.Reader) (*source, error) {
 	var pendingStart int64
 	var pendingRaw []byte
 	handle := func(l *line, lstart, lend int64, lraw []byte) error {
+		// Its name is of the line, once it's unfolded, as a name can be
+		// folded too
+		l.name = lineName(l.text)
 		switch l.name {
 		case "BEGIN":
 			kind := strings.ToUpper(strings.TrimSpace(value(l.text)))
@@ -184,8 +188,7 @@ func parseFeed(r io.Reader) (*source, error) {
 					return nil, err
 				}
 			}
-			name, _, _ := strings.Cut(params(text), ";")
-			pending, pendingStart, pendingRaw = &line{name: strings.ToUpper(strings.TrimSpace(name)), text: text, physical: []string{text}}, lstart, append([]byte(nil), physical...)
+			pending, pendingStart, pendingRaw = &line{text: text, physical: []string{text}}, lstart, append([]byte(nil), physical...)
 		}
 		if err == io.EOF {
 			break
@@ -203,6 +206,7 @@ func parseFeed(r io.Reader) (*source, error) {
 	}
 
 	// The calendar's name, and zone
+	self.version = seen["VERSION"]
 	if calendar, err := ical.Decode(bytes.NewReader(self.calendar(nil, nil))); err == nil {
 		self.name, self.tz = strings.TrimSpace(calendar.Name), calendar.TZ
 	}
@@ -273,7 +277,7 @@ func (self *source) prefix(zones []string) []byte {
 	var b bytes.Buffer
 	b.WriteString(beginCalendar)
 	b.Write(self.header)
-	if !bytes.Contains(self.header, []byte("\nVERSION:")) && !bytes.HasPrefix(self.header, []byte("VERSION:")) {
+	if !self.version {
 		b.WriteString(version)
 	}
 	for _, tzid := range zones {
@@ -328,11 +332,23 @@ func unfold(data []byte) []line {
 			last.text += p[1:]
 			last.physical = append(last.physical, p)
 		default:
-			name, _, _ := strings.Cut(params(p), ";")
-			result = append(result, line{name: strings.ToUpper(strings.TrimSpace(name)), text: p, physical: []string{p}})
+			result = append(result, line{text: p, physical: []string{p}})
 		}
 	}
+
+	// Their names are of the lines, once they're unfolded, as a name can be
+	// folded too
+	for i := range result {
+		result[i].name = lineName(result[i].text)
+	}
 	return result
+}
+
+// lineName returns a content line's name, in upper case, such as DTSTAMP,
+// of the line, unfolded
+func lineName(text string) string {
+	name, _, _ := strings.Cut(params(text), ";")
+	return strings.ToUpper(strings.TrimSpace(name))
 }
 
 // params returns a content line's name, and its parameters, which are

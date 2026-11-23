@@ -517,3 +517,75 @@ func Test_FeedCache(t *testing.T) {
 	assert.Equal(t, int32(2), full.Load())
 	assert.Equal(t, strings.Split(before, "DTSTAMP")[0], strings.Split(after, "DTSTAMP")[0])
 }
+
+// Test_FeedLines tests a property's name is of its line, once it's
+// unfolded, and in any case, so a folded DTSTAMP isn't part of the entity
+// tag, a folded BEGIN begins, and a calendar of version:2.0 has one VERSION
+func Test_FeedLines(t *testing.T) {
+	ics := "BEGIN:VCALENDAR\r\nversion:2.0\r\n" +
+		"BEG\r\n IN:VEVENT\r\nUID:a\r\nDTST\r\n AMP:@NOW@\r\nDTSTART;VALUE=DATE:20261201\r\nSUMMARY:Folded\r\nEND:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+	body := feed(ics)
+	server, _, _ := newFeed(t, body)
+	f, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1ms"}}), testCache())
+	require.NoError(t, err, "a folded BEGIN begins")
+	object, content := read(t, f, "/2026/2026-12/01-folded.ics")
+	assert.Equal(t, 1, strings.Count(strings.ToUpper(content), "\nVERSION:"), content)
+
+	// The feed is stamped again, which isn't a change
+	restamped := ics + "\r\n"
+	body.Store(&restamped)
+	time.Sleep(1100 * time.Millisecond)
+	again, err := f.GetObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}})
+	require.NoError(t, err)
+	assert.Equal(t, types.Value(object.ETag), types.Value(again.ETag))
+}
+
+// Test_FeedClones tests filers of the same cache, such as a clone, and the
+// filer it's of, each fetch the feed, of its own key, so one which can't be
+// read, of one filer, doesn't replace the one which the other saved, which
+// is read after a restart
+func Test_FeedClones(t *testing.T) {
+	body := feed(calendarICS)
+	server, _, _ := newFeed(t, body)
+	cache := testCache()
+	a, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1ns"}}), cache)
+	require.NoError(t, err)
+
+	// The clone fetches a feed which changed, and saves it
+	b, err := a.Clone(context.Background(), nil)
+	require.NoError(t, err)
+	changed := strings.Replace(calendarICS, "SUMMARY:Holiday\r\nEND:VEVENT\r\nEND:VCALENDAR", "SUMMARY:Boxing Day\r\nEND:VEVENT\r\nEND:VCALENDAR", 1)
+	body.Store(&changed)
+	assert.Contains(t, list(t, b, "/2026/2026-12", false), "/2026/2026-12/25-boxing-day.ics")
+
+	// The feed is cut off, which the filer it's of fetches, and can't read
+	cut := strings.TrimSuffix(changed, "END:VCALENDAR\r\n")
+	body.Store(&cut)
+	_, err = a.ListObjects(context.Background(), schema.ListObjectsRequest{ObjectKey: schema.ObjectKey{Path: "/"}})
+	require.ErrorIs(t, err, gofiler.ErrBadParameter)
+
+	// The clone's feed is what's read after a restart
+	restarted, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache)
+	require.NoError(t, err, "the feed which was saved is read")
+	assert.Contains(t, list(t, restarted, "/2026/2026-12", false), "/2026/2026-12/25-boxing-day.ics")
+}
+
+// Test_FeedReadErrors tests a read of a feed which is fetched again, as it
+// isn't in the cache, is of the request's conditions, and a read whose
+// context is cancelled is its error
+func Test_FeedReadErrors(t *testing.T) {
+	server, _, _ := newFeed(t, feed(calendarICS))
+	cache := testCache()
+	f, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache)
+	require.NoError(t, err)
+	object, _ := read(t, f, "/2026/2026-12/25-holiday.ics")
+	require.NoError(t, cache.Delete(context.Background(), "feed/"))
+	_, _, err = f.ReadObject(context.Background(), schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}, IfNoneMatch: []string{*object.ETag}})
+	assert.ErrorIs(t, err, gofiler.ErrNotModified)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = f.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: object.Path}})
+	assert.ErrorIs(t, err, context.Canceled)
+}
