@@ -5,9 +5,12 @@
 // loads them again when they change, of the changes which are given to it,
 // keeping what's shown until they're loaded. The listing can't leave out
 // folders, so they're left out of its pages, of which more are loaded,
-// until one has an object, or there are no more.
+// until one has an object, or there are no more. A folder which isn't
+// there any more, such as once it's deleted, is said to be gone, rather
+// than that its objects couldn't be loaded, so what shows it can show
+// another.
 
-import type { Client } from '@mutablelogic/go-server/api';
+import { ApiError, type Client } from '@mutablelogic/go-server/api';
 import type { Change } from '@mutablelogic/go-server/broadcaster';
 import { ListController, type ListState, type Page, type Sort } from '@mutablelogic/go-server/list';
 import type { NotificationController } from '@mutablelogic/go-server/notification';
@@ -59,6 +62,7 @@ export class FolderController {
     private state: FolderState = { count: null, more: false, loading: false, failed: false };
     private readonly listeners = new Set<(state: FolderState) => void>();
     private errorFn?: (title: string, error: unknown) => void;
+    private goneFn?: (volume: string, path: string) => void;
 
     constructor(client: Client, options: FolderOptions = {}) {
         this.client = client;
@@ -90,6 +94,13 @@ export class FolderController {
     // onError calls the function when the objects can't be loaded
     onError(fn: (title: string, error: unknown) => void): this {
         this.errorFn = fn;
+        return this;
+    }
+
+    // onGone calls the function with a folder which isn't there, other than
+    // a volume's root, such as once it's deleted, whose objects are none
+    onGone(fn: (volume: string, path: string) => void): this {
+        this.goneFn = fn;
         return this;
     }
 
@@ -204,7 +215,20 @@ export class FolderController {
         const body: FilerObject[] = [];
         let next = after?.path;
         do {
-            const list = await listObjects(this.client, volume, { path, start_after: next, limit, sort: order });
+            let list;
+            try {
+                list = await listObjects(this.client, volume, { path, start_after: next, limit, sort: order });
+            } catch (error) {
+                // A folder which isn't there is gone, once, of the folder
+                // which is shown, and has none
+                if (error instanceof ApiError && error.status === 404 && path !== '/') {
+                    if (volume === this.volume && path === this.path) {
+                        queueMicrotask(() => this.goneFn?.(volume, path));
+                    }
+                    return { body: [], more: false };
+                }
+                throw error;
+            }
             body.push(...list.body.filter((object) => !object.dir));
             next = list.next;
         } while (next && body.length === 0 && volume === this.volume && path === this.path);

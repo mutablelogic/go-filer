@@ -25,7 +25,7 @@ import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-load
 import { backendIconURL } from '../filer/httpclient.ts';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController, type FolderState } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeFileNames, volumeSortable, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, parentPath, volumeBackend, volumeFileNames, volumeSortable, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -496,6 +496,23 @@ export class VolumeElement extends LitElement {
         return [{ label: 'Edit Volume', kind: 'secondary', icon: Edit16, run: () => this.querySelector('gf-volume-panel')?.open(volume, 'view') }];
     }
 
+    // gone shows the folder above one which isn't there, such as once it's
+    // deleted, in place of it in the history, so the nearest which is
+    // there is shown, as one which isn't either is gone, in turn, or the
+    // folder the volume's root shows is found again, when it was that
+    gone(volume: string, path: string) {
+        if (volume !== this.name) {
+            return;
+        } else if (this.path === path) {
+            const parent = parentPath(path);
+            this.path = parent;
+            history.replaceState(null, '', folderHref(volume, parent));
+        } else if (this.path === '/' && this.shown === path) {
+            this.shown = undefined;
+            this.openFolder();
+        }
+    }
+
     // chosen chooses the folder which is chosen in the tree, and adds it to
     // the history, as its route, without routing to it again
     private chosen(selection: TreeSelection) {
@@ -607,7 +624,9 @@ export function volumesModule(app: VolumesApp, section = 'Volumes'): VolumesCont
     volumeElement.controller = controller;
     volumeElement.notifications = app.notifications;
     volumeElement.tree = tree;
-    volumeElement.folder = new FolderController(app.client).onError((title, error) => app.notifications?.error(title, error));
+    volumeElement.folder = new FolderController(app.client)
+        .onError((title, error) => app.notifications?.error(title, error))
+        .onGone((volume, path) => volumeElement.gone(volume, path));
     volumeElement.changes = app.changes;
     volumePage.append(volumeElement);
 
