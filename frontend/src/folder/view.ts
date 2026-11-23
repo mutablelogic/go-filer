@@ -117,9 +117,14 @@ export class FileViewElement extends LitElement {
         }
 
         // A volume which can't be sorted any more, such as once its index
-        // is changed, isn't
-        if (changed.has('sortable') && !this.sortable && this.controller?.list.current.sort) {
-            this.controller.list.setSort(undefined);
+        // is changed, isn't, whose order is kept until it can be, and the
+        // order of a column which isn't shown is the first column's, of the
+        // objects' names
+        const sort = this.controller?.list.current.sort;
+        if (sort && !this.sortable) {
+            this.controller?.unsorted();
+        } else if (sort && !this.columns.some((column) => ColumnSorts[column]?.key === sort.key)) {
+            this.controller?.list.setSort(undefined);
         }
 
         // An object which isn't selected any more, such as once its panel

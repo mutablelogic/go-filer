@@ -256,6 +256,59 @@ test('FolderController sort', async () => {
     assert.deepEqual(queries, ['/api/object/photos  ']);
 });
 
+test('FolderController remembers the sort of each volume', async () => {
+    // The order which is chosen of a volume is remembered, in the browser,
+    // and is its order when it's opened again, when it can be sorted
+    const storage = new Map<string, string>();
+    const saved = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: {
+            getItem: (key: string) => storage.get(key) ?? null,
+            setItem: (key: string, value: string) => { storage.set(key, value); },
+            removeItem: (key: string) => { storage.delete(key); },
+        },
+    });
+    try {
+        const sorts: string[] = [];
+        const client: Client = {
+            base: 'http://localhost/api',
+            fetch: (async (input: RequestInfo | URL) => {
+                const url = new URL(String(input));
+                sorts.push(`${url.pathname.split('/').pop()} ${url.searchParams.get('sort') ?? ''}`);
+                return new Response(JSON.stringify({ name: 'v', count: 1, body: [{ name: 'v', path: '/1' }] }), { headers: { 'Content-Type': 'application/json' } });
+            }) as typeof fetch,
+        };
+        const folder = new FolderController(client);
+        await folder.open('media', '/', true);
+        folder.list.setSort({ key: 'modified', direction: 'descending' });
+        await settle();
+        assert.equal(storage.get('gf-file-view-sort:media'), JSON.stringify({ key: 'modified', direction: 'descending' }));
+        await folder.open('photos', '/', true);
+        await folder.open('media', '/', true);
+        assert.deepEqual(folder.list.current.sort, { key: 'modified', direction: 'descending' });
+        await folder.open('photos', '/', true);
+        await folder.open('media', '/', false);
+        assert.equal(folder.list.current.sort, undefined, "it isn't sorted when it can't be");
+        assert.ok(storage.has('gf-file-view-sort:media'), 'its order is kept until it can be');
+        folder.list.setSort(undefined);
+        await settle();
+        folder.list.setSort({ key: 'size', direction: 'ascending' });
+        await settle();
+        folder.list.setSort(undefined);
+        await settle();
+        assert.equal(storage.has('gf-file-view-sort:media'), false, 'an order which is chosen of none is forgotten');
+        sorts.splice(6);
+        assert.deepEqual(sorts, ['media ', 'media -modified', 'photos ', 'media -modified', 'photos ', 'media ']);
+    } finally {
+        if (saved) {
+            Object.defineProperty(globalThis, 'localStorage', saved);
+        } else {
+            delete (globalThis as { localStorage?: unknown }).localStorage;
+        }
+    }
+});
+
 test('volumeSortable', () => {
     // A volume whose files are indexed, and ready
     const volume = (mode: string, status?: string) => ({ name: 'v', url: 'file://v/tmp', enabled: true, mounted: true, index: { mode, status } });

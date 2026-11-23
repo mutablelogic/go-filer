@@ -51,6 +51,7 @@ export class FolderController {
 
     private volume?: string;
     private path?: string;
+    private sorted?: Sort;
     private state: FolderState = { count: null, more: false, loading: false, failed: false };
     private readonly listeners = new Set<(state: FolderState) => void>();
     private errorFn?: (title: string, error: unknown) => void;
@@ -89,21 +90,33 @@ export class FolderController {
     }
 
     // open shows a folder, from its first page, unless it's shown, in the
-    // order it's sorted, unless it's of another volume, which isn't sorted,
-    // as it may not be able to be
-    open(volume: string, path: string): Promise<void> {
+    // order it's sorted, or, of another volume, in the order which was last
+    // chosen of it, in the browser, when it can be sorted, or else of its
+    // keys
+    open(volume: string, path: string, sortable = false): Promise<void> {
         if (volume === this.volume && path === this.path) {
             return Promise.resolve();
         }
         const another = volume !== this.volume;
         this.volume = volume;
         this.path = path;
-        if (another && this.list.current.sort) {
-            this.list.close();
-            this.list.setSort(undefined);
-            return this.loaded();
+        if (another) {
+            const sort = sortable ? readSort(volume) : undefined;
+            if (!sameSort(sort, this.list.current.sort)) {
+                this.list.close();
+                this.unsorted(sort);
+                return this.loaded();
+            }
         }
         return this.list.reset();
+    }
+
+    // unsorted sorts the folder in the order, or of its keys, without one,
+    // without remembering it, such as of a volume which can't be sorted
+    // now, whose order is kept until it can be
+    unsorted(sort?: Sort) {
+        this.sorted = sort;
+        this.list.setSort(sort);
     }
 
     // loaded resolves once the list is loaded, such as once it's sorted,
@@ -193,8 +206,13 @@ export class FolderController {
         return { body, more: !!next };
     }
 
-    // follow keeps the folder's state, of the list's
+    // follow keeps the folder's state, of the list's, and remembers the
+    // order it's sorted in, of its volume, when it's chosen
     private follow(list: ListState<FilerObject>) {
+        if (this.volume && !sameSort(list.sort, this.sorted)) {
+            writeSort(this.volume, list.sort);
+        }
+        this.sorted = list.sort;
         const more = list.more ?? false;
         this.state = {
             volume: this.volume,
@@ -219,3 +237,41 @@ export class FolderController {
 function within(path: string, dir: string): boolean {
     return dir === '/' || path === dir || path.startsWith(dir + '/');
 }
+
+// The prefix of the key of the order which was chosen of a volume, in the
+// browser's storage, before its name
+const SortKey = 'gf-file-view-sort:';
+
+// sameSort returns whether two orders are the same
+function sameSort(a?: Sort, b?: Sort): boolean {
+    return a?.key === b?.key && a?.direction === b?.direction;
+}
+
+// readSort returns the order which was chosen of a volume, or undefined,
+// when none was, or the browser's storage can't be read
+function readSort(volume: string): Sort | undefined {
+    try {
+        const value = JSON.parse(localStorage.getItem(SortKey + volume) ?? 'null');
+        if (value && typeof value.key === 'string' && (value.direction === 'ascending' || value.direction === 'descending')) {
+            return { key: value.key, direction: value.direction };
+        }
+    } catch {
+        // None was
+    }
+    return undefined;
+}
+
+// writeSort remembers the order which is chosen of a volume, or forgets it,
+// when it isn't sorted, when the browser's storage can be written
+function writeSort(volume: string, sort?: Sort) {
+    try {
+        if (sort) {
+            localStorage.setItem(SortKey + volume, JSON.stringify(sort));
+        } else {
+            localStorage.removeItem(SortKey + volume);
+        }
+    } catch {
+        // It isn't remembered
+    }
+}
+

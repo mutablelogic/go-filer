@@ -379,9 +379,9 @@ export class VolumeElement extends LitElement {
         if (!name || !this.path || !volume?.mounted) {
             this.folder?.close();
         } else if (this.path !== '/') {
-            void this.folder?.open(name, this.path);
+            void this.folder?.open(name, this.path, volumeSortable(volume));
         } else if (this.shown) {
-            void this.folder?.open(name, this.shown);
+            void this.folder?.open(name, this.shown, volumeSortable(volume));
         } else if (!this.starting) {
             void this.openStart(name, volumeScheme(volume));
         }
@@ -408,7 +408,7 @@ export class VolumeElement extends LitElement {
         }
         this.starting = false;
         this.shown = path;
-        void this.folder?.open(name, path);
+        void this.folder?.open(name, path, !!this.volume && volumeSortable(this.volume));
         if (path !== '/' && this.tree) {
             await this.tree.reveal(name, path);
             await this.updateComplete;
