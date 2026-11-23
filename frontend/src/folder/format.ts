@@ -18,10 +18,9 @@ const Columns: [FileViewColumn, string][] = [['file', 'File'], ['kind', 'Kind'],
 const FileColumns: FileViewColumn[] = ['file', 'format'];
 export const DefaultColumns: FileViewColumn[] = ['kind', 'size', 'modified'];
 
-// ColumnWidths are the widths of the columns, in rem, and NameWidth the
-// least width of Name, which has what's left of the table's
+// ColumnWidths are the widths of the columns, in rem, beside Name, which
+// has what's left of the table's
 export const ColumnWidths: Record<FileViewColumn, number> = { file: 12, kind: 7, format: 5, size: 5.5, modified: 10.5 };
-export const NameWidth = 12;
 
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC FUNCTIONS
@@ -30,12 +29,6 @@ export const NameWidth = 12;
 // volume whose objects have file names, or not
 export function availableColumns(files: boolean): FileViewColumn[] {
     return Columns.map(([column]) => column).filter((column) => files || !FileColumns.includes(column));
-}
-
-// tableWidth returns the least width of the table, in rem, of the columns
-// which are shown, and Name
-export function tableWidth(columns: readonly FileViewColumn[]): number {
-    return columns.reduce((width, column) => width + ColumnWidths[column], NameWidth);
 }
 
 // visibleColumns returns the columns which are shown, in order, of those

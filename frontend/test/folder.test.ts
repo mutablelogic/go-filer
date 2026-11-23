@@ -57,10 +57,8 @@ test('FolderController', async (t) => {
         const { client, listed } = fakeServer({ '/': ['/a/', '/b/', '/c/', '/d/', '/x.txt', '/y/', '/z.txt'] });
         const folder = new FolderController(client, { pageLimit: 2 });
         await folder.open('media', '/');
-        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt']);
-        assert.deepEqual(listed, ['/@', '/@/b/', '/@/d/'], 'the pages of only folders are skipped');
-        await folder.loadMore();
-        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt', '/z.txt']);
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt', '/z.txt'], 'a page of objects, of as many pages as it takes');
+        assert.deepEqual(listed, ['/@', '/@/b/', '/@/d/', '/@/x.txt'], 'the pages of only folders are skipped, and more start after the last object');
         assert.equal(folder.current.more, false);
         assert.equal(folder.current.count, 2, 'its objects, without its folders');
     });
