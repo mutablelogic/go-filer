@@ -18,6 +18,13 @@ import type { Column, TableAction, TableRowAction, TableSetting, TableSettingCha
 import { play, playable } from '@mutablelogic/go-server/player';
 import Add16 from '@carbon/icons/es/add/16.js';
 import TrashCan16 from '@carbon/icons/es/trash-can/16.js';
+import Information16 from '@carbon/icons/es/information/16.js';
+import Image16 from '@carbon/icons/es/image/16.js';
+import Map16 from '@carbon/icons/es/map/16.js';
+import Calendar16 from '@carbon/icons/es/calendar/16.js';
+import View16 from '@carbon/icons/es/view/16.js';
+import Download16 from '@carbon/icons/es/download/16.js';
+import Play16 from '@carbon/icons/es/play/16.js';
 import './delete.ts';
 import './upload.ts';
 import '@mutablelogic/go-server/list/view';
@@ -226,23 +233,23 @@ export class FileViewElement extends LitElement {
     private readonly rowActions = (object: FilerObject): TableRowAction<FilerObject>[] => {
         const client = this.controller?.client;
         const actions: TableRowAction<FilerObject>[] = objectTabs(object).map((tab) => ({
-            label: tab.label, run: () => this.open(object, tab.value),
+            label: tab.label, icon: TabIcons[tab.value], run: () => this.open(object, tab.value),
         }));
         if (client) {
             actions.push({
-                label: 'Download', divider: true,
+                label: 'Download', icon: Download16, divider: true,
                 run: () => { window.open(objectURL(client, object.name, object.path, true), '_blank', 'noopener'); },
             });
             if (playable(object.type)) {
                 actions.push({
-                    label: 'Play',
+                    label: 'Play', icon: Play16,
                     run: () => play({ url: objectURL(client, object.name, object.path), name: objectTitle(object), type: object.type }, this),
                 });
             }
         }
         if (this.writable) {
             actions.push({
-                label: 'Delete', danger: true, divider: true,
+                label: 'Delete', icon: TrashCan16, danger: true, divider: true,
                 run: async () => {
                     // Once it's deleted, the rows which are selected aren't,
                     // as the batch actions' Delete does, so it isn't of them
@@ -368,6 +375,15 @@ function cellView(column: FileViewColumn, object: FilerObject) {
             return formatTime(object.mtime);
     }
 }
+
+// TabIcons are the icons of the tabs of a file's panel, in its menu
+const TabIcons: Record<ObjectTab, unknown> = {
+    metadata: Information16,
+    artwork: Image16,
+    map: Map16,
+    events: Calendar16,
+    preview: View16,
+};
 
 // DeleteCancelled is why files which are selected aren't deleted, as it
 // wasn't confirmed, which keeps them selected, and isn't an error
