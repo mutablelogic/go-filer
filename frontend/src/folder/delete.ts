@@ -83,7 +83,7 @@ export class ObjectDeleteElement extends LitElement {
         const more = this.objects.length - named.length;
         return html`
             <div class="gf-volume-form">
-                <p>${this.objects.length === 1 ? 'This file is' : 'These files are'} deleted from the volume, and its backend, such as its folder, or bucket, which can't be undone.</p>
+                <p>Warning, deleting from the volume cannot be undone</p>
                 <cds-contained-list label=${noun(this.objects.length)} kind="on-page">
                     ${named.map((object) => html`
                         <cds-contained-list-item title=${object.path}>
