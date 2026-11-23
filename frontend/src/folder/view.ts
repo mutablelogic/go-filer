@@ -1,6 +1,6 @@
 // The gf-file-view element is the objects of a folder, which aren't folders,
 // as the tree has those, as Carbon's data table of their names, and of the
-// columns which are chosen of its toolbar's Columns menu: their file names
+// columns which are chosen of its toolbar's settings menu: their file names
 // and formats, of a volume whose objects have them, their kinds, sizes and
 // when they were changed, each of its artwork, such as an album's cover, in place
 // of its icon, when it has some, which loads more as it's scrolled, in the element it's in,
@@ -13,14 +13,15 @@ import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
 import EmptyIcon from '@carbon/icons/es/folders/32.js';
+import SettingsIcon from '@carbon/icons/es/settings/16.js';
+import CheckmarkIcon from '@carbon/icons/es/checkmark/16.js';
 import { artworkURL } from '../filer/httpclient.ts';
 import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 import { availableColumns, columnLabel, ColumnWidths, DefaultColumns, formatSize, formatTime, tableWidth, visibleColumns, type FileViewColumn } from './format.ts';
 import '@carbon/web-components/es/components/button/index.js';
 import '@carbon/web-components/es/components/data-table/index.js';
-import '@carbon/web-components/es/components/menu-button/index.js';
-import '@carbon/web-components/es/components/menu/index.js';
+import '@carbon/web-components/es/components/overflow-menu/index.js';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
@@ -34,6 +35,7 @@ export const FileViewTag = 'gf-file-view';
 export const FileViewSelected = 'gf-file-view-selected';
 
 const fileIcon = iconLoader(FileIcon);
+const checkmarkIcon = iconLoader(CheckmarkIcon);
 
 
 // The prefix of the key of the columns which are chosen of a volume, in
@@ -154,14 +156,19 @@ export class FileViewElement extends LitElement {
             <cds-table size="sm" class="gf-file-view-table" style=${`--gf-file-view-width: ${tableWidth(columns)}rem`}>
                 <cds-table-toolbar slot="toolbar" size="sm">
                     <cds-table-toolbar-content>
-                        <cds-menu-button kind="ghost" size="sm" label="Columns" menu-alignment="bottom-end">
-                            <cds-menu>
+                        <cds-overflow-menu toolbar-action>
+                            ${iconLoader(SettingsIcon, { slot: 'icon', class: 'cds--overflow-menu__icon' })}
+                            <span slot="tooltip-content">Columns</span>
+                            <cds-overflow-menu-body flipped>
                                 ${availableColumns(this.files).map((column) => html`
-                                    <cds-menu-item-selectable label=${columnLabel(column)} ?selected=${columns.includes(column)}
-                                        @cds-item-changed=${(event: Event) => this.show(column, (event.target as HTMLElement & { selected: boolean }).selected)}></cds-menu-item-selectable>
+                                    <cds-overflow-menu-item @click=${() => this.show(column, !columns.includes(column))}>
+                                        <span class="gf-file-view-setting">
+                                            <span class="gf-file-view-check">${columns.includes(column) ? checkmarkIcon : nothing}</span>${columnLabel(column)}<span class="cds--visually-hidden">, ${columns.includes(column) ? 'shown' : 'hidden'}</span>
+                                        </span>
+                                    </cds-overflow-menu-item>
                                 `)}
-                            </cds-menu>
-                        </cds-menu-button>
+                            </cds-overflow-menu-body>
+                        </cds-overflow-menu>
                     </cds-table-toolbar-content>
                 </cds-table-toolbar>
                 <cds-table-head>
@@ -202,9 +209,7 @@ export class FileViewElement extends LitElement {
         }
     }
 
-    // show shows, or hides, a column, which is remembered, of the volume.
-    // Carbon's item says it changed twice, so it's of whether it's
-    // selected, rather than toggled.
+    // show shows, or hides, a column, which is remembered, of the volume
     private show(column: FileViewColumn, shown: boolean) {
         if (this.columns.includes(column) === shown) {
             return;
