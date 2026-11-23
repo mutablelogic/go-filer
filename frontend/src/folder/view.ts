@@ -1,5 +1,6 @@
 // The gf-file-view element is the objects of a folder, which aren't folders,
-// as the tree has those, as Carbon's data table of their names, types, sizes and when
+// as the tree has those, as Carbon's data table of their names, file names
+// and formats, of a volume whose objects have them, their kinds, sizes and when
 // they were changed, each of its artwork, such as an album's cover, in place
 // of its icon, when it has some, which loads more as it's scrolled, in the element it's in,
 // which scrolls. A row which is clicked is chosen, which is an event of
@@ -12,7 +13,7 @@ import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.j
 import FileIcon from '@carbon/icons/es/document/16.js';
 import EmptyIcon from '@carbon/icons/es/folders/32.js';
 import { artworkURL } from '../filer/httpclient.ts';
-import { objectArtwork, objectTitle, objectType, type FilerObject } from '../filer/schema.ts';
+import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 import '@carbon/web-components/es/components/button/index.js';
 import '@carbon/web-components/es/components/data-table/index.js';
@@ -37,6 +38,7 @@ export class FileViewElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
         empty: { type: String },
+        files: { type: Boolean },
         selected: { attribute: false },
         state: { state: true },
     };
@@ -46,9 +48,18 @@ export class FileViewElement extends LitElement {
     declare controller?: FolderController;
     declare empty?: string;
 
+    // files is whether the objects have file names, and formats, which are
+    // shown, such as a folder's, rather than ids, such as a contact's
+    declare files: boolean;
+
     // selected is the path of the object which is chosen, if any
     declare selected?: string;
     declare private state?: FolderState;
+
+    constructor() {
+        super();
+        this.files = true;
+    }
 
     private unsubscribe?: () => void;
     private observer?: IntersectionObserver;
@@ -116,12 +127,15 @@ export class FileViewElement extends LitElement {
         // Carbon's table, whose header stays at the top of the element which
         // scrolls, as its own scrolling is turned off (see index.html)
         const count = state.count;
+        const files = this.files;
         return html`
             <cds-table size="sm" class="gf-file-view-table">
                 <cds-table-head>
                     <cds-table-header-row>
                         <cds-table-header-cell>Name</cds-table-header-cell>
-                        <cds-table-header-cell class="gf-file-view-type">Type</cds-table-header-cell>
+                        ${files ? html`<cds-table-header-cell class="gf-file-view-file">File</cds-table-header-cell>` : nothing}
+                        <cds-table-header-cell class="gf-file-view-type">Kind</cds-table-header-cell>
+                        ${files ? html`<cds-table-header-cell class="gf-file-view-type">Format</cds-table-header-cell>` : nothing}
                         <cds-table-header-cell class="gf-file-view-size">Size</cds-table-header-cell>
                         <cds-table-header-cell>Modified</cds-table-header-cell>
                     </cds-table-header-row>
@@ -132,7 +146,9 @@ export class FileViewElement extends LitElement {
                             <cds-table-cell>
                                 <button type="button" class="gf-file-view-name" title=${object.path}><span class="gf-file-view-icon">${this.iconView(object)}</span><span>${objectTitle(object)}</span></button>
                             </cds-table-cell>
-                            <cds-table-cell class="gf-file-view-type" title=${object.type ?? ''}>${objectType(object)}</cds-table-cell>
+                            ${files ? html`<cds-table-cell class="gf-file-view-file">${objectFileName(object)}</cds-table-cell>` : nothing}
+                            <cds-table-cell class="gf-file-view-type">${objectKind(object)}</cds-table-cell>
+                            ${files ? html`<cds-table-cell class="gf-file-view-type" title=${object.type ?? ''}>${objectFormat(object)}</cds-table-cell>` : nothing}
                             <cds-table-cell class="gf-file-view-size">${formatSize(object.size)}</cds-table-cell>
                             <cds-table-cell>${formatTime(object.mtime)}</cds-table-cell>
                         </cds-table-row>

@@ -25,7 +25,7 @@ import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-load
 import { backendIconURL } from '../filer/httpclient.ts';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController, type FolderState } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeFileNames, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -472,7 +472,7 @@ export class VolumeElement extends LitElement {
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path: path === '/' ? this.shown ?? path : path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
-                <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected}
+                <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected} ?files=${volumeFileNames(volume)}
                     empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}
                     @gf-file-view-selected=${(event: CustomEvent<FilerObject>) => this.select(event.detail)}></gf-file-view>
             </div>

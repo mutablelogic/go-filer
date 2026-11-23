@@ -486,6 +486,18 @@
             white-space: nowrap;
         }
 
+        /* A file's name, beside its title, is secondary to it */
+        .gf-file-view-file {
+            max-width: 16rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        cds-table-cell.gf-file-view-file {
+            color: var(--cds-text-secondary);
+        }
+
         .gf-file-view-size {
             text-align: right;
             white-space: nowrap;
