@@ -83,7 +83,7 @@ export class ObjectDeleteElement extends LitElement {
         const more = this.objects.length - named.length;
         return html`
             <div class="gf-volume-form">
-                <p>Warning, deleting from the volume cannot be undone</p>
+                ${alertView('warning', 'Warning', 'Deleting from the volume cannot be undone')}
                 <cds-contained-list label=${noun(this.objects.length)} kind="on-page">
                     ${named.map((object) => html`
                         <cds-contained-list-item title=${object.path}>
