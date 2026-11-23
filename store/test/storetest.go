@@ -1691,8 +1691,29 @@ func testObjectArtwork(t *testing.T, s store.Store) {
 	assert.Equal(t, []string{"back", "cover", "thumbnail"}, contexts("media", "/music/a.mp3"))
 	assert.Equal(t, []string{"cover"}, set("media", "/music/b.mp3", artwork("cover", "a")))
 	assert.Empty(t, contexts("media", "/music"), "an object which links to none")
+
+	// An object, and a listing of it, has the artwork it links to, as
+	// ObjectArtwork returns it, without its data, in the order of their
+	// contexts, and one which links to none has none
+	linked, err := s.ObjectArtwork(ctx, "media", "/music/a.mp3")
+	require.NoError(t, err)
+	want := make([]schema.Artwork, 0, len(linked))
+	for _, a := range linked {
+		want = append(want, *a)
+	}
+	object, err := s.GetObject(ctx, "media", "/music/a.mp3")
+	require.NoError(t, err)
+	assert.Equal(t, want, object.Artwork)
+	objects, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/music/"})
+	require.NoError(t, err)
+	require.Len(t, objects, 2)
+	assert.Equal(t, want, objects[0].Artwork)
+	assert.Equal(t, []string{"cover"}, []string{objects[1].Artwork[0].Context})
+	object, err = s.GetObject(ctx, "media", "/music/")
+	require.NoError(t, err)
+	assert.Nil(t, object.Artwork)
 	assert.Empty(t, contexts("photos", "/missing"), "an object which isn't stored")
-	_, err := s.SetObjectArtwork(ctx, "media", "/music/a.mp3", artwork("cover", "a"), artwork("cover", "c"))
+	_, err = s.SetObjectArtwork(ctx, "media", "/music/a.mp3", artwork("cover", "a"), artwork("cover", "c"))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter, "two of one context")
 	_, err = s.SetObjectArtwork(ctx, "media", "/music/missing.mp3", artwork("cover", "a"))
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
@@ -1772,6 +1793,17 @@ func testTaskArtwork(t *testing.T, s store.Store) {
 	err = s.SetMetadata(ctx, "media", "/b.mp3", "metadata", &read, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("cover", "z")}})
 	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
 	assert.Equal(t, []string{"back"}, contexts("/b.mp3"))
+
+	// The links of a volume are removed alone, keeping the metadata
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.mp3", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"A"`)}}, Artwork: []schema.ArtworkMeta{artwork("cover", "a")}}))
+	require.NoError(t, s.UnlinkVolumeArtwork(ctx, "media"))
+	assert.Empty(t, contexts("/a.mp3"))
+	assert.Empty(t, contexts("/b.mp3"))
+	object, err = s.GetObject(ctx, "media", "/a.mp3")
+	require.NoError(t, err)
+	assert.Len(t, object.Meta, 1, "its metadata is kept")
+	require.NoError(t, s.UnlinkVolumeArtwork(ctx, "missing"), "a volume which isn't stored has none")
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.mp3", "metadata", nil, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("back", "b")}}))
 
 	// The links of a volume whose task's metadata is deleted are too
 	require.NoError(t, s.DeleteMetadata(ctx, "media", "metadata"))

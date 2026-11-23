@@ -105,6 +105,11 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
   SELECT json_group_array(json_object('uid', uid, 'recurrence_id', recurrence_id, 'kind', kind, 'title', title,
     'start', coalesce(start_date, start_at), 'end', coalesce(end_date, end_at), 'tz', tz) ORDER BY coalesce(start_at, start_date || 'T00:00:00Z'), rowid)
   FROM object_event WHERE object_event.volume = object.volume AND object_event.object = object.key
+), (
+  SELECT json_group_array(json_object('hash', artwork.hash, 'context', artwork.context, 'type', artwork.type,
+    'width', artwork.width, 'height', artwork.height, 'size', length(artwork.data), 'created_at', artwork.created_at) ORDER BY artwork.context, artwork.hash)
+  FROM object_artwork JOIN artwork ON artwork.hash = object_artwork.hash
+  WHERE object_artwork.volume = object.volume AND object_artwork.object = object.key
 )
 FROM object WHERE volume = @volume AND key = @key;
 
@@ -126,6 +131,11 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
   SELECT json_group_array(json_object('uid', uid, 'recurrence_id', recurrence_id, 'kind', kind, 'title', title,
     'start', coalesce(start_date, start_at), 'end', coalesce(end_date, end_at), 'tz', tz) ORDER BY coalesce(start_at, start_date || 'T00:00:00Z'), rowid)
   FROM object_event WHERE object_event.volume = object.volume AND object_event.object = object.key
+), (
+  SELECT json_group_array(json_object('hash', artwork.hash, 'context', artwork.context, 'type', artwork.type,
+    'width', artwork.width, 'height', artwork.height, 'size', length(artwork.data), 'created_at', artwork.created_at) ORDER BY artwork.context, artwork.hash)
+  FROM object_artwork JOIN artwork ON artwork.hash = object_artwork.hash
+  WHERE object_artwork.volume = object.volume AND object_artwork.object = object.key
 )
 FROM object WHERE volume = @volume AND ${where} AND key > @after
 ORDER BY key;

@@ -76,6 +76,10 @@ func (self *Store) ObjectArtwork(context.Context, string, string) ([]*schema.Art
 	return nil, errNotImplemented
 }
 
+func (self *Store) UnlinkVolumeArtwork(context.Context, string) error {
+	return errNotImplemented
+}
+
 func (self *Store) DeleteUnlinkedArtwork(context.Context) (int, error) {
 	return 0, errNotImplemented
 }

@@ -40,7 +40,7 @@ How the filer's server is put together: the registry of volumes, which mounts th
   * `index=artwork` enriches files as `metadata` does, and stores their artwork too, such as an album's cover, a video's thumbnails or a document's pages (see [Artwork](#artwork)).
     * The task asks go-metadata for `WithNamespace(metadata, artwork)`, so a file is read once, for all its metadata and its artwork. Without `index=artwork`, go-metadata doesn't extract artwork, as it's slow to.
     * Each `artwork:<key>` entry becomes an artwork of that context, such as `cover` or `thumbnail-2`, of its type, size and data. Artwork is stored and linked with the task's metadata, in one transaction (`TaskMeta.Artwork`), and replaces the file's links.
-    * Moving a volume between `metadata` and `artwork`, either way, enriches every file again once, so artwork is found, or its links removed. The index state's `enriched` records what files were enriched with. It's reconciled with the mode before the indexer's workers start, and retried until it succeeds, so a scan or a task never runs on stale results.
+    * Raising a volume from `metadata` to `artwork` enriches every file again once, so its artwork is found. Lowering it from `artwork` to `metadata` only removes its links to artwork (`UnlinkVolumeArtwork`), as its metadata is the same, and the hourly cleanup deletes artwork nothing links to. The index state's `enriched` records what files were enriched with. It's reconciled with the mode before the indexer's workers start, and retried until it succeeds, so a scan or a task never runs on stale results.
   * Folders are listed from the index.
   * With `index=objects`, a new or changed file is stored from `GetObject`, not from the listing, which on S3 lacks the metadata. That's one HEAD request per new or changed object.
   * A scan has two phases: **scanning** lists the tree, and **indexing** fetches and stores new or changed files 100 at a time. It then goes **idle**. The Index column shows the phase. On a first scan, the file count rises as files are stored.
@@ -117,6 +117,7 @@ A `gofiler.ArtworkStore`, part of the index store, keeps artwork: images such as
 * **Its hash** is the SHA-256 of its context and data, so an image is kept once per context, however many objects link to it. `GetArtwork(hash, data)` returns it, with its data only when asked for.
 * **Storing and linking** are one transaction: `SetObjectArtwork(volume, key, artwork...)` stores each artwork, or finds the one already stored, and replaces the object's links, at most one per context. With none, it removes them. It returns the artwork by context. If any artwork isn't valid, or conflicts with stored artwork of the same hash but another type or size, nothing is stored or changed. `ObjectArtwork` lists an object's artwork.
 * **Links** are removed when their object is deleted, or changes (its ETag, size or modification time), like a task's metadata.
+* **On objects:** an object, as got, listed or found by search, has its artwork in `artwork` (`schema.Artwork`), by context, without the data. Its data is got by its hash.
 * **Cleanup:** the registry deletes artwork that no object links to, every hour.
 * **Stores:** SQLite keeps artwork in the index's database (`artwork` and `object_artwork`). Postgres doesn't yet.
 

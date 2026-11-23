@@ -44,7 +44,7 @@ type ObjectArtworkLink struct {
 }
 
 // VolumeArtwork selects the links of the objects of a volume to their
-// artwork, which are deleted, as what a task found of them is
+// artwork, which are deleted, as what a task found of them is, or alone
 type VolumeArtwork string
 
 // Keys are the keys of objects, or the hashes of artwork, which are read,

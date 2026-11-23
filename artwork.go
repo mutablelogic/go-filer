@@ -38,6 +38,12 @@ type ArtworkStore interface {
 	// none when it links to none, or isn't stored
 	ObjectArtwork(ctx context.Context, volume, key string) ([]*schema.Artwork, error)
 
+	// UnlinkVolumeArtwork removes the links of the objects of the volume to
+	// their artwork, but not what tasks found of them, otherwise, such as
+	// when its files aren't enriched with artwork any more, whose artwork
+	// is deleted once no object links to it (see DeleteUnlinkedArtwork)
+	UnlinkVolumeArtwork(ctx context.Context, volume string) error
+
 	// DeleteUnlinkedArtwork deletes the artwork which no object links to,
 	// such as of objects which changed, or were deleted, and returns how
 	// many were deleted
