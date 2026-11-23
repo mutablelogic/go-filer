@@ -35,6 +35,7 @@ import '../folder/view.ts';
 import '../folder/panel.ts';
 import { apiLister, startFolder } from '../folder/start.ts';
 import type { FilerObject } from '../filer/schema.ts';
+import '@carbon/web-components/es/components/skeleton-text/index.js';
 import '@carbon/web-components/es/components/tile/clickable-tile.js';
 import '@carbon/web-components/es/components/tag/tag.js';
 import '@carbon/web-components/es/components/tabs/index.js';
@@ -458,7 +459,9 @@ export class VolumeElement extends LitElement {
     // chosen
     private contentView(name: string, path: string, volume: Volume | undefined, hasFolders: boolean): TemplateResult {
         if (!volume) {
-            return html`<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
+            return this.controller?.volumes
+                ? html`<p class="gf-empty">This volume doesn't exist</p>`
+                : html`<div class="gf-skeleton" aria-busy="true"><cds-skeleton-text paragraph line-count="3"></cds-skeleton-text></div>`;
         } else if (!volume.mounted) {
             // One which is unmounted is, of its own, so it isn't an error,
             // which its tag says, too
