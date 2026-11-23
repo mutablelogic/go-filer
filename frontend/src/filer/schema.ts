@@ -129,6 +129,21 @@ export interface FilerObject {
     artwork?: Artwork[];
 }
 
+// ObjectSkipped is a file which wasn't uploaded, by its path in the volume,
+// and why, such as it exists, and the upload doesn't overwrite it
+export interface ObjectSkipped {
+    path: string;
+    exists?: boolean;
+    reason: string;
+}
+
+// ObjectUpload is the files which were uploaded, and those which were
+// skipped, and why
+export interface ObjectUpload {
+    body: FilerObject[];
+    skipped?: ObjectSkipped[];
+}
+
 // ObjectListQuery is the query of a listing: the folder, which is the root
 // by default, whether it's of everything beneath it, the key it starts
 // after, how many objects it has, at most, the type of its objects, and
