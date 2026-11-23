@@ -194,11 +194,12 @@ export class FileViewElement extends LitElement {
         },
     }];
 
-    // deleteActions are Delete, of the rows which are selected, which asks
-    // to confirm, and deletes them, and loads the folder again, or keeps them
+    // deleteActions are Delete, of the rows which are selected, of Carbon's
+    // batch actions, whose buttons are primary, on its bar, which asks to
+    // confirm, of a panel whose Delete is danger, and deletes them, and loads the folder again, or keeps them
     // selected, when it isn't confirmed
     private readonly deleteActions: TableAction<FilerObject>[] = [{
-        label: 'Delete', kind: 'danger', icon: TrashCan16,
+        label: 'Delete', kind: 'primary', icon: TrashCan16,
         run: async (objects) => {
             const panel = this.querySelector('gf-object-delete');
             const deleted = panel ? await panel.confirm(objects) : false;
