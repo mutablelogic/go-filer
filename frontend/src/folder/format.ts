@@ -86,3 +86,10 @@ export function formatTime(time?: string): string {
     const date = new Date(time);
     return Number.isNaN(date.getTime()) || date.getFullYear() <= 1 ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
+
+// skippedFirst returns the first of the files which are uploaded, to the
+// most which are listed: those which weren't added, and why, first, so
+// they're shown however many there are, and the others, in their order
+export function skippedFirst<T extends { skipped?: unknown }>(files: readonly T[], max: number): T[] {
+    return [...files.filter((f) => f.skipped), ...files.filter((f) => !f.skipped)].slice(0, max);
+}

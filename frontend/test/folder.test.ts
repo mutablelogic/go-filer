@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Client } from '@mutablelogic/go-server/api';
 import { FolderController } from '../src/folder/controller.ts';
-import { availableColumns, formatSize, formatTime, visibleColumns } from '../src/folder/format.ts';
+import { availableColumns, formatSize, formatTime, skippedFirst, visibleColumns } from '../src/folder/format.ts';
 import { objectFormat, objectKind, volumeFileNames, volumeSortable } from '../src/filer/schema.ts';
 
 // fakeServer is a volume's folders, of their objects' paths, whose listings
@@ -384,4 +384,14 @@ test('volumeSortable', () => {
     assert.equal(volumeSortable(volume({ mode: 'objects', sortable: true })), true);
     assert.equal(volumeSortable(volume({ mode: 'objects' })), false, 'until its files are scanned');
     assert.equal(volumeSortable(volume()), false);
+});
+
+test('skippedFirst', () => {
+    // Files which weren't added are listed first, of the most which are
+    const files = Array.from({ length: 150 }, (_, i) => ({ path: `f${i}`, skipped: i === 120 ? { reason: 'it exists' } : undefined }));
+    const shown = skippedFirst(files, 100);
+    assert.equal(shown.length, 100);
+    assert.equal(shown[0].path, 'f120');
+    assert.equal(shown[1].path, 'f0');
+    assert.deepEqual(skippedFirst([{ path: 'a', skipped: undefined }], 100).map((f) => f.path), ['a']);
 });
