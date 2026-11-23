@@ -5,7 +5,7 @@
 
 Filer puts object-oriented data sources behind one file system.
 
-- **Sources:** local file systems, S3 buckets, Google Workspace (Drive, Calendar, Contacts and Tasks) and RSS feeds are each a volume of objects and folders.
+- **Sources:** local file systems, S3 buckets, Google Workspace (Drive, Calendar, Contacts and Tasks), RSS feeds and calendar subscriptions are each a volume of objects and folders.
 - **Indexed:** each volume is indexed, and its objects' metadata enriched, such as a photo's camera and place, a song's artist, or a document's title.
 - **Search:** search files, tasks, events, and media using rich metadata queries from the index.
 - **Interfaces:** a web application, a command line, and a REST API.
@@ -87,6 +87,7 @@ flowchart LR
         s3[S3]
         google[Google Workspace]
         rss[RSS feeds]
+        webcal[Calendar subscriptions]
     end
     registry --> indexer[Indexer]
     indexer --> volumes

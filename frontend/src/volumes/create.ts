@@ -42,6 +42,7 @@ export interface VolumeCreate {
 const SchemeFile = 'file';
 const SchemeS3 = 's3';
 const SchemeRSS = 'rss';
+const SchemeWebcal = 'webcal';
 const SchemeCalendar = 'gcalendar';
 const GoogleSchemes = new Set(['gcalendar', 'gcontacts', 'gdrive', 'gtasks']);
 
@@ -71,6 +72,9 @@ export const VolumeFields = new Map<string, readonly VolumeField[]>([
     [SchemeRSS, [
         { key: 'feed', label: 'Feed', placeholder: 'https://example.com/rss.xml', required: true, helper: 'The URL of the feed, which is http or https' },
     ]],
+    [SchemeWebcal, [
+        { key: 'feed', label: 'Calendar', placeholder: 'webcal://example.com/calendar.ics', required: true, helper: "The URL of the calendar, such as its subscription link, which is webcal, https or http" },
+    ]],
     ['gcalendar', [CredentialField, WindowField]],
     ['gcontacts', [CredentialField]],
     ['gdrive', [CredentialField]],
@@ -86,9 +90,9 @@ const reCredential = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // PUBLIC METHODS
 
 // canBeWritable returns whether a backend's volume can be writable, which a
-// feed's can't
+// feed's, or a calendar subscription's, can't
 export function canBeWritable(scheme: string): boolean {
-    return scheme !== SchemeRSS;
+    return scheme !== SchemeRSS && scheme !== SchemeWebcal;
 }
 
 // volumeCreate returns the volume of a draft, of its name, and its backend's
@@ -116,6 +120,9 @@ export function volumeCreate(draft: VolumeDraft): VolumeCreate {
             break;
         case SchemeRSS:
             url = rssURL(name, value(draft, 'feed'), query);
+            break;
+        case SchemeWebcal:
+            url = webcalURL(name, value(draft, 'feed'), query);
             break;
         default:
             if (!GoogleSchemes.has(draft.scheme)) {
@@ -240,6 +247,32 @@ function rssURL(name: string, feed: string, query: URLSearchParams): string {
         query.set('insecure', 'true');
     }
     return `rss://${name}/${u.host}${u.pathname}`;
+}
+
+// webcalURL returns the URL of a calendar subscription's volume, of its host
+// and path, and its query, of a URL which is webcal, which is fetched as
+// https, or https, or http, which is insecure
+function webcalURL(name: string, feed: string, query: URLSearchParams): string {
+    const invalid = 'The URL of the calendar is webcal, https or http, such as webcal://example.com/calendar.ics';
+    let u: URL;
+    try {
+        u = new URL(feed.trim());
+    } catch {
+        throw new Error(invalid);
+    }
+    if (u.protocol === 'webcal:') {
+        u = new URL('https:' + u.href.slice('webcal:'.length));
+    }
+    if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.host) {
+        throw new Error(invalid);
+    }
+    for (const [key, v] of u.searchParams) {
+        query.append(key, v);
+    }
+    if (u.protocol === 'http:') {
+        query.set('insecure', 'true');
+    }
+    return `webcal://${name}/${u.host}${u.pathname}`;
 }
 
 // setCredential sets an option of the name of a credential, which is

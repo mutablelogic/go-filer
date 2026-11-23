@@ -55,6 +55,17 @@ test('volumeCreate', async (t) => {
         assert.ok(!canBeWritable('rss'));
     });
 
+    await t.test('a calendar subscription', () => {
+        // A subscription link, which is webcal, is fetched as https
+        const v = volumeCreate(draft('webcal', 'holidays', { feed: 'webcal://example.com/cal/holidays.ics?key=1' }));
+        assert.match(v.url, /^webcal:\/\/holidays\/example\.com\/cal\/holidays\.ics\?/);
+        assert.deepEqual(query(v.url), { index: ['objects'], key: ['1'] }, "it isn't writable, and has no readonly");
+        assert.deepEqual(query(volumeCreate(draft('webcal', 'local', { feed: 'http://localhost:8080/cal.ics' })).url).insecure, ['true']);
+        assert.equal(query(volumeCreate(draft('webcal', 'team', { feed: 'https://example.com/team.ics' })).url).insecure, undefined);
+        assert.throws(() => volumeCreate(draft('webcal', 'team', { feed: 'ftp://example.com/team.ics' })), /webcal, https or http/);
+        assert.ok(!canBeWritable('webcal'));
+    });
+
     await t.test("a Google account's", () => {
         assert.deepEqual(query(volumeCreate(draft('gdrive', 'drive')).url), { index: ['objects'], readonly: ['true'] });
         const cal = volumeCreate(draft('gcalendar', 'cal', { credential: 'GOOGLE_WORK', window: '30d' }, { readonly: false }));

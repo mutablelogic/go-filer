@@ -10,6 +10,7 @@ import (
 	fs "github.com/mutablelogic/go-filer/backend/fs"
 	google "github.com/mutablelogic/go-filer/backend/google"
 	s3 "github.com/mutablelogic/go-filer/backend/s3"
+	webcal "github.com/mutablelogic/go-filer/backend/webcal"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -30,6 +31,7 @@ func builtin() map[string]gofiler.Backend {
 		google.ContactsBackend(),
 		google.CalendarBackend(),
 		google.DriveBackend(),
+		webcal.Backend(),
 	} {
 		result[backend.Scheme()] = backend
 	}

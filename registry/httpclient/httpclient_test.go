@@ -121,6 +121,7 @@ func TestVolumes(t *testing.T) {
 		{"gdrive", "Google Drive"},
 		{"gtasks", "Google Tasks"},
 		{"s3", "S3 bucket"},
+		{"webcal", "Calendar subscription"},
 	}, described)
 
 	// A volume is created, with its options, and is listed

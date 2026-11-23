@@ -546,6 +546,42 @@ func Test_VolumeCreateRSSCmd(t *testing.T) {
 	}
 }
 
+func Test_VolumeCreateWebcalCmd(t *testing.T) {
+	var cli struct {
+		VolumeCreateWebcal VolumeCreateWebcalCmd `cmd:"" name:"volume-create-webcal"`
+	}
+	parser, err := kong.New(&cli)
+	require.NoError(t, err)
+	volume := func(args ...string) (string, error) {
+		_, err := parser.Parse(append([]string{"volume-create-webcal"}, args...))
+		if err != nil {
+			return "", err
+		}
+		v, err := cli.VolumeCreateWebcal.volume()
+		return v.URL, err
+	}
+
+	// A subscription link, which is webcal, is fetched as https, and one
+	// which is http is insecure
+	u, err := volume("holidays", "webcal://example.com/holidays.ics?key=1")
+	require.NoError(t, err)
+	assert.Equal(t, "webcal://holidays/example.com/holidays.ics?key=1", u)
+	u, err = volume("team", "https://example.com/team.ics")
+	require.NoError(t, err)
+	assert.Equal(t, "webcal://team/example.com/team.ics", u)
+	u, err = volume("local", "http://localhost:8080/cal.ics", "--refresh-interval", "1h", "--description", "Local", "-o", "index=metadata")
+	require.NoError(t, err)
+	assert.Equal(t, "webcal://local/localhost:8080/cal.ics?description=Local&index=metadata&insecure=true&refresh_interval=1h0m0s", u)
+
+	// A name which isn't an identifier, or a URL which isn't a calendar's
+	_, err = volume("not-a-name!", "https://example.com/cal.ics")
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
+	for _, feed := range []string{"ftp://example.com/cal.ics", "example.com/cal.ics", "webcal://"} {
+		_, err = volume("team", feed)
+		assert.ErrorIs(t, err, gofiler.ErrBadParameter, feed)
+	}
+}
+
 // A volume of a backend which the server doesn't run isn't created, with
 // those it does run, before it's created, such as before signing in
 func Test_CheckBackend(t *testing.T) {
