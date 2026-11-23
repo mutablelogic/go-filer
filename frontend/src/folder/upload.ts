@@ -130,6 +130,7 @@ export class ObjectUploadElement extends LitElement {
         this.abort?.abort();
         this.abort = undefined;
         this.reading = 0;
+        this.uploading = undefined;
     }
 
     protected override createRenderRoot() {
@@ -343,13 +344,14 @@ export class ObjectUploadElement extends LitElement {
         }
         this.uploading = { done: 0, total: pending.length };
         this.error = undefined;
-        this.chosen = [...this.chosen];
+        this.requestUpdate();
 
         // What's uploaded is of this session, a batch at a time, and once
         // each is, its folder is loaded again, whether or not the panel is
         // open, or of another folder, which isn't changed of it, so what's
         // uploaded is shown, and a batch which fails, or is cancelled,
-        // leaves those before it uploaded
+        // leaves those before it uploaded. Its files are changed in place,
+        // and drawn again, rather than copied, of each batch.
         const session = this.session;
         const added = this.added;
         const folder = this.folder === '/' ? '' : this.folder;
@@ -371,7 +373,7 @@ export class ObjectUploadElement extends LitElement {
                     c.skipped = s;
                 }
                 this.uploading = { done: this.uploading.done + batch.length, total: pending.length };
-                this.chosen = [...this.chosen];
+                this.requestUpdate();
             }
         } catch (error) {
             // An upload which is cancelled, as the panel is closed, isn't
@@ -388,7 +390,7 @@ export class ObjectUploadElement extends LitElement {
         } finally {
             if (session === this.session) {
                 this.uploading = undefined;
-                this.chosen = [...this.chosen];
+                this.requestUpdate();
             }
         }
         this.setAction();
