@@ -17,7 +17,7 @@ import '@mutablelogic/go-server/list/view';
 import { artworkURL } from '../filer/httpclient.ts';
 import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
-import { availableColumns, columnLabel, ColumnSorts, ColumnWidths, DefaultColumns, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
+import { availableColumns, columnLabel, ColumnSorts, ColumnWidths, DefaultColumns, NameSort, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -118,13 +118,13 @@ export class FileViewElement extends LitElement {
 
         // A volume which can't be sorted any more, such as once its index
         // is changed, isn't, whose order is kept until it can be, and the
-        // order of a column which isn't shown is the first column's, of the
-        // objects' names
+        // order of a column which isn't shown is the first column's, Name,
+        // of the objects' titles
         const sort = this.controller?.list.current.sort;
         if (sort && !this.sortable) {
             this.controller?.unsorted();
-        } else if (sort && !this.columns.some((column) => ColumnSorts[column]?.key === sort.key)) {
-            this.controller?.list.setSort(undefined);
+        } else if (sort && sort.key !== NameSort.key && !this.columns.some((column) => ColumnSorts[column]?.key === sort.key)) {
+            this.controller?.list.setSort({ key: NameSort.key, direction: NameSort.first });
         }
 
         // An object which isn't selected any more, such as once its panel
@@ -167,7 +167,12 @@ export class FileViewElement extends LitElement {
     // its width, and those which are shown, of their widths, which sort the
     // objects, by the server, when they're sortable
     private tableColumns(): Column<FilerObject>[] {
-        const name: Column<FilerObject> = { header: 'Name', cell: (object) => this.nameView(object) };
+        const name: Column<FilerObject> = {
+            header: 'Name',
+            cell: (object) => this.nameView(object),
+            sort: this.sortable ? NameSort.key : undefined,
+            sortFirst: this.sortable ? NameSort.first : undefined,
+        };
         return [name, ...this.columns.map((column) => {
             const sort = this.sortable ? ColumnSorts[column] : undefined;
             return {
