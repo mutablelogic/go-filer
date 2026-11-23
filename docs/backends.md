@@ -11,6 +11,7 @@ A volume's backend is chosen by its URL's scheme, such as `file://media/mnt/medi
 | [Google Calendar](#google-calendar) | `gcalendar` | With `readonly=false` | Synced | `volume-create-gcalendar` |
 | [Google Drive](#google-drive) | `gdrive` | With `readonly=false` | Its changes feed | `volume-create-gdrive` |
 | [RSS feeds](#rss-feeds) | `rss` | No | Polled | `volume-create-rss` |
+| [Calendar subscriptions](#calendar-subscriptions) | `webcal` | No | Polled | `volume-create-webcal` |
 
 ## Filesystem
 
@@ -217,3 +218,26 @@ A volume of an RSS feed's items, read-only. It's an example of a pluggable backe
 * **Cache:** the feed's body is saved in the volume's cache as it's fetched, with its ETag and Last-Modified. A restart reads it from there, as old as when it was saved, so it isn't fetched again until it would have been, and then with its ETag, so an unchanged feed is a 304. A feed that can't be read isn't saved, and one that can't be saved is still read. The items' pages are kept in memory, as before.
 * **Errors:** a feed that isn't found, or isn't RSS, is `ErrBadParameter`. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.
 
+## Calendar Subscriptions
+
+A volume of an iCalendar feed's events, read-only, such as a calendar's "Subscribe" link.
+
+* **URL:** `webcal://<name>/<host>/<path>`, of the feed `https://<host>/<path>`. `filer volume-create-webcal holidays webcal://www.gov.uk/bank-holidays/england-and-wales.ics` creates one, with `--refresh-interval` and `--description`.
+  * The CLI and the web UI take a `webcal://`, `https://` or `http://` link. `webcal://` is fetched as https.
+  * `insecure=true` fetches it over http instead.
+  * Query parameters that aren't the volume's options belong to the feed's URL, such as a private link's `?key=...`.
+* **Layout:** like Google Calendar's: a folder of each year and month, of the day each event starts, in its own zone: `/2026/2026-12/25-<title>.ics`.
+  * A repeating event is one file, at its first start, with its changed occurrences (their `RECURRENCE-ID`s).
+  * Events without a start, such as a task that isn't due, are in `/undated/`.
+  * Events of the same title and day are numbered, in the order of their UIDs.
+* **Content:** each event is an iCalendar of it, with the calendar's name and zone. Its `DTSTAMP` is its `LAST-MODIFIED` or `CREATED`, or else the feed's, which isn't part of its ETag. Many feeds stamp every event with the time they're fetched, so this keeps unchanged events from being updated.
+* **Metadata:** `dc:title`, `dc:identifier` (its UID) and `webcal:calendar` (the calendar's name). The rest is go-metadata's, from the iCalendar.
+* **Options:**
+  * `refresh_interval`: how long a fetched feed is kept, and how often it's polled. `5m` by default.
+  * `description`: by default, the calendar's name (`X-WR-CALNAME`), or its URL.
+* **Watching:**
+  * The feed is polled at that interval, with its last ETag and Last-Modified, so an unchanged feed is a 304, not downloaded again.
+  * Changes are sent by the events' UIDs: new, gone and changed events, and events whose title or day changed, as for RSS.
+  * Folders are created and deleted as events appear in, and leave, their months.
+* **Cache:** as for RSS: the feed's body is saved in the volume's cache, with its ETag and Last-Modified, so a restart doesn't fetch it again until it would have been.
+* **Errors:** a feed that isn't found, or isn't an iCalendar (such as a sign-in page), is `ErrBadParameter`. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.

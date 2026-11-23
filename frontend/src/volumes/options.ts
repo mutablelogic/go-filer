@@ -71,7 +71,7 @@ const ManyOptions = new Set(['skip', 'package']);
 
 // ReadonlySchemes are the schemes of the backends which are read-only, so
 // they can't be made writable
-const ReadonlySchemes = new Set(['rss']);
+const ReadonlySchemes = new Set(['rss', 'webcal']);
 
 // DefaultReadonly are the schemes of the backends which are read-only,
 // unless they're made writable, of a URL without the option

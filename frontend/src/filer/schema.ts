@@ -350,6 +350,7 @@ const ObjectNouns = new Map<string, [string, string]>([
     ['gdrive', ['file', 'files']],
     ['gtasks', ['task', 'tasks']],
     ['rss', ['item', 'items']],
+    ['webcal', ['event', 'events']],
 ]);
 
 // volumeNoun returns what a volume's objects are called, of its backend, of

@@ -23,7 +23,7 @@ export interface StartLister {
 
 // DatedSchemes are the backends whose folders are of years and months, such
 // as /2026/2026-11, whose volumes start at the current month
-export const DatedSchemes: ReadonlySet<string> = new Set(['gcalendar', 'rss']);
+export const DatedSchemes: ReadonlySet<string> = new Set(['gcalendar', 'rss', 'webcal']);
 
 // The folders of a year, and of a month, of their paths, and how deep a
 // volume's folders are descended, at most
