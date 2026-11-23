@@ -98,7 +98,7 @@ type ListObjectsRequest struct {
 	Recursive  bool   `json:"recursive,omitempty"`
 	StartAfter string `json:"start_after,omitempty" help:"Return objects after this path"`
 	Type       string `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters"`
-	Sort       string `json:"sort,omitempty" help:"The order of the objects: name, size, modified or type, or of their keys, without one, with - before it for descending, such as -size, of a volume whose files are indexed"`
+	Sort       string `json:"sort,omitempty" help:"The order of the objects: name, title, kind, size, modified or type, or of their keys, without one, with - before it for descending, such as -size, of a volume whose files are indexed"`
 }
 
 // ObjectListRequest lists the objects beneath a path in a volume, a page at
@@ -314,11 +314,16 @@ func MatchType(object *Object, t string) bool {
 // SORT
 
 const (
-	// SortName, SortSize, SortModified and SortType are the orders of a
-	// listing: of the objects' keys, which is their names, of a folder's,
-	// their sizes, when they were modified, and their media types, each of
-	// their keys, after, of the same
+	// SortName, SortTitle, SortKind, SortSize, SortModified and SortType
+	// are the orders of a listing: of the objects' keys, which is their
+	// names, of a folder's, their titles, of their dc:title, or else their
+	// names, in any case, their kinds, of their metadata:kind, or else of
+	// their media types' major types, their sizes, when they were
+	// modified, and their media types, each of their keys, after, of the
+	// same
 	SortName     = "name"
+	SortTitle    = "title"
+	SortKind     = "kind"
 	SortSize     = "size"
 	SortModified = "modified"
 	SortType     = "type"
@@ -335,8 +340,8 @@ func ParseSort(sort string) (string, bool, error) {
 			return "", false, fmt.Errorf("a sort without an order")
 		}
 		return SortName, false, nil
-	case SortName, SortSize, SortModified, SortType:
+	case SortName, SortTitle, SortKind, SortSize, SortModified, SortType:
 		return order, descending, nil
 	}
-	return "", false, fmt.Errorf("objects can't be sorted by %q, only of name, size, modified or type", order)
+	return "", false, fmt.Errorf("objects can't be sorted by %q, only of name, title, kind, size, modified or type", order)
 }

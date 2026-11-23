@@ -17,6 +17,8 @@ func Test_ParseSort(t *testing.T) {
 		"name":      {schema.SortName, false},
 		"size":      {schema.SortSize, false},
 		"-size":     {schema.SortSize, true},
+		"title":     {schema.SortTitle, false},
+		"-kind":     {schema.SortKind, true},
 		" modified": {schema.SortModified, false},
 		"-type":     {schema.SortType, true},
 	} {
