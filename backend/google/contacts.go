@@ -536,8 +536,11 @@ func contactCard(id string, person *httpclient.Person) *vcard.Card {
 			card.Notes = append(card.Notes, bio.Value)
 		}
 	}
-	for _, photo := range primaryFirst(person.Photos, func(p httpclient.PersonPhoto) bool { return p.Metadata.Primary }) {
-		if photo.URL != "" && !photo.Default {
+	// A contact's own photo is preferred to its default one, of its
+	// initial, which Google makes of it, and which it has otherwise
+	photos := primaryFirst(person.Photos, func(p httpclient.PersonPhoto) bool { return p.Metadata.Primary })
+	for _, photo := range primaryFirst(photos, func(p httpclient.PersonPhoto) bool { return !p.Default }) {
+		if photo.URL != "" {
 			card.Photo = &vcard.Photo{URI: photo.URL}
 			break
 		}
