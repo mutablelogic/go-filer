@@ -1852,6 +1852,18 @@ func testListSort(t *testing.T, s store.Store) {
 	assert.Equal(t, []string{"/a/sub", "/a/d.png", "/a/c.mp3", "/a/b.jpg", "/a/a.txt"}, list(schema.SortModified, false))
 	assert.Equal(t, []string{"/a/c.mp3", "/a/b.jpg", "/a/d.png", "/a/sub", "/a/a.txt"}, list(schema.SortType, false))
 
+	// Of their titles, of their dc:title, rather than their names, in any
+	// case, of a task's, rather than the backend's
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a/d.png", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"Apple"`)}}}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a/c.mp3", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"zebra"`)}}}))
+	assert.Equal(t, []string{"/a/a.txt", "/a/d.png", "/a/b.jpg", "/a/sub", "/a/c.mp3"}, list(schema.SortTitle, false))
+	assert.Equal(t, []string{"/a/c.mp3", "/a/sub", "/a/b.jpg", "/a/d.png", "/a/a.txt"}, list(schema.SortTitle, true))
+
+	// Of their kinds, of their metadata:kind, or else of their media
+	// types' major types, which say what they are, or none
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a/c.mp3", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "metadata", Key: "kind", Value: json.RawMessage(`"Recording"`)}}}))
+	assert.Equal(t, []string{"/a/sub", "/a/b.jpg", "/a/d.png", "/a/c.mp3", "/a/a.txt"}, list(schema.SortKind, false))
+
 	// Of their keys, by name, or without a sort, and reversed
 	assert.Equal(t, []string{"/a/a.txt", "/a/b.jpg", "/a/c.mp3", "/a/d.png", "/a/sub"}, list(schema.SortName, false))
 	assert.Equal(t, []string{"/a/sub", "/a/d.png", "/a/c.mp3", "/a/b.jpg", "/a/a.txt"}, list("", true))

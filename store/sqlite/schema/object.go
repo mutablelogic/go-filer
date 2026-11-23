@@ -173,10 +173,33 @@ func (req KindsRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) 
 // by, of each sort, which are of the object table's columns, and aren't
 // NULL, so they're compared
 var sortValues = map[string]string{
+	filer.SortTitle:    titleValue,
+	filer.SortKind:     kindValue,
 	filer.SortSize:     "coalesce(size, -1)",
 	filer.SortModified: "coalesce(modified_at, '')",
 	filer.SortType:     "coalesce(media_type, '')",
 }
+
+// titleValue is an object's title, as its metadata has it, of a task's
+// dc:title, rather than the backend's, or else its name, the last element
+// of its key, in lower case, so it's sorted in any case
+const titleValue = `lower(coalesce((
+  SELECT json_extract(title.value, '$') FROM metadata AS title
+  WHERE title.volume = object.volume AND title.object = object.key AND title.namespace = 'dc' AND title.key = 'title'
+    AND json_type(title.value) = 'text'
+  ORDER BY title.source = '' LIMIT 1
+), substr(rtrim(key, '/'), length(rtrim(rtrim(key, '/'), replace(rtrim(key, '/'), '/', ''))) + 1)))`
+
+// kindValue is an object's kind, as its metadata has it, of a task's
+// metadata:kind, rather than the backend's, or else of its media type's
+// major type, when it says what it is, such as image, or none, in lower
+// case, as the web UI's kinds are
+const kindValue = `lower(coalesce((
+  SELECT json_extract(kind.value, '$') FROM metadata AS kind
+  WHERE kind.volume = object.volume AND kind.object = object.key AND kind.namespace = 'metadata' AND kind.key = 'kind'
+    AND json_type(kind.value) = 'text'
+  ORDER BY kind.source = '' LIMIT 1
+), CASE substr(media_type, 1, instr(media_type, '/') - 1) WHEN 'image' THEN 'image' WHEN 'audio' THEN 'audio' WHEN 'video' THEN 'video' WHEN 'text' THEN 'text' WHEN 'font' THEN 'font' ELSE '' END))`
 
 // listOrder returns the condition of the objects after the key a listing
 // starts after, of the order of their keys, or of its sort, of the value

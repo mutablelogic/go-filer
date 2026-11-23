@@ -79,7 +79,7 @@ type ObjectListCmd struct {
 	StartAfter string  `name:"start-after" help:"Return objects whose keys sort after this key, which is the next key of the previous page."`
 	Limit      *uint64 `name:"limit" help:"Maximum number of objects to return, which defaults to and is capped at 100."`
 	Type       string  `name:"type" placeholder:"TYPE" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters. Folders of an indexed volume are listed from its index."`
-	Sort       string  `name:"sort" placeholder:"ORDER" help:"The order of the objects: name, size, modified or type, with - before it for descending, such as -size, of a volume whose files are indexed."`
+	Sort       string  `name:"sort" placeholder:"ORDER" help:"The order of the objects: name, title, kind, size, modified or type, with - before it for descending, such as -size, of a volume whose files are indexed."`
 	NoTitle    bool    `name:"no-title" help:"Show each object's name, rather than its title (dc:title), when it has one."`
 }
 
