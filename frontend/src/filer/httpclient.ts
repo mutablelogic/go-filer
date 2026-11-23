@@ -70,6 +70,12 @@ export function backendIconURL(client: Client, scheme: string): string {
     return new URL(`${client.base.replace(/\/$/, '')}/backend/${encodeURIComponent(scheme)}/icon`, location.href).href;
 }
 
+// artworkURL returns the URL of the image of artwork, of its hash, as the
+// browser reaches it, which it keeps, as it never changes
+export function artworkURL(client: Client, hash: string): string {
+    return new URL(`${client.base.replace(/\/$/, '')}/artwork/${encodeURIComponent(hash)}`, location.href).href;
+}
+
 // MarkdownPart is the start of a file's content, as Markdown, and whether
 // there's more of it, which isn't shown
 export interface MarkdownPart {

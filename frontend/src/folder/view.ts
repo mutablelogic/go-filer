@@ -1,6 +1,7 @@
 // The gf-file-view element is the objects of a folder, which aren't folders,
 // as the tree has those, as a table of their names, types, sizes and when
-// they were changed, which loads more as it's scrolled, in the element it's in,
+// they were changed, each of its artwork, such as an album's cover, in place
+// of its icon, when it has some, which loads more as it's scrolled, in the element it's in,
 // which scrolls. A row which is clicked is chosen, which is an event of
 // its object, and is shown chosen, of its path, as selected. Its name is a
 // button, so it's chosen of the keyboard, too.
@@ -10,7 +11,8 @@ import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
 import EmptyIcon from '@carbon/icons/es/folders/32.js';
-import { objectTitle, objectType, type FilerObject } from '../filer/schema.ts';
+import { artworkURL } from '../filer/httpclient.ts';
+import { objectArtwork, objectTitle, objectType, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 import '@carbon/web-components/es/components/button/index.js';
 
@@ -128,7 +130,7 @@ export class FileViewElement extends LitElement {
                     ${repeat(state.objects, (object) => object.path, (object) => html`
                         <tr class=${object.path === this.selected ? 'cds--data-table--selected' : ''} @click=${() => this.choose(object)}>
                             <td>
-                                <button type="button" class="gf-file-view-name" title=${object.path}>${fileIcon}<span>${objectTitle(object)}</span></button>
+                                <button type="button" class="gf-file-view-name" title=${object.path}><span class="gf-file-view-icon">${this.iconView(object)}</span><span>${objectTitle(object)}</span></button>
                             </td>
                             <td class="gf-file-view-type" title=${object.type ?? ''}>${objectType(object)}</td>
                             <td class="gf-file-view-size">${formatSize(object.size)}</td>
@@ -140,6 +142,17 @@ export class FileViewElement extends LitElement {
             ${state.failed ? this.failedView() : state.more ? html`<p class="gf-file-view-end gf-empty">${state.loading ? 'Loading…' : ''}</p>` : nothing}
             ${count !== null ? html`<p class="gf-file-view-count">${countText(count)}</p>` : nothing}
         `;
+    }
+
+    // iconView is a file's artwork which shows it best, such as an album's
+    // cover, which is loaded once it's scrolled to, or else its icon
+    private iconView(object: FilerObject) {
+        const artwork = objectArtwork(object);
+        const client = this.controller?.client;
+        if (!artwork || !client) {
+            return fileIcon;
+        }
+        return html`<img src=${artworkURL(client, artwork.hash)} alt="" loading="lazy" decoding="async">`;
     }
 
     // choose says the object is chosen

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError, type Client } from '@mutablelogic/go-server/api';
-import { listVolumes } from '../src/filer/httpclient.ts';
+import { artworkURL, listVolumes } from '../src/filer/httpclient.ts';
 
 // fakeClient returns a client whose fetch records each request, and
 // returns the response of the function
@@ -36,4 +36,20 @@ test('listVolumes', async (t) => {
         const { client } = fakeClient(() => json(500, { code: 500, reason: 'broken' }));
         await assert.rejects(listVolumes(client), ApiError);
     });
+});
+
+test('artworkURL', () => {
+    // Of the client's base, as the browser reaches it, of the page's location
+    const saved = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    Object.defineProperty(globalThis, 'location', { value: { href: 'http://localhost/app/' }, configurable: true });
+    try {
+        assert.equal(artworkURL({ base: '/api/' }, 'ab12'), 'http://localhost/api/artwork/ab12');
+        assert.equal(artworkURL({ base: 'http://server/api' }, 'ab12'), 'http://server/api/artwork/ab12');
+    } finally {
+        if (saved) {
+            Object.defineProperty(globalThis, 'location', saved);
+        } else {
+            delete (globalThis as { location?: unknown }).location;
+        }
+    }
 });

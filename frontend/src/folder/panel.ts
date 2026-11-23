@@ -1,7 +1,8 @@
-// The panel of a file, which is chosen of a folder's objects, of three
-// tabs: Metadata, what it is, its size and when it changed, and its
-// metadata, of each namespace, Artwork, of a file whose metadata hints it
-// has artwork, and Preview, of one whose content can be read as Markdown.
+// The panel of a file, which is chosen of a folder's objects, of its tabs:
+// Metadata, what it is, its size and when it changed, and its metadata, of
+// each namespace, and, of a file which has them, Artwork, its images, such
+// as an album's cover, Map, where it is, and Events, its times, and
+// Preview, of one whose content can be read as Markdown.
 // Download downloads it, of each tab, and Play plays audio, or video, in
 // the sidebar's player.
 
@@ -12,8 +13,8 @@ import '@mutablelogic/go-server/panel/view';
 import { play, playable } from '@mutablelogic/go-server/player';
 import Download16 from '@carbon/icons/es/download/16.js';
 import Play16 from '@carbon/icons/es/play/16.js';
-import { objectURL } from '../filer/httpclient.ts';
-import { metaValue, MetadataNamespace, objectTitle, objectType, type FilerObject, type Meta } from '../filer/schema.ts';
+import { artworkURL, objectURL } from '../filer/httpclient.ts';
+import { artworkLabel, metaValue, MetadataNamespace, objectTitle, objectType, type Artwork, type FilerObject, type Meta } from '../filer/schema.ts';
 import { formatSize, formatTime } from './view.ts';
 import './preview.ts';
 
@@ -21,7 +22,7 @@ import './preview.ts';
 // TYPES
 
 // ObjectTab is a tab of a file's panel
-export type ObjectTab = 'metadata' | 'artwork' | 'preview';
+export type ObjectTab = 'metadata' | 'artwork' | 'map' | 'events' | 'preview';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -39,10 +40,9 @@ const FirstNamespaces = ['dc', 'metadata'];
 const reTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 const reLink = /^https?:\/\//;
 
-// The key of a file's hints, of what's read of it next, and the hints of
-// its artwork, and its content, as Markdown, of go-metadata
+// The key of a file's hints, of what's read of it next, and the hint of
+// its content, as Markdown, of go-metadata
 const HintKey = 'hint';
-const HintArtwork = 'artwork';
 const HintMarkdown = 'markdown';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -116,25 +116,36 @@ export class ObjectPanelElement extends LitElement {
         return html`<gs-panel .controller=${this.panel}>${object ? this.tabView(object) : nothing}</gs-panel>`;
     }
 
-    // tabs are Metadata, Artwork, of a file whose metadata hints it has
-    // artwork, and Preview, of one whose content can be read as Markdown,
+    // tabs are Metadata, and Artwork, Map and Events, only of a file which
+    // has them, and Preview, of one whose content can be read as Markdown,
     // each of Download
     private tabs(object: FilerObject): PanelTab[] {
         const actions = this.actions(object);
-        return [
-            { value: 'metadata', label: 'Metadata', actions },
-            { value: 'artwork', label: 'Artwork', disabled: !hinted(object, HintArtwork), actions },
-            { value: 'preview', label: 'Preview', disabled: !hinted(object, HintMarkdown), actions },
-        ];
+        const tabs: PanelTab[] = [{ value: 'metadata', label: 'Metadata', actions }];
+        if (object.artwork?.length) {
+            tabs.push({ value: 'artwork', label: 'Artwork', actions });
+        }
+        if (object.geo?.length) {
+            tabs.push({ value: 'map', label: 'Map', actions });
+        }
+        if (object.events?.length) {
+            tabs.push({ value: 'events', label: 'Events', actions });
+        }
+        tabs.push({ value: 'preview', label: 'Preview', disabled: !hinted(object, HintMarkdown), actions });
+        return tabs;
     }
 
     // tabView is the tab which is chosen: the file's metadata, or its
-    // artwork, which is empty, for now, or its preview, of its content, as
-    // Markdown
+    // artwork, or where it is, or its events, which are to come, or its
+    // preview, of its content, as Markdown
     private tabView(object: FilerObject): TemplateResult | typeof nothing {
         switch (this.tab) {
             case 'artwork':
-                return nothing;
+                return this.artworkView(object.artwork ?? []);
+            case 'map':
+                return html`<p class="gf-empty">${countOf(object.geo?.length ?? 0, 'place')}</p>`;
+            case 'events':
+                return html`<p class="gf-empty">${countOf(object.events?.length ?? 0, 'event')}</p>`;
             case 'preview':
                 return html`<gf-object-preview .client=${this.client} .object=${object}></gf-object-preview>`;
             default:
@@ -161,6 +172,33 @@ export class ObjectPanelElement extends LitElement {
             label: 'Play', kind: 'primary', icon: Play16, close: false,
             run: () => play({ url, name: objectTitle(object), type: object.type }, this),
         }];
+    }
+
+    // artworkView is the file's artwork, in the order of their contexts,
+    // each of what it is, such as Cover, its size, in pixels, and its type,
+    // which opens on its own, of its own size, when it's clicked
+    private artworkView(artwork: readonly Artwork[]): TemplateResult | typeof nothing {
+        const client = this.client;
+        if (!client) {
+            return nothing;
+        }
+        return html`
+            <ul class="gf-object-artwork">
+                ${artwork.map((a) => {
+                    const url = artworkURL(client, a.hash);
+                    const label = artworkLabel(a);
+                    return html`
+                        <li>
+                            <a href=${url} target="_blank" rel="noopener" title=${`Open ${label}`}>
+                                <img src=${url} alt=${label} width=${a.width} height=${a.height} loading="lazy" decoding="async">
+                            </a>
+                            <span class="gf-object-artwork-label">${label}</span>
+                            <span class="gf-object-artwork-detail">${[`${a.width} × ${a.height}`, a.type.replace(/^image\//, '').toUpperCase(), formatSize(a.size)].filter(Boolean).join(' · ')}</span>
+                        </li>
+                    `;
+                })}
+            </ul>
+        `;
     }
 
     // detailsView is what the file is, and its metadata, of each namespace
@@ -190,6 +228,11 @@ export class ObjectPanelElement extends LitElement {
 
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
+
+// countOf returns how many there are of a noun, such as 2 events
+function countOf(count: number, noun: string): string {
+    return `${count.toLocaleString()} ${count === 1 ? noun : noun + 's'}`;
+}
 
 // hinted returns whether a file's metadata hints the hint, such as that it
 // has artwork
