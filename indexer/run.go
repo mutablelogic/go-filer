@@ -46,6 +46,12 @@ func (self *Indexer) Run(ctx context.Context, logger *slog.Logger) error {
 			self.failed(ctx, err)
 		}
 	} else if self.tasked() {
+		// A volume whose files were enriched with their artwork, and aren't
+		// now, or the other way round, is enriched of every file again, so
+		// its artwork is found, or its links to it are removed, as what's
+		// found of a file depends on it
+		self.reenrich(ctx)
+
 		// The files which are indexed, and not enriched, such as those of a
 		// volume whose files were indexed, which is enriched now, are queued
 		// at once, rather than once it's scanned again, as their revisions are
@@ -420,4 +426,32 @@ func (self *Indexer) indexed(ctx context.Context, work []store.Work) []schema.Ev
 		result = append(result, event)
 	}
 	return result
+}
+
+// reenrich removes what was found of the volume's files, so they're
+// enriched again, when they were enriched of the other side of ModeArtwork,
+// of the mode of its last scan, and sets its state's mode, so it isn't done
+// again, when it's run again before it's scanned
+func (self *Indexer) reenrich(ctx context.Context) {
+	state, err := self.store.State(ctx, self.name)
+	if err != nil {
+		self.failed(ctx, err)
+		return
+	}
+	last := Mode(state.Mode)
+	if last.Level() < ModeMetadata.Level() || (last.Level() >= ModeArtwork.Level()) == (self.mode.Level() >= ModeArtwork.Level()) {
+		return
+	} else if err := self.store.DeleteMetadata(ctx, self.name, string(store.KindMetadata)); err != nil {
+		self.failed(ctx, err)
+		return
+	}
+	if err := self.updateState(ctx, func(state *schema.IndexState) bool {
+		if Mode(state.Mode).Level() < ModeMetadata.Level() {
+			return false
+		}
+		state.Mode = string(self.mode)
+		return true
+	}); err != nil {
+		self.failed(ctx, err)
+	}
 }

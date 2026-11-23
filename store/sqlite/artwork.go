@@ -27,20 +27,10 @@ func (self *Store) SetObjectArtwork(ctx context.Context, volume, key string, art
 	defer func() { end(err) }()
 	if err := store.ValidateKey(key); err != nil {
 		return nil, err
+	} else if artwork, err = normalizeArtwork(artwork); err != nil {
+		return nil, err
 	}
-
-	// The artwork, which is valid, of one context, once
-	contexts := make(map[string]bool, len(artwork))
-	for i := range artwork {
-		if artwork[i], err = store.NormalizeArtwork(artwork[i]); err != nil {
-			return nil, err
-		} else if contexts[artwork[i].Context] {
-			return nil, gofiler.ErrBadParameter.Withf("more than one artwork is of context %q", artwork[i].Context)
-		}
-		contexts[artwork[i].Context] = true
-	}
-
-	result := make([]*filer.Artwork, 0, len(artwork))
+	var result []*filer.Artwork
 	if err := self.conn.Tx(ctx, func(conn sqlite.Conn) error {
 		var keys schema.Keys
 		if err := conn.Get(ctx, &keys, schema.ObjectArtwork{Volume: volume, Key: key}); errors.Is(err, sqlite.ErrNotFound) {
@@ -48,36 +38,11 @@ func (self *Store) SetObjectArtwork(ctx context.Context, volume, key string, art
 		} else if err != nil {
 			return err
 		}
-
-		// Its links are replaced, of the artwork, which is stored, or is
-		// the one which is stored already, of its type and size
-		var deleted schema.Keys
-		if err := conn.Delete(ctx, &deleted, schema.ObjectArtwork{Volume: volume, Key: key}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
-			return err
-		}
-		for _, meta := range artwork {
-			var stored schema.ArtworkList
-			if err := conn.Insert(ctx, &stored, schema.ArtworkPut(meta)); err != nil {
-				return err
-			} else if a := stored[0]; a.Type != meta.Type || a.Width != meta.Width || a.Height != meta.Height {
-				return gofiler.ErrConflict.Withf("artwork %s is stored as %q, %dx%d, not %q, %dx%d", a.Hash, a.Type, a.Width, a.Height, meta.Type, meta.Width, meta.Height)
-			}
-			var inserted schema.Keys
-			if err := conn.Insert(ctx, &inserted, schema.ObjectArtworkLink{Volume: volume, Key: key, Hash: stored[0].Hash}); err != nil {
-				return err
-			}
-			result = append(result, stored[0])
-		}
-		return nil
+		result, err = linkArtwork(ctx, conn, volume, key, artwork)
+		return err
 	}); err != nil {
 		return nil, storeErr(err)
 	}
-	slices.SortFunc(result, func(a, b *filer.Artwork) int {
-		if c := strings.Compare(a.Context, b.Context); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Hash, b.Hash)
-	})
 	return result, nil
 }
 
@@ -123,4 +88,56 @@ func (self *Store) DeleteUnlinkedArtwork(ctx context.Context) (_ int, err error)
 		return 0, storeErr(err)
 	}
 	return len(deleted), nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PRIVATE FUNCTIONS
+
+// normalizeArtwork returns the artwork, of normalized types, or
+// ErrBadParameter when one isn't valid, or two are of the same context
+func normalizeArtwork(artwork []filer.ArtworkMeta) ([]filer.ArtworkMeta, error) {
+	result := make([]filer.ArtworkMeta, len(artwork))
+	contexts := make(map[string]bool, len(artwork))
+	for i, a := range artwork {
+		var err error
+		if result[i], err = store.NormalizeArtwork(a); err != nil {
+			return nil, err
+		} else if contexts[a.Context] {
+			return nil, gofiler.ErrBadParameter.Withf("more than one artwork is of context %q", a.Context)
+		}
+		contexts[a.Context] = true
+	}
+	return result, nil
+}
+
+// linkArtwork replaces the links of the object of the volume of the key, of
+// a transaction, with the artwork, which is normalized, and is stored, or
+// is the artwork of its hash, which is stored already, of its type and
+// size, and returns it, without its data, in the order of its contexts
+func linkArtwork(ctx context.Context, conn sqlite.Conn, volume, key string, artwork []filer.ArtworkMeta) ([]*filer.Artwork, error) {
+	var deleted schema.Keys
+	if err := conn.Delete(ctx, &deleted, schema.ObjectArtwork{Volume: volume, Key: key}); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+		return nil, err
+	}
+	result := make([]*filer.Artwork, 0, len(artwork))
+	for _, meta := range artwork {
+		var stored schema.ArtworkList
+		if err := conn.Insert(ctx, &stored, schema.ArtworkPut(meta)); err != nil {
+			return nil, err
+		} else if a := stored[0]; a.Type != meta.Type || a.Width != meta.Width || a.Height != meta.Height {
+			return nil, gofiler.ErrConflict.Withf("artwork %s is stored as %q, %dx%d, not %q, %dx%d", a.Hash, a.Type, a.Width, a.Height, meta.Type, meta.Width, meta.Height)
+		}
+		var inserted schema.Keys
+		if err := conn.Insert(ctx, &inserted, schema.ObjectArtworkLink{Volume: volume, Key: key, Hash: stored[0].Hash}); err != nil {
+			return nil, err
+		}
+		result = append(result, stored[0])
+	}
+	slices.SortFunc(result, func(a, b *filer.Artwork) int {
+		if c := strings.Compare(a.Context, b.Context); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Hash, b.Hash)
+	})
+	return result, nil
 }

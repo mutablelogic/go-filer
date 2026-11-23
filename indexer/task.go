@@ -33,10 +33,15 @@ type Task func(ctx context.Context, backend gofiler.Filer, store MetadataStore, 
 type MetadataStore interface {
 	// SetMetadata replaces what the task found of the file of the key: its
 	// metadata, the shapes of where it is, such as where a photo was taken,
-	// and the times of its events, or returns ErrNotFound when the file
-	// isn't indexed, or ErrBadParameter when a shape, or an occurrence,
-	// isn't valid
+	// the times of its events, and its artwork, or returns ErrNotFound when
+	// the file isn't indexed, or ErrBadParameter when a shape, an
+	// occurrence, or artwork, isn't valid
 	SetMetadata(ctx context.Context, key string, found schema.TaskMeta) error
+
+	// Artwork returns true when the volume's files are enriched with their
+	// artwork too, of ModeArtwork, so the task finds it, which it doesn't
+	// otherwise, as it's slow to
+	Artwork() bool
 }
 
 // taskStore is the metadata store of a task, of a volume, of its kind, of
@@ -49,6 +54,7 @@ type taskStore struct {
 	kind   store.Kind
 	key    string
 	of     schema.ObjectAttr
+	art    bool // the volume's files are enriched with their artwork
 }
 
 var _ MetadataStore = taskStore{}
@@ -78,6 +84,12 @@ var taskTimeout = taskLease - time.Minute
 
 ////////////////////////////////////////////////////////////////////////////////
 // PUBLIC METHODS
+
+// Artwork returns true when the volume's files are enriched with their
+// artwork, of ModeArtwork
+func (self taskStore) Artwork() bool {
+	return self.art
+}
 
 // SetMetadata replaces the metadata the task found of the file of the key,
 // which is the file it's done of, when it's the version it read
@@ -175,7 +187,7 @@ func (self *Indexer) doTask(ctx context.Context, task Task, kind store.Kind, w s
 		return nil
 	}
 	object.Name = self.name
-	ts := taskStore{store: self.store, volume: self.name, kind: kind, key: w.Key, of: object.ObjectAttr}
+	ts := taskStore{store: self.store, volume: self.name, kind: kind, key: w.Key, of: object.ObjectAttr, art: self.mode.Level() >= ModeArtwork.Level()}
 	if err := task(ctx, self.Filer, ts, object); errors.Is(err, gofiler.ErrNotFound) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, gofiler.ErrPreconditionFailed) {
 		return nil
 	} else {

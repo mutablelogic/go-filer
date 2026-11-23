@@ -43,6 +43,10 @@ type ObjectArtworkLink struct {
 	Volume, Key, Hash string
 }
 
+// VolumeArtwork selects the links of the objects of a volume to their
+// artwork, which are deleted, as what a task found of them is
+type VolumeArtwork string
+
 // Keys are the keys of objects, or the hashes of artwork, which are read,
 // of which rows a query returned
 type Keys []string
@@ -80,6 +84,15 @@ func (o ObjectArtwork) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 		return bind.Query("object_artwork.delete"), nil
 	}
 	return "", sqlite.ErrNotImplemented.Withf("object artwork: %v", op)
+}
+
+func (v VolumeArtwork) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
+	bind.Set("volume", string(v))
+	switch op {
+	case sqlite.Delete:
+		return bind.Query("object_artwork.delete_volume"), nil
+	}
+	return "", sqlite.ErrNotImplemented.Withf("volume artwork: %v", op)
 }
 
 ////////////////////////////////////////////////////////////////////////////////

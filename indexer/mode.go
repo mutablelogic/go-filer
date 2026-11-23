@@ -23,6 +23,7 @@ const (
 	ModeFolders  Mode = "folders"  // Its folders are indexed
 	ModeObjects  Mode = "objects"  // Its folders, and files, are indexed, with the backend's metadata
 	ModeMetadata Mode = "metadata" // Its folders, and files, are indexed, and its files are enriched with their metadata, of a task (see WithMetadataTask)
+	ModeArtwork  Mode = "artwork"  // As metadata, and the task finds its files' artwork too, such as an album's cover, or a thumbnail, which the store keeps
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -34,15 +35,16 @@ func ParseMode(value string) (Mode, error) {
 	switch Mode(value) {
 	case "", ModeNone:
 		return ModeNone, nil
-	case ModeFolders, ModeObjects, ModeMetadata:
+	case ModeFolders, ModeObjects, ModeMetadata, ModeArtwork:
 		return Mode(value), nil
 	default:
-		return ModeNone, gofiler.ErrBadParameter.Withf("%s: %q, which is %s, %s, %s or %s", IndexParam, value, ModeNone, ModeFolders, ModeObjects, ModeMetadata)
+		return ModeNone, gofiler.ErrBadParameter.Withf("%s: %q, which is %s, %s, %s, %s or %s", IndexParam, value, ModeNone, ModeFolders, ModeObjects, ModeMetadata, ModeArtwork)
 	}
 }
 
 // Level returns how much the mode indexes, of each mode including what the
-// one below it does: none is 0, folders 1, objects 2, and metadata 3
+// one below it does: none is 0, folders 1, objects 2, metadata 3, and
+// artwork 4
 func (m Mode) Level() int {
 	switch m {
 	case ModeFolders:
@@ -51,6 +53,8 @@ func (m Mode) Level() int {
 		return 2
 	case ModeMetadata:
 		return 3
+	case ModeArtwork:
+		return 4
 	default:
 		return 0
 	}

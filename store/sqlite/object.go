@@ -83,6 +83,10 @@ func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, 
 			return gofiler.ErrBadParameter.Withf("%q: %v", key, err)
 		}
 	}
+	artwork, err := normalizeArtwork(found.Artwork)
+	if err != nil {
+		return gofiler.ErrBadParameter.Withf("%q: %v", key, err)
+	}
 	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
 		var result schema.ObjectList
 		if err := conn.Get(ctx, &result, schema.ObjectKey{Volume: volume, Key: key}); errors.Is(err, sqlite.ErrNotFound) {
@@ -93,6 +97,8 @@ func (self *Store) SetMetadata(ctx context.Context, volume, key, source string, 
 			return gofiler.ErrPreconditionFailed.Withf("%q changed since it was read", key)
 		}
 		if err := conn.Insert(ctx, nil, schema.ObjectMetaPut{Volume: volume, Key: key, Source: source, TaskMeta: found}); err != nil {
+			return err
+		} else if _, err := linkArtwork(ctx, conn, volume, key, artwork); err != nil {
 			return err
 		}
 		return conn.Insert(ctx, nil, schema.KeyRefresh(volume, key))
@@ -109,6 +115,8 @@ func (self *Store) DeleteMetadata(ctx context.Context, volume, source string) (e
 	}
 	return storeErr(self.conn.Bulk(ctx, func(conn sqlite.Conn) error {
 		if err := conn.Delete(ctx, nil, schema.ObjectMetaSource{Volume: volume, Source: source}); err != nil {
+			return err
+		} else if err := conn.Delete(ctx, nil, schema.VolumeArtwork(volume)); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
 			return err
 		}
 		return conn.Insert(ctx, nil, schema.VolumeRefresh(volume))

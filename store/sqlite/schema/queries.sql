@@ -458,3 +458,8 @@ DELETE FROM object_artwork WHERE volume = @volume AND object = @key RETURNING ha
 -- object_artwork.insert
 -- A link of an object to artwork
 INSERT INTO object_artwork (volume, object, hash) VALUES (@volume, @key, @hash) RETURNING hash;
+
+-- object_artwork.delete_volume
+-- The links of the objects of a volume, as what a task found of them is
+-- removed
+DELETE FROM object_artwork WHERE volume = @volume;
