@@ -64,6 +64,26 @@ func (self *Store) DeleteVolume(context.Context, string) error {
 	return errNotImplemented
 }
 
+func (self *Store) PutArtwork(context.Context, schema.ArtworkMeta) (*schema.Artwork, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) GetArtwork(context.Context, string, bool) (*schema.Artwork, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) SetObjectArtwork(context.Context, string, string, ...string) error {
+	return errNotImplemented
+}
+
+func (self *Store) ObjectArtwork(context.Context, string, string) ([]*schema.Artwork, error) {
+	return nil, errNotImplemented
+}
+
+func (self *Store) DeleteUnlinkedArtwork(context.Context, time.Time) (int, error) {
+	return 0, errNotImplemented
+}
+
 func (self *Store) Push(context.Context, string, ...store.Work) error {
 	return errNotImplemented
 }

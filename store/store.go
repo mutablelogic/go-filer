@@ -25,6 +25,7 @@ type Store interface {
 	VolumeStore
 	ObjectStore
 	MetadataStore
+	gofiler.ArtworkStore
 	QueueStore
 	ScanStore
 	SearchStore
