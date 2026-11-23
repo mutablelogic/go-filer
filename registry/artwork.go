@@ -8,6 +8,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	schema "github.com/mutablelogic/go-filer/schema"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -18,6 +19,16 @@ var (
 	// deleted, such as of objects which changed, or were deleted
 	artworkInterval = time.Hour
 )
+
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC METHODS
+
+// GetArtwork returns the artwork of the hash, which objects link to (see
+// schema.Object's Artwork), with its data, when it's asked for, or
+// ErrNotFound, or ErrBadParameter when the hash isn't one
+func (self *Registry) GetArtwork(ctx context.Context, hash string, data bool) (*schema.Artwork, error) {
+	return self.store.GetArtwork(ctx, hash, data)
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PRIVATE METHODS

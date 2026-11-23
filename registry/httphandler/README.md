@@ -92,6 +92,14 @@ Upload files into the directory at `path` in the volume `name`, or its root, whe
 
 Delete the file at `path` in the volume `name`, or a directory, with `recursive=true`, and every object beneath it, including hidden files, which aren't listed. A package, such as a macOS sparse disk image, is deleted as a file, with the files in it, without `recursive`. The directories which are left empty are removed, as a directory exists while an object is beneath it. Returns the objects deleted, which are files, not directories. Returns 400 if the path is outside the volume, has `%2F`, is hidden, or is the root of the volume, or the query is invalid, 403 if the volume is read-only, 404 if the volume isn't mounted, or the object doesn't exist, or 409 if the object is a directory, and the request isn't recursive. A path which ends with `/` is a directory, even when a file has its name, as it can in a bucket, and isn't found when it's a file. In a bucket, a directory's keys are deleted a page of up to 1,000 at a time, so when one can't be, those before it, and the others of its page, are deleted, and a directory which is a key of its own, ending with `/`, isn't removed when the last file beneath it is.
 
+### GET /artwork/{hash}
+
+Get the image of the artwork of `hash`, which an object links to, as its `artwork` lists it, such as an album's cover, or a thumbnail, of its media type, such as `image/jpeg`. Its `ETag` is its hash, and as it never changes, a browser keeps it for a year, without checking it, so it's 304 when it matches `If-None-Match`. Returns 400 if the hash isn't a SHA-256 hash, in hex, and 404 if there's no artwork of it, such as once no object links to it.
+
+### HEAD /artwork/{hash}
+
+Get the headers of the artwork of `hash`, as `GET /artwork/{hash}` has them, without its image.
+
 ## Search
 
 ### GET /search
