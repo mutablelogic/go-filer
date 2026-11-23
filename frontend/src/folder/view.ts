@@ -244,7 +244,10 @@ export class FileViewElement extends LitElement {
             actions.push({
                 label: 'Delete', danger: true, divider: true,
                 run: async () => {
+                    // Once it's deleted, the rows which are selected aren't,
+                    // as the batch actions' Delete does, so it isn't of them
                     if (await this.querySelector('gf-object-delete')?.confirm([object])) {
+                        this.querySelector('gs-table')?.clearSelection();
                         void this.controller?.reload();
                     }
                 },
