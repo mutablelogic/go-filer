@@ -191,6 +191,36 @@ test('FolderController', async (t) => {
         assert.equal(errors.length, 1, "the root's 404 is an error");
     });
 
+    await t.test("a folder isn't gone of a response to when it was opened before", async () => {
+        // /a's first listing is 404, once it's let go, after /a is opened
+        // again, and loaded, which isn't gone
+        let release: (() => void) | undefined;
+        let first = true;
+        const client: Client = {
+            base: 'http://localhost/api',
+            fetch: (async (input: RequestInfo | URL) => {
+                const path = (new URL(String(input)).searchParams.get('path') ?? '/').replace(/(.)\/$/, '$1');
+                if (path === '/a' && first) {
+                    first = false;
+                    await new Promise<void>((resolve) => { release = resolve; });
+                    return new Response(JSON.stringify({ code: 404 }), { status: 404 });
+                }
+                return new Response(JSON.stringify({ name: 'media', count: 1, body: [{ name: 'media', path: `${path}/1` }] }), { headers: { 'Content-Type': 'application/json' } });
+            }) as typeof fetch,
+        };
+        const gone: string[] = [];
+        const folder = new FolderController(client).onGone((volume, path) => gone.push(`${volume}${path}`));
+        const stale = folder.open('media', '/a');
+        await settle();
+        const b = folder.open('media', '/b');
+        const a = folder.open('media', '/a');
+        release?.();
+        await Promise.all([stale, b, a]);
+        await settle();
+        assert.deepEqual(gone, []);
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/a/1']);
+    });
+
     await t.test('a reload without a folder does nothing, and later reloads still do', async () => {
         const { client, listed } = fakeServer({ '/a': ['/a/1'] });
         const folder = new FolderController(client);

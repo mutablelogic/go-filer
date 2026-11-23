@@ -22,7 +22,8 @@ import ObjectStorage32 from '@carbon/icons/es/object-storage/32.js';
 import Rss32 from '@carbon/icons/es/rss/32.js';
 import DataBaseIcon from '@carbon/icons/es/data--base/16.js';
 import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-loader.js';
-import { backendIconURL } from '../filer/httpclient.ts';
+import { ApiError } from '@mutablelogic/go-server/api';
+import { backendIconURL, listObjects } from '../filer/httpclient.ts';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController, type FolderState } from '../folder/controller.ts';
 import { baseName, objectTitle, parentPath, volumeBackend, volumeFileNames, volumeSortable, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
@@ -496,20 +497,41 @@ export class VolumeElement extends LitElement {
         return [{ label: 'Edit Volume', kind: 'secondary', icon: Edit16, run: () => this.querySelector('gf-volume-panel')?.open(volume, 'view') }];
     }
 
-    // gone shows the folder above one which isn't there, such as once it's
-    // deleted, in place of it in the history, so the nearest which is
-    // there is shown, as one which isn't either is gone, in turn, or the
-    // folder the volume's root shows is found again, when it was that
+    // gone shows the nearest folder above one which isn't there, such as
+    // once it's deleted, in place of it in the history, or finds the folder
+    // the volume's root shows again, when it was that, while the volume's
+    // page shows it, rather than another page, such as of the volumes
     gone(volume: string, path: string) {
         if (volume !== this.name) {
             return;
-        } else if (this.path === path) {
-            const parent = parentPath(path);
-            this.path = parent;
-            history.replaceState(null, '', folderHref(volume, parent));
-        } else if (this.path === '/' && this.shown === path) {
+        } else if (this.path === path && showing(folderHref(volume, path))) {
+            void this.walkUp(volume, path);
+        } else if (this.path === '/' && this.shown === path && showing(folderHref(volume, '/'))) {
             this.shown = undefined;
             this.openFolder();
+        }
+    }
+
+    // walkUp shows the nearest folder above one which isn't there, which
+    // is found first, so the tree only reveals folders which are, unless
+    // another folder, or page, is shown meanwhile
+    private async walkUp(volume: string, path: string) {
+        const client = this.controller?.client;
+        let parent = parentPath(path);
+        while (client && parent !== '/') {
+            try {
+                await listObjects(client, volume, { path: parent, limit: 1 });
+                break;
+            } catch (error) {
+                if (!(error instanceof ApiError) || error.status !== 404) {
+                    break;
+                }
+                parent = parentPath(parent);
+            }
+        }
+        if (volume === this.name && this.path === path && showing(folderHref(volume, path))) {
+            this.path = parent;
+            history.replaceState(null, '', folderHref(volume, parent));
         }
     }
 
@@ -689,6 +711,16 @@ function page(id: string, root: HTMLElement): HTMLElement {
 // volumeHref returns the link of a volume's page
 function volumeHref(name: string): string {
     return '#' + VolumeRoute + '/' + encodeURIComponent(name);
+}
+
+// showing returns whether the location is the link, of its folders,
+// whatever their escaping
+function showing(href: string): boolean {
+    try {
+        return decodeURIComponent(location.hash) === decodeURIComponent(href);
+    } catch {
+        return location.hash === href;
+    }
 }
 
 // folderHref returns the link of a folder of a volume

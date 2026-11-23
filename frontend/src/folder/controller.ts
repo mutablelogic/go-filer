@@ -56,6 +56,11 @@ export class FolderController {
     private path?: string;
     private sorted?: Sort;
 
+    // opens is the generation of the folder which is opened, which changes
+    // each time one is, or it's closed, so a response to an earlier one
+    // doesn't say a folder is gone
+    private opens = 0;
+
     // opened is the volume which was last opened, which is kept once it's
     // closed, so opening it again, such as its root, isn't another volume's
     private opened?: string;
@@ -113,6 +118,7 @@ export class FolderController {
             return Promise.resolve();
         }
         const another = volume !== this.opened;
+        this.opens++;
         this.volume = volume;
         this.path = path;
         this.opened = volume;
@@ -159,6 +165,7 @@ export class FolderController {
         if (this.volume === undefined && this.path === undefined) {
             return;
         }
+        this.opens++;
         this.volume = undefined;
         this.path = undefined;
         void this.list.reset();
@@ -207,7 +214,7 @@ export class FolderController {
     // more, and whether there are more, in the order of the sort, when it's
     // sorted, by the server. Without a folder, there are none.
     private async page(after: FilerObject | undefined, limit: number, sort?: Sort): Promise<Page<FilerObject>> {
-        const { volume, path } = this;
+        const { volume, path, opens } = this;
         if (!volume || !path) {
             return { body: [], more: false };
         }
@@ -220,10 +227,15 @@ export class FolderController {
                 list = await listObjects(this.client, volume, { path, start_after: next, limit, sort: order });
             } catch (error) {
                 // A folder which isn't there is gone, once, of the folder
-                // which is shown, and has none
+                // which is opened, rather than of one which was before, and
+                // has none
                 if (error instanceof ApiError && error.status === 404 && path !== '/') {
-                    if (volume === this.volume && path === this.path) {
-                        queueMicrotask(() => this.goneFn?.(volume, path));
+                    if (opens === this.opens) {
+                        queueMicrotask(() => {
+                            if (opens === this.opens) {
+                                this.goneFn?.(volume, path);
+                            }
+                        });
                     }
                     return { body: [], more: false };
                 }
