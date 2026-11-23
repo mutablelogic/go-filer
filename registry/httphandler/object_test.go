@@ -772,3 +772,64 @@ func TestBackendIcon(t *testing.T) {
 	status, _, _ = getObject(t, server, "backend/nope/icon", nil)
 	assert.Equal(t, http.StatusNotFound, status)
 }
+
+func TestObjectListSort(t *testing.T) {
+	ctx := context.Background()
+
+	// A volume whose files aren't indexed can't be sorted
+	server, _ := newServer(t)
+	assert.Equal(t, http.StatusNotImplemented, get(t, server, "object/media?sort=size", nil))
+
+	// A server of a volume whose files are indexed
+	dir := t.TempDir()
+	for name, size := range map[string]int{"a.txt": 3, "b.txt": 1, "c.txt": 2, "d.txt": 2} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), bytes.Repeat([]byte("x"), size), 0o644))
+	}
+	reg, err := registry.New(ctx, registry.WithStore(newStore(t)))
+	require.NoError(t, err)
+	rctx, cancel := context.WithCancel(ctx)
+	running := make(chan error, 1)
+	go func() { running <- reg.Run(rctx, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		<-running
+	})
+	mount(t, reg, "media", &url.URL{Scheme: "file", Host: "media", Path: filepath.ToSlash(dir), RawQuery: "index=objects"})
+	mux := http.NewServeMux()
+	router, err := httprouter.NewRouter(ctx, mux, "/api", "", "test", "0.0.0")
+	require.NoError(t, err)
+	require.NoError(t, httphandler.RegisterHandlers(reg, router))
+	indexed := httptest.NewServer(mux)
+	t.Cleanup(indexed.Close)
+
+	// sorted returns the paths of the listing of the sort, a page of two at
+	// a time, once it's indexed
+	sorted := func(sort string) []string {
+		t.Helper()
+		result := []string{}
+		after := ""
+		for range 10 {
+			var list schema.ObjectList
+			require.Equal(t, http.StatusOK, get(t, indexed, "object/media?limit=2&sort="+sort+"&start_after="+url.QueryEscape(after), &list))
+			assert.Equal(t, sort, list.Sort)
+			for _, object := range list.Body {
+				result = append(result, object.Path)
+			}
+			if list.Next == "" {
+				return result
+			}
+			after = list.Next
+		}
+		t.Fatalf("the listing by %q doesn't end", sort)
+		return nil
+	}
+	require.Eventually(t, func() bool {
+		return get(t, indexed, "object/media?sort=size", nil) == http.StatusOK
+	}, 10*time.Second, 10*time.Millisecond, "the volume isn't indexed")
+	assert.Equal(t, []string{"/b.txt", "/c.txt", "/d.txt", "/a.txt"}, sorted("size"))
+	assert.Equal(t, []string{"/a.txt", "/d.txt", "/c.txt", "/b.txt"}, sorted("-size"))
+	assert.Equal(t, []string{"/d.txt", "/c.txt", "/b.txt", "/a.txt"}, sorted("-name"))
+
+	// A sort which isn't one is a bad request
+	assert.Equal(t, http.StatusBadRequest, get(t, indexed, "object/media?sort=colour", nil))
+}

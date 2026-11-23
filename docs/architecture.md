@@ -58,6 +58,7 @@ How the filer's server is put together: the registry of volumes, which mounts th
   * Otherwise a listing comes from the backend, as does one of a path that's both a file and a folder.
   * A listing of a type, such as `type=image`, is a query on the index, which keeps each object's type without its parameters.
   * A page of a listing from the index has `count`, the number of objects the whole query matches, including its type filter but not `start_after` or the limit. When the listing can't be counted, such as from a backend, `count` is `null`.
+  * A listing with `sort` (`name`, `size`, `modified` or `type`, `-` for descending) always comes from the index, as the backend can't sort, even while work is queued, so its order doesn't change mid-listing. It pages by `start_after` as usual: the next page continues after that object's value and key. Volumes whose files aren't indexed, or aren't ready yet, return `ErrNotImplemented` (501).
   * Lowering it to `folders` removes the files from the index after the next scan.
   * The registry runs each indexer while the volume is mounted. Turning indexing off, or pointing the volume at another backend (scheme, host or path), removes the index. Deleting a volume deletes its index.
 * **Volume changes:** with `store.WithBroadcaster`, a store publishes a change when a volume is created, updated or deleted, of schema `store`, table `volume`, whose row is the volume's name, and whose data is the volume. The `filer` server serves them on `/changes`, with its objects' changes.

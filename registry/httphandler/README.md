@@ -70,7 +70,11 @@ List the objects in a directory of the volume `name`, a page at a time. The `pat
 
 With `type`, only the objects of a type are listed: a media type, such as `inode/directory`, or its major type, `inode`, or its subtype, `directory`. Parameters, such as `charset`, and case are ignored. A directory without a type of its own is `inode/directory`. The folders of an indexed volume, with `type=directory`, `inode`, or `inode/directory`, are listed from its index, once it's ready, rather than the backend.
 
-Objects are returned in the same order as S3, by the byte order of their keys. A page has at most `limit` objects, which defaults to and is capped at 100. When there are more objects, `next` is the key of the last object, and the next page is returned by passing it as `start_after`. The total number of objects isn't returned. Returns 400 if the path is outside the volume, or the query is invalid, or 404 if the volume isn't mounted, or the path doesn't exist.
+Objects are returned in the same order as S3, by the byte order of their keys. A page has at most `limit` objects, which defaults to and is capped at 100. When there are more objects, `next` is the key of the last object, and the next page is returned by passing it as `start_after`. The total number of objects isn't returned.
+
+With `sort`, a volume whose files are indexed lists a directory's objects in another order, from its index: `name`, `size`, `modified` or `type` (the media type), with `-` before it for descending, such as `-size`. Objects of the same value are in the order of their keys, reversed when it's descending. Paging is the same: `next` is the key of the last object, and the next page starts after that object's value, and key, so a listing whose last object is deleted meanwhile has no more pages, and is listed again. A sorted listing is of the index as it is, even while it's catching up with the backend. Returns 501 when the volume's files aren't indexed, or aren't yet.
+
+Returns 400 if the path is outside the volume, or the query is invalid, or 404 if the volume isn't mounted, or the path doesn't exist.
 
 ### GET /object/{name}/{path...}
 

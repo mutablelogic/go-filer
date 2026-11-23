@@ -60,10 +60,11 @@ type ObjectStore interface {
 	// every object beneath it, which isn't an error when there's none
 	DeleteObject(ctx context.Context, volume, key string) error
 
-	// ListObjects returns, in the order of their keys, up to the request's limit
-	// of the objects of a folder, or every object beneath it when it's
-	// recursive, after the key it starts after, without the folder, and of
-	// its type, when it has one (see schema.MatchType)
+	// ListObjects returns, in the order of their keys, or of the request's
+	// sort, up to the request's limit of the objects of a folder, or every
+	// object beneath it when it's recursive, after the key it starts after,
+	// without the folder, and of its type, when it has one (see
+	// schema.MatchType)
 	ListObjects(ctx context.Context, volume string, req ListRequest) ([]*schema.Object, error)
 
 	// CountObjects returns how many objects a listing has, of every page, without
@@ -135,6 +136,14 @@ type ListRequest struct {
 	Limit     int    // The most objects returned, or zero for every one
 	Type      string // Only objects of this type, its major type, or its subtype, or empty for every one
 	Objects   bool   // Only objects, without folders, of their keys, whatever their types
+
+	// Sort is the order of the objects, schema.SortSize, SortModified or
+	// SortType, each of their keys after, of the same, or of their keys,
+	// when it's empty, or SortName, and Descending reverses it. The objects
+	// are after After, in that order, of its object's value, so a listing
+	// whose last object is deleted ends.
+	Sort       string
+	Descending bool
 }
 
 // MediaType returns a type of a listing, without its parameters, in lower

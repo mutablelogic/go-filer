@@ -139,8 +139,13 @@ func (req ObjectListRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, er
 		return "", sqlite.ErrNotImplemented.Withf("object list: %v", op)
 	}
 	bind.Set("volume", req.Volume)
-	bind.Set("after", req.After)
 	bind.Set("where", listWhere(bind, req.ListRequest))
+	after, order, err := listOrder(bind, req.ListRequest)
+	if err != nil {
+		return "", err
+	}
+	bind.Set("cursor", after)
+	bind.Set("order", order)
 	if req.Limit > 0 {
 		bind.Set("offsetlimit", "LIMIT "+bind.Set("limit", req.Limit))
 	}
@@ -162,6 +167,43 @@ func (req KindsRequest) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) 
 	}
 	bind.Set("volume", req.Volume)
 	return bind.Query("object.kinds"), nil
+}
+
+// sortValues are the values of the objects of a listing which it's sorted
+// by, of each sort, which are of the object table's columns, and aren't
+// NULL, so they're compared
+var sortValues = map[string]string{
+	filer.SortSize:     "coalesce(size, -1)",
+	filer.SortModified: "coalesce(modified_at, '')",
+	filer.SortType:     "coalesce(media_type, '')",
+}
+
+// listOrder returns the condition of the objects after the key a listing
+// starts after, of the order of their keys, or of its sort, of the value
+// of the object of the key, and of their keys, after, of the same, and its
+// order, which binds its values. A listing whose key's object isn't stored
+// has none after it, of a sort.
+func listOrder(bind *sqlite.Bind, req store.ListRequest) (string, string, error) {
+	dir, cmp := "", ">"
+	if req.Descending {
+		dir, cmp = " DESC", "<"
+	}
+	if req.Sort == "" || req.Sort == filer.SortName {
+		if req.After == "" {
+			return "true", "key" + dir, nil
+		}
+		return "key " + cmp + " " + bind.Set("after", req.After), "key" + dir, nil
+	}
+	value, exists := sortValues[req.Sort]
+	if !exists {
+		return "", "", sqlite.ErrBadParameter.Withf("objects can't be sorted by %q", req.Sort)
+	}
+	order := value + dir + ", key" + dir
+	if req.After == "" {
+		return "true", order, nil
+	}
+	after := bind.Set("after", req.After)
+	return "(" + value + ", key) " + cmp + " ((SELECT " + value + " FROM object WHERE volume = @volume AND key = " + after + "), " + after + ")", order, nil
 }
 
 // listWhere returns the condition of the objects of a listing, of a folder,

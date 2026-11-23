@@ -115,7 +115,8 @@ FROM object WHERE volume = @volume AND key = @key;
 
 -- object.list
 -- The objects of a folder, or beneath it, of the where clause, in the order
--- of their keys, after the key the listing starts after
+-- of their keys, or of the sort, after the key the listing starts after, of
+-- its object's value of the sort
 SELECT key, coalesce(type, ''), size, etag, modified_at, (
   SELECT json_group_array(json_object('namespace', namespace, 'key', metadata.key, 'value', json(value), 'text', text) ORDER BY source <> '', rowid)
   FROM metadata WHERE metadata.volume = object.volume AND metadata.object = object.key
@@ -137,8 +138,8 @@ SELECT key, coalesce(type, ''), size, etag, modified_at, (
   FROM object_artwork JOIN artwork ON artwork.hash = object_artwork.hash
   WHERE object_artwork.volume = object.volume AND object_artwork.object = object.key
 )
-FROM object WHERE volume = @volume AND ${where} AND key > @after
-ORDER BY key;
+FROM object WHERE volume = @volume AND ${where} AND ${cursor}
+ORDER BY ${order};
 
 -- object.count
 -- How many objects a listing has, of the where clause, of every page
