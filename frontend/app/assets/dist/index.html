@@ -389,6 +389,32 @@
             letter-spacing: var(--cds-heading-compact-01-letter-spacing, 0.16px);
         }
 
+        /* The drop zone, in the panel which adds files, of an icon, and what
+           to do, beneath it, and its files, as wide as it */
+        .gf-object-upload-drop {
+            display: block;
+        }
+
+        .gf-object-upload-drop-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .gf-object-upload-drop-content svg {
+            margin-bottom: 0.5rem;
+            fill: currentColor;
+        }
+
+        .gf-object-upload-drop-hint {
+            color: var(--cds-text-secondary);
+        }
+
+        gf-object-upload cds-file-uploader-item {
+            max-inline-size: none;
+        }
+
         /* A file's size, beside its path, in the panel which adds files */
         .gf-object-upload-size {
             margin-left: 0.5rem;
