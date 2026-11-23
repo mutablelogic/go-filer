@@ -318,7 +318,7 @@ func Test_ContactObjects(t *testing.T) {
 		p.Birthdays = []httpclient.PersonDate{{}}
 		p.Birthdays[0].Date.Month, p.Birthdays[0].Date.Day = 12, 10
 		p.Biographies = []httpclient.PersonValue{{Value: "The first programmer"}}
-		p.Photos = []httpclient.PersonPhoto{{URL: endpoint + "/photos/default=s100", Default: true}, {URL: endpoint + "/photos/ada=s100"}}
+		p.Photos = []httpclient.PersonPhoto{{URL: endpoint + "/photos/default=s100", Default: true, Metadata: httpclient.FieldMetadata{Primary: true}}, {URL: endpoint + "/photos/ada=s100"}}
 	})
 	fake.add("c1", func(p *httpclient.Person) {
 		p.Names = []httpclient.PersonName{{DisplayName: "Charles Babbage"}}
@@ -327,6 +327,7 @@ func Test_ContactObjects(t *testing.T) {
 	fake.add("c3", func(p *httpclient.Person) { p.Metadata.Deleted = true })
 	fake.add("c4", func(p *httpclient.Person) {
 		p.EmailAddresses = []httpclient.PersonValue{{Value: "other@example.com"}, {Value: "primary@example.com", Metadata: httpclient.FieldMetadata{Primary: true}}}
+		p.Photos = []httpclient.PersonPhoto{{URL: endpoint + "/photos/default=s100", Default: true, Metadata: httpclient.FieldMetadata{Primary: true}}}
 	})
 	fake.profiles = map[string]httpclient.Person{
 		"me":    {ResourceName: "people/me", Metadata: httpclient.PersonMetadata{Sources: []httpclient.PersonSource{{Type: "PROFILE"}}}},
@@ -361,6 +362,7 @@ func Test_ContactObjects(t *testing.T) {
 
 	// Its content, whose size is its file's, of its fields, with its primary
 	// email preferred, its birthday, its photo, rather than its default one,
+	// which is primary,
 	// and its notes
 	read, object, err := filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c2.vcf"}})
 	require.NoError(t, err)
@@ -413,6 +415,20 @@ func Test_ContactObjects(t *testing.T) {
 	require.NotNil(t, cards[0].Photo)
 	assert.Equal(t, endpoint+"/photos/missing=s100", cards[0].Photo.URI)
 	assert.Equal(t, []string{"The first programmer"}, card.Notes)
+
+	// A contact which only has its default photo has it
+	read, _, err = filer.ReadObject(ctx, schema.GetObjectRequest{ObjectKey: schema.ObjectKey{Path: "/c4.vcf"}})
+	require.NoError(t, err)
+	require.NoError(t, read(ctx, func(r io.Reader) error {
+		data, err := io.ReadAll(r)
+		content = string(data)
+		return err
+	}))
+	cards, err = vcard.Decode(strings.NewReader(content))
+	require.NoError(t, err)
+	require.Len(t, cards, 1)
+	require.NotNil(t, cards[0].Photo)
+	assert.Equal(t, endpoint+"/photos/default=s100", cards[0].Photo.URI, "a link, as the fake doesn't serve it")
 
 	// A contact which is deleted, or isn't there, or a path which isn't a
 	// contact's, isn't found, and the root can't be read
