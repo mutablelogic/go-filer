@@ -17,6 +17,7 @@ import Upload16 from '@carbon/icons/es/upload/16.js';
 import '@carbon/web-components/es/components/file-uploader/index.js';
 import '@carbon/web-components/es/components/toggle/index.js';
 import '@carbon/web-components/es/components/button/index.js';
+import '@carbon/web-components/es/components/layer/index.js';
 import { alertView } from '../alert/view.ts';
 import { uploadObjects } from '../filer/httpclient.ts';
 import type { ObjectSkipped } from '../filer/schema.ts';
@@ -125,33 +126,36 @@ export class ObjectUploadElement extends LitElement {
     }
 
     // formView is where files are dropped, or chosen, which are listed, of
-    // their sizes, and whether those which exist are replaced
+    // their sizes, and whether those which exist are replaced, of the layer
+    // above the panel's, as Carbon's are, so each is of a box of its own
     private formView(): TemplateResult {
         const uploading = this.chosen.some((c) => c.state === 'uploading');
         const done = this.chosen.length > 0 && this.chosen.every((c) => c.state === 'complete');
         return html`
             <div class="gf-volume-form">
-                <cds-file-uploader label-title="Files" label-description="Files, and folders, of all of their files, which are added to the folder">
-                    ${done ? nothing : html`
-                        <div @drop=${{ handleEvent: (event: DragEvent) => this.dropped(event), capture: true }}>
-                            <cds-file-uploader-drop-container multiple ?disabled=${uploading}
-                                @cds-file-uploader-drop-container-changed=${(event: CustomEvent<{ addedFiles: File[] }>) => this.add(event.detail.addedFiles.map((file) => ({ file, path: file.name })))}>
-                                Drag and drop files, or folders, here, or click to choose files
-                            </cds-file-uploader-drop-container>
-                        </div>
-                        <cds-button kind="ghost" size="sm" ?disabled=${uploading} @click=${() => this.querySelector<HTMLInputElement>('.gf-object-upload-folder')?.click()}>Choose a folder</cds-button>
-                        <input class="gf-object-upload-folder" type="file" webkitdirectory multiple hidden
-                            @change=${(event: Event) => this.chooseFolder(event.target as HTMLInputElement)}>
-                    `}
-                    ${repeat(this.chosen.slice(0, MaxListed), (c) => c.path, (c) => html`
-                        <cds-file-uploader-item state=${c.state} ?invalid=${!!c.skipped}
-                            error-subject=${c.skipped ? (c.skipped.exists ? 'It exists' : "It wasn't added") : ''}
-                            error-body=${c.skipped?.reason ?? ''}
-                            @cds-file-uploader-item-deleted=${(event: Event) => { event.preventDefault(); this.unchoose(c.path); }}>
-                            ${c.path} <span class="gf-object-upload-size">${formatSize(c.file.size)}</span>
-                        </cds-file-uploader-item>
-                    `)}
-                </cds-file-uploader>
+                <cds-layer level="1">
+                    <cds-file-uploader label-title="Files" label-description="Files, and folders, of all of their files, which are added to the folder">
+                        ${done ? nothing : html`
+                            <div @drop=${{ handleEvent: (event: DragEvent) => this.dropped(event), capture: true }}>
+                                <cds-file-uploader-drop-container multiple ?disabled=${uploading}
+                                    @cds-file-uploader-drop-container-changed=${(event: CustomEvent<{ addedFiles: File[] }>) => this.add(event.detail.addedFiles.map((file) => ({ file, path: file.name })))}>
+                                    Drag and drop files, or folders, here, or click to choose files
+                                </cds-file-uploader-drop-container>
+                            </div>
+                            <cds-button kind="ghost" size="sm" ?disabled=${uploading} @click=${() => this.querySelector<HTMLInputElement>('.gf-object-upload-folder')?.click()}>Choose a folder</cds-button>
+                            <input class="gf-object-upload-folder" type="file" webkitdirectory multiple hidden
+                                @change=${(event: Event) => this.chooseFolder(event.target as HTMLInputElement)}>
+                        `}
+                        ${repeat(this.chosen.slice(0, MaxListed), (c) => c.path, (c) => html`
+                            <cds-file-uploader-item state=${c.state} ?invalid=${!!c.skipped}
+                                error-subject=${c.skipped ? (c.skipped.exists ? 'It exists' : "It wasn't added") : ''}
+                                error-body=${c.skipped?.reason ?? ''}
+                                @cds-file-uploader-item-deleted=${(event: Event) => { event.preventDefault(); this.unchoose(c.path); }}>
+                                ${c.path} <span class="gf-object-upload-size">${formatSize(c.file.size)}</span>
+                            </cds-file-uploader-item>
+                        `)}
+                    </cds-file-uploader>
+                </cds-layer>
                 ${this.summaryView()}
                 ${done ? nothing : html`
                     <cds-toggle size="sm" label-text="Replace files which exist" label-a="Yes" label-b="No" ?checked=${this.overwrite} ?disabled=${uploading}
