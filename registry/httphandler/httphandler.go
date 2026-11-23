@@ -30,6 +30,7 @@ func RegisterHandlers(reg *registry.Registry, router *httprouter.Router) error {
 		backendHandlers(reg, router, documentation),
 		objectHandlers(reg, router, documentation),
 		searchHandlers(reg, router, documentation),
+		artworkHandlers(reg, router, documentation),
 		actionHandlers(reg, router, documentation),
 	)
 }
