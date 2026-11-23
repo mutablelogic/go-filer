@@ -16,7 +16,6 @@ import '@mutablelogic/go-server/panel/view';
 import Upload16 from '@carbon/icons/es/upload/16.js';
 import '@carbon/web-components/es/components/file-uploader/index.js';
 import '@carbon/web-components/es/components/toggle/index.js';
-import '@carbon/web-components/es/components/button/index.js';
 import '@carbon/web-components/es/components/layer/index.js';
 import { alertView } from '../alert/view.ts';
 import { uploadObjects } from '../filer/httpclient.ts';
@@ -138,7 +137,7 @@ export class ObjectUploadElement extends LitElement {
         return html`
             <div class="gf-volume-form">
                 <cds-layer level="1">
-                    <cds-file-uploader label-title="Files" label-description="Files, and folders, of all of their files, which are added to the folder">
+                    <cds-file-uploader>
                         ${done ? nothing : html`
                             <div @drop=${{ handleEvent: (event: DragEvent) => this.dropped(event), capture: true }}>
                                 <cds-file-uploader-drop-container multiple ?disabled=${uploading}
@@ -146,10 +145,8 @@ export class ObjectUploadElement extends LitElement {
                                     Drag and drop files, or folders, here, or click to choose files
                                 </cds-file-uploader-drop-container>
                             </div>
-                            <cds-button kind="ghost" size="sm" ?disabled=${uploading} @click=${() => this.querySelector<HTMLInputElement>('.gf-object-upload-folder')?.click()}>Choose a folder</cds-button>
-                            <input class="gf-object-upload-folder" type="file" webkitdirectory multiple hidden
-                                @change=${(event: Event) => this.chooseFolder(event.target as HTMLInputElement)}>
                         `}
+                        ${this.summaryView()}
                         ${repeat(skippedFirst(this.chosen, MaxListed), (c) => c.path, (c) => html`
                             <cds-file-uploader-item state=${c.state} ?invalid=${!!c.skipped}
                                 error-subject=${c.skipped ? (c.skipped.exists ? 'It exists' : "It wasn't added") : ''}
@@ -160,9 +157,8 @@ export class ObjectUploadElement extends LitElement {
                         `)}
                     </cds-file-uploader>
                 </cds-layer>
-                ${this.summaryView()}
                 ${done ? nothing : html`
-                    <cds-toggle size="sm" label-text="Replace files which exist" label-a="Yes" label-b="No" ?checked=${this.overwrite} ?disabled=${uploading}
+                    <cds-toggle size="sm" label-text="Overwrite existing files" label-a="Yes" label-b="No" ?checked=${this.overwrite} ?disabled=${uploading}
                         @cds-toggle-changed=${(event: CustomEvent<{ checked: boolean }>) => { this.overwrite = event.detail.checked; }}></cds-toggle>
                 `}
                 ${this.error ? alertView('error', "The files couldn't be added", this.error) : nothing}
@@ -170,20 +166,24 @@ export class ObjectUploadElement extends LitElement {
         `;
     }
 
-    // summaryView says how many files are chosen, and their size, beneath
-    // those which are listed, of more than are, and that a folder is being
-    // read, while it is
+    // summaryView says how many files are chosen, and their size, above
+    // those which are listed, and how many more there are, of more than are
+    // listed, and how many weren't added, and that a folder is being read,
+    // while it is
     private summaryView(): TemplateResult | typeof nothing {
-        const more = this.chosen.length - MaxListed;
-        if (more <= 0 && !this.reading) {
+        if (this.chosen.length === 0 && !this.reading) {
             return nothing;
         }
-        const size = this.chosen.reduce((total, c) => total + c.file.size, 0);
+        const total = this.chosen.length;
+        const listed = Math.min(total, MaxListed);
+        const size = formatSize(this.chosen.reduce((sum, c) => sum + c.file.size, 0)) || '0 B';
         const skipped = this.chosen.filter((c) => c.skipped).length;
-        const count = `${this.chosen.length.toLocaleString()} ${this.chosen.length === 1 ? 'file' : 'files'}, ${formatSize(size) || '0 B'}`;
+        const summary = total > listed
+            ? `${files(listed)}, and ${(total - listed).toLocaleString()} more, of ${files(total)}, ${size}`
+            : `${files(total)}, ${size}`;
         return html`
             <p class="gf-object-upload-summary">
-                ${more > 0 ? `and ${more.toLocaleString()} more, of ${count}` : count}${skipped ? ` · ${skipped.toLocaleString()} not added` : ''}${this.reading ? ' · Reading…' : ''}
+                ${summary}${skipped ? ` · ${skipped.toLocaleString()} not added` : ''}${this.reading ? ' · Reading…' : ''}
             </p>
         `;
     }
@@ -259,24 +259,6 @@ export class ObjectUploadElement extends LitElement {
                 this.reading--;
                 this.setAction();
             }
-        }
-    }
-
-    // chooseFolder adds the files of a folder which is chosen, of their
-    // paths, which start with the folder's name, a batch at a time
-    private async chooseFolder(input: HTMLInputElement) {
-        const files = [...(input.files ?? [])];
-        input.value = '';
-        const session = this.session;
-        this.reading++;
-        this.setAction();
-        for (let i = 0; i < files.length && session === this.session; i += BatchSize) {
-            this.add(files.slice(i, i + BatchSize).map((file) => ({ file, path: file.webkitRelativePath || file.name })));
-            await nextFrame();
-        }
-        if (session === this.session) {
-            this.reading--;
-            this.setAction();
         }
     }
 
@@ -380,6 +362,11 @@ async function* entryBatches(entry: FileSystemEntry, folder: string, live: () =>
 // entryFile returns the file of a file entry
 function entryFile(entry: FileSystemFileEntry): Promise<File> {
     return new Promise<File>((resolve, reject) => entry.file(resolve, reject));
+}
+
+// files returns how many files there are, such as 2 files
+function files(count: number): string {
+    return `${count.toLocaleString()} ${count === 1 ? 'file' : 'files'}`;
 }
 
 // nextFrame resolves once the page is drawn, so what's added is shown,
