@@ -3,10 +3,13 @@
 // their paths, so a folder is added in the folder, with its folders, which
 // are uploaded into the folder, of one request, replacing those which exist, when it overwrites them, and
 // otherwise skipping them, and then which were added, and which skipped,
-// and why. open opens it, of the folder, and the function which is called
+// and why. A folder's files are listed as they're read, a batch at a time,
+// so a large one doesn't hold the page up, and closing the panel, such as
+// of Esc, stops reading it, and cancels an upload. open opens it, of the folder, and the function which is called
 // once files are added.
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { repeat } from 'lit/directives/repeat.js';
 import type { Client } from '@mutablelogic/go-server/api';
 import { PanelController, type PanelAction } from '@mutablelogic/go-server/panel';
 import '@mutablelogic/go-server/panel/view';
@@ -37,6 +40,12 @@ interface Chosen {
 
 export const ObjectUploadTag = 'gf-object-upload';
 
+// MaxListed is how many of the files which are chosen are listed, of more,
+// which are counted, and BatchSize how many of a folder's files are added
+// at once, as it's read
+const MaxListed = 100;
+const BatchSize = 200;
+
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
 
@@ -44,6 +53,7 @@ export class ObjectUploadElement extends LitElement {
     static override properties = {
         client: { attribute: false },
         chosen: { state: true },
+        reading: { state: true },
         overwrite: { state: true },
         error: { state: true },
     };
@@ -57,20 +67,37 @@ export class ObjectUploadElement extends LitElement {
     declare private overwrite: boolean;
     declare private error?: string;
 
+    // reading is how many folders are being read, whose files are added
+    // as they are
+    declare private reading: number;
+
     private volume = '';
     private folder = '/';
     private added?: () => void;
     private readonly panel = new PanelController<string>({ closable: true });
 
     // session is of each time the panel is opened, and closed, so what's
-    // read, or uploaded, of one before, isn't of this one
+    // read, or uploaded, of one before, isn't of this one, paths are those
+    // which are chosen, and abort cancels the upload in progress
     private session = 0;
+    private paths = new Set<string>();
+    private abort?: AbortController;
 
     constructor() {
         super();
         this.chosen = [];
         this.overwrite = false;
-        this.panel.onClose(() => { this.session++; });
+        this.reading = 0;
+        this.panel.onClose(() => this.cancel());
+    }
+
+    // cancel stops reading folders, and the upload in progress, once the
+    // panel is closed, or opened again
+    private cancel() {
+        this.session++;
+        this.abort?.abort();
+        this.abort = undefined;
+        this.reading = 0;
     }
 
     protected override createRenderRoot() {
@@ -80,11 +107,12 @@ export class ObjectUploadElement extends LitElement {
     // open opens the panel of the volume's folder, and calls the function
     // once files are added to it
     open(volume: string, folder: string, added?: () => void) {
-        this.session++;
+        this.cancel();
         this.volume = volume;
         this.folder = folder;
         this.added = added;
         this.chosen = [];
+        this.paths = new Set();
         this.overwrite = false;
         this.error = undefined;
         this.panel.setHeader({ title: 'Add files', subtitle: `${volume}${folder === '/' ? '' : folder}` });
@@ -115,15 +143,16 @@ export class ObjectUploadElement extends LitElement {
                         <input class="gf-object-upload-folder" type="file" webkitdirectory multiple hidden
                             @change=${(event: Event) => this.chooseFolder(event.target as HTMLInputElement)}>
                     `}
-                    ${this.chosen.map((c, i) => html`
+                    ${repeat(this.chosen.slice(0, MaxListed), (c) => c.path, (c) => html`
                         <cds-file-uploader-item state=${c.state} ?invalid=${!!c.skipped}
                             error-subject=${c.skipped ? (c.skipped.exists ? 'It exists' : "It wasn't added") : ''}
                             error-body=${c.skipped?.reason ?? ''}
-                            @cds-file-uploader-item-deleted=${(event: Event) => { event.preventDefault(); this.unchoose(i); }}>
+                            @cds-file-uploader-item-deleted=${(event: Event) => { event.preventDefault(); this.unchoose(c.path); }}>
                             ${c.path} <span class="gf-object-upload-size">${formatSize(c.file.size)}</span>
                         </cds-file-uploader-item>
                     `)}
                 </cds-file-uploader>
+                ${this.summaryView()}
                 ${done ? nothing : html`
                     <cds-toggle size="sm" label-text="Replace files which exist" label-a="Yes" label-b="No" ?checked=${this.overwrite} ?disabled=${uploading}
                         @cds-toggle-changed=${(event: CustomEvent<{ checked: boolean }>) => { this.overwrite = event.detail.checked; }}></cds-toggle>
@@ -133,11 +162,36 @@ export class ObjectUploadElement extends LitElement {
         `;
     }
 
+    // summaryView says how many files are chosen, and their size, beneath
+    // those which are listed, of more than are, and that a folder is being
+    // read, while it is
+    private summaryView(): TemplateResult | typeof nothing {
+        const more = this.chosen.length - MaxListed;
+        if (more <= 0 && !this.reading) {
+            return nothing;
+        }
+        const size = this.chosen.reduce((total, c) => total + c.file.size, 0);
+        const count = `${this.chosen.length.toLocaleString()} ${this.chosen.length === 1 ? 'file' : 'files'}, ${formatSize(size) || '0 B'}`;
+        return html`
+            <p class="gf-object-upload-summary">
+                ${more > 0 ? `and ${more.toLocaleString()} more, of ${count}` : count}${this.reading ? ' · Reading…' : ''}
+            </p>
+        `;
+    }
+
     // add adds files which are dropped, or chosen, of their paths, other
     // than those of the same paths, which are chosen already
     private add(files: readonly { file: File; path: string }[]) {
-        const paths = new Set(this.chosen.map((c) => c.path));
-        this.chosen = [...this.chosen, ...files.filter((f) => !paths.has(f.path)).map((f) => ({ ...f, state: 'edit' as const }))];
+        const added: Chosen[] = [];
+        for (const f of files) {
+            if (!this.paths.has(f.path)) {
+                this.paths.add(f.path);
+                added.push({ ...f, state: 'edit' });
+            }
+        }
+        if (added.length) {
+            this.chosen = [...this.chosen, ...added];
+        }
         this.error = undefined;
         this.setAction();
     }
@@ -152,31 +206,60 @@ export class ObjectUploadElement extends LitElement {
         }
         event.preventDefault();
         event.stopPropagation();
+        void this.read(entries);
+    }
+
+    // read adds the files of what's dropped, of their paths, a batch at a
+    // time, as they're read, until they're all read, or the panel is closed
+    private async read(entries: readonly FileSystemEntry[]) {
         const session = this.session;
-        void Promise.all(entries.map((entry) => entryFiles(entry, ''))).then(
-            (files) => {
-                if (session === this.session) {
-                    this.add(files.flat());
+        const live = () => session === this.session;
+        this.reading++;
+        this.setAction();
+        try {
+            for (const entry of entries) {
+                for await (const batch of entryBatches(entry, '', live)) {
+                    if (!live()) {
+                        return;
+                    }
+                    this.add(batch);
+                    await nextFrame();
                 }
-            },
-            (error) => {
-                if (session === this.session) {
-                    this.error = `The folder couldn't be read: ${error instanceof Error ? error.message : String(error)}`;
-                }
-            },
-        );
+            }
+        } catch (error) {
+            if (live()) {
+                this.error = `The folder couldn't be read: ${error instanceof Error ? error.message : String(error)}`;
+            }
+        } finally {
+            if (live()) {
+                this.reading--;
+                this.setAction();
+            }
+        }
     }
 
     // chooseFolder adds the files of a folder which is chosen, of their
-    // paths, which start with the folder's name
-    private chooseFolder(input: HTMLInputElement) {
-        this.add([...(input.files ?? [])].map((file) => ({ file, path: file.webkitRelativePath || file.name })));
+    // paths, which start with the folder's name, a batch at a time
+    private async chooseFolder(input: HTMLInputElement) {
+        const files = [...(input.files ?? [])];
         input.value = '';
+        const session = this.session;
+        this.reading++;
+        this.setAction();
+        for (let i = 0; i < files.length && session === this.session; i += BatchSize) {
+            this.add(files.slice(i, i + BatchSize).map((file) => ({ file, path: file.webkitRelativePath || file.name })));
+            await nextFrame();
+        }
+        if (session === this.session) {
+            this.reading--;
+            this.setAction();
+        }
     }
 
-    // unchoose removes a file which is chosen
-    private unchoose(i: number) {
-        this.chosen = this.chosen.filter((_, j) => j !== i);
+    // unchoose removes a file which is chosen, of its path
+    private unchoose(path: string) {
+        this.paths.delete(path);
+        this.chosen = this.chosen.filter((c) => c.path !== path);
         this.setAction();
     }
 
@@ -186,7 +269,7 @@ export class ObjectUploadElement extends LitElement {
         const done = this.chosen.length > 0 && this.chosen.every((c) => c.state === 'complete');
         const action: PanelAction = done
             ? { label: 'Done', kind: 'primary' }
-            : { label: 'Add', kind: 'primary', icon: Upload16, close: false, disabled: this.chosen.length === 0, run: () => this.upload() };
+            : { label: 'Add', kind: 'primary', icon: Upload16, close: false, disabled: this.chosen.length === 0 || this.reading > 0, run: () => this.upload() };
         this.panel.setActions([action]);
     }
 
@@ -206,8 +289,10 @@ export class ObjectUploadElement extends LitElement {
         // another folder, which isn't changed of it
         const session = this.session;
         const added = this.added;
+        const abort = new AbortController();
+        this.abort = abort;
         try {
-            const result = await uploadObjects(client, this.volume, this.folder, pending.map((c) => ({ file: c.file, path: c.path })), this.overwrite);
+            const result = await uploadObjects(client, this.volume, this.folder, pending.map((c) => ({ file: c.file, path: c.path })), this.overwrite, abort.signal);
             if (result.body.length) {
                 added?.();
             }
@@ -221,7 +306,9 @@ export class ObjectUploadElement extends LitElement {
                 return c.state === 'uploading' ? (s ? { ...c, state: 'edit', skipped: s } : { ...c, state: 'complete' }) : c;
             });
         } catch (error) {
-            if (session !== this.session) {
+            // An upload which is cancelled, as the panel is closed, isn't
+            // an error
+            if (session !== this.session || abort.signal.aborted) {
                 return;
             }
             this.chosen = this.chosen.map((c) => (c.state === 'uploading' ? { ...c, state: 'edit' } : c));
@@ -234,26 +321,47 @@ export class ObjectUploadElement extends LitElement {
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS
 
-// entryFiles returns the files of an entry which is dropped, of its path,
-// of the folder it's in: a file, or every file in a folder, and its
-// folders, of their paths, which start with its name
-async function entryFiles(entry: FileSystemEntry, folder: string): Promise<{ file: File; path: string }[]> {
+// entryBatches returns the files of an entry which is dropped, of its
+// path, of the folder it's in, a batch at a time, as they're read: a file,
+// or every file in a folder, and its folders, of their paths, which start
+// with its name, until there are no more, or it isn't live
+async function* entryBatches(entry: FileSystemEntry, folder: string, live: () => boolean): AsyncGenerator<{ file: File; path: string }[]> {
     const path = folder ? `${folder}/${entry.name}` : entry.name;
     if (entry.isFile) {
-        const file = await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject));
-        return [{ file, path }];
+        yield [{ file: await entryFile(entry as FileSystemFileEntry), path }];
+        return;
     }
+
+    // A folder's entries are read in batches, until a batch is empty, of
+    // which its files are, and its folders, in turn
     const reader = (entry as FileSystemDirectoryEntry).createReader();
-    const entries: FileSystemEntry[] = [];
-    for (;;) {
-        // A folder's entries are read in batches, until a batch is empty
-        const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
-        if (batch.length === 0) {
-            break;
+    while (live()) {
+        const entries = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+        if (entries.length === 0) {
+            return;
         }
-        entries.push(...batch);
+        const files = entries.filter((e) => e.isFile) as FileSystemFileEntry[];
+        for (let i = 0; i < files.length && live(); i += BatchSize) {
+            yield await Promise.all(files.slice(i, i + BatchSize).map(async (e) => ({ file: await entryFile(e), path: `${path}/${e.name}` })));
+        }
+        for (const sub of entries.filter((e) => e.isDirectory)) {
+            if (!live()) {
+                return;
+            }
+            yield* entryBatches(sub, path, live);
+        }
     }
-    return (await Promise.all(entries.map((e) => entryFiles(e, path)))).flat();
+}
+
+// entryFile returns the file of a file entry
+function entryFile(entry: FileSystemFileEntry): Promise<File> {
+    return new Promise<File>((resolve, reject) => entry.file(resolve, reject));
+}
+
+// nextFrame resolves once the page is drawn, so what's added is shown,
+// and the page answers, between batches
+function nextFrame(): Promise<void> {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 if (!customElements.get(ObjectUploadTag)) {
