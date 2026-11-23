@@ -9,7 +9,7 @@
 
 import type { Client } from '@mutablelogic/go-server/api';
 import type { Change } from '@mutablelogic/go-server/broadcaster';
-import { ListController, type ListState, type Page } from '@mutablelogic/go-server/list';
+import { ListController, type ListState, type Page, type Sort } from '@mutablelogic/go-server/list';
 import type { NotificationController } from '@mutablelogic/go-server/notification';
 import { listObjects } from '../filer/httpclient.ts';
 import { ObjectChangeSchema, parentPath, type FilerObject } from '../filer/schema.ts';
@@ -63,7 +63,7 @@ export class FolderController {
             scroll: true,
             pageSize: limit,
             same: (a, b) => a.name === b.name && a.path === b.path,
-            list: (_offset, _limit, _sort, after) => this.page(after, limit),
+            list: (_offset, _limit, sort, after) => this.page(after, limit, sort),
             notifications: { error: (title: string, error: unknown) => this.errorFn?.(this.title(title), error) } as unknown as NotificationController,
         });
         this.list.subscribe((state) => this.follow(state));
@@ -88,14 +88,41 @@ export class FolderController {
         return this;
     }
 
-    // open shows a folder, from its first page, unless it's shown
+    // open shows a folder, from its first page, unless it's shown, in the
+    // order it's sorted, unless it's of another volume, which isn't sorted,
+    // as it may not be able to be
     open(volume: string, path: string): Promise<void> {
         if (volume === this.volume && path === this.path) {
             return Promise.resolve();
         }
+        const another = volume !== this.volume;
         this.volume = volume;
         this.path = path;
+        if (another && this.list.current.sort) {
+            this.list.close();
+            this.list.setSort(undefined);
+            return this.loaded();
+        }
         return this.list.reset();
+    }
+
+    // loaded resolves once the list is loaded, such as once it's sorted,
+    // which loads it, without loading it again
+    private loaded(): Promise<void> {
+        return new Promise((resolve) => {
+            let unsubscribe: (() => void) | undefined;
+            let done = false;
+            unsubscribe = this.list.subscribe((state) => {
+                if (state.items && !state.loading && !done) {
+                    done = true;
+                    queueMicrotask(() => unsubscribe?.());
+                    resolve();
+                }
+            });
+            if (done) {
+                unsubscribe();
+            }
+        });
     }
 
     // close shows no folder
@@ -148,16 +175,18 @@ export class FolderController {
 
     // page returns the objects of the folder, which aren't folders, after
     // the object, a page of the listing at a time, until there's one, or no
-    // more, and whether there are more. Without a folder, there are none.
-    private async page(after: FilerObject | undefined, limit: number): Promise<Page<FilerObject>> {
+    // more, and whether there are more, in the order of the sort, when it's
+    // sorted, by the server. Without a folder, there are none.
+    private async page(after: FilerObject | undefined, limit: number, sort?: Sort): Promise<Page<FilerObject>> {
         const { volume, path } = this;
         if (!volume || !path) {
             return { body: [], more: false };
         }
+        const order = sort ? `${sort.direction === 'descending' ? '-' : ''}${sort.key}` : undefined;
         const body: FilerObject[] = [];
         let next = after?.path;
         do {
-            const list = await listObjects(this.client, volume, { path, start_after: next, limit });
+            const list = await listObjects(this.client, volume, { path, start_after: next, limit, sort: order });
             body.push(...list.body.filter((object) => !object.dir));
             next = list.next;
         } while (next && body.length === 0 && volume === this.volume && path === this.path);

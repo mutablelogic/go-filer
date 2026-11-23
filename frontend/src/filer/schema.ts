@@ -130,13 +130,16 @@ export interface FilerObject {
 
 // ObjectListQuery is the query of a listing: the folder, which is the root
 // by default, whether it's of everything beneath it, the key it starts
-// after, how many objects it has, at most, and the type of its objects
+// after, how many objects it has, at most, the type of its objects, and
+// its order, of a volume whose files are indexed, such as size, or -size,
+// which is descending
 export interface ObjectListQuery {
     path?: string;
     recursive?: boolean;
     start_after?: string;
     limit?: number;
     type?: string;
+    sort?: string;
 }
 
 // ObjectList is a page of a listing, and the key the next page starts
@@ -474,6 +477,17 @@ export function objectFormat(object: FilerObject): string {
     const type = (object.type ?? '').split(';')[0].trim();
     const subtype = type.slice(type.indexOf('/') + 1).replace(/^(x-|vnd\.)/, '');
     return type.includes('/') && subtype.length <= MaxFormat ? subtype.toUpperCase() : '';
+}
+
+// The modes of a volume's index whose files are indexed, so its listings
+// can be sorted
+const FilesModes = ['objects', 'metadata', 'artwork'];
+
+// volumeSortable returns whether a volume's listings can be sorted, by the
+// server, of its index: when its files are indexed, and it's ready, of
+// its first scan
+export function volumeSortable(volume: Volume): boolean {
+    return !!volume.index && FilesModes.includes(volume.index.mode) && volume.index.status === 'ready';
 }
 
 // volumeFileNames returns whether a volume's objects have file names, such

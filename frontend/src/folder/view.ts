@@ -17,7 +17,7 @@ import '@mutablelogic/go-server/list/view';
 import { artworkURL } from '../filer/httpclient.ts';
 import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
-import { availableColumns, columnLabel, ColumnWidths, DefaultColumns, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
+import { availableColumns, columnLabel, ColumnSorts, ColumnWidths, DefaultColumns, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -50,6 +50,7 @@ export class FileViewElement extends LitElement {
         controller: { attribute: false },
         empty: { type: String },
         files: { type: Boolean },
+        sortable: { type: Boolean },
         columns: { state: true },
         selected: { attribute: false },
         state: { state: true },
@@ -63,6 +64,11 @@ export class FileViewElement extends LitElement {
     // files is whether the objects have file names, and formats, which are
     // shown, such as a folder's, rather than ids, such as a contact's
     declare files: boolean;
+
+    // sortable is whether the objects can be sorted, by the server, of a
+    // volume whose files are indexed, when their columns' headers are
+    // clicked
+    declare sortable: boolean;
 
     // columns are those which are shown, of those which can be, of the
     // volume of columnsOf
@@ -78,6 +84,7 @@ export class FileViewElement extends LitElement {
     constructor() {
         super();
         this.files = true;
+        this.sortable = false;
         this.columns = DefaultColumns;
     }
 
@@ -107,6 +114,12 @@ export class FileViewElement extends LitElement {
         if (volume && (changed.has('files') || volume !== this.columnsOf)) {
             this.columnsOf = volume;
             this.columns = visibleColumns(this.files, readColumns(volume));
+        }
+
+        // A volume which can't be sorted any more, such as once its index
+        // is changed, isn't
+        if (changed.has('sortable') && !this.sortable && this.controller?.list.current.sort) {
+            this.controller.list.setSort(undefined);
         }
 
         // An object which isn't selected any more, such as once its panel
@@ -146,15 +159,21 @@ export class FileViewElement extends LitElement {
     }
 
     // tableColumns are the table's columns: Name, which has what's left of
-    // its width, and those which are shown, of their widths
+    // its width, and those which are shown, of their widths, which sort the
+    // objects, by the server, when they're sortable
     private tableColumns(): Column<FilerObject>[] {
         const name: Column<FilerObject> = { header: 'Name', cell: (object) => this.nameView(object) };
-        return [name, ...this.columns.map((column) => ({
-            header: columnLabel(column),
-            width: `${ColumnWidths[column]}rem`,
-            align: column === 'size' ? 'end' as const : undefined,
-            cell: (object: FilerObject) => cellView(column, object),
-        }))];
+        return [name, ...this.columns.map((column) => {
+            const sort = this.sortable ? ColumnSorts[column] : undefined;
+            return {
+                header: columnLabel(column),
+                width: `${ColumnWidths[column]}rem`,
+                align: column === 'size' ? 'end' as const : undefined,
+                sort: sort?.key,
+                sortFirst: sort?.first,
+                cell: (object: FilerObject) => cellView(column, object),
+            };
+        })];
     }
 
     // nameView is a file's name: its artwork which shows it best, such as an
