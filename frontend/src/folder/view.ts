@@ -1,23 +1,23 @@
 // The gf-file-view element is the objects of a folder, which aren't folders,
-// as the tree has those, as a table of their names, types, sizes and when
-// they were changed, each of its artwork, such as an album's cover, in place
-// of its icon, when it has some, which loads more as it's scrolled, in the element it's in,
-// which scrolls. A row which is clicked is chosen, which is an event of
-// its object, and is shown chosen, of its path, as selected. Its name is a
-// button, so it's chosen of the keyboard, too.
+// as the tree has those, as go-server's gs-table, which scrolls: their
+// names, each of its artwork, such as an album's cover, in place of its
+// icon, when it has some, and the columns which are chosen of its toolbar's
+// settings menu, which are remembered of each volume: their file names and
+// formats, of a volume whose objects have them, their kinds, sizes and when
+// they were changed. It loads more as it's scrolled, in the element it's
+// in, which scrolls, beneath its header, which stays at the top. A row
+// which is clicked is chosen, which is an event of its object, and is shown
+// chosen, until it isn't selected.
 
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
-import { repeat } from 'lit/directives/repeat.js';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
-import EmptyIcon from '@carbon/icons/es/folders/32.js';
+import type { Column, TableSetting, TableSettingChange } from '@mutablelogic/go-server/list/view';
+import '@mutablelogic/go-server/list/view';
 import { artworkURL } from '../filer/httpclient.ts';
-import { objectArtwork, objectTitle, objectType, type FilerObject } from '../filer/schema.ts';
+import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
-import '@carbon/web-components/es/components/button/index.js';
-
-///////////////////////////////////////////////////////////////////////////////
-// TYPES
+import { availableColumns, columnLabel, ColumnWidths, DefaultColumns, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -29,6 +29,19 @@ export const FileViewSelected = 'gf-file-view-selected';
 
 const fileIcon = iconLoader(FileIcon);
 
+// The prefix of the key of the columns which are chosen of a volume, in
+// the browser's storage, before its name
+const ColumnsKey = 'gf-file-view-columns:';
+
+// The styles of a file's name, in gs-table's cells, which the app's styles
+// don't reach: its icon, or its artwork, in a box of the same size, so the
+// names line up, which artwork fills, and its title, cut short, of one line
+const nameStyle = 'display: inline-flex; align-items: center; gap: 0.5rem; max-width: 100%; vertical-align: middle';
+const iconStyle = 'display: inline-flex; flex: none; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem';
+const artworkStyle = 'width: 100%; height: 100%; border-radius: 2px; object-fit: cover; background: var(--cds-layer-accent-01, #e0e0e0)';
+const titleStyle = 'min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap';
+const secondaryStyle = 'color: var(--cds-text-secondary, #525252)';
+
 ///////////////////////////////////////////////////////////////////////////////
 // ELEMENT
 
@@ -36,6 +49,8 @@ export class FileViewElement extends LitElement {
     static override properties = {
         controller: { attribute: false },
         empty: { type: String },
+        files: { type: Boolean },
+        columns: { state: true },
         selected: { attribute: false },
         state: { state: true },
     };
@@ -45,14 +60,28 @@ export class FileViewElement extends LitElement {
     declare controller?: FolderController;
     declare empty?: string;
 
+    // files is whether the objects have file names, and formats, which are
+    // shown, such as a folder's, rather than ids, such as a contact's
+    declare files: boolean;
+
+    // columns are those which are shown, of those which can be, of the
+    // volume of columnsOf
+    declare private columns: FileViewColumn[];
+    private columnsOf?: string;
+
     // selected is the path of the object which is chosen, if any
     declare selected?: string;
     declare private state?: FolderState;
 
     private unsubscribe?: () => void;
-    private observer?: IntersectionObserver;
 
-    // The table is in the light DOM, so the app's styles apply
+    constructor() {
+        super();
+        this.files = true;
+        this.columns = DefaultColumns;
+    }
+
+    // The table is in the light DOM, so the app's styles apply to it
     protected override createRenderRoot() {
         return this;
     }
@@ -66,109 +95,90 @@ export class FileViewElement extends LitElement {
         super.disconnectedCallback();
         this.unsubscribe?.();
         this.unsubscribe = undefined;
-        this.observer?.disconnect();
-        this.observer = undefined;
     }
 
     protected override willUpdate(changed: PropertyValues<this>) {
         if (changed.has('controller') && this.isConnected) {
             this.watch();
         }
+
+        // The columns of the volume, which are chosen of each one
+        const volume = this.state?.volume;
+        if (volume && (changed.has('files') || volume !== this.columnsOf)) {
+            this.columnsOf = volume;
+            this.columns = visibleColumns(this.files, readColumns(volume));
+        }
+
+        // An object which isn't selected any more, such as once its panel
+        // closes, isn't shown chosen
+        if (changed.has('selected') && !this.selected && this.state?.selected) {
+            this.controller?.list.close();
+        }
     }
 
+    // watch follows the folder, and says when an object is chosen, of its
+    // row, which isn't the one which is selected
     private watch() {
         this.unsubscribe?.();
-        this.unsubscribe = this.controller?.subscribe((state) => { this.state = state; });
-    }
-
-    // More are loaded when the end of the table is scrolled to, which is
-    // watched once it's rendered
-    protected override updated() {
-        const end = this.querySelector('.gf-file-view-end');
-        this.observer?.disconnect();
-        if (end && this.state?.more && !this.state.failed) {
-            this.observer = new IntersectionObserver((entries) => {
-                if (entries.some((entry) => entry.isIntersecting)) {
-                    void this.controller?.loadMore();
-                }
-            }, { rootMargin: '200px' });
-            this.observer.observe(end);
-        }
+        this.unsubscribe = this.controller?.subscribe((state) => {
+            const chosen = state.selected;
+            if (chosen && chosen !== this.state?.selected && chosen.path !== this.selected) {
+                this.dispatchEvent(new CustomEvent<FilerObject>(FileViewSelected, { detail: chosen, bubbles: true, composed: true }));
+            }
+            this.state = state;
+        });
     }
 
     protected override render() {
         const state = this.state;
-        if (!state?.volume) {
+        const controller = this.controller;
+        if (!state?.volume || !controller) {
             return nothing;
-        } else if (!state.objects) {
-            return html`<p class="gf-empty">Loading…</p>`;
-        } else if (state.objects.length === 0 && state.failed) {
-            return this.failedView();
-        } else if (state.objects.length === 0) {
-            return html`
-                <div class="gf-file-view-empty">
-                    ${iconLoader(EmptyIcon)}
-                    <p>${this.empty || 'No objects'}</p>
-                </div>
-            `;
         }
-        // A table of Carbon's styles, rather than its element, whose own
-        // scrolling would keep its header from staying at the top of the
-        // element which scrolls
-        const count = state.count;
+        const settings: TableSetting[] = availableColumns(this.files).map((column) => ({
+            key: column, label: columnLabel(column), checked: this.columns.includes(column),
+        }));
         return html`
-            <table class="cds--data-table cds--data-table--sm gf-file-view-table">
-                <thead>
-                    <tr>
-                        <th><div class="cds--table-header-label">Name</div></th>
-                        <th class="gf-file-view-type"><div class="cds--table-header-label">Type</div></th>
-                        <th class="gf-file-view-size"><div class="cds--table-header-label">Size</div></th>
-                        <th><div class="cds--table-header-label">Modified</div></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${repeat(state.objects, (object) => object.path, (object) => html`
-                        <tr class=${object.path === this.selected ? 'cds--data-table--selected' : ''} @click=${() => this.choose(object)}>
-                            <td>
-                                <button type="button" class="gf-file-view-name" title=${object.path}><span class="gf-file-view-icon">${this.iconView(object)}</span><span>${objectTitle(object)}</span></button>
-                            </td>
-                            <td class="gf-file-view-type" title=${object.type ?? ''}>${objectType(object)}</td>
-                            <td class="gf-file-view-size">${formatSize(object.size)}</td>
-                            <td>${formatTime(object.mtime)}</td>
-                        </tr>
-                    `)}
-                </tbody>
-            </table>
-            ${state.failed ? this.failedView() : state.more ? html`<p class="gf-file-view-end gf-empty">${state.loading ? 'Loading…' : ''}</p>` : nothing}
-            ${count !== null ? html`<p class="gf-file-view-count">${countText(count)}</p>` : nothing}
+            <gs-table scrolls size="sm" class="gf-file-view-table" .controller=${controller.list} .columns=${this.tableColumns()}
+                .settings=${settings} .countLabel=${countText} empty=${this.empty || 'No objects'}
+                @gs-table-setting=${(event: CustomEvent<TableSettingChange>) => this.show(event.detail.key as FileViewColumn, event.detail.checked)}></gs-table>
         `;
     }
 
-    // iconView is a file's artwork which shows it best, such as an album's
-    // cover, which is loaded once it's scrolled to, or else its icon
-    private iconView(object: FilerObject) {
+    // tableColumns are the table's columns: Name, which has what's left of
+    // its width, and those which are shown, of their widths
+    private tableColumns(): Column<FilerObject>[] {
+        const name: Column<FilerObject> = { header: 'Name', cell: (object) => this.nameView(object) };
+        return [name, ...this.columns.map((column) => ({
+            header: columnLabel(column),
+            width: `${ColumnWidths[column]}rem`,
+            align: column === 'size' ? 'end' as const : undefined,
+            cell: (object: FilerObject) => cellView(column, object),
+        }))];
+    }
+
+    // nameView is a file's name: its artwork which shows it best, such as an
+    // album's cover, which is loaded once it's scrolled to, or else its icon,
+    // and its title, whose path is shown when it's pointed at
+    private nameView(object: FilerObject) {
         const artwork = objectArtwork(object);
         const client = this.controller?.client;
-        if (!artwork || !client) {
-            return fileIcon;
+        const icon = artwork && client
+            ? html`<img src=${artworkURL(client, artwork.hash)} alt="" loading="lazy" decoding="async" style=${artworkStyle}>`
+            : fileIcon;
+        return html`<span style=${nameStyle} title=${object.path}><span style=${iconStyle}>${icon}</span><span style=${titleStyle}>${objectTitle(object)}</span></span>`;
+    }
+
+    // show shows, or hides, a column, which is remembered, of the volume
+    private show(column: FileViewColumn, shown: boolean) {
+        if (this.columns.includes(column) === shown) {
+            return;
         }
-        return html`<img src=${artworkURL(client, artwork.hash)} alt="" loading="lazy" decoding="async">`;
-    }
-
-    // choose says the object is chosen
-    private choose(object: FilerObject) {
-        this.dispatchEvent(new CustomEvent<FilerObject>(FileViewSelected, { detail: object, bubbles: true, composed: true }));
-    }
-
-    // failedView says the objects couldn't be loaded, and loads them again,
-    // from where they couldn't be, when it's asked to
-    private failedView() {
-        return html`
-            <div class="gf-file-view-failed">
-                <span>${this.state?.objects?.length ? "More objects couldn't be loaded" : "The objects couldn't be loaded"}</span>
-                <cds-button kind="ghost" size="sm" @click=${() => void this.controller?.loadMore()}>Try again</cds-button>
-            </div>
-        `;
+        const chosen = shown ? [...this.columns, column] : this.columns.filter((c) => c !== column);
+        this.columns = visibleColumns(this.files, chosen);
+        if (this.columnsOf) {
+            writeColumns(this.columnsOf, this.columns);
+        }
     }
 }
 
@@ -185,33 +195,50 @@ declare global {
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC FUNCTIONS
 
-// formatSize returns a size, in bytes, as B, KB, MB, GB or TB, of 1,000s,
-// or "" when it isn't known
-export function formatSize(size?: number): string {
-    if (size === undefined || size < 0) {
-        return '';
-    }
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let value = size;
-    let unit = 0;
-    while (value >= 1000 && unit < units.length - 1) {
-        value /= 1000;
-        unit++;
-    }
-    return unit === 0 ? `${value} B` : `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-}
+// The file view's columns, and its sizes, and times, for people
+export { availableColumns, formatSize, formatTime, visibleColumns, type FileViewColumn };
 
-// formatTime returns when something changed, in the browser's locale, or ""
-// when it isn't known
-export function formatTime(time?: string): string {
-    if (!time) {
-        return '';
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE FUNCTIONS
+
+// cellView is a file's cell of a column
+function cellView(column: FileViewColumn, object: FilerObject) {
+    switch (column) {
+        case 'file':
+            return html`<span style=${secondaryStyle}>${objectFileName(object)}</span>`;
+        case 'kind':
+            return objectKind(object);
+        case 'format':
+            return html`<span title=${object.type ?? ''}>${objectFormat(object)}</span>`;
+        case 'size':
+            return formatSize(object.size);
+        case 'modified':
+            return formatTime(object.mtime);
     }
-    const date = new Date(time);
-    return Number.isNaN(date.getTime()) || date.getFullYear() <= 1 ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 // countText returns how many objects a folder has
 function countText(count: number): string {
     return `${count.toLocaleString()} ${count === 1 ? 'item' : 'items'}`;
+}
+
+// readColumns returns the columns which were chosen of a volume, or
+// undefined, when none were, or the browser's storage can't be read
+function readColumns(volume: string): string[] | undefined {
+    try {
+        const value = JSON.parse(localStorage.getItem(ColumnsKey + volume) ?? 'null');
+        return Array.isArray(value) ? value.filter((v) => typeof v === 'string') : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+// writeColumns remembers the columns which are chosen of a volume, when the
+// browser's storage can be written
+function writeColumns(volume: string, columns: readonly FileViewColumn[]) {
+    try {
+        localStorage.setItem(ColumnsKey + volume, JSON.stringify(columns));
+    } catch {
+        // It isn't remembered
+    }
 }

@@ -196,6 +196,13 @@ export function artworkLabel(artwork: Artwork): string {
     return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+// MajorKinds are the kinds of objects of the major types of their media
+// types, without a metadata:kind, MaxFormat the longest format which is
+// shown, and FileNameSchemes the backends whose objects have file names
+const MajorKinds: Record<string, string> = { image: 'Image', audio: 'Audio', video: 'Video', text: 'Text', font: 'Font' };
+const MaxFormat = 8;
+const FileNameSchemes = ['file', 's3', 'gdrive'];
+
 // subfolderCount returns how many subfolders a folder lists, or undefined,
 // when it isn't known
 export function subfolderCount(object: FilerObject): number | undefined {
@@ -436,14 +443,42 @@ export function volumeTitle(volume: Volume, backends: readonly Backend[] = []): 
 export const MetadataNamespace = 'metadata';
 export const MetadataKind = 'kind';
 
-// objectType returns what an object is: its kind, of its metadata, such as
-// Book, or else the subtype of its type, such as mpeg of audio/mpeg, or ""
-export function objectType(object: FilerObject): string {
+// objectKind returns what an object is: its metadata:kind, such as Book,
+// or Recording, or else of its media type's major type, such as Image, or
+// Audio, or "", when that isn't one which says
+export function objectKind(object: FilerObject): string {
     const kind = metaValue(object, MetadataNamespace, MetadataKind);
     if (typeof kind === 'string' && kind) {
         return kind.charAt(0).toUpperCase() + kind.slice(1);
     }
+    const major = (object.type ?? '').split('/')[0].trim().toLowerCase();
+    return MajorKinds[major] ?? '';
+}
+
+// objectFileName returns an object's file name, the last element of its
+// path, with its extension
+export function objectFileName(object: FilerObject): string {
+    return baseName(object.path);
+}
+
+// objectFormat returns an object's format, for people: its file name's
+// extension, such as HEIC, or PDF, or else its media type's subtype, without
+// x- or vnd., such as MPEG, or "", of neither, or one which is too long to
+// say much
+export function objectFormat(object: FilerObject): string {
+    const name = objectFileName(object);
+    const dot = name.lastIndexOf('.');
+    if (dot > 0 && name.length - dot - 1 <= MaxFormat && /^[a-z0-9]+$/i.test(name.slice(dot + 1))) {
+        return name.slice(dot + 1).toUpperCase();
+    }
     const type = (object.type ?? '').split(';')[0].trim();
-    const slash = type.indexOf('/');
-    return slash < 0 ? type : type.slice(slash + 1);
+    const subtype = type.slice(type.indexOf('/') + 1).replace(/^(x-|vnd\.)/, '');
+    return type.includes('/') && subtype.length <= MaxFormat ? subtype.toUpperCase() : '';
+}
+
+// volumeFileNames returns whether a volume's objects have file names, such
+// as a folder's, or a bucket's, whose paths are their names, rather than
+// ids, such as a contact's, or an event's
+export function volumeFileNames(volume: Volume): boolean {
+    return FileNameSchemes.includes(volumeScheme(volume));
 }

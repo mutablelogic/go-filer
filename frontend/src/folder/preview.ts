@@ -10,6 +10,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { Client } from '@mutablelogic/go-server/api';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import '@carbon/web-components/es/components/skeleton-text/index.js';
 import { readMarkdown } from '../filer/httpclient.ts';
 import type { FilerObject } from '../filer/schema.ts';
 
@@ -161,7 +162,7 @@ export class ObjectPreviewElement extends LitElement {
         const state = this.state;
         switch (state.kind) {
             case 'loading':
-                return html`<p class="note">Loading…</p>`;
+                return html`<cds-skeleton-text paragraph line-count="6" aria-busy="true"></cds-skeleton-text>`;
             case 'unavailable':
                 return html`<p class="note">This file can't be previewed</p>`;
             case 'failed':

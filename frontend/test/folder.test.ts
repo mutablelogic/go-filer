@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Client } from '@mutablelogic/go-server/api';
 import { FolderController } from '../src/folder/controller.ts';
-import { formatSize, formatTime } from '../src/folder/view.ts';
-import { objectType } from '../src/filer/schema.ts';
+import { availableColumns, formatSize, formatTime, visibleColumns } from '../src/folder/format.ts';
+import { objectFormat, objectKind, volumeFileNames } from '../src/filer/schema.ts';
 
 // fakeServer is a volume's folders, of their objects' paths, whose listings
 // are paged, and counted, which records each listing's folder and start
@@ -57,10 +57,8 @@ test('FolderController', async (t) => {
         const { client, listed } = fakeServer({ '/': ['/a/', '/b/', '/c/', '/d/', '/x.txt', '/y/', '/z.txt'] });
         const folder = new FolderController(client, { pageLimit: 2 });
         await folder.open('media', '/');
-        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt']);
-        assert.deepEqual(listed, ['/@', '/@/b/', '/@/d/'], 'the pages of only folders are skipped');
-        await folder.loadMore();
-        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt', '/z.txt']);
+        assert.deepEqual(folder.current.objects?.map((o) => o.path), ['/x.txt', '/z.txt'], 'a page of objects, of as many pages as it takes');
+        assert.deepEqual(listed, ['/@', '/@/b/', '/@/d/', '/@/x.txt'], 'the pages of only folders are skipped, and more start after the last object');
         assert.equal(folder.current.more, false);
         assert.equal(folder.current.count, 2, 'its objects, without its folders');
     });
@@ -191,9 +189,45 @@ async function settle() {
     }
 }
 
-test('objectType', () => {
-    assert.equal(objectType({ name: 'media', path: '/a.epub', type: 'application/epub+zip', meta: [{ namespace: 'metadata', key: 'kind', value: 'book' }] }), 'Book');
-    assert.equal(objectType({ name: 'media', path: '/a.mp3', type: 'audio/mpeg' }), 'mpeg');
-    assert.equal(objectType({ name: 'media', path: '/a.txt', type: 'text/plain; charset=utf-8' }), 'plain');
-    assert.equal(objectType({ name: 'media', path: '/a' }), '');
+test('objectKind', () => {
+    // Its metadata:kind, or else of its major type, or none
+    assert.equal(objectKind({ name: 'media', path: '/a.epub', type: 'application/epub+zip', meta: [{ namespace: 'metadata', key: 'kind', value: 'book' }] }), 'Book');
+    assert.equal(objectKind({ name: 'media', path: '/a.mp3', type: 'audio/mpeg' }), 'Audio');
+    assert.equal(objectKind({ name: 'media', path: '/a.heic', type: 'image/heic' }), 'Image');
+    assert.equal(objectKind({ name: 'media', path: '/a.zip', type: 'application/zip' }), '');
+    assert.equal(objectKind({ name: 'media', path: '/a' }), '');
+});
+
+test('objectFormat', () => {
+    // Its extension, or else its subtype, without x- or vnd., or none
+    assert.equal(objectFormat({ name: 'media', path: '/Mac Blue.heic', type: 'image/heic' }), 'HEIC');
+    assert.equal(objectFormat({ name: 'media', path: '/a/report.final.pdf' }), 'PDF');
+    assert.equal(objectFormat({ name: 'media', path: '/song', type: 'audio/mpeg' }), 'MPEG');
+    assert.equal(objectFormat({ name: 'media', path: '/notes', type: 'text/x-markdown; charset=utf-8' }), 'MARKDOWN');
+    assert.equal(objectFormat({ name: 'media', path: '/doc', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), '');
+    assert.equal(objectFormat({ name: 'media', path: '/.profile' }), '');
+    assert.equal(objectFormat({ name: 'media', path: '/a' }), '');
+});
+
+test('volumeFileNames', () => {
+    // A folder's, a bucket's and Drive's objects have file names, and
+    // contacts', events' and tasks' are ids
+    const volume = (url: string) => ({ name: 'v', url, enabled: true, mounted: true });
+    assert.equal(volumeFileNames(volume('file://media/mnt/media')), true);
+    assert.equal(volumeFileNames(volume('s3://bucket/')), true);
+    assert.equal(volumeFileNames(volume('gdrive://drive')), true);
+    assert.equal(volumeFileNames(volume('gcontacts://contacts')), false);
+    assert.equal(volumeFileNames(volume('webcal://example.com/feed.ics')), false);
+});
+
+test('fileViewColumns', () => {
+    // File and Format are only of volumes whose objects have file names
+    assert.deepEqual(availableColumns(true), ['file', 'kind', 'format', 'size', 'modified']);
+    assert.deepEqual(availableColumns(false), ['kind', 'size', 'modified']);
+
+    // Those which are chosen, which can be, in order, or else the defaults
+    assert.deepEqual(visibleColumns(true), ['kind', 'size', 'modified']);
+    assert.deepEqual(visibleColumns(true, ['modified', 'file']), ['file', 'modified']);
+    assert.deepEqual(visibleColumns(false, ['file', 'format', 'size']), ['size']);
+    assert.deepEqual(visibleColumns(true, ['unknown']), []);
 });

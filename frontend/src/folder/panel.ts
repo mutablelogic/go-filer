@@ -14,7 +14,7 @@ import { play, playable } from '@mutablelogic/go-server/player';
 import Download16 from '@carbon/icons/es/download/16.js';
 import Play16 from '@carbon/icons/es/play/16.js';
 import { artworkURL, objectURL } from '../filer/httpclient.ts';
-import { artworkLabel, metaValue, MetadataNamespace, objectTitle, objectType, type Artwork, type FilerObject, type Meta } from '../filer/schema.ts';
+import { artworkLabel, metaValue, MetadataNamespace, objectFormat, objectKind, objectTitle, type Artwork, type FilerObject, type Meta } from '../filer/schema.ts';
 import { formatSize, formatTime } from './view.ts';
 import './preview.ts';
 
@@ -204,7 +204,8 @@ export class ObjectPanelElement extends LitElement {
     // detailsView is what the file is, and its metadata, of each namespace
     private detailsView(object: FilerObject): TemplateResult {
         const rows: [string, string][] = [
-            ['Type', [objectType(object), object.type].filter(Boolean).join(' · ') || '–'],
+            ['Kind', objectKind(object) || '–'],
+            ['Format', [objectFormat(object), object.type].filter(Boolean).join(' · ') || '–'],
             ['Size', formatSize(object.size) || '–'],
             ['Modified', formatTime(object.mtime) || '–'],
         ];

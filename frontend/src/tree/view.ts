@@ -13,6 +13,7 @@ import type { ChangesController } from '@mutablelogic/go-server/broadcaster';
 import FolderIcon from '@carbon/icons/es/folder/16.js';
 import { ObjectChangeSchema, objectTitle, subfolderCount, type FilerObject } from '../filer/schema.ts';
 import type { TreeController } from './controller.ts';
+import '@carbon/web-components/es/components/skeleton-text/index.js';
 import '@carbon/web-components/es/components/tree-view/index.js';
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -152,7 +153,11 @@ export class FileTreeElement extends LitElement {
         if (!volume || !roots) {
             return nothing;
         } else if (roots.state !== 'loaded') {
-            return html`<p class="gf-empty">${roots.state === 'error' ? "The folders couldn't be loaded" : 'Loading…'}</p>`;
+            // Carbon's skeleton, of grey bars which are animated, while
+            // they're loading
+            return roots.state === 'error'
+                ? html`<p class="gf-empty">The folders couldn't be loaded</p>`
+                : html`<div class="gf-skeleton" aria-busy="true">${['70%', '55%', '80%', '45%'].map((width) => html`<cds-skeleton-text width=${width}></cds-skeleton-text>`)}</div>`;
         } else if (roots.folders.length === 0) {
             return nothing;
         }

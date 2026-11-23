@@ -25,7 +25,7 @@ import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-load
 import { backendIconURL } from '../filer/httpclient.ts';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController, type FolderState } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeFileNames, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -35,6 +35,7 @@ import '../folder/view.ts';
 import '../folder/panel.ts';
 import { apiLister, startFolder } from '../folder/start.ts';
 import type { FilerObject } from '../filer/schema.ts';
+import '@carbon/web-components/es/components/skeleton-text/index.js';
 import '@carbon/web-components/es/components/tile/clickable-tile.js';
 import '@carbon/web-components/es/components/tag/tag.js';
 import '@carbon/web-components/es/components/tabs/index.js';
@@ -458,7 +459,9 @@ export class VolumeElement extends LitElement {
     // chosen
     private contentView(name: string, path: string, volume: Volume | undefined, hasFolders: boolean): TemplateResult {
         if (!volume) {
-            return html`<p class="gf-empty">${this.controller?.volumes ? "This volume doesn't exist" : 'Loading…'}</p>`;
+            return this.controller?.volumes
+                ? html`<p class="gf-empty">This volume doesn't exist</p>`
+                : html`<div class="gf-skeleton" aria-busy="true"><cds-skeleton-text paragraph line-count="3"></cds-skeleton-text></div>`;
         } else if (!volume.mounted) {
             // One which is unmounted is, of its own, so it isn't an error,
             // which its tag says, too
@@ -472,7 +475,7 @@ export class VolumeElement extends LitElement {
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path: path === '/' ? this.shown ?? path : path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
-                <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected}
+                <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected} ?files=${volumeFileNames(volume)}
                     empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}
                     @gf-file-view-selected=${(event: CustomEvent<FilerObject>) => this.select(event.detail)}></gf-file-view>
             </div>
