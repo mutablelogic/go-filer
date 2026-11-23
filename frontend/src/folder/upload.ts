@@ -8,15 +8,16 @@
 // of Esc, stops reading it, and cancels an upload. open opens it, of the folder, and the function which is called
 // once files are added.
 
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import type { Client } from '@mutablelogic/go-server/api';
 import { PanelController, type PanelAction } from '@mutablelogic/go-server/panel';
 import '@mutablelogic/go-server/panel/view';
 import Upload16 from '@carbon/icons/es/upload/16.js';
+import Upload32 from '@carbon/icons/es/upload/32.js';
+import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import '@carbon/web-components/es/components/file-uploader/index.js';
 import '@carbon/web-components/es/components/toggle/index.js';
-import '@carbon/web-components/es/components/button/index.js';
 import '@carbon/web-components/es/components/layer/index.js';
 import { alertView } from '../alert/view.ts';
 import { uploadObjects } from '../filer/httpclient.ts';
@@ -40,6 +41,21 @@ interface Chosen {
 // GLOBALS
 
 export const ObjectUploadTag = 'gf-object-upload';
+
+// dropZone is the drop zone's style, in Carbon's drop container's shadow
+// root: as wide as the panel, taller, and of what it says in its middle
+const dropZone = css`
+    .cds--file-browse-btn {
+        max-inline-size: none;
+    }
+
+    .cds--file__drop-container {
+        align-items: center;
+        justify-content: center;
+        block-size: 10rem;
+        text-align: center;
+    }
+`;
 
 // MaxListed is how many of the files which are chosen are listed, of more,
 // which are counted, and BatchSize how many of a folder's files are added
@@ -109,6 +125,20 @@ export class ObjectUploadElement extends LitElement {
         return this;
     }
 
+    // The drop zone is as wide as the panel, and taller, with what it says
+    // in its middle, of a stylesheet added to Carbon's drop container's
+    // shadow root, which doesn't expose its parts, once it's rendered
+    protected override updated() {
+        const drop = this.querySelector('cds-file-uploader-drop-container');
+        const sheet = dropZone.styleSheet;
+        void (drop as (Element & { updateComplete?: Promise<unknown> }) | null)?.updateComplete?.then(() => {
+            const root = drop?.shadowRoot;
+            if (sheet && root && !root.adoptedStyleSheets.includes(sheet)) {
+                root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+            }
+        });
+    }
+
     // open opens the panel of the volume's folder, and calls the function
     // once files are added to it
     open(volume: string, folder: string, added?: () => void) {
@@ -138,18 +168,20 @@ export class ObjectUploadElement extends LitElement {
         return html`
             <div class="gf-volume-form">
                 <cds-layer level="1">
-                    <cds-file-uploader label-title="Files" label-description="Files, and folders, of all of their files, which are added to the folder">
+                    <cds-file-uploader>
                         ${done ? nothing : html`
                             <div @drop=${{ handleEvent: (event: DragEvent) => this.dropped(event), capture: true }}>
-                                <cds-file-uploader-drop-container multiple ?disabled=${uploading}
+                                <cds-file-uploader-drop-container class="gf-object-upload-drop" multiple ?disabled=${uploading}
                                     @cds-file-uploader-drop-container-changed=${(event: CustomEvent<{ addedFiles: File[] }>) => this.add(event.detail.addedFiles.map((file) => ({ file, path: file.name })))}>
-                                    Drag and drop files, or folders, here, or click to choose files
+                                    <span class="gf-object-upload-drop-content">
+                                        ${iconLoader(Upload32)}
+                                        <span>Drag and drop files or folders here</span>
+                                        <span class="gf-object-upload-drop-hint">or click to choose files</span>
+                                    </span>
                                 </cds-file-uploader-drop-container>
                             </div>
-                            <cds-button kind="ghost" size="sm" ?disabled=${uploading} @click=${() => this.querySelector<HTMLInputElement>('.gf-object-upload-folder')?.click()}>Choose a folder</cds-button>
-                            <input class="gf-object-upload-folder" type="file" webkitdirectory multiple hidden
-                                @change=${(event: Event) => this.chooseFolder(event.target as HTMLInputElement)}>
                         `}
+                        ${this.summaryView()}
                         ${repeat(skippedFirst(this.chosen, MaxListed), (c) => c.path, (c) => html`
                             <cds-file-uploader-item state=${c.state} ?invalid=${!!c.skipped}
                                 error-subject=${c.skipped ? (c.skipped.exists ? 'It exists' : "It wasn't added") : ''}
@@ -160,9 +192,8 @@ export class ObjectUploadElement extends LitElement {
                         `)}
                     </cds-file-uploader>
                 </cds-layer>
-                ${this.summaryView()}
                 ${done ? nothing : html`
-                    <cds-toggle size="sm" label-text="Replace files which exist" label-a="Yes" label-b="No" ?checked=${this.overwrite} ?disabled=${uploading}
+                    <cds-toggle size="sm" label-text="Overwrite existing files" label-a="Yes" label-b="No" ?checked=${this.overwrite} ?disabled=${uploading}
                         @cds-toggle-changed=${(event: CustomEvent<{ checked: boolean }>) => { this.overwrite = event.detail.checked; }}></cds-toggle>
                 `}
                 ${this.error ? alertView('error', "The files couldn't be added", this.error) : nothing}
@@ -170,20 +201,24 @@ export class ObjectUploadElement extends LitElement {
         `;
     }
 
-    // summaryView says how many files are chosen, and their size, beneath
-    // those which are listed, of more than are, and that a folder is being
-    // read, while it is
+    // summaryView says how many files are chosen, and their size, above
+    // those which are listed, and how many more there are, of more than are
+    // listed, and how many weren't added, and that a folder is being read,
+    // while it is
     private summaryView(): TemplateResult | typeof nothing {
-        const more = this.chosen.length - MaxListed;
-        if (more <= 0 && !this.reading) {
+        if (this.chosen.length === 0 && !this.reading) {
             return nothing;
         }
-        const size = this.chosen.reduce((total, c) => total + c.file.size, 0);
+        const total = this.chosen.length;
+        const listed = Math.min(total, MaxListed);
+        const size = formatSize(this.chosen.reduce((sum, c) => sum + c.file.size, 0)) || '0 B';
         const skipped = this.chosen.filter((c) => c.skipped).length;
-        const count = `${this.chosen.length.toLocaleString()} ${this.chosen.length === 1 ? 'file' : 'files'}, ${formatSize(size) || '0 B'}`;
+        const summary = total > listed
+            ? `${files(listed)}, and ${(total - listed).toLocaleString()} more, of ${files(total)}, ${size}`
+            : `${files(total)}, ${size}`;
         return html`
             <p class="gf-object-upload-summary">
-                ${more > 0 ? `and ${more.toLocaleString()} more, of ${count}` : count}${skipped ? ` · ${skipped.toLocaleString()} not added` : ''}${this.reading ? ' · Reading…' : ''}
+                ${summary}${skipped ? ` · ${skipped.toLocaleString()} not added` : ''}${this.reading ? ' · Reading…' : ''}
             </p>
         `;
     }
@@ -259,24 +294,6 @@ export class ObjectUploadElement extends LitElement {
                 this.reading--;
                 this.setAction();
             }
-        }
-    }
-
-    // chooseFolder adds the files of a folder which is chosen, of their
-    // paths, which start with the folder's name, a batch at a time
-    private async chooseFolder(input: HTMLInputElement) {
-        const files = [...(input.files ?? [])];
-        input.value = '';
-        const session = this.session;
-        this.reading++;
-        this.setAction();
-        for (let i = 0; i < files.length && session === this.session; i += BatchSize) {
-            this.add(files.slice(i, i + BatchSize).map((file) => ({ file, path: file.webkitRelativePath || file.name })));
-            await nextFrame();
-        }
-        if (session === this.session) {
-            this.reading--;
-            this.setAction();
         }
     }
 
@@ -380,6 +397,11 @@ async function* entryBatches(entry: FileSystemEntry, folder: string, live: () =>
 // entryFile returns the file of a file entry
 function entryFile(entry: FileSystemFileEntry): Promise<File> {
     return new Promise<File>((resolve, reject) => entry.file(resolve, reject));
+}
+
+// files returns how many files there are, such as 2 files
+function files(count: number): string {
+    return `${count.toLocaleString()} ${count === 1 ? 'file' : 'files'}`;
 }
 
 // nextFrame resolves once the page is drawn, so what's added is shown,

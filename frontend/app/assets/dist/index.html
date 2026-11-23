@@ -374,12 +374,42 @@
             --cds-layer-background: var(--cds-layer);
         }
 
-        /* How many files are chosen, of more than are listed, in the panel
-           which adds files, and whether a folder is being read */
+        /* How many files are chosen, above those which are listed, in the
+           panel which adds files, and whether a folder is being read, in
+           bold, as the files which are deleted are labelled */
         .gf-object-upload-summary {
-            margin: 0;
+            margin: 1rem 0 0.5rem;
+            color: var(--cds-text-primary);
+            font-size: var(--cds-heading-compact-01-font-size, 0.875rem);
+            font-weight: var(--cds-heading-compact-01-font-weight, 600);
+            line-height: var(--cds-heading-compact-01-line-height, 1.28572);
+            letter-spacing: var(--cds-heading-compact-01-letter-spacing, 0.16px);
+        }
+
+        /* The drop zone, in the panel which adds files, of an icon, and what
+           to do, beneath it, and its files, as wide as it */
+        .gf-object-upload-drop {
+            display: block;
+        }
+
+        .gf-object-upload-drop-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .gf-object-upload-drop-content svg {
+            margin-bottom: 0.5rem;
+            fill: currentColor;
+        }
+
+        .gf-object-upload-drop-hint {
             color: var(--cds-text-secondary);
-            font-size: 0.875rem;
+        }
+
+        gf-object-upload cds-file-uploader-item {
+            max-inline-size: none;
         }
 
         /* A file's size, beside its path, in the panel which adds files */
