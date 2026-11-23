@@ -146,23 +146,11 @@ export class VolumesElement extends LitElement {
             label: 'Add Volume',
             menu: backends.map((backend) => ({
                 label: backend.description || backend.scheme,
-                icon: this.backendIcon(backend),
+                icon: backendIcon(this.controller, backend.scheme, 1, DataBaseIcon),
                 disabled: !VolumeFields.has(backend.scheme),
                 run: () => this.querySelector('gf-volume-add')?.open(backend),
             })),
         }];
-    }
-
-    // backendIcon is the icon of a backend, its own, of the server, drawn in
-    // the menu's colour, as a mask, or a database's, without one
-    private backendIcon(backend: Backend): unknown {
-        const client = this.controller?.client;
-        if (!backend.icon || !client) {
-            return DataBaseIcon;
-        }
-        const url = backendIconURL(client, backend.scheme);
-        const mask = `url("${url.replace(/["\\]/g, '\\$&')}") center / contain no-repeat`;
-        return html`<span style=${`display: inline-block; inline-size: 1rem; block-size: 1rem; background-color: currentColor; -webkit-mask: ${mask}; mask: ${mask};`} role="img" aria-hidden="true"></span>`;
     }
 
     // edit opens the panel of a volume, of its View tab
@@ -453,7 +441,7 @@ export class VolumeElement extends LitElement {
             <gs-page-header
                 heading=${folder ? objectTitle(folder) : baseName(path) || (volume ? volumeLabel(volume) : name)}
                 subtitle=${`${name}${path === '/' ? '' : path}`}
-                .icon=${path === '/' ? VolumesIcon : FolderIcon} .actions=${volume ? this.editActions(volume) : []}>
+                .icon=${path === '/' && volume ? backendIcon(this.controller, volumeScheme(volume), 2, VolumesIcon) : path === '/' ? VolumesIcon : FolderIcon} .actions=${volume ? this.editActions(volume) : []}>
                 ${volume ? html`<div class="gf-volume-header-status">${statusTag(volume, 'md')}</div>` : nothing}
             </gs-page-header>
             <gf-volume-panel .controller=${this.controller} .notifications=${this.notifications}></gf-volume-panel>
@@ -794,6 +782,20 @@ function tagType(volume: Volume, backends: readonly Backend[] = []): string {
 // tileCount returns how many objects a volume has, of a tile, with what
 // they are beneath, such as events, or "–", when it isn't known, with why, and that it's
 // offline, when it is
+// backendIcon is the icon of a backend, of its scheme, its own, of the
+// server, drawn in the text's colour, as a mask, of the size, in rem, or the
+// fallback, when it has none
+function backendIcon(controller: VolumesController | undefined, scheme: string, size: number, fallback: unknown): unknown {
+    const client = controller?.client;
+    const backend = controller?.backends?.find((b) => b.scheme === scheme);
+    if (!backend?.icon || !client) {
+        return fallback;
+    }
+    const url = backendIconURL(client, backend.scheme);
+    const mask = `url("${url.replace(/["\\]/g, '\\$&')}") center / contain no-repeat`;
+    return html`<span style=${`display: inline-block; inline-size: ${size}rem; block-size: ${size}rem; background-color: currentColor; -webkit-mask: ${mask}; mask: ${mask};`} role="img" aria-hidden="true"></span>`;
+}
+
 function tileCount(volume: Volume): TemplateResult {
     if (!volume.mounted) {
         // One which is unmounted, of its own, isn't an error
