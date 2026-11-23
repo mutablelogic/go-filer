@@ -16,7 +16,6 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -293,13 +292,28 @@ func (self *Registry) Schemes() []string {
 }
 
 // Backends returns the backends which volumes can be created of, in order
-// of their schemes, with what each is
+// of their schemes, with what each is, the media type of its icon, when it
+// has one, and its default options
 func (self *Registry) Backends() []schema.Backend {
 	result := make([]schema.Backend, 0, len(self.backends))
 	for _, scheme := range self.Schemes() {
-		result = append(result, schema.Backend{Scheme: scheme, Description: self.backends[scheme].description})
+		backend := self.backends[scheme]
+		item := schema.Backend{Scheme: scheme, Description: backend.Description(), Defaults: backend.Defaults()}
+		if icon := backend.Icon(); icon != nil {
+			item.Icon = icon.Type()
+		}
+		result = append(result, item)
 	}
 	return result
+}
+
+// Backend returns the backend of the scheme, or ErrNotFound, when there's
+// none, such as one which isn't run
+func (self *Registry) Backend(scheme string) (gofiler.Backend, error) {
+	if backend, exists := self.backends[scheme]; exists {
+		return backend, nil
+	}
+	return nil, gofiler.ErrNotFound.Withf("no backend of scheme %q", scheme)
 }
 
 // forget removes a volume's index, and its state, from the registry's store,
@@ -399,7 +413,7 @@ func (self *Registry) indexed(volume string, b gofiler.Filer, mode indexer.Mode)
 
 // newBackend creates a backend from a URL, without the registry's options,
 // of the backend of its scheme (see WithBackend), with its cache
-func (self *Registry) newBackend(ctx context.Context, u *url.URL, cache store.CacheStore) (gofiler.Filer, error) {
+func (self *Registry) newBackend(ctx context.Context, u *url.URL, cache gofiler.CacheStore) (gofiler.Filer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	} else if u == nil {
@@ -415,7 +429,7 @@ func (self *Registry) newBackend(ctx context.Context, u *url.URL, cache store.Ca
 	if !exists {
 		return nil, gofiler.ErrBadParameter.Withf("unsupported scheme: %q", u.Scheme)
 	}
-	return backend.open(ctx, u, cache, self.backendOpts)
+	return backend.New(ctx, u, cache, self.backendOpts)
 }
 
 // register registers the backend with the entry of the volume, unless the

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	// Packages
+	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	store "github.com/mutablelogic/go-filer/store"
 )
@@ -85,7 +86,7 @@ func (self *CalendarFiler) loadCheckpoint(ctx context.Context) (checkpoint, bool
 // the sync tokens, and the calendars' entity tags, of a sync, once the
 // listings it changed are deleted
 func (self *CalendarFiler) saveCheckpoint(ctx context.Context, state *calendarSync) error {
-	return store.PutCacheJSON(ctx, self.cache, checkpointKey, 0, store.CacheMeta{}, checkpoint{Tokens: state.tokens, Tags: state.calendars})
+	return store.PutCacheJSON(ctx, self.cache, checkpointKey, 0, gofiler.CacheMeta{}, checkpoint{Tokens: state.tokens, Tags: state.calendars})
 }
 
 // loadListing returns the events of a directory, of the days, which were
@@ -144,7 +145,7 @@ func (self *CalendarFiler) saveListing(ctx context.Context, dir string, from, to
 	if self.listGen != generation {
 		return
 	}
-	meta := store.CacheMeta{Values: map[string]string{listingFrom: from.UTC().Format(time.RFC3339), listingTo: to.UTC().Format(time.RFC3339)}}
+	meta := gofiler.CacheMeta{Values: map[string]string{listingFrom: from.UTC().Format(time.RFC3339), listingTo: to.UTC().Format(time.RFC3339)}}
 	_ = store.PutCacheJSON(ctx, self.cache, listingKey(dir), 0, meta, saved)
 }
 

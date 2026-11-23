@@ -26,7 +26,6 @@ import (
 	fsevents "github.com/mutablelogic/go-filer/backend/fs/fsevents"
 	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -1167,7 +1166,7 @@ func (e example) Close() error {
 func Test_Registry_WithBackend(t *testing.T) {
 	dir := t.TempDir()
 	var given gofiler.Opts
-	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		given = opts
 		assert.False(t, u.Query().Has(indexer.IndexParam), "the index option is the registry's")
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
@@ -1176,7 +1175,7 @@ func Test_Registry_WithBackend(t *testing.T) {
 		}
 		return example{Filer: b, u: u}, nil
 	}
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithCredentials(credentials{}), WithBackend("example", "Examples", open))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithCredentials(credentials{}), WithBackend(testBackend("example", "Examples", open)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -1198,13 +1197,13 @@ func Test_Registry_WithBackend(t *testing.T) {
 	// A scheme which isn't valid, or of a single letter, which is a Windows
 	// drive, a backend which is nil, and a scheme which is taken, such as
 	// one which is built in, can't be added
-	for _, opt := range []Opt{WithBackend("Example", "", open), WithBackend("1x", "", open), WithBackend("x", "", open), WithBackend("xy", "", nil)} {
+	for _, opt := range []Opt{WithBackend(testBackend("Example", "", open)), WithBackend(testBackend("1x", "", open)), WithBackend(testBackend("x", "", open)), WithBackend(testBackend("xy", "", nil))} {
 		_, err := New(context.Background(), WithStore(newStore(t)), opt)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	}
-	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("file", "", open))
+	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend(testBackend("file", "", open)))
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
-	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend("example", "Examples", open), WithBackend("example", "Examples", open))
+	_, err = New(context.Background(), WithStore(newStore(t)), WithBackend(testBackend("example", "Examples", open)), WithBackend(testBackend("example", "Examples", open)))
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 }
 
@@ -1258,7 +1257,7 @@ func Test_Registry_BackendGone(t *testing.T) {
 	r.close()
 
 	// Once its backend is registered, it's mounted
-	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err
@@ -1267,7 +1266,7 @@ func Test_Registry_BackendGone(t *testing.T) {
 	}
 	_, err = s.UpdateVolume(context.Background(), schema.VolumeMeta{Name: "things", URL: "example://things", Enabled: true})
 	require.NoError(t, err)
-	r, err = New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithBackend("example", "Examples", open))
+	r, err = New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithBackend(testBackend("example", "Examples", open)))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -1286,7 +1285,7 @@ func Test_Registry_BackendGone(t *testing.T) {
 // backend's is an error, of those which are
 func Test_Registry_WithSchemes(t *testing.T) {
 	dir := t.TempDir()
-	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err
@@ -1296,7 +1295,7 @@ func Test_Registry_WithSchemes(t *testing.T) {
 	s := newStore(t)
 	_, err := s.CreateVolume(context.Background(), schema.VolumeMeta{Name: "bucket", URL: "s3://bucket", Enabled: true})
 	require.NoError(t, err)
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithSchemes("example", " file", ""), WithBackend("example", "Examples", open), WithSchemes("file"))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(s), WithSchemes("example", " file", ""), WithBackend(testBackend("example", "Examples", open)), WithSchemes("file"))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
 	runRegistry(t, r)
@@ -1320,13 +1319,25 @@ func Test_Registry_WithSchemes(t *testing.T) {
 // The backends are listed, with what each is, and logged, once the registry
 // runs
 func Test_Registry_Backends(t *testing.T) {
-	open := func(context.Context, *url.URL, store.CacheStore, gofiler.Opts) (gofiler.Filer, error) {
+	open := func(context.Context, *url.URL, gofiler.CacheStore, gofiler.Opts) (gofiler.Filer, error) {
 		return nil, gofiler.ErrNotImplemented
 	}
-	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithBackend("example", "Examples", open), WithSchemes("example", "file"))
+	r, err := New(context.Background(), WithDebounce(0), WithBroadcaster(newBroadcaster(t)), WithStore(newStore(t)), WithBackend(testBackend("example", "Examples", open)), WithSchemes("example", "file"))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })
-	assert.Equal(t, []schema.Backend{{Scheme: "example", Description: "Examples"}, {Scheme: "file", Description: "Server filesystem"}}, r.Backends())
+	backends := r.Backends()
+	require.Len(t, backends, 2)
+	assert.Equal(t, [][2]string{{"example", "Examples"}, {"file", "Server filesystem"}}, [][2]string{{backends[0].Scheme, backends[0].Description}, {backends[1].Scheme, backends[1].Description}})
+
+	// Each has the media type of its icon, when it has one, and its defaults
+	assert.Empty(t, backends[0].Icon)
+	assert.Equal(t, "image/svg+xml", backends[1].Icon)
+	assert.Equal(t, "false", backends[1].Defaults.Get("readonly"))
+	file, err := r.Backend("file")
+	require.NoError(t, err)
+	assert.Equal(t, "file", file.Scheme())
+	_, err = r.Backend("s3")
+	assert.ErrorIs(t, err, gofiler.ErrNotFound, "a backend which isn't run")
 
 	var logs logBuffer
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1340,4 +1351,28 @@ func Test_Registry_Backends(t *testing.T) {
 	require.Eventually(t, func() bool { return logs.count("added backend") == 2 }, 5*time.Second, time.Millisecond)
 	assert.Equal(t, 1, logs.count("level=INFO", "added backend", "scheme=example", "description=Examples"))
 	assert.Equal(t, 1, logs.count("added backend", "scheme=file", `description="Server filesystem"`))
+}
+
+// funcBackend is a backend of a test, of its scheme, what it is, and the
+// function which opens a volume of it
+type funcBackend struct {
+	scheme, description string
+	open                func(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error)
+}
+
+// testBackend returns the backend of the scheme, of what it is, and the
+// function which opens a volume of it, or nil, without one
+func testBackend(scheme, description string, open func(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error)) gofiler.Backend {
+	if open == nil {
+		return nil
+	}
+	return funcBackend{scheme, description, open}
+}
+
+func (b funcBackend) Scheme() string       { return b.scheme }
+func (b funcBackend) Description() string  { return b.description }
+func (b funcBackend) Icon() gofiler.Icon   { return nil }
+func (b funcBackend) Defaults() url.Values { return url.Values{} }
+func (b funcBackend) New(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+	return b.open(ctx, u, cache, opts)
 }

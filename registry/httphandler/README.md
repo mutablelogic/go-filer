@@ -13,6 +13,7 @@ List the volumes which are stored, in order of their names, including those whic
 * **`mounted`** is true once the server has mounted the volume, so its objects can be used, which an enabled volume is shortly after it's created, or updated.
 * **`enabled: false` with an `error`** is a volume which is enabled, but offline, or can't be mounted. One whose user needs to sign in again stays so until `PATCH /volume/{name}`. Others are opened again by the server, after a while.
 * **`schemes`** is the schemes of the URLs which volumes can be created from, such as `file` and `s3`.
+* **`backends`** is what each is: its `scheme`, its `description`, such as `Server filesystem`, the media type of its `icon`, such as `image/svg+xml`, when it has one, which is `GET /backend/{scheme}/icon`, and its `defaults`, the options of a volume which aren't set, such as `readonly=true`.
 
 ### POST /volume
 
@@ -54,6 +55,10 @@ Without any options, `{}`, the volume is opened again, as it is. That brings an 
 ### DELETE /volume/{name}
 
 Delete the volume `name`, and its index, from the store, and return it. The server then stops watching it, and closes its backend, once the requests which are using it, which are cancelled, have finished, and releases what it used, such as its directory, whose files aren't deleted. A volume of the same name isn't mounted until it's closed. Returns 404 if the volume isn't stored.
+
+### GET /backend/{scheme}/icon
+
+Get the icon of the backend of `scheme`, such as `file`, which represents it, such as in the web UI's Add Volume menu, as an image of its media type, such as `image/svg+xml`. Its `ETag` is of the image, which a browser keeps for a day, so it's 304 when it matches `If-None-Match`. Returns 404 if there's no backend of the scheme, such as one which isn't run, or it has no icon.
 
 ## Object Operations
 

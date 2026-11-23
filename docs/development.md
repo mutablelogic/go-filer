@@ -12,7 +12,7 @@ Building and testing the filer, its Go packages, and using them as a library. Se
 | `github.com/mutablelogic/go-filer/backend/fs/fsevents` | Watches a directory for changes, on macOS, Linux and Windows. It has no dependencies on the other packages |
 | `github.com/mutablelogic/go-filer/backend/s3` | The S3 backend, watched through a SeaweedFS filer when it's one |
 | `github.com/mutablelogic/go-filer/backend/google` | Backends of Google's services: Google Tasks, Contacts, Calendar and Drive |
-| `github.com/mutablelogic/go-filer/backend/rss` | The backend of an RSS feed, read with go-rss. It isn't built into the registry; the `filer` server adds it with `registry.WithBackend` |
+| `github.com/mutablelogic/go-filer/backend/rss` | The backend of an RSS feed, read with go-rss. It isn't built into the registry; the `filer` server adds it with `registry.WithBackend(rss.Backend())` |
 | `github.com/mutablelogic/go-filer/backend/google/httpclient` | Clients of Google's APIs, with go-auth's `auth/httpclient`, so a request which isn't authorized is an `AuthError` |
 | `github.com/mutablelogic/go-filer/store` | The `Store` of volumes and their indexes, and its options: `WithTracer` and `WithBroadcaster` |
 | `github.com/mutablelogic/go-filer/store/sqlite` | A store in a SQLite database, in a file, or in memory, and the `CacheStore` of a volume |

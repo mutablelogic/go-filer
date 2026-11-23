@@ -20,15 +20,9 @@ import Search32 from '@carbon/icons/es/search/32.js';
 import Password32 from '@carbon/icons/es/password/32.js';
 import ObjectStorage32 from '@carbon/icons/es/object-storage/32.js';
 import Rss32 from '@carbon/icons/es/rss/32.js';
-import FolderIcon16 from '@carbon/icons/es/folder/16.js';
-import ObjectStorageIcon from '@carbon/icons/es/object-storage/16.js';
-import RssIcon from '@carbon/icons/es/rss/16.js';
-import CalendarIcon from '@carbon/icons/es/calendar/16.js';
-import ContactsIcon from '@carbon/icons/es/user--multiple/16.js';
-import CloudIcon from '@carbon/icons/es/cloud/16.js';
-import TaskIcon from '@carbon/icons/es/task/16.js';
 import DataBaseIcon from '@carbon/icons/es/data--base/16.js';
 import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-loader.js';
+import { backendIconURL } from '../filer/httpclient.ts';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController, type FolderState } from '../folder/controller.ts';
 import { baseName, objectTitle, volumeBackend, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
@@ -152,11 +146,23 @@ export class VolumesElement extends LitElement {
             label: 'Add Volume',
             menu: backends.map((backend) => ({
                 label: backend.description || backend.scheme,
-                icon: BackendIcons.get(backend.scheme) ?? DataBaseIcon,
+                icon: this.backendIcon(backend),
                 disabled: !VolumeFields.has(backend.scheme),
                 run: () => this.querySelector('gf-volume-add')?.open(backend),
             })),
         }];
+    }
+
+    // backendIcon is the icon of a backend, its own, of the server, drawn in
+    // the menu's colour, as a mask, or a database's, without one
+    private backendIcon(backend: Backend): unknown {
+        const client = this.controller?.client;
+        if (!backend.icon || !client) {
+            return DataBaseIcon;
+        }
+        const url = backendIconURL(client, backend.scheme);
+        const mask = `url("${url.replace(/["\\]/g, '\\$&')}") center / contain no-repeat`;
+        return html`<span style=${`display: inline-block; inline-size: 1rem; block-size: 1rem; background-color: currentColor; -webkit-mask: ${mask}; mask: ${mask};`} role="img" aria-hidden="true"></span>`;
     }
 
     // edit opens the panel of a volume, of its View tab
@@ -774,18 +780,6 @@ function statusTitle(volume: Volume, status: string, error?: string): string {
 
 // EditIcon is Carbon's edit icon, of an icon button
 const EditIcon = iconLoader(Edit16, { slot: 'icon' });
-
-// BackendIcons are the icons of the backends, of their schemes, of the Add
-// Volume menu, of which another's is a database's
-const BackendIcons = new Map<string, unknown>([
-    ['file', FolderIcon16],
-    ['s3', ObjectStorageIcon],
-    ['rss', RssIcon],
-    ['gcalendar', CalendarIcon],
-    ['gcontacts', ContactsIcon],
-    ['gdrive', CloudIcon],
-    ['gtasks', TaskIcon],
-]);
 
 // TagTypes are the colours of the backends' tags, in the order of the
 // backends, so each backend has its own, while there are enough

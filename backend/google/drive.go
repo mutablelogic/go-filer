@@ -19,7 +19,6 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
 
@@ -34,8 +33,8 @@ import (
 type DriveFiler struct {
 	driveOpt
 	name   string
-	opts   gofiler.Opts     // Its credentials, and client options, which a clone is created with
-	cache  store.CacheStore // The volume's cache, which the registry owns
+	opts   gofiler.Opts       // Its credentials, and client options, which a clone is created with
+	cache  gofiler.CacheStore // The volume's cache, which the registry owns
 	tokens *tokens
 	client *httpclient.DriveClient
 
@@ -131,7 +130,7 @@ var driveEndpoint = httpclient.DriveEndpoint
 // are polled for, when it's watched, and how long the files are kept, once
 // they're got, when it isn't, which is DefaultRefreshInterval, or zero not
 // to watch it, nor keep them.
-func NewDriveFiler(ctx context.Context, name string, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*DriveFiler, error) {
+func NewDriveFiler(ctx context.Context, name string, params url.Values, cache gofiler.CacheStore, opts gofiler.Opts) (*DriveFiler, error) {
 	if cache == nil {
 		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
 	}
@@ -462,9 +461,9 @@ func (self *DriveFiler) export(ctx context.Context, p string, file *httpclient.D
 		}
 		return nil
 	}
-	entry, err := self.cache.GetOrCreate(ctx, driveExportKey+file.Id, versionTag(file), driveExportTTL, func(w io.Writer) (store.CacheMeta, error) {
+	entry, err := self.cache.GetOrCreate(ctx, driveExportKey+file.Id, versionTag(file), driveExportTTL, func(w io.Writer) (gofiler.CacheMeta, error) {
 		if err := check(); err != nil {
-			return store.CacheMeta{}, err
+			return gofiler.CacheMeta{}, err
 		}
 		var n int64
 		if err := self.client.Export(ctx, file.Id, export.contentType, func(r io.Reader) error {
@@ -472,13 +471,13 @@ func (self *DriveFiler) export(ctx context.Context, p string, file *httpclient.D
 			n, err = io.Copy(w, io.LimitReader(r, driveExportMax+1))
 			return err
 		}); err != nil {
-			return store.CacheMeta{}, self.apiError("read", p, err)
+			return gofiler.CacheMeta{}, self.apiError("read", p, err)
 		} else if n > driveExportMax {
-			return store.CacheMeta{}, gofiler.ErrForbidden.Withf("%q is exported as more than Google exports", p)
+			return gofiler.CacheMeta{}, gofiler.ErrForbidden.Withf("%q is exported as more than Google exports", p)
 		} else if err := check(); err != nil {
-			return store.CacheMeta{}, err
+			return gofiler.CacheMeta{}, err
 		}
-		return store.CacheMeta{}, nil
+		return gofiler.CacheMeta{}, nil
 	})
 	if err != nil {
 		return err
@@ -692,7 +691,7 @@ func (s *streamReader) Read(p []byte) (int, error) {
 // context's error
 type cachedReader struct {
 	ctx   context.Context
-	entry store.CacheEntry
+	entry gofiler.CacheEntry
 }
 
 var _ io.ReadSeeker = (*cachedReader)(nil)

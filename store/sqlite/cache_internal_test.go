@@ -46,7 +46,7 @@ func (r *rows) Scan(row sqlite.Row) error {
 }
 
 // put stores an entry, which is closed
-func put(t *testing.T, cache *CacheStore, key string, ttl time.Duration, meta store.CacheMeta, r io.Reader) {
+func put(t *testing.T, cache *CacheStore, key string, ttl time.Duration, meta gofiler.CacheMeta, r io.Reader) {
 	t.Helper()
 	entry, err := cache.Put(t.Context(), key, ttl, meta, r)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func count(t *testing.T, cache *CacheStore, table string) int64 {
 }
 
 // readAll returns the content of an entry, which is closed
-func readAll(t *testing.T, entry store.CacheEntry) string {
+func readAll(t *testing.T, entry gofiler.CacheEntry) string {
 	t.Helper()
 	defer entry.Close()
 	data, err := io.ReadAll(entry)
@@ -87,8 +87,8 @@ func Test_NewCacheStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "media.sqlite")
 	cache, err := NewCacheStore(t.Context(), path)
 	require.NoError(t, err)
-	put(t, cache, "kept", 0, store.CacheMeta{Version: "v1"}, strings.NewReader("kept"))
-	put(t, cache, "brief", time.Millisecond, store.CacheMeta{}, strings.NewReader("brief"))
+	put(t, cache, "kept", 0, gofiler.CacheMeta{Version: "v1"}, strings.NewReader("kept"))
+	put(t, cache, "brief", time.Millisecond, gofiler.CacheMeta{}, strings.NewReader("brief"))
 	require.NoError(t, cache.conn.Exec(t.Context(), `INSERT INTO cache_entry (stored) VALUES (0)`))
 	assert.Equal(t, int64(3), count(t, cache, "cache_entry"))
 	require.NoError(t, cache.Close())
@@ -112,12 +112,12 @@ func Test_CachePutGet(t *testing.T) {
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	_, err = cache.Get(ctx, "")
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
-	_, err = cache.Put(ctx, "x", -time.Second, store.CacheMeta{}, strings.NewReader("x"))
+	_, err = cache.Put(ctx, "x", -time.Second, gofiler.CacheMeta{}, strings.NewReader("x"))
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
 	// An entry of more than one chunk, with what it is
 	content := strings.Repeat("0123456789", 60_000) // 600,000 bytes, of three chunks
-	meta := store.CacheMeta{Version: "v1", Values: map[string]string{"last-modified": "Fri, 20 Nov 2026 12:00:00 GMT"}}
+	meta := gofiler.CacheMeta{Version: "v1", Values: map[string]string{"last-modified": "Fri, 20 Nov 2026 12:00:00 GMT"}}
 	entry, err := cache.Put(ctx, "export/doc", time.Hour, meta, strings.NewReader(content))
 	require.NoError(t, err)
 	assert.Equal(t, meta, entry.Meta())
@@ -149,7 +149,7 @@ func Test_CachePutGet(t *testing.T) {
 	assert.Error(t, err, "once it's closed")
 
 	// An empty entry, without a TTL
-	entry, err = cache.Put(ctx, "empty", 0, store.CacheMeta{}, nil)
+	entry, err = cache.Put(ctx, "empty", 0, gofiler.CacheMeta{}, nil)
 	require.NoError(t, err)
 	assert.Zero(t, entry.Size())
 	assert.True(t, entry.Expires().IsZero())
@@ -166,13 +166,13 @@ func Test_CachePutGet(t *testing.T) {
 func Test_CacheReplace(t *testing.T) {
 	ctx := t.Context()
 	cache, _ := newCache(t)
-	put(t, cache, "tree", 0, store.CacheMeta{Version: "1"}, strings.NewReader("old"))
+	put(t, cache, "tree", 0, gofiler.CacheMeta{Version: "1"}, strings.NewReader("old"))
 
 	// An entry which is read, when it's replaced, is read as it was, and is
 	// deleted once it's closed
 	old, err := cache.Get(ctx, "tree")
 	require.NoError(t, err)
-	put(t, cache, "tree", 0, store.CacheMeta{Version: "2"}, strings.NewReader("new"))
+	put(t, cache, "tree", 0, gofiler.CacheMeta{Version: "2"}, strings.NewReader("new"))
 	assert.Equal(t, "new", get(t, cache, "tree"))
 	assert.Equal(t, int64(2), count(t, cache, "cache_entry"))
 	assert.Equal(t, "old", readAll(t, old))
@@ -180,13 +180,13 @@ func Test_CacheReplace(t *testing.T) {
 
 	// Content which is cut short, of io.ErrUnexpectedEOF, such as a response
 	// which ends before its length, isn't stored
-	_, err = cache.Put(ctx, "tree", 0, store.CacheMeta{Version: "3"}, io.MultiReader(strings.NewReader("partial"), shortReader{}))
+	_, err = cache.Put(ctx, "tree", 0, gofiler.CacheMeta{Version: "3"}, io.MultiReader(strings.NewReader("partial"), shortReader{}))
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	assert.Equal(t, "new", get(t, cache, "tree"))
 	assert.Equal(t, int64(1), count(t, cache, "cache_entry"))
 
 	// Content which can't be read keeps the entry, and isn't kept
-	_, err = cache.Put(ctx, "tree", 0, store.CacheMeta{Version: "3"}, io.MultiReader(strings.NewReader("partial"), errReader{}))
+	_, err = cache.Put(ctx, "tree", 0, gofiler.CacheMeta{Version: "3"}, io.MultiReader(strings.NewReader("partial"), errReader{}))
 	assert.ErrorIs(t, err, errBroken)
 	entry, err := cache.Get(ctx, "tree")
 	require.NoError(t, err)
@@ -200,11 +200,11 @@ func Test_CacheReplace(t *testing.T) {
 func Test_CacheExpiredReplaced(t *testing.T) {
 	ctx := t.Context()
 	cache, now := newCache(t)
-	put(t, cache, "feed", time.Hour, store.CacheMeta{Version: "old"}, strings.NewReader("old"))
+	put(t, cache, "feed", time.Hour, gofiler.CacheMeta{Version: "old"}, strings.NewReader("old"))
 	var old schema.CacheEntry
 	require.NoError(t, cache.conn.Get(ctx, &old, schema.CacheKey("feed")))
 	*now = now.Add(2 * time.Hour)
-	put(t, cache, "feed", time.Hour, store.CacheMeta{Version: "new"}, strings.NewReader("new"))
+	put(t, cache, "feed", time.Hour, gofiler.CacheMeta{Version: "new"}, strings.NewReader("new"))
 
 	// Get found the old one expired, and releases it, of its id
 	require.NoError(t, cache.release(ctx, schema.CacheId(old.Id)))
@@ -215,7 +215,7 @@ func Test_CacheDelete(t *testing.T) {
 	ctx := t.Context()
 	cache, _ := newCache(t)
 	for _, key := range []string{"export/a", "export/b", "exports", "tree"} {
-		put(t, cache, key, 0, store.CacheMeta{}, strings.NewReader(key))
+		put(t, cache, key, 0, gofiler.CacheMeta{}, strings.NewReader(key))
 	}
 
 	// A key, and the keys beneath a prefix, but not one which only starts
@@ -236,12 +236,12 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	ctx := t.Context()
 	cache, _ := newCache(t)
 	var creates atomic.Int32
-	valuefn := func(content string) func(io.Writer) (store.CacheMeta, error) {
-		return func(w io.Writer) (store.CacheMeta, error) {
+	valuefn := func(content string) func(io.Writer) (gofiler.CacheMeta, error) {
+		return func(w io.Writer) (gofiler.CacheMeta, error) {
 			creates.Add(1)
 			time.Sleep(20 * time.Millisecond)
 			_, err := io.WriteString(w, content)
-			return store.CacheMeta{Values: map[string]string{"type": "docx"}}, err
+			return gofiler.CacheMeta{Values: map[string]string{"type": "docx"}}, err
 		}
 	}
 
@@ -272,9 +272,9 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	assert.Equal(t, int32(2), creates.Load())
 
 	// A creation which fails returns its error, and keeps the entry
-	_, err = cache.GetOrCreate(ctx, "export/d1", "9", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
+	_, err = cache.GetOrCreate(ctx, "export/d1", "9", time.Hour, func(w io.Writer) (gofiler.CacheMeta, error) {
 		io.WriteString(w, "partial")
-		return store.CacheMeta{}, errBroken
+		return gofiler.CacheMeta{}, errBroken
 	})
 	assert.ErrorIs(t, err, errBroken)
 	entry, err = cache.Get(ctx, "export/d1")
@@ -285,9 +285,9 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	// As does one which returns io.EOF, or io.ErrUnexpectedEOF, after some
 	// of its content, which isn't its end
 	for _, end := range []error{io.EOF, io.ErrUnexpectedEOF} {
-		_, err = cache.GetOrCreate(ctx, "export/d1", "eof", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
+		_, err = cache.GetOrCreate(ctx, "export/d1", "eof", time.Hour, func(w io.Writer) (gofiler.CacheMeta, error) {
 			io.WriteString(w, "partial")
-			return store.CacheMeta{}, end
+			return gofiler.CacheMeta{}, end
 		})
 		assert.ErrorIs(t, err, end)
 		entry, err = cache.Get(ctx, "export/d1")
@@ -299,7 +299,7 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	// A key which another creates, after it's got, and before it's claimed,
 	// isn't created again
 	cache.beforeCreate = func() {
-		put(t, cache, "export/d2", time.Hour, store.CacheMeta{Version: "3"}, strings.NewReader("theirs"))
+		put(t, cache, "export/d2", time.Hour, gofiler.CacheMeta{Version: "3"}, strings.NewReader("theirs"))
 	}
 	entry, err = cache.GetOrCreate(ctx, "export/d2", "3", time.Hour, valuefn("ours"))
 	cache.beforeCreate = nil
@@ -308,7 +308,7 @@ func Test_CacheGetOrCreate(t *testing.T) {
 	assert.Equal(t, int32(2), creates.Load())
 
 	// As does one which panics
-	_, err = cache.GetOrCreate(ctx, "export/d1", "10", time.Hour, func(w io.Writer) (store.CacheMeta, error) {
+	_, err = cache.GetOrCreate(ctx, "export/d1", "10", time.Hour, func(w io.Writer) (gofiler.CacheMeta, error) {
 		panic("oops")
 	})
 	assert.ErrorIs(t, err, gofiler.ErrInternalServerError)
@@ -322,7 +322,7 @@ func Test_CacheJSON(t *testing.T) {
 		Root  string   `json:"root"`
 		Files []string `json:"files"`
 	}
-	require.NoError(t, store.PutCacheJSON(ctx, cache, "tree", 0, store.CacheMeta{Version: "token-1"}, tree{Root: "r", Files: []string{"a", "b"}}))
+	require.NoError(t, store.PutCacheJSON(ctx, cache, "tree", 0, gofiler.CacheMeta{Version: "token-1"}, tree{Root: "r", Files: []string{"a", "b"}}))
 	var got tree
 	meta, err := store.GetCacheJSON(ctx, cache, "tree", &got)
 	require.NoError(t, err)
@@ -336,7 +336,7 @@ func Test_CacheJSON(t *testing.T) {
 	for i := range files {
 		files[i] = strings.Repeat("x", 10)
 	}
-	require.NoError(t, store.PutCacheJSON(ctx, cache, "big", 0, store.CacheMeta{}, tree{Files: files}))
+	require.NoError(t, store.PutCacheJSON(ctx, cache, "big", 0, gofiler.CacheMeta{}, tree{Files: files}))
 	_, err = store.GetCacheJSON(ctx, cache, "big", &got)
 	require.NoError(t, err)
 	assert.Len(t, got.Files, 50_000)

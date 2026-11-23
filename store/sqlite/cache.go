@@ -11,7 +11,6 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
-	store "github.com/mutablelogic/go-filer/store"
 	schema "github.com/mutablelogic/go-filer/store/sqlite/schema"
 	sqlite "github.com/mutablelogic/go-sqlite"
 	ncruces "github.com/mutablelogic/go-sqlite/ncruces"
@@ -61,8 +60,8 @@ type cacheEntry struct {
 	closed bool
 }
 
-var _ store.CacheStore = (*CacheStore)(nil)
-var _ store.CacheEntry = (*cacheEntry)(nil)
+var _ gofiler.CacheStore = (*CacheStore)(nil)
+var _ gofiler.CacheEntry = (*cacheEntry)(nil)
 
 ////////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -117,7 +116,7 @@ func (self *CacheStore) Close() error {
 // Get returns the entry of the key, or ErrNotFound when there's none, or it
 // expired, which is deleted. It's selected, and its reader registered, at
 // once, so a Put, or Delete, which releases it, deletes it once it's closed.
-func (self *CacheStore) Get(ctx context.Context, key string) (store.CacheEntry, error) {
+func (self *CacheStore) Get(ctx context.Context, key string) (gofiler.CacheEntry, error) {
 	if err := checkKey(key); err != nil {
 		return nil, err
 	}
@@ -145,13 +144,13 @@ func (self *CacheStore) Get(ctx context.Context, key string) (store.CacheEntry, 
 // Put stores the content, as it's read, in chunks, as an entry without a
 // key, which is given the key once it's all read, in place of the entry of
 // the key, which is deleted, once it isn't read
-func (self *CacheStore) Put(ctx context.Context, key string, ttl time.Duration, meta store.CacheMeta, r io.Reader) (store.CacheEntry, error) {
-	return self.put(ctx, key, ttl, func() store.CacheMeta { return meta }, r)
+func (self *CacheStore) Put(ctx context.Context, key string, ttl time.Duration, meta gofiler.CacheMeta, r io.Reader) (gofiler.CacheEntry, error) {
+	return self.put(ctx, key, ttl, func() gofiler.CacheMeta { return meta }, r)
 }
 
 // put is Put, whose metadata is got once its content is read, when it's
 // committed
-func (self *CacheStore) put(ctx context.Context, key string, ttl time.Duration, meta func() store.CacheMeta, r io.Reader) (store.CacheEntry, error) {
+func (self *CacheStore) put(ctx context.Context, key string, ttl time.Duration, meta func() gofiler.CacheMeta, r io.Reader) (gofiler.CacheEntry, error) {
 	if err := checkKey(key); err != nil {
 		return nil, err
 	} else if ttl < 0 {
@@ -216,7 +215,7 @@ func (self *CacheStore) abandon(ctx context.Context, id int64) error {
 // GetOrCreate returns the entry of the key, when there's one of the
 // version, or else, once another which creates it is done, when there's
 // one, or else stores what valuefn writes, as it's written
-func (self *CacheStore) GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
+func (self *CacheStore) GetOrCreate(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (gofiler.CacheMeta, error)) (gofiler.CacheEntry, error) {
 	for {
 		entry, err := self.Get(ctx, key)
 		if err == nil && entry.Meta().Version == version {
@@ -280,9 +279,9 @@ func (self *CacheStore) Delete(ctx context.Context, key string) error {
 
 // create stores what valuefn writes, as it's written, through a pipe, with the
 // metadata it returns, whose version is the version, when it hasn't one
-func (self *CacheStore) create(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (store.CacheMeta, error)) (store.CacheEntry, error) {
+func (self *CacheStore) create(ctx context.Context, key, version string, ttl time.Duration, valuefn func(w io.Writer) (gofiler.CacheMeta, error)) (gofiler.CacheEntry, error) {
 	pr, pw := io.Pipe()
-	var meta store.CacheMeta
+	var meta gofiler.CacheMeta
 	created := make(chan error, 1)
 	go func() {
 		var err error
@@ -304,7 +303,7 @@ func (self *CacheStore) create(ctx context.Context, key, version string, ttl tim
 
 	// The metadata is read once the content is, as valuefn returns it then,
 	// which put commits after it's read all of it
-	entry, err := self.put(ctx, key, ttl, func() store.CacheMeta {
+	entry, err := self.put(ctx, key, ttl, func() gofiler.CacheMeta {
 		if meta.Version == "" {
 			meta.Version = version
 		}
@@ -426,7 +425,7 @@ func (self *CacheStore) sweep(ctx context.Context) error {
 ////////////////////////////////////////////////////////////////////////////////
 // ENTRY
 
-func (e *cacheEntry) Meta() store.CacheMeta {
+func (e *cacheEntry) Meta() gofiler.CacheMeta {
 	meta := e.entry.Meta
 	if meta.Values != nil {
 		values := make(map[string]string, len(meta.Values))

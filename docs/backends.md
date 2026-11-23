@@ -191,7 +191,7 @@ In the registry, its URL is `gdrive://<name>`, and the `filer` command creates o
 
 ## RSS Feeds
 
-A volume of an RSS feed's items, read-only. It's an example of a pluggable backend: it isn't built into the registry, and the `filer` server adds it with `registry.WithBackend(rss.Scheme, rss.Description, rss.Open)`.
+A volume of an RSS feed's items, read-only. It's an example of a pluggable backend: it isn't built into the registry, and the `filer` server adds it with `registry.WithBackend(rss.Backend())`.
 
 * **URL:** `rss://<name>/<host>/<path>`, of the feed `https://<host>/<path>`. `filer volume-create-rss news https://feeds.example.com/news.xml -o index=metadata` creates one, with `--refresh-interval` and `--description`.
   * `insecure=true` fetches it over http instead.

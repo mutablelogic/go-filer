@@ -21,7 +21,6 @@ import (
 	gofiler "github.com/mutablelogic/go-filer"
 	httpclient "github.com/mutablelogic/go-filer/backend/google/httpclient"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	httpresponse "github.com/mutablelogic/go-server/pkg/httpresponse"
 	types "github.com/mutablelogic/go-server/pkg/types"
 )
@@ -35,8 +34,8 @@ import (
 type TaskFiler struct {
 	taskOpt
 	name   string
-	opts   gofiler.Opts     // Its credentials, and client options, which a clone is created with
-	cache  store.CacheStore // The volume's cache, which the registry owns
+	opts   gofiler.Opts       // Its credentials, and client options, which a clone is created with
+	cache  gofiler.CacheStore // The volume's cache, which the registry owns
 	tokens *tokens
 	client *httpclient.TasksClient
 
@@ -125,7 +124,7 @@ const (
 //     watched, which is DefaultRefreshInterval, or zero not to watch them
 //   - hidden: tasks which are hidden, as they're completed, and cleared from
 //     their list, are included, which they aren't unless it's true
-func NewTaskFiler(ctx context.Context, name string, params url.Values, cache store.CacheStore, opts gofiler.Opts) (*TaskFiler, error) {
+func NewTaskFiler(ctx context.Context, name string, params url.Values, cache gofiler.CacheStore, opts gofiler.Opts) (*TaskFiler, error) {
 	if cache == nil {
 		return nil, gofiler.ErrBadParameter.Withf("volume %q has no cache", name)
 	}

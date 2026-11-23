@@ -108,14 +108,20 @@ func TestVolumes(t *testing.T) {
 	list, err := client.ListVolumes(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, list.Body)
-	assert.Equal(t, []schema.Backend{
-		{Scheme: "file", Description: "Server filesystem"},
-		{Scheme: "gcalendar", Description: "Google Calendar"},
-		{Scheme: "gcontacts", Description: "Google Contacts"},
-		{Scheme: "gdrive", Description: "Google Drive"},
-		{Scheme: "gtasks", Description: "Google Tasks"},
-		{Scheme: "s3", Description: "S3 bucket"},
-	}, list.Backends)
+	described := make([][2]string, 0, len(list.Backends))
+	for _, backend := range list.Backends {
+		described = append(described, [2]string{backend.Scheme, backend.Description})
+		assert.Equal(t, "image/svg+xml", backend.Icon, backend.Scheme)
+		assert.NotEmpty(t, backend.Defaults, backend.Scheme)
+	}
+	assert.Equal(t, [][2]string{
+		{"file", "Server filesystem"},
+		{"gcalendar", "Google Calendar"},
+		{"gcontacts", "Google Contacts"},
+		{"gdrive", "Google Drive"},
+		{"gtasks", "Google Tasks"},
+		{"s3", "S3 bucket"},
+	}, described)
 
 	// A volume is created, with its options, and is listed
 	volume, err := client.CreateVolume(ctx, schema.VolumeCreateRequest{Name: "media", URL: fileURL("media", dir, "readonly=true")})

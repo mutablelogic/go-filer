@@ -19,7 +19,6 @@ import (
 	httpclient "github.com/mutablelogic/go-filer/registry/httpclient"
 	httphandler "github.com/mutablelogic/go-filer/registry/httphandler"
 	schema "github.com/mutablelogic/go-filer/schema"
-	store "github.com/mutablelogic/go-filer/store"
 	sqlite "github.com/mutablelogic/go-filer/store/sqlite"
 	httprouter "github.com/mutablelogic/go-server/pkg/httprouter"
 	jsonschema "github.com/mutablelogic/go-server/pkg/jsonschema"
@@ -63,14 +62,14 @@ func TestActions(t *testing.T) {
 	s, err := sqlite.New(ctx, gosqlite.Memory)
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
-	open := func(ctx context.Context, u *url.URL, _ store.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+	open := func(ctx context.Context, u *url.URL, _ gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
 		b, err := fsbackend.New(registry.VolumeName(u), dir, nil, opts)
 		if err != nil {
 			return nil, err
 		}
 		return notes{Filer: b, u: u}, nil
 	}
-	reg, err := registry.New(ctx, registry.WithDebounce(0), registry.WithStore(s), registry.WithBackend("notes", "Notes", open))
+	reg, err := registry.New(ctx, registry.WithDebounce(0), registry.WithStore(s), registry.WithBackend(testBackend("notes", "Notes", open)))
 	require.NoError(t, err)
 	runCtx, cancel := context.WithCancel(ctx)
 	running := make(chan error, 1)
@@ -166,4 +165,28 @@ func TestActions(t *testing.T) {
 	list, err = client.ListActions(ctx, "")
 	require.NoError(t, err)
 	assert.Empty(t, list.Body, "nor are they listed, of every volume")
+}
+
+// funcBackend is a backend of a test, of its scheme, what it is, and the
+// function which opens a volume of it
+type funcBackend struct {
+	scheme, description string
+	open                func(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error)
+}
+
+// testBackend returns the backend of the scheme, of what it is, and the
+// function which opens a volume of it, or nil, without one
+func testBackend(scheme, description string, open func(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error)) gofiler.Backend {
+	if open == nil {
+		return nil
+	}
+	return funcBackend{scheme, description, open}
+}
+
+func (b funcBackend) Scheme() string       { return b.scheme }
+func (b funcBackend) Description() string  { return b.description }
+func (b funcBackend) Icon() gofiler.Icon   { return nil }
+func (b funcBackend) Defaults() url.Values { return url.Values{} }
+func (b funcBackend) New(ctx context.Context, u *url.URL, cache gofiler.CacheStore, opts gofiler.Opts) (gofiler.Filer, error) {
+	return b.open(ctx, u, cache, opts)
 }
