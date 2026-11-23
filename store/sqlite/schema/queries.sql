@@ -423,10 +423,10 @@ SELECT (
 
 -- artwork.put
 -- Artwork, or the artwork of its hash, which is stored already, without
--- its data, which was put now, so it isn't deleted before it's linked to
-INSERT INTO artwork (hash, type, width, height, context, data, created_at, put_at)
-VALUES (@hash, @type, @width, @height, @context, @data, @now, @now)
-ON CONFLICT (hash) DO UPDATE SET put_at = excluded.put_at
+-- its data, as it's linked to, in the same transaction
+INSERT INTO artwork (hash, type, width, height, context, data, created_at)
+VALUES (@hash, @type, @width, @height, @context, @data, @now)
+ON CONFLICT (hash) DO UPDATE SET hash = excluded.hash
 RETURNING hash, type, width, height, context, length(data), created_at, NULL;
 
 -- artwork.get
@@ -435,8 +435,8 @@ SELECT hash, type, width, height, context, length(data), created_at, CASE WHEN @
 FROM artwork WHERE hash = @hash;
 
 -- artwork.delete_unlinked
--- The artwork which no object links to, which was last put before a time
-DELETE FROM artwork WHERE put_at < @before AND NOT EXISTS (SELECT 1 FROM object_artwork WHERE object_artwork.hash = artwork.hash)
+-- The artwork which no object links to
+DELETE FROM artwork WHERE NOT EXISTS (SELECT 1 FROM object_artwork WHERE object_artwork.hash = artwork.hash)
 RETURNING hash, type, width, height, context, length(data), created_at, NULL;
 
 -- object_artwork.object

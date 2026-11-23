@@ -27,9 +27,9 @@ type ArtworkMeta struct {
 // and data, with the size of its data, and when it was stored
 type Artwork struct {
 	ArtworkMeta
-	Hash    string    `json:"hash" readonly:"" help:"The SHA-256 hash of its context and data, in hex"`
-	Size    uint64    `json:"size" readonly:"" help:"The size of its data, in bytes"`
-	Created time.Time `json:"created,omitzero" readonly:"" help:"When it was stored"`
+	Hash      string    `json:"hash" readonly:"" help:"The SHA-256 hash of its context and data, in hex"`
+	Size      uint64    `json:"size" readonly:"" help:"The size of its data, in bytes"`
+	CreatedAt time.Time `json:"created_at,omitzero" readonly:"" help:"When it was first stored"`
 }
 
 ////////////////////////////////////////////////////////////////////////////////

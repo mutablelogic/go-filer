@@ -15,11 +15,8 @@ import (
 
 var (
 	// artworkInterval is how often the artwork which no object links to is
-	// deleted, such as of objects which changed, or were deleted, and
-	// artworkGrace how long ago it was last put, so artwork which is put,
-	// and is about to be linked to, isn't
+	// deleted, such as of objects which changed, or were deleted
 	artworkInterval = time.Hour
-	artworkGrace    = time.Hour
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -43,11 +40,11 @@ func (self *Registry) cleanArtwork(ctx context.Context, logger *slog.Logger) {
 	}
 }
 
-// deleteUnlinkedArtwork deletes the artwork which no object links to, which
-// was last put before artworkGrace, and logs how many were deleted, and
-// returns false when the store doesn't keep artwork
+// deleteUnlinkedArtwork deletes the artwork which no object links to, and
+// logs how many were deleted, and returns false when the store doesn't keep
+// artwork
 func (self *Registry) deleteUnlinkedArtwork(ctx context.Context, logger *slog.Logger) bool {
-	n, err := self.store.DeleteUnlinkedArtwork(ctx, time.Now().Add(-artworkGrace))
+	n, err := self.store.DeleteUnlinkedArtwork(ctx)
 	switch {
 	case errors.Is(err, gofiler.ErrNotImplemented):
 		logger.DebugContext(ctx, "the store doesn't keep artwork, so it isn't cleaned up")

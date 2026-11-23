@@ -12,7 +12,7 @@ import (
 // TYPES
 
 // ArtworkPut is artwork which is stored, of its hash, or the artwork of its
-// hash, which is stored already
+// hash, which is stored already, as it's linked to
 type ArtworkPut filer.ArtworkMeta
 
 // ArtworkHash selects artwork, of its hash, which is got, with its data,
@@ -22,11 +22,9 @@ type ArtworkHash struct {
 	Data bool
 }
 
-// ArtworkUnlinked selects the artwork which no object links to, which was
-// last put before the time, which is deleted
-type ArtworkUnlinked struct {
-	Before time.Time
-}
+// ArtworkUnlinked selects the artwork which no object links to, which is
+// deleted
+type ArtworkUnlinked struct{}
 
 // ArtworkList is the artwork which is read, of a get, which reads one, a
 // list, or a delete
@@ -62,8 +60,7 @@ func (h ArtworkHash) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 	return "", sqlite.ErrNotImplemented.Withf("artwork: %v", op)
 }
 
-func (u ArtworkUnlinked) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
-	bind.Set("before", u.Before)
+func (ArtworkUnlinked) Select(bind *sqlite.Bind, op sqlite.Op) (string, error) {
 	switch op {
 	case sqlite.Delete:
 		return bind.Query("artwork.delete_unlinked"), nil
@@ -121,7 +118,7 @@ func (ObjectArtworkLink) Update(*sqlite.Bind) error {
 
 func (list *ArtworkList) Scan(row sqlite.Row) error {
 	var artwork filer.Artwork
-	if err := row.Scan(&artwork.Hash, &artwork.Type, &artwork.Width, &artwork.Height, &artwork.Context, &artwork.Size, &artwork.Created, &artwork.Data); err != nil {
+	if err := row.Scan(&artwork.Hash, &artwork.Type, &artwork.Width, &artwork.Height, &artwork.Context, &artwork.Size, &artwork.CreatedAt, &artwork.Data); err != nil {
 		return err
 	}
 	*list = append(*list, &artwork)

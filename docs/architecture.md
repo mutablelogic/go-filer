@@ -110,9 +110,10 @@ A `gofiler.CacheStore` keeps what a volume's backend gets from a service, by key
 A `gofiler.ArtworkStore`, part of the index store, keeps artwork: images such as an album's cover or a thumbnail, which objects link to.
 
 * **Artwork** (`schema.ArtworkMeta`) is its type (an image's), width and height in pixels, context, and data. The context is what it is of an object: `cover`, `back`, `thumbnail`, or another name of a letter and up to 63 letters, digits, `-` and `_`, in lower case.
-* **Its hash** is the SHA-256 of its context and data, so an image is kept once per context, however many objects link to it. `PutArtwork` stores it, or returns the one already stored, and `ErrConflict` if that has another type or size. `GetArtwork(hash, data)` returns it, with its data only when asked for.
-* **Links:** `SetObjectArtwork(volume, key, hashes...)` replaces an object's links, at most one per context, and `ObjectArtwork` lists them, by context. Links are removed when their object is deleted, or changes (its ETag, size or modification time), like a task's metadata.
-* **Cleanup:** the registry deletes artwork that no object links to every hour, once it was last put more than an hour ago, so artwork that's just been put, and is about to be linked to, is kept.
+* **Its hash** is the SHA-256 of its context and data, so an image is kept once per context, however many objects link to it. `GetArtwork(hash, data)` returns it, with its data only when asked for.
+* **Storing and linking** are one transaction: `SetObjectArtwork(volume, key, artwork...)` stores each artwork, or finds the one already stored, and replaces the object's links, at most one per context. With none, it removes them. It returns the artwork by context. If any artwork isn't valid, or conflicts with stored artwork of the same hash but another type or size, nothing is stored or changed. `ObjectArtwork` lists an object's artwork.
+* **Links** are removed when their object is deleted, or changes (its ETag, size or modification time), like a task's metadata.
+* **Cleanup:** the registry deletes artwork that no object links to, every hour.
 * **Stores:** SQLite keeps artwork in the index's database (`artwork` and `object_artwork`). Postgres doesn't yet.
 
 ## Actions
