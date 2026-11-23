@@ -1558,27 +1558,31 @@ func artwork(context, seed string) schema.ArtworkMeta {
 
 func testArtwork(t *testing.T, s store.Store) {
 	ctx := context.Background()
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), file("/a.mp3"), file("/b.mp3")))
 
-	// Artwork is stored, of the hash of its context, and data, without its
-	// data, and the same artwork is the one which is stored already
+	// Artwork is stored as it's linked to, of the hash of its context, and
+	// data, and is returned without its data
 	cover := artwork(schema.ArtworkCover, "a")
-	stored, err := s.PutArtwork(ctx, cover)
+	linked, err := s.SetObjectArtwork(ctx, "media", "/a.mp3", cover)
 	require.NoError(t, err)
+	require.Len(t, linked, 1)
+	stored := linked[0]
 	assert.Equal(t, cover.Hash(), stored.Hash)
 	assert.Len(t, stored.Hash, 64)
 	assert.Equal(t, uint64(len(cover.Data)), stored.Size)
 	assert.Nil(t, stored.Data)
 	assert.Equal(t, schema.ArtworkCover, stored.Context)
-	assert.False(t, stored.Created.IsZero())
-	again, err := s.PutArtwork(ctx, cover)
-	require.NoError(t, err)
-	assert.Equal(t, stored.Hash, again.Hash)
-	assert.True(t, stored.Created.Equal(again.Created), "it's the one which is stored already")
+	assert.False(t, stored.CreatedAt.IsZero())
 
-	// The same image, of another context, is another artwork
-	thumbnail, err := s.PutArtwork(ctx, artwork(schema.ArtworkThumbnail, "a"))
+	// The same artwork, of another object, is the one which is stored
+	// already, and the same image, of another context, is another artwork
+	linked, err = s.SetObjectArtwork(ctx, "media", "/b.mp3", cover, artwork(schema.ArtworkThumbnail, "a"))
 	require.NoError(t, err)
-	assert.NotEqual(t, stored.Hash, thumbnail.Hash)
+	require.Len(t, linked, 2)
+	assert.Equal(t, stored.Hash, linked[0].Hash)
+	assert.True(t, stored.CreatedAt.Equal(linked[0].CreatedAt), "it's the one which is stored already")
+	assert.NotEqual(t, stored.Hash, linked[1].Hash)
+	assert.Equal(t, schema.ArtworkThumbnail, linked[1].Context)
 
 	// It's got, of its hash, in any case, with its data, when it's asked for
 	got, err := s.GetArtwork(ctx, strings.ToUpper(stored.Hash), false)
@@ -1595,8 +1599,9 @@ func testArtwork(t *testing.T, s store.Store) {
 	_, err = s.GetArtwork(ctx, "nothex", false)
 	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 
-	// Artwork which isn't valid isn't stored, and the artwork of a hash
-	// which is stored already, of another type, or size, is a conflict
+	// Artwork which isn't valid isn't stored, nor are the others of the
+	// request, as it's one transaction, and the artwork of a hash which is
+	// stored already, of another type, or size, is a conflict
 	for _, bad := range []schema.ArtworkMeta{
 		{Type: "image/png", Width: 1, Height: 1, Context: "cover"},
 		{Type: "text/plain", Width: 1, Height: 1, Context: "cover", Data: []byte("x")},
@@ -1604,55 +1609,52 @@ func testArtwork(t *testing.T, s store.Store) {
 		{Type: "image/png", Width: 1, Height: 1, Context: "Cover", Data: []byte("x")},
 		{Type: "image/png", Width: 1, Height: 1, Data: []byte("x")},
 	} {
-		_, err := s.PutArtwork(ctx, bad)
+		_, err := s.SetObjectArtwork(ctx, "media", "/a.mp3", artwork("back", "new"), bad)
 		assert.ErrorIs(t, err, gofiler.ErrBadParameter, bad.String())
 	}
 	other := cover
 	other.Type = "image/jpeg"
-	_, err = s.PutArtwork(ctx, other)
+	_, err = s.SetObjectArtwork(ctx, "media", "/a.mp3", artwork("back", "new"), other)
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
+	_, err = s.GetArtwork(ctx, artwork("back", "new").Hash(), false)
+	assert.ErrorIs(t, err, gofiler.ErrNotFound, "the request's other artwork isn't stored")
+	got2, err := s.ObjectArtwork(ctx, "media", "/a.mp3")
+	require.NoError(t, err)
+	if assert.Len(t, got2, 1, "nor are its links changed") {
+		assert.Equal(t, stored.Hash, got2[0].Hash)
+	}
 
 	// Its type is normalized, of its case, and spaces, so it's the same
 	// artwork, of the same type
 	for _, t2 := range []string{"IMAGE/PNG", " image/png ", "Image/Png"} {
 		same := cover
 		same.Type = t2
-		normalized, err := s.PutArtwork(ctx, same)
+		linked, err := s.SetObjectArtwork(ctx, "media", "/a.mp3", same)
 		if assert.NoError(t, err, t2) {
-			assert.Equal(t, stored.Hash, normalized.Hash, t2)
-			assert.Equal(t, "image/png", normalized.Type, t2)
+			assert.Equal(t, stored.Hash, linked[0].Hash, t2)
+			assert.Equal(t, "image/png", linked[0].Type, t2)
 		}
 	}
-	upper, err := s.PutArtwork(ctx, schema.ArtworkMeta{Type: "IMAGE/JPEG", Width: 1, Height: 1, Context: "back", Data: []byte("jpeg")})
+	linked, err = s.SetObjectArtwork(ctx, "media", "/a.mp3", schema.ArtworkMeta{Type: "IMAGE/JPEG", Width: 1, Height: 1, Context: "back", Data: []byte("jpeg")})
 	require.NoError(t, err)
-	assert.Equal(t, "image/jpeg", upper.Type)
+	assert.Equal(t, "image/jpeg", linked[0].Type)
 
-	// Artwork which no object links to is deleted, once it was last put
-	// before the time, and not while it's just been put, and is about to be
-	// linked to, which putting it again is too: of a time between when it
-	// was first put, and when it was put again, it's kept
-	n, err := s.DeleteUnlinkedArtwork(ctx, time.Now().Add(-time.Hour))
+	// Artwork which no object links to is deleted: the cover, which /a.mp3
+	// linked to, is still linked to by /b.mp3, so none is, then all are,
+	// once their objects link to none
+	n, err := s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
-	assert.Zero(t, n, "it was put since")
-	time.Sleep(20 * time.Millisecond)
-	between := time.Now()
-	time.Sleep(20 * time.Millisecond)
-	_, err = s.PutArtwork(ctx, cover)
+	assert.Zero(t, n)
+	_, err = s.SetObjectArtwork(ctx, "media", "/a.mp3")
 	require.NoError(t, err)
-	n, err = s.DeleteUnlinkedArtwork(ctx, between)
+	_, err = s.SetObjectArtwork(ctx, "media", "/b.mp3")
 	require.NoError(t, err)
-	assert.Equal(t, 2, n, "the thumbnail, and the back, which weren't put again")
-	_, err = s.GetArtwork(ctx, stored.Hash, false)
-	require.NoError(t, err, "the cover, which was put again, is kept")
-	again, err = s.GetArtwork(ctx, stored.Hash, false)
+	n, err = s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
-	assert.True(t, stored.Created.Equal(again.Created), "it was first put when it was")
-	n, err = s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
+	assert.Equal(t, 3, n, "the cover, the thumbnail and the back")
 	_, err = s.GetArtwork(ctx, stored.Hash, false)
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
-	n, err = s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
+	n, err = s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -1660,12 +1662,6 @@ func testArtwork(t *testing.T, s store.Store) {
 func testObjectArtwork(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	require.NoError(t, s.PutObject(ctx, "media", folder("/"), folder("/music"), file("/music/a.mp3"), file("/music/b.mp3")))
-	put := func(meta schema.ArtworkMeta) string {
-		t.Helper()
-		artwork, err := s.PutArtwork(ctx, meta)
-		require.NoError(t, err)
-		return artwork.Hash
-	}
 	contexts := func(volume, key string) []string {
 		t.Helper()
 		artwork, err := s.ObjectArtwork(ctx, volume, key)
@@ -1673,35 +1669,41 @@ func testObjectArtwork(t *testing.T, s store.Store) {
 		result := []string{}
 		for _, a := range artwork {
 			assert.Nil(t, a.Data)
-			result = append(result, a.Context+":"+a.Hash[:8])
+			result = append(result, a.Context)
 		}
 		return result
 	}
-	cover, back, thumbnail, cover2 := put(artwork("cover", "a")), put(artwork("back", "b")), put(artwork("thumbnail", "a")), put(artwork("cover", "c"))
+	set := func(volume, key string, artwork ...schema.ArtworkMeta) []string {
+		t.Helper()
+		linked, err := s.SetObjectArtwork(ctx, volume, key, artwork...)
+		require.NoError(t, err)
+		result := []string{}
+		for _, a := range linked {
+			result = append(result, a.Context)
+		}
+		return result
+	}
 
 	// An object links to artwork, of one context once, in the order of
-	// their contexts, and artwork is linked to from more than one object
-	require.NoError(t, s.SetObjectArtwork(ctx, "media", "/music/a.mp3", thumbnail, cover, back))
-	require.NoError(t, s.SetObjectArtwork(ctx, "media", "/music/b.mp3", cover))
-	assert.Equal(t, []string{"back:" + back[:8], "cover:" + cover[:8], "thumbnail:" + thumbnail[:8]}, contexts("media", "/music/a.mp3"))
-	assert.Equal(t, []string{"cover:" + cover[:8]}, contexts("media", "/music/b.mp3"))
+	// their contexts, which it returns
+	assert.Equal(t, []string{"back", "cover", "thumbnail"}, set("media", "/music/a.mp3", artwork("thumbnail", "a"), artwork("cover", "a"), artwork("back", "b")))
+	assert.Equal(t, []string{"back", "cover", "thumbnail"}, contexts("media", "/music/a.mp3"))
+	assert.Equal(t, []string{"cover"}, set("media", "/music/b.mp3", artwork("cover", "a")))
 	assert.Empty(t, contexts("media", "/music"), "an object which links to none")
 	assert.Empty(t, contexts("photos", "/missing"), "an object which isn't stored")
-	assert.ErrorIs(t, s.SetObjectArtwork(ctx, "media", "/music/a.mp3", cover, cover2), gofiler.ErrBadParameter, "two of one context")
-	assert.ErrorIs(t, s.SetObjectArtwork(ctx, "media", "/music/missing.mp3", cover), gofiler.ErrNotFound)
-	assert.ErrorIs(t, s.SetObjectArtwork(ctx, "media", "/music/a.mp3", strings.Repeat("0", 64)), gofiler.ErrNotFound)
-	assert.ErrorIs(t, s.SetObjectArtwork(ctx, "media", "music", cover), gofiler.ErrBadParameter)
+	_, err := s.SetObjectArtwork(ctx, "media", "/music/a.mp3", artwork("cover", "a"), artwork("cover", "c"))
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter, "two of one context")
+	_, err = s.SetObjectArtwork(ctx, "media", "/music/missing.mp3", artwork("cover", "a"))
+	assert.ErrorIs(t, err, gofiler.ErrNotFound)
+	_, err = s.SetObjectArtwork(ctx, "media", "music", artwork("cover", "a"))
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 	assert.Len(t, contexts("media", "/music/a.mp3"), 3, "links which can't be set aren't changed")
 
-	// Linked artwork isn't deleted, and links are replaced
-	n, err := s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
+	// Links are replaced, so artwork which isn't linked to is deleted
+	assert.Equal(t, []string{"back"}, set("media", "/music/a.mp3", artwork("back", "b")))
+	n, err := s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n, "the cover which isn't linked to")
-	require.NoError(t, s.SetObjectArtwork(ctx, "media", "/music/a.mp3", back))
-	assert.Equal(t, []string{"back:" + back[:8]}, contexts("media", "/music/a.mp3"))
-	n, err = s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
-	require.NoError(t, err)
-	assert.Equal(t, 1, n, "the thumbnail")
+	assert.Equal(t, 1, n, "the thumbnail, as /music/b.mp3 links to the cover")
 
 	// An object which is put again, unchanged, keeps its links, and one
 	// which changed, or is deleted, hasn't any
@@ -1711,19 +1713,18 @@ func testObjectArtwork(t *testing.T, s store.Store) {
 	changed.ETag = &[]string{"v2"}[0]
 	require.NoError(t, s.PutObject(ctx, "media", changed))
 	assert.Empty(t, contexts("media", "/music/b.mp3"))
-	require.NoError(t, s.SetObjectArtwork(ctx, "media", "/music/b.mp3", cover))
+	set("media", "/music/b.mp3", artwork("cover", "a"))
 	require.NoError(t, s.DeleteObject(ctx, "media", "/music/"))
 	assert.Empty(t, contexts("media", "/music/a.mp3"))
-	n, err = s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
+	n, err = s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n, "the cover and the back, as their objects are gone")
 
 	// The links of a volume which is deleted are too
 	require.NoError(t, s.PutObject(ctx, "photos", folder("/"), file("/a.jpg")))
-	thumbnail = put(artwork("thumbnail", "a"))
-	require.NoError(t, s.SetObjectArtwork(ctx, "photos", "/a.jpg", thumbnail))
+	set("photos", "/a.jpg", artwork("thumbnail", "a"))
 	require.NoError(t, s.DeleteVolume(ctx, "photos"))
-	n, err = s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
+	n, err = s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 }

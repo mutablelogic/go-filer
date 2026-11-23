@@ -20,20 +20,26 @@ type unkeptArtwork struct {
 	store.Store
 }
 
-func (unkeptArtwork) DeleteUnlinkedArtwork(context.Context, time.Time) (int, error) {
+func (unkeptArtwork) DeleteUnlinkedArtwork(context.Context) (int, error) {
 	return 0, gofiler.ErrNotImplemented.With("artwork")
 }
 
 // Test_CleanArtwork tests the artwork which no object links to is deleted,
-// once it was put a while ago, by the registry, as it runs
+// by the registry, as it runs
 func Test_CleanArtwork(t *testing.T) {
-	interval, grace := artworkInterval, artworkGrace
-	artworkInterval, artworkGrace = 10*time.Millisecond, 0
-	t.Cleanup(func() { artworkInterval, artworkGrace = interval, grace })
+	interval := artworkInterval
+	artworkInterval = 10 * time.Millisecond
+	t.Cleanup(func() { artworkInterval = interval })
 
+	// Artwork, which an object linked to, before it was deleted
 	s := newStore(t)
-	artwork, err := s.PutArtwork(context.Background(), schema.ArtworkMeta{Type: "image/png", Width: 1, Height: 1, Context: schema.ArtworkCover, Data: []byte("png")})
+	_, err := s.CreateVolume(context.Background(), schema.VolumeMeta{Name: "media", URL: "file://media/tmp", Enabled: false})
 	require.NoError(t, err)
+	require.NoError(t, s.PutObject(context.Background(), "media", &schema.Object{ObjectKey: schema.ObjectKey{Path: "/a.jpg"}}))
+	linked, err := s.SetObjectArtwork(context.Background(), "media", "/a.jpg", schema.ArtworkMeta{Type: "image/png", Width: 1, Height: 1, Context: schema.ArtworkCover, Data: []byte("png")})
+	require.NoError(t, err)
+	artwork := linked[0]
+	require.NoError(t, s.DeleteObject(context.Background(), "media", "/a.jpg"))
 	r, err := New(context.Background(), WithDebounce(0), WithStore(s))
 	require.NoError(t, err)
 	t.Cleanup(func() { r.close() })

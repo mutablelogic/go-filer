@@ -246,8 +246,7 @@ CREATE TABLE IF NOT EXISTS artwork (
   height          INTEGER NOT NULL CHECK (height > 0),
   context         TEXT NOT NULL CHECK (context GLOB '[a-z]*' AND context NOT GLOB '*[^a-z0-9_-]*' AND length(context) <= 64),
   data            BLOB NOT NULL,
-  created_at      TIMESTAMP NOT NULL,     -- when it was first put
-  put_at          TIMESTAMP NOT NULL      -- when it was last put, of which artwork which isn't linked to is deleted, after a while
+  created_at      TIMESTAMP NOT NULL
 );
 
 -- schema.object_artwork
