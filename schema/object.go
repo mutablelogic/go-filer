@@ -4,6 +4,7 @@ package schema
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"mime"
 	"net/url"
@@ -97,6 +98,7 @@ type ListObjectsRequest struct {
 	Recursive  bool   `json:"recursive,omitempty"`
 	StartAfter string `json:"start_after,omitempty" help:"Return objects after this path"`
 	Type       string `json:"type,omitempty" help:"Only objects of this type, such as inode/directory, or its major type, inode, or its subtype, directory, without their parameters"`
+	Sort       string `json:"sort,omitempty" help:"The order of the objects: name, title, kind, size, modified or type, or of their keys, without one, with - before it for descending, such as -size, of a volume whose files are indexed"`
 }
 
 // ObjectListRequest lists the objects beneath a path in a volume, a page at
@@ -187,6 +189,9 @@ func (r ObjectListRequest) Query() url.Values {
 	}
 	if r.Type != "" {
 		values.Set("type", r.Type)
+	}
+	if r.Sort != "" {
+		values.Set("sort", r.Sort)
 	}
 	return values
 }
@@ -303,4 +308,40 @@ func MatchType(object *Object, t string) bool {
 	}
 	major, minor, _ := strings.Cut(mediaType, "/")
 	return major == t || minor == t
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SORT
+
+const (
+	// SortName, SortTitle, SortKind, SortSize, SortModified and SortType
+	// are the orders of a listing: of the objects' keys, which is their
+	// names, of a folder's, their titles, of their dc:title, or else their
+	// names, in any case, their kinds, of their metadata:kind, or else of
+	// their media types' major types, their sizes, when they were
+	// modified, and their media types, each of their keys, after, of the
+	// same
+	SortName     = "name"
+	SortTitle    = "title"
+	SortKind     = "kind"
+	SortSize     = "size"
+	SortModified = "modified"
+	SortType     = "type"
+)
+
+// ParseSort returns the order of a listing's sort, such as size, of -size,
+// which is descending, or of name, without one, or an error, of one which
+// isn't one
+func ParseSort(sort string) (string, bool, error) {
+	order, descending := strings.CutPrefix(strings.TrimSpace(sort), "-")
+	switch order {
+	case "":
+		if descending {
+			return "", false, fmt.Errorf("a sort without an order")
+		}
+		return SortName, false, nil
+	case SortName, SortTitle, SortKind, SortSize, SortModified, SortType:
+		return order, descending, nil
+	}
+	return "", false, fmt.Errorf("objects can't be sorted by %q, only of name, title, kind, size, modified or type", order)
 }

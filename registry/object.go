@@ -10,6 +10,7 @@ import (
 
 	// Packages
 	gofiler "github.com/mutablelogic/go-filer"
+	indexer "github.com/mutablelogic/go-filer/indexer"
 	schema "github.com/mutablelogic/go-filer/schema"
 )
 
@@ -139,6 +140,18 @@ func (self *Registry) ListObjects(ctx context.Context, req schema.ListObjectsReq
 	e, err := self.use(ctx, req.Name)
 	if err != nil {
 		return nil, err
+	}
+
+	// Only an indexer's listing can be sorted, of its index, which a volume
+	// which isn't indexed hasn't, of a sort which is one
+	if req.Sort != "" {
+		if _, _, err := schema.ParseSort(req.Sort); err != nil {
+			e.wg.Done()
+			return nil, gofiler.ErrBadParameter.With(err)
+		} else if _, indexed := e.Filer.(*indexer.Indexer); !indexed {
+			e.wg.Done()
+			return nil, gofiler.ErrNotImplemented.Withf("the objects of %q can't be sorted, as its files aren't indexed", req.Name)
+		}
 	}
 	inner, err := e.ListObjects(ctx, req)
 	if err != nil {

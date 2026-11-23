@@ -42,6 +42,7 @@ func Run(t *testing.T, newStore func(t *testing.T, opts ...store.Opt) store.Stor
 	t.Run("QueuePendingBeneath", func(t *testing.T) { testQueuePendingBeneath(t, withVolumes(t, newStore(t))) })
 	t.Run("Revisions", func(t *testing.T) { testRevisions(t, withVolumes(t, newStore(t))) })
 	t.Run("ListType", func(t *testing.T) { testListType(t, withVolumes(t, newStore(t))) })
+	t.Run("ListSort", func(t *testing.T) { testListSort(t, withVolumes(t, newStore(t))) })
 	t.Run("Kinds", func(t *testing.T) { testKinds(t, withVolumes(t, newStore(t))) })
 	t.Run("Scan", func(t *testing.T) { testScan(t, withVolumes(t, newStore(t))) })
 	t.Run("SetMetadata", func(t *testing.T) { testSetMetadata(t, withVolumes(t, newStore(t))) })
@@ -1811,4 +1812,95 @@ func testTaskArtwork(t *testing.T, s store.Store) {
 	n, err := s.DeleteUnlinkedArtwork(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 4, n)
+}
+
+func testListSort(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	object := func(path string, size int64, minutes int, t string) *schema.Object {
+		return &schema.Object{ObjectKey: schema.ObjectKey{Path: path}, ObjectMeta: schema.ObjectMeta{ContentType: t}, ObjectAttr: schema.ObjectAttr{Size: &size, ModTime: at.Add(time.Duration(minutes) * time.Minute)}}
+	}
+	require.NoError(t, s.PutObject(ctx, "media", folder("/"), folder("/a"), folder("/a/sub"),
+		object("/a/c.mp3", 30, 1, "audio/mpeg"), object("/a/a.txt", 10, 3, "text/plain"),
+		object("/a/b.jpg", 30, 2, "image/jpeg"), object("/a/d.png", 20, 0, "image/png")))
+
+	// list returns the paths of the folder's objects of the sort, a page of
+	// two at a time, each after the last of the one before
+	list := func(sort string, descending bool) []string {
+		t.Helper()
+		result := []string{}
+		req := store.ListRequest{Parent: "/a/", Limit: 2, Sort: sort, Descending: descending}
+		for range 10 {
+			page, err := s.ListObjects(ctx, "media", req)
+			require.NoError(t, err)
+			result = append(result, paths(page)...)
+			if len(page) < req.Limit {
+				return result
+			}
+			req.After = store.Key(page[len(page)-1])
+		}
+		t.Fatalf("the listing by %q doesn't end", sort)
+		return nil
+	}
+
+	// Of their sizes, with a folder's first, of none, and of their keys, of
+	// the same, reversed when it's descending
+	assert.Equal(t, []string{"/a/sub", "/a/a.txt", "/a/d.png", "/a/b.jpg", "/a/c.mp3"}, list(schema.SortSize, false))
+	assert.Equal(t, []string{"/a/c.mp3", "/a/b.jpg", "/a/d.png", "/a/a.txt", "/a/sub"}, list(schema.SortSize, true))
+
+	// Of when they were modified, and of their media types
+	assert.Equal(t, []string{"/a/sub", "/a/d.png", "/a/c.mp3", "/a/b.jpg", "/a/a.txt"}, list(schema.SortModified, false))
+	assert.Equal(t, []string{"/a/c.mp3", "/a/b.jpg", "/a/d.png", "/a/sub", "/a/a.txt"}, list(schema.SortType, false))
+
+	// Of their titles, of their dc:title, rather than their names, in any
+	// case, of a task's, rather than the backend's
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a/d.png", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"Apple"`)}}}))
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a/c.mp3", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"zebra"`)}}}))
+	assert.Equal(t, []string{"/a/a.txt", "/a/d.png", "/a/b.jpg", "/a/sub", "/a/c.mp3"}, list(schema.SortTitle, false))
+	assert.Equal(t, []string{"/a/c.mp3", "/a/sub", "/a/b.jpg", "/a/d.png", "/a/a.txt"}, list(schema.SortTitle, true))
+
+	// Of their kinds, of their metadata:kind, or else of their media
+	// types' major types, which say what they are, or none
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a/c.mp3", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "metadata", Key: "kind", Value: json.RawMessage(`"Recording"`)}}}))
+	assert.Equal(t, []string{"/a/sub", "/a/b.jpg", "/a/d.png", "/a/c.mp3", "/a/a.txt"}, list(schema.SortKind, false))
+
+	// Of their keys, by name, or without a sort, and reversed
+	assert.Equal(t, []string{"/a/a.txt", "/a/b.jpg", "/a/c.mp3", "/a/d.png", "/a/sub"}, list(schema.SortName, false))
+	assert.Equal(t, []string{"/a/sub", "/a/d.png", "/a/c.mp3", "/a/b.jpg", "/a/a.txt"}, list("", true))
+
+	// Of when they were modified, in time, rather than as text, of their
+	// seconds' fractions, and their offsets, to the millisecond
+	berlin := time.FixedZone("CET", 60*60)
+	require.NoError(t, s.PutObject(ctx, "media", folder("/b"),
+		object("/b/whole", 1, 0, "text/plain"),
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/b/fraction"}, ObjectAttr: schema.ObjectAttr{Size: &[]int64{1}[0], ModTime: at.Add(100 * time.Millisecond)}},
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/b/offset"}, ObjectAttr: schema.ObjectAttr{Size: &[]int64{1}[0], ModTime: at.Add(50 * time.Millisecond).In(berlin)}},
+		&schema.Object{ObjectKey: schema.ObjectKey{Path: "/b/earlier"}, ObjectAttr: schema.ObjectAttr{Size: &[]int64{1}[0], ModTime: at.Add(-time.Hour + time.Second).In(berlin)}}))
+	modified := func(descending bool) []string {
+		t.Helper()
+		result := []string{}
+		req := store.ListRequest{Parent: "/b/", Limit: 1, Sort: schema.SortModified, Descending: descending}
+		for range 10 {
+			page, err := s.ListObjects(ctx, "media", req)
+			require.NoError(t, err)
+			if len(page) == 0 {
+				return result
+			}
+			result = append(result, paths(page)...)
+			req.After = store.Key(page[0])
+		}
+		t.Fatal("the listing by modified doesn't end")
+		return nil
+	}
+	assert.Equal(t, []string{"/b/earlier", "/b/whole", "/b/offset", "/b/fraction"}, modified(false))
+	assert.Equal(t, []string{"/b/fraction", "/b/offset", "/b/whole", "/b/earlier"}, modified(true))
+
+	// After an object which isn't stored, there are none
+	page, err := s.ListObjects(ctx, "media", store.ListRequest{Parent: "/a/", Sort: schema.SortSize, After: "/a/missing"})
+	require.NoError(t, err)
+	assert.Empty(t, page)
+
+	// A sort which isn't one is an error
+	_, err = s.ListObjects(ctx, "media", store.ListRequest{Parent: "/a/", Sort: "colour"})
+	assert.ErrorIs(t, err, gofiler.ErrBadParameter)
 }
