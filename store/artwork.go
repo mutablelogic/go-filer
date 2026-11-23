@@ -37,6 +37,20 @@ func ValidateArtwork(artwork schema.ArtworkMeta) error {
 	return nil
 }
 
+// NormalizeArtwork returns artwork whose type is normalized, of its media
+// type, in lower case, without spaces, and its parameters, such as
+// IMAGE/PNG as image/png, which is valid, or ErrBadParameter
+func NormalizeArtwork(artwork schema.ArtworkMeta) (schema.ArtworkMeta, error) {
+	if err := ValidateArtwork(artwork); err != nil {
+		return artwork, err
+	}
+	media, params, _ := mime.ParseMediaType(artwork.Type)
+	if t := mime.FormatMediaType(media, params); t != "" {
+		artwork.Type = t
+	}
+	return artwork, nil
+}
+
 // ArtworkHash returns the hash of artwork, in lower case, or
 // ErrBadParameter when it isn't 64 hex digits
 func ArtworkHash(hash string) (string, error) {

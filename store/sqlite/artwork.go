@@ -23,7 +23,7 @@ import (
 func (self *Store) PutArtwork(ctx context.Context, artwork filer.ArtworkMeta) (_ *filer.Artwork, err error) {
 	ctx, end := self.span(ctx, "PutArtwork", attribute.String("arg.artwork", artwork.String()))
 	defer func() { end(err) }()
-	if err := store.ValidateArtwork(artwork); err != nil {
+	if artwork, err = store.NormalizeArtwork(artwork); err != nil {
 		return nil, err
 	}
 	var result schema.ArtworkList

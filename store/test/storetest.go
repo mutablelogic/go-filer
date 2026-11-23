@@ -1612,15 +1612,44 @@ func testArtwork(t *testing.T, s store.Store) {
 	_, err = s.PutArtwork(ctx, other)
 	assert.ErrorIs(t, err, gofiler.ErrConflict)
 
+	// Its type is normalized, of its case, and spaces, so it's the same
+	// artwork, of the same type
+	for _, t2 := range []string{"IMAGE/PNG", " image/png ", "Image/Png"} {
+		same := cover
+		same.Type = t2
+		normalized, err := s.PutArtwork(ctx, same)
+		if assert.NoError(t, err, t2) {
+			assert.Equal(t, stored.Hash, normalized.Hash, t2)
+			assert.Equal(t, "image/png", normalized.Type, t2)
+		}
+	}
+	upper, err := s.PutArtwork(ctx, schema.ArtworkMeta{Type: "IMAGE/JPEG", Width: 1, Height: 1, Context: "back", Data: []byte("jpeg")})
+	require.NoError(t, err)
+	assert.Equal(t, "image/jpeg", upper.Type)
+
 	// Artwork which no object links to is deleted, once it was last put
 	// before the time, and not while it's just been put, and is about to be
-	// linked to, which putting it again is too
+	// linked to, which putting it again is too: of a time between when it
+	// was first put, and when it was put again, it's kept
 	n, err := s.DeleteUnlinkedArtwork(ctx, time.Now().Add(-time.Hour))
 	require.NoError(t, err)
 	assert.Zero(t, n, "it was put since")
+	time.Sleep(20 * time.Millisecond)
+	between := time.Now()
+	time.Sleep(20 * time.Millisecond)
+	_, err = s.PutArtwork(ctx, cover)
+	require.NoError(t, err)
+	n, err = s.DeleteUnlinkedArtwork(ctx, between)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "the thumbnail, and the back, which weren't put again")
+	_, err = s.GetArtwork(ctx, stored.Hash, false)
+	require.NoError(t, err, "the cover, which was put again, is kept")
+	again, err = s.GetArtwork(ctx, stored.Hash, false)
+	require.NoError(t, err)
+	assert.True(t, stored.Created.Equal(again.Created), "it was first put when it was")
 	n, err = s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
 	require.NoError(t, err)
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 1, n)
 	_, err = s.GetArtwork(ctx, stored.Hash, false)
 	assert.ErrorIs(t, err, gofiler.ErrNotFound)
 	n, err = s.DeleteUnlinkedArtwork(ctx, time.Now().Add(time.Minute))
