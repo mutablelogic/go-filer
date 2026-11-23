@@ -156,6 +156,19 @@ func (self *Registry) Run(ctx context.Context, logger *slog.Logger) (err error) 
 		stopStates()
 		<-statesDone
 	}()
+
+	// Delete the artwork which no object links to, every while, until it's
+	// stopped
+	artworkCtx, stopArtwork := context.WithCancel(ctx)
+	artworkDone := make(chan struct{})
+	go func() {
+		defer close(artworkDone)
+		self.cleanArtwork(artworkCtx, logger)
+	}()
+	defer func() {
+		stopArtwork()
+		<-artworkDone
+	}()
 	relist := make(chan struct{}, 1)
 	var listRetry time.Duration
 	list := func() {

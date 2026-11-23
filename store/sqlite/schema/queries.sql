@@ -37,8 +37,8 @@ RETURNING coalesce(status, ''), coalesce(folders, 0), coalesce(files, 0), coales
 -- An object, which replaces the one of its key, and its metadata, of a JSON
 -- array of entries, which replaces the backend's metadata, but not a task's,
 -- unless it changed, as of its entity tag, size or modification time, when
--- what tasks found of it, their metadata and shapes, is out of date, which
--- is removed, until they're done of it again
+-- what tasks found of it, their metadata, shapes, events and links to its
+-- artwork, is out of date, which is removed, until they're done of it again
 DELETE FROM metadata WHERE volume = @volume AND object = @key AND source <> '' AND EXISTS (
   SELECT 1 FROM object WHERE volume = @volume AND key = @key
     AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
@@ -48,6 +48,10 @@ DELETE FROM object_geo WHERE volume = @volume AND object = @key AND source <> ''
     AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
 );
 DELETE FROM object_event WHERE volume = @volume AND object = @key AND source <> '' AND EXISTS (
+  SELECT 1 FROM object WHERE volume = @volume AND key = @key
+    AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
+);
+DELETE FROM object_artwork WHERE volume = @volume AND object = @key AND EXISTS (
   SELECT 1 FROM object WHERE volume = @volume AND key = @key
     AND (etag IS NOT @etag OR size IS NOT @size OR modified_at IS NOT @modified_at)
 );
@@ -416,3 +420,41 @@ SELECT (
   WHERE object_search MATCH @match AND (@volumes IS 'null' OR object.volume IN (SELECT value FROM json_each(@volumes)))
   ORDER BY score LIMIT 1
 ), 0);
+
+-- artwork.put
+-- Artwork, or the artwork of its hash, which is stored already, without
+-- its data, which was put now, so it isn't deleted before it's linked to
+INSERT INTO artwork (hash, type, width, height, context, data, created_at, put_at)
+VALUES (@hash, @type, @width, @height, @context, @data, @now, @now)
+ON CONFLICT (hash) DO UPDATE SET put_at = excluded.put_at
+RETURNING hash, type, width, height, context, length(data), created_at, NULL;
+
+-- artwork.get
+-- Artwork of its hash, with its data, when it's asked for
+SELECT hash, type, width, height, context, length(data), created_at, CASE WHEN @data THEN data END
+FROM artwork WHERE hash = @hash;
+
+-- artwork.delete_unlinked
+-- The artwork which no object links to, which was last put before a time
+DELETE FROM artwork WHERE put_at < @before AND NOT EXISTS (SELECT 1 FROM object_artwork WHERE object_artwork.hash = artwork.hash)
+RETURNING hash, type, width, height, context, length(data), created_at, NULL;
+
+-- object_artwork.object
+-- An object, of which links are set, which is found, or not
+SELECT key FROM object WHERE volume = @volume AND key = @key;
+
+-- object_artwork.list
+-- The artwork an object links to, without its data, in the order of its
+-- contexts
+SELECT artwork.hash, type, width, height, context, length(data), created_at, NULL
+FROM object_artwork JOIN artwork ON artwork.hash = object_artwork.hash
+WHERE volume = @volume AND object = @key
+ORDER BY context, artwork.hash;
+
+-- object_artwork.delete
+-- The links of an object
+DELETE FROM object_artwork WHERE volume = @volume AND object = @key RETURNING hash;
+
+-- object_artwork.insert
+-- A link of an object to artwork
+INSERT INTO object_artwork (volume, object, hash) VALUES (@volume, @key, @hash) RETURNING hash;

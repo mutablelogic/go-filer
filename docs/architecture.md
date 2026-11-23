@@ -105,6 +105,16 @@ A `gofiler.CacheStore` keeps what a volume's backend gets from a service, by key
   * The directory is made readable only by its owner, and locked while the registry is open (on Unix), so two servers can't share it and delete each other's caches. Only files named as caches are deleted.
   * A cache's identity is its volume's stored URL and when it was created, so a volume that's deleted and created again with the same URL starts again.
 
+## Artwork
+
+A `gofiler.ArtworkStore`, part of the index store, keeps artwork: images such as an album's cover or a thumbnail, which objects link to.
+
+* **Artwork** (`schema.ArtworkMeta`) is its type (an image's), width and height in pixels, context, and data. The context is what it is of an object: `cover`, `back`, `thumbnail`, or another name of a letter and up to 63 letters, digits, `-` and `_`, in lower case.
+* **Its hash** is the SHA-256 of its context and data, so an image is kept once per context, however many objects link to it. `PutArtwork` stores it, or returns the one already stored, and `ErrConflict` if that has another type or size. `GetArtwork(hash, data)` returns it, with its data only when asked for.
+* **Links:** `SetObjectArtwork(volume, key, hashes...)` replaces an object's links, at most one per context, and `ObjectArtwork` lists them, by context. Links are removed when their object is deleted, or changes (its ETag, size or modification time), like a task's metadata.
+* **Cleanup:** the registry deletes artwork that no object links to every hour, once it was last put more than an hour ago, so artwork that's just been put, and is about to be linked to, is kept.
+* **Stores:** SQLite keeps artwork in the index's database (`artwork` and `object_artwork`). Postgres doesn't yet.
+
 ## Actions
 
 An action is something a volume's backend can do beyond reading and writing its objects, such as creating a task list. It maps onto an LLM tool.

@@ -234,3 +234,33 @@ SELECT object.rowid, search_name(object.key),
           AND ifnull(task.namespace, '') = ifnull(metadata.namespace, '') AND task.key = metadata.key))
   ), '')
 FROM object;
+
+-- schema.artwork
+-- Artwork: images, such as an album's cover, or a thumbnail, by the hash of
+-- their context, and data, so an image is kept once, of its context, which
+-- objects link to, and which can't be deleted while one does
+CREATE TABLE IF NOT EXISTS artwork (
+  hash            TEXT PRIMARY KEY CHECK (length(hash) = 64 AND hash NOT GLOB '*[^0-9a-f]*'),
+  type            TEXT NOT NULL CHECK (type GLOB 'image/*'),
+  width           INTEGER NOT NULL CHECK (width > 0),
+  height          INTEGER NOT NULL CHECK (height > 0),
+  context         TEXT NOT NULL CHECK (context GLOB '[a-z]*' AND context NOT GLOB '*[^a-z0-9_-]*' AND length(context) <= 64),
+  data            BLOB NOT NULL,
+  created_at      TIMESTAMP NOT NULL,     -- when it was first put
+  put_at          TIMESTAMP NOT NULL      -- when it was last put, of which artwork which isn't linked to is deleted, after a while
+);
+
+-- schema.object_artwork
+-- The links of the objects to their artwork, which are removed with their
+-- object, and follow it, as their keys change
+CREATE TABLE IF NOT EXISTS object_artwork (
+  volume          TEXT NOT NULL,
+  object          TEXT NOT NULL,          -- the key of its object
+  hash            TEXT NOT NULL REFERENCES artwork (hash),
+  PRIMARY KEY (volume, object, hash),
+  FOREIGN KEY (volume, object) REFERENCES object (volume, key) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- schema.object_artwork_hash
+-- The links of artwork, of which artwork no object links to is found
+CREATE INDEX IF NOT EXISTS object_artwork_hash ON object_artwork (hash);
