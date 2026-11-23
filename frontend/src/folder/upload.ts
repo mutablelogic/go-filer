@@ -8,12 +8,14 @@
 // of Esc, stops reading it, and cancels an upload. open opens it, of the folder, and the function which is called
 // once files are added.
 
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import type { Client } from '@mutablelogic/go-server/api';
 import { PanelController, type PanelAction } from '@mutablelogic/go-server/panel';
 import '@mutablelogic/go-server/panel/view';
 import Upload16 from '@carbon/icons/es/upload/16.js';
+import Upload32 from '@carbon/icons/es/upload/32.js';
+import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import '@carbon/web-components/es/components/file-uploader/index.js';
 import '@carbon/web-components/es/components/toggle/index.js';
 import '@carbon/web-components/es/components/layer/index.js';
@@ -40,6 +42,21 @@ interface Chosen {
 // GLOBALS
 
 export const ObjectUploadTag = 'gf-object-upload';
+
+// dropZone is the drop zone's style, in Carbon's drop container's shadow
+// root: as wide as the panel, taller, and of what it says in its middle
+const dropZone = css`
+    .cds--file-browse-btn {
+        max-inline-size: none;
+    }
+
+    .cds--file__drop-container {
+        align-items: center;
+        justify-content: center;
+        block-size: 10rem;
+        text-align: center;
+    }
+`;
 
 // MaxListed is how many of the files which are chosen are listed, of more,
 // which are counted, and BatchSize how many of a folder's files are added
@@ -119,6 +136,20 @@ export class ObjectUploadElement extends LitElement {
         return this;
     }
 
+    // The drop zone is as wide as the panel, and taller, with what it says
+    // in its middle, of a stylesheet added to Carbon's drop container's
+    // shadow root, which doesn't expose its parts, once it's rendered
+    protected override updated() {
+        const drop = this.querySelector('cds-file-uploader-drop-container');
+        const sheet = dropZone.styleSheet;
+        void (drop as (Element & { updateComplete?: Promise<unknown> }) | null)?.updateComplete?.then(() => {
+            const root = drop?.shadowRoot;
+            if (sheet && root && !root.adoptedStyleSheets.includes(sheet)) {
+                root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+            }
+        });
+    }
+
     // open opens the panel of the volume's folder, and calls the function
     // once files are added to it
     open(volume: string, folder: string, added?: () => void) {
@@ -151,9 +182,13 @@ export class ObjectUploadElement extends LitElement {
                     <cds-file-uploader>
                         ${done ? nothing : html`
                             <div @drop=${{ handleEvent: (event: DragEvent) => this.dropped(event), capture: true }}>
-                                <cds-file-uploader-drop-container multiple ?disabled=${uploading}
+                                <cds-file-uploader-drop-container class="gf-object-upload-drop" multiple ?disabled=${uploading}
                                     @cds-file-uploader-drop-container-changed=${(event: CustomEvent<{ addedFiles: File[] }>) => this.add(event.detail.addedFiles.map((file) => ({ file, path: file.name })))}>
-                                    Drag and drop files, or folders, here, or click to choose files
+                                    <span class="gf-object-upload-drop-content">
+                                        ${iconLoader(Upload32)}
+                                        <span>Drag and drop files or folders here</span>
+                                        <span class="gf-object-upload-drop-hint">or click to choose files</span>
+                                    </span>
                                 </cds-file-uploader-drop-container>
                             </div>
                         `}
