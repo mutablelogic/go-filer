@@ -93,3 +93,26 @@ export function formatTime(time?: string): string {
 export function skippedFirst<T extends { skipped?: unknown }>(files: readonly T[], max: number): T[] {
     return [...files.filter((f) => f.skipped), ...files.filter((f) => !f.skipped)].slice(0, max);
 }
+
+// uploadBatches returns the files which are uploaded, in their order, in
+// batches of at most the files, and the bytes, of their sizes, apart from
+// a file which is more than the bytes, which is a batch of its own
+export function uploadBatches<T extends { file: { size: number } }>(files: readonly T[], maxFiles: number, maxBytes: number): T[][] {
+    const batches: T[][] = [];
+    let batch: T[] = [];
+    let bytes = 0;
+    for (const f of files) {
+        if (batch.length && (batch.length >= maxFiles || bytes + f.file.size > maxBytes)) {
+            batches.push(batch);
+            batch = [];
+            bytes = 0;
+        }
+        batch.push(f);
+        bytes += f.file.size;
+    }
+    if (batch.length) {
+        batches.push(batch);
+    }
+    return batches;
+}
+

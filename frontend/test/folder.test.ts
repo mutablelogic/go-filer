@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Client } from '@mutablelogic/go-server/api';
 import { FolderController } from '../src/folder/controller.ts';
-import { availableColumns, formatSize, formatTime, skippedFirst, visibleColumns } from '../src/folder/format.ts';
+import { availableColumns, formatSize, formatTime, skippedFirst, uploadBatches, visibleColumns } from '../src/folder/format.ts';
 import { objectFormat, objectKind, volumeFileNames, volumeSortable } from '../src/filer/schema.ts';
 
 // fakeServer is a volume's folders, of their objects' paths, whose listings
@@ -394,4 +394,15 @@ test('skippedFirst', () => {
     assert.equal(shown[0].path, 'f120');
     assert.equal(shown[1].path, 'f0');
     assert.deepEqual(skippedFirst([{ path: 'a', skipped: undefined }], 100).map((f) => f.path), ['a']);
+});
+
+test('uploadBatches', () => {
+    // Batches of at most the files, and bytes, in order, of which a file
+    // which is more than the bytes is alone
+    const f = (size: number) => ({ file: { size } });
+    const sizes = (batches: { file: { size: number } }[][]) => batches.map((b) => b.map((x) => x.file.size));
+    assert.deepEqual(sizes(uploadBatches([f(1), f(1), f(1), f(1), f(1)], 2, 100)), [[1, 1], [1, 1], [1]]);
+    assert.deepEqual(sizes(uploadBatches([f(40), f(40), f(40)], 10, 100)), [[40, 40], [40]]);
+    assert.deepEqual(sizes(uploadBatches([f(10), f(500), f(10)], 10, 100)), [[10], [500], [10]]);
+    assert.deepEqual(uploadBatches([], 10, 100), []);
 });
