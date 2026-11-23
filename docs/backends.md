@@ -241,5 +241,8 @@ A volume of an iCalendar feed's events, read-only, such as a calendar's "Subscri
   * The feed is polled at that interval, with its last ETag and Last-Modified, so an unchanged feed is a 304, not downloaded again.
   * Changes are sent by the events' UIDs: new, gone and changed events, and events whose title or day changed, as for RSS. They're of the events the watch last sent, so a feed that a read fetched between polls is still sent.
   * Folders are created and deleted as events appear in, and leave, their months.
-* **Cache:** as for RSS: the feed's body is saved in the volume's cache, with its ETag and Last-Modified, so a restart doesn't fetch it again until it would have been.
+* **Cache:** the feed is kept in the volume's cache, not in memory. Memory holds each event's path, metadata, and where its lines are in the cached feed, and a read renders the event from there.
+  * A fetched feed is saved to whichever of two cache slots isn't current, then read from there. It replaces the current feed only once it's a whole calendar.
+  * A restart reads it from the cache, with its ETag and Last-Modified, so it isn't fetched again until it would have been.
+  * A feed that's gone from the cache, such as when the cache is cleared, is fetched again when it's read.
 * **Errors:** a feed that isn't found, or isn't an iCalendar (such as a sign-in page), is `ErrBadParameter`, as is one that's cut off, or whose components don't end as they began, so it doesn't replace the saved feed. One that can't be reached is `ErrServiceUnavailable`, so the volume is offline and retried.

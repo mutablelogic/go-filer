@@ -29,13 +29,24 @@ import (
 // TYPES
 
 // events are a feed's events, as files, of the folders of their days, by
-// their paths, with their iCalendars, and the calendar's name
+// their paths, with where their lines are in the feed, which is in the
+// volume's cache, of its key, and its generation, and the calendar's name
 type events struct {
-	title   string
-	objects map[string]*schema.Object // of their paths, folders with "/" after them
-	content map[string]string         // the iCalendars of the events, of their paths
-	paths   []string                  // every path, in order
-	keys    map[string]string         // the paths of the events, of their UIDs
+	title      string
+	key        string                    // the key of the feed in the volume's cache
+	generation string                    // which feed it is, of those of the key
+	src        *source                   // the calendar's properties, and time zones
+	objects    map[string]*schema.Object // of their paths, folders with "/" after them
+	files      map[string]*file          // the events' lines, of their paths
+	paths      []string                  // every path, in order
+	keys       map[string]string         // the paths of the events, of their UIDs
+}
+
+// file is where an event's lines are, and those of its changes, in the
+// feed, and the time zones they're in
+type file struct {
+	zones []string
+	parts []part
 }
 
 // event is an event of a feed, of its UID, with the changes to the times it
@@ -78,8 +89,8 @@ const (
 // those of its changes to the times it repeats, which have its UID. Events
 // of the same title and day are told apart by a number, in the order of
 // their UIDs.
-func newEvents(src *source) *events {
-	self := &events{title: src.name, objects: make(map[string]*schema.Object), content: make(map[string]string), keys: make(map[string]string)}
+func newEvents(src *source, key, generation string) *events {
+	self := &events{title: src.name, key: key, generation: generation, src: src, objects: make(map[string]*schema.Object), files: make(map[string]*file), keys: make(map[string]string)}
 	self.dir("/")
 
 	// The events, of their UIDs, with their changes
@@ -138,6 +149,9 @@ func newEvents(src *source) *events {
 		self.keys[ev.key] = name
 	}
 	self.paths = slices.Sorted(maps.Keys(self.objects))
+
+	// What's decoded of the events isn't kept, once they're files
+	src.components = nil
 	return self
 }
 
@@ -166,57 +180,70 @@ func (self *events) dir(p string) {
 // and those of its changes, as they are, apart from DTSTAMP, which is when
 // it was last modified, or created, or else the feed's. Many feeds set it to
 // when they're fetched, so the event's entity tag is of its iCalendar
-// without it, and an event which didn't change isn't updated.
+// without it, and an event which didn't change isn't updated. Its lines
+// aren't kept, but where they are, and its size, and entity tag, are of
+// them, as they're rendered.
 func (self *events) file(p string, ev *event, src *source) {
 	self.dir(path.Dir(p) + "/")
-	var lines, hashed []line
+	f := &file{}
 	var modified time.Time
 	cal := &ical.Calendar{Name: src.name, TZ: src.tz}
 	for _, c := range ev.components {
-		stamp := c.event.Modified
-		if stamp.IsZero() {
-			stamp = c.event.Created
-		}
-		if stamp.After(modified) {
-			modified = stamp
-		}
-		for _, l := range c.lines {
-			if l.name != "DTSTAMP" {
-				lines, hashed = append(lines, l), append(hashed, l)
-			} else if stamp.IsZero() {
-				lines = append(lines, l)
-			} else {
-				text := "DTSTAMP:" + stamp.UTC().Format("20060102T150405Z")
-				lines = append(lines, line{name: l.name, text: text, physical: []string{text}})
+		for _, tzid := range c.tzids {
+			if _, exists := src.zones[tzid]; exists && !slices.Contains(f.zones, tzid) {
+				f.zones = append(f.zones, tzid)
 			}
 		}
+	}
+	prefix := src.prefix(f.zones)
+	hash := sha256.New()
+	hash.Write(prefix)
+	size := len(prefix) + len(endCalendar)
+	for _, c := range ev.components {
+		if c.stamp.After(modified) {
+			modified = c.stamp
+		}
+		hash.Write(c.sum[:])
+		size += c.length
+		f.parts = append(f.parts, c.part)
 		cal.Events = append(cal.Events, c.event)
 	}
-	zones := src.tzids(lines)
-	data := src.calendar(zones, lines)
-	sum := sha256.Sum256(src.calendar(zones, hashed))
-	content := string(data)
 	object := &schema.Object{
 		ObjectKey:  schema.ObjectKey{Path: p},
-		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(len(content))), ETag: types.Ptr(hex.EncodeToString(sum[:16])), ModTime: modified},
+		ObjectAttr: schema.ObjectAttr{Size: types.Ptr(int64(size)), ETag: types.Ptr(hex.EncodeToString(hash.Sum(nil)[:16])), ModTime: modified},
 		ObjectMeta: schema.ObjectMeta{ContentType: cal.ContentType(), Meta: meta(ev, src.name)},
 	}
-	self.objects[p], self.content[p] = object, content
+	self.objects[p], self.files[p] = object, f
+}
+
+// render returns the iCalendar of an event's file, of its lines, which are
+// read from the feed, which is the generation of the events
+func (self *events) render(feed io.ReaderAt, f *file) ([]byte, error) {
+	b := self.src.prefix(f.zones)
+	for _, p := range f.parts {
+		raw := make([]byte, p.n)
+		if _, err := feed.ReadAt(raw, p.off); err != nil {
+			return nil, err
+		}
+		out, _ := renderComponent(raw, p.stamp)
+		b = append(b, out...)
+	}
+	return append(b, endCalendar...), nil
 }
 
 // get returns the object of a path, and the iCalendar of an event, or
 // fs.ErrNotExist when there's none, of a folder's path, with or without "/"
 // after it
-func (self *events) get(op, p string) (*schema.Object, string, error) {
+func (self *events) get(op, p string) (*schema.Object, *file, error) {
 	if p == "" {
 		p = "/"
 	}
 	if object, exists := self.objects[p]; exists {
-		return object, self.content[p], nil
+		return object, self.files[p], nil
 	} else if object, exists := self.objects[p+"/"]; exists && !strings.HasSuffix(p, "/") {
-		return object, "", nil
+		return object, nil, nil
 	}
-	return nil, "", &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
+	return nil, nil, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 }
 
 // listing returns the objects beneath a folder, of its children, or every

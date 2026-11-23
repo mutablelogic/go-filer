@@ -486,3 +486,34 @@ func Test_FeedTruncated(t *testing.T) {
 	require.NoError(t, err, "the feed which was saved is read")
 	assert.Contains(t, list(t, f, "/", true), "/2026/2026-12/25-holiday-2.ics")
 }
+
+// Test_FeedCache tests an event's lines are read from the feed, in the
+// volume's cache, as its size, and entity tag, say, and a feed which isn't
+// there, such as of a cache which was cleared, is fetched again
+func Test_FeedCache(t *testing.T) {
+	server, full, _ := newFeed(t, feed(calendarICS+zonedICS))
+	cache := testCache()
+	f, err := open(t, feedURL(t, server.URL, url.Values{"refresh_interval": {"1h"}}), cache)
+	require.NoError(t, err)
+	var files []string
+	for _, p := range list(t, f, "/", true) {
+		if strings.HasSuffix(p, ".ics") {
+			files = append(files, p)
+		}
+	}
+	require.Len(t, files, 4)
+	for _, p := range files {
+		object, content := read(t, f, p)
+		assert.Equal(t, types.Value(object.Size), int64(len(content)), p)
+		_, err := ical.Decode(strings.NewReader(content))
+		assert.NoError(t, err, p)
+	}
+	assert.Equal(t, int32(1), full.Load())
+
+	// The cache is cleared, so the feed is fetched again, when it's read
+	_, before := read(t, f, files[0])
+	require.NoError(t, cache.Delete(context.Background(), "feed/"))
+	_, after := read(t, f, files[0])
+	assert.Equal(t, int32(2), full.Load())
+	assert.Equal(t, strings.Split(before, "DTSTAMP")[0], strings.Split(after, "DTSTAMP")[0])
+}
