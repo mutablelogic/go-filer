@@ -5,10 +5,14 @@
 package cmd
 
 import (
+	"context"
+	"log/slog"
+
 	// Packages
 	client "github.com/mutablelogic/go-client"
 	metadata "github.com/mutablelogic/go-filer/metadata"
 	registry "github.com/mutablelogic/go-filer/registry"
+	chromaprint "github.com/mutablelogic/go-metadata/pkg/chromaprint"
 	server "github.com/mutablelogic/go-server"
 )
 
@@ -48,5 +52,29 @@ func (flags Flags) WithMetadataEnrichment(ctx server.Cmd) ([]registry.Opt, error
 	if err != nil {
 		return nil, err
 	}
+	flags.logLookups(ctx.Context(), ctx.Logger(), chromaprint.Enabled)
 	return []registry.Opt{registry.WithMetadataTask(e.Enrich), registry.WithMarkdown(e.Markdown)}, nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PRIVATE METHODS
+
+// logLookups logs which of the online lookups of enrichment are on, once,
+// as the server starts: TMDB, of videos, and AcoustID, of audio, which
+// fingerprints it with Chromaprint, when it's built in, and a warning of
+// each which is off, and how it's turned on
+func (flags Flags) logLookups(ctx context.Context, logger *slog.Logger, fingerprints bool) {
+	if flags.TMDBKey != "" {
+		logger.InfoContext(ctx, "TMDB lookups are on: videos are looked up as films and TV episodes")
+	} else {
+		logger.WarnContext(ctx, "TMDB lookups are off: set TMDB_TOKEN to look videos up as films and TV episodes")
+	}
+	switch {
+	case flags.AcoustIDKey == "":
+		logger.WarnContext(ctx, "AcoustID lookups are off: set ACOUSTID_KEY to look audio up as recordings")
+	case fingerprints:
+		logger.InfoContext(ctx, "AcoustID lookups are on: audio is looked up as recordings, of its Chromaprint fingerprints")
+	default:
+		logger.WarnContext(ctx, "AcoustID lookups are on, but Chromaprint isn't built in: audio is only looked up of the AcoustID identifiers in its tags, as it can't be fingerprinted without cgo and the chromaprint tag")
+	}
 }
