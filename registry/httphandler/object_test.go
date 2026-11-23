@@ -750,6 +750,10 @@ func TestBackendIcon(t *testing.T) {
 	status, _, body = getObject(t, server, "backend/file/icon", http.Header{"If-None-Match": {etag}})
 	assert.Equal(t, http.StatusNotModified, status)
 	assert.Empty(t, body)
+	status, _, _ = getObject(t, server, "backend/file/icon", http.Header{"If-None-Match": {`"other", W/` + etag}})
+	assert.Equal(t, http.StatusNotModified, status, "a weak validator matches, of a GET")
+	status, _, _ = getObject(t, server, "backend/file/icon", http.Header{"If-None-Match": {`W/"other"`}})
+	assert.Equal(t, http.StatusOK, status)
 
 	// The backends' list has the media type of each one's icon, and its
 	// defaults

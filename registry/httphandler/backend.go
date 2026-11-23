@@ -65,7 +65,8 @@ func backendHandlers(reg *registry.Registry, router *httprouter.Router, document
 }
 
 // writeIcon writes the icon, of its media type, whose entity tag is of its
-// data, which a browser keeps, or 304, when it matches If-None-Match
+// data, which a browser keeps, or 304, when it matches If-None-Match, of the
+// weak comparison of a GET, so W/"<etag>" matches too
 func writeIcon(w http.ResponseWriter, r *http.Request, icon gofiler.Icon) {
 	data := icon.Data()
 	sum := sha256.Sum256(data)
@@ -73,7 +74,7 @@ func writeIcon(w http.ResponseWriter, r *http.Request, icon gofiler.Icon) {
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(iconMaxAge))
 	for _, match := range strings.Split(r.Header.Get("If-None-Match"), ",") {
-		if match = strings.TrimSpace(match); match == etag || match == "*" {
+		if match = strings.TrimPrefix(strings.TrimSpace(match), "W/"); match == etag || match == "*" {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
