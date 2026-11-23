@@ -76,6 +76,17 @@ func (self *Store) ObjectArtwork(ctx context.Context, volume, key string) (_ []*
 	return result, nil
 }
 
+// UnlinkVolumeArtwork removes the links of the objects of the volume to
+// their artwork, but not what tasks found of them, otherwise
+func (self *Store) UnlinkVolumeArtwork(ctx context.Context, volume string) (err error) {
+	ctx, end := self.span(ctx, "UnlinkVolumeArtwork", attribute.String("arg.volume", volume))
+	defer func() { end(err) }()
+	if err := self.conn.Delete(ctx, nil, schema.VolumeArtwork(volume)); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+		return storeErr(err)
+	}
+	return nil
+}
+
 // DeleteUnlinkedArtwork deletes the artwork which no object links to, and
 // returns how many were deleted
 func (self *Store) DeleteUnlinkedArtwork(ctx context.Context) (_ int, err error) {

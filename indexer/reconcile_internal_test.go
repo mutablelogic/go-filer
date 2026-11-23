@@ -34,9 +34,9 @@ func Test_Reconcile(t *testing.T) {
 
 	// enriched sets what the task found of the file, and what the volume's
 	// state says it was enriched with, of a scan which is in progress, so its
-	// mode is empty, and returns whether it's kept, once the indexer of the
-	// mode reconciles it
-	enriched := func(was string, mode Mode) bool {
+	// mode is empty, and returns whether its metadata, and its links to
+	// artwork, are kept, once the indexer of the mode reconciles it
+	enriched := func(was string, mode Mode) (bool, bool) {
 		t.Helper()
 		require.NoError(t, s.SetMetadata(ctx, "media", "/a.png", string(store.KindMetadata), nil, schema.TaskMeta{
 			Meta:    []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"A"`)}},
@@ -52,20 +52,31 @@ func Test_Reconcile(t *testing.T) {
 		require.NoError(t, err)
 		state, err := s.State(ctx, "media")
 		require.NoError(t, err)
-		kept := len(object.Meta) > 0
-		assert.Equal(t, kept, len(artwork) > 0, "what the task found is kept, or not, with its artwork")
 		assert.Equal(t, i.enrichment(), state.Enriched, "its state records what its files are enriched with, so it isn't enriched again")
-		return kept
+		return len(object.Meta) > 0, len(artwork) > 0
 	}
 
 	// Of something else, it's enriched again, and not of the same, or of
-	// nothing recorded, which has nothing of it
-	assert.False(t, enriched("metadata", ModeArtwork))
-	assert.False(t, enriched("artwork", ModeMetadata))
-	assert.False(t, enriched("artwork", ModeObjects), "it isn't enriched any more")
-	assert.True(t, enriched("artwork", ModeArtwork))
-	assert.True(t, enriched("metadata", ModeMetadata))
-	assert.True(t, enriched("", ModeArtwork), "nothing was recorded")
+	// nothing recorded, which has nothing of it, and of artwork, to
+	// metadata, only its links to artwork are removed, as its metadata is
+	// the same
+	for _, test := range []struct {
+		was           string
+		mode          Mode
+		meta, artwork bool
+	}{
+		{"metadata", ModeArtwork, false, false},
+		{"artwork", ModeMetadata, true, false},
+		{"artwork", ModeObjects, false, false},
+		{"metadata", ModeObjects, false, false},
+		{"artwork", ModeArtwork, true, true},
+		{"metadata", ModeMetadata, true, true},
+		{"", ModeArtwork, true, true},
+	} {
+		meta, artwork := enriched(test.was, test.mode)
+		assert.Equal(t, test.meta, meta, "its metadata, of %q, to %v", test.was, test.mode)
+		assert.Equal(t, test.artwork, artwork, "its links to artwork, of %q, to %v", test.was, test.mode)
+	}
 }
 
 // Test_ReconcileFails tests what a volume's files were enriched with isn't

@@ -1794,6 +1794,17 @@ func testTaskArtwork(t *testing.T, s store.Store) {
 	assert.ErrorIs(t, err, gofiler.ErrPreconditionFailed)
 	assert.Equal(t, []string{"back"}, contexts("/b.mp3"))
 
+	// The links of a volume are removed alone, keeping the metadata
+	require.NoError(t, s.SetMetadata(ctx, "media", "/a.mp3", "metadata", nil, schema.TaskMeta{Meta: []schema.Meta{{Namespace: "dc", Key: "title", Value: json.RawMessage(`"A"`)}}, Artwork: []schema.ArtworkMeta{artwork("cover", "a")}}))
+	require.NoError(t, s.UnlinkVolumeArtwork(ctx, "media"))
+	assert.Empty(t, contexts("/a.mp3"))
+	assert.Empty(t, contexts("/b.mp3"))
+	object, err = s.GetObject(ctx, "media", "/a.mp3")
+	require.NoError(t, err)
+	assert.Len(t, object.Meta, 1, "its metadata is kept")
+	require.NoError(t, s.UnlinkVolumeArtwork(ctx, "missing"), "a volume which isn't stored has none")
+	require.NoError(t, s.SetMetadata(ctx, "media", "/b.mp3", "metadata", nil, schema.TaskMeta{Artwork: []schema.ArtworkMeta{artwork("back", "b")}}))
+
 	// The links of a volume whose task's metadata is deleted are too
 	require.NoError(t, s.DeleteMetadata(ctx, "media", "metadata"))
 	assert.Empty(t, contexts("/b.mp3"))

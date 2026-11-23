@@ -452,10 +452,11 @@ func (self *Indexer) enrichment() string {
 
 // reconcile removes what was found of the volume's files, so they're
 // enriched again, when they were enriched with something else than its mode
-// says, such as with artwork, or without it, or aren't enriched any more,
-// and then records what they're enriched with, of its state, which a scan
-// doesn't change. A volume whose mode enriches its files, without a task to,
-// is left as it is.
+// says, such as without artwork, which it finds now, or aren't enriched any
+// more, or removes only their links to artwork, when they were enriched
+// with it, and aren't now, as their metadata is the same, and then records
+// what they're enriched with, of its state, which a scan doesn't change. A
+// volume whose mode enriches its files, without a task to, is left as it is.
 func (self *Indexer) reconcile(ctx context.Context) error {
 	want := self.enrichment()
 	if want != "" && !self.tasked() {
@@ -472,7 +473,12 @@ func (self *Indexer) reconcile(ctx context.Context) error {
 	// with, of when it was, so it's enriched of every file again, when it
 	// is again, and it's removed before what it's enriched with is
 	// recorded, so it's removed again, when it isn't recorded
-	if want == "" || state.Enriched != "" {
+	switch {
+	case state.Enriched == string(ModeArtwork) && want == string(ModeMetadata):
+		if err := self.store.UnlinkVolumeArtwork(ctx, self.name); err != nil {
+			return err
+		}
+	case want == "" || state.Enriched != "":
 		if err := self.store.DeleteMetadata(ctx, self.name, string(store.KindMetadata)); err != nil {
 			return err
 		}
