@@ -440,6 +440,33 @@
             vertical-align: middle;
         }
 
+        /* Cells are of one line, never wrapped, cut short when they're
+           long. The columns are of fixed widths, of the header's, so they
+           don't move as more rows are loaded, and Name has what's left */
+        .gf-file-view-table::part(content) {
+            table-layout: fixed;
+            min-width: var(--gf-file-view-width, 0);
+        }
+
+        .gf-file-view-table cds-table-cell,
+        .gf-file-view-table cds-table-header-cell {
+            box-sizing: border-box;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .gf-file-view-name {
+            max-width: 100%;
+        }
+
+        .gf-file-view-name > span:last-child {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         /* A file's name is a button, which chooses it, of its row's click,
            and of the keyboard, which reads as its name */
         .gf-file-view-name {
@@ -479,21 +506,7 @@
             outline-offset: 2px;
         }
 
-        .gf-file-view-type {
-            max-width: 12rem;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
         /* A file's name, beside its title, is secondary to it */
-        .gf-file-view-file {
-            max-width: 16rem;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
         cds-table-cell.gf-file-view-file {
             color: var(--cds-text-secondary);
         }

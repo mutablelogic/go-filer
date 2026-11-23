@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Client } from '@mutablelogic/go-server/api';
 import { FolderController } from '../src/folder/controller.ts';
-import { formatSize, formatTime } from '../src/folder/view.ts';
+import { availableColumns, formatSize, formatTime, visibleColumns } from '../src/folder/format.ts';
 import { objectFormat, objectKind, volumeFileNames } from '../src/filer/schema.ts';
 
 // fakeServer is a volume's folders, of their objects' paths, whose listings
@@ -220,4 +220,16 @@ test('volumeFileNames', () => {
     assert.equal(volumeFileNames(volume('gdrive://drive')), true);
     assert.equal(volumeFileNames(volume('gcontacts://contacts')), false);
     assert.equal(volumeFileNames(volume('webcal://example.com/feed.ics')), false);
+});
+
+test('fileViewColumns', () => {
+    // File and Format are only of volumes whose objects have file names
+    assert.deepEqual(availableColumns(true), ['file', 'kind', 'format', 'size', 'modified']);
+    assert.deepEqual(availableColumns(false), ['kind', 'size', 'modified']);
+
+    // Those which are chosen, which can be, in order, or else the defaults
+    assert.deepEqual(visibleColumns(true), ['kind', 'size', 'modified']);
+    assert.deepEqual(visibleColumns(true, ['modified', 'file']), ['file', 'modified']);
+    assert.deepEqual(visibleColumns(false, ['file', 'format', 'size']), ['size']);
+    assert.deepEqual(visibleColumns(true, ['unknown']), []);
 });
