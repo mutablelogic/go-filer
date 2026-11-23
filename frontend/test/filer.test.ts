@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError, type Client } from '@mutablelogic/go-server/api';
-import { artworkURL, listVolumes } from '../src/filer/httpclient.ts';
+import { artworkURL, deleteObject, listVolumes, uploadObjects } from '../src/filer/httpclient.ts';
 
 // fakeClient returns a client whose fetch records each request, and
 // returns the response of the function
@@ -52,4 +52,41 @@ test('artworkURL', () => {
             delete (globalThis as { location?: unknown }).location;
         }
     }
+});
+
+test('deleteObject', async () => {
+    // A file is deleted, of its path, whose segments are escaped
+    const { client, requests } = fakeClient(() => json(200, { body: [{ name: 'media', path: '/a b/c.txt' }] }));
+    const deleted = await deleteObject(client, 'media', '/a b/c.txt');
+    assert.deepEqual(requests, [{ method: 'DELETE', path: '/api/object/media/a%20b/c.txt' }]);
+    assert.deepEqual(deleted.map((o) => o.path), ['/a b/c.txt']);
+});
+
+test('uploadObjects', async () => {
+    // Files are uploaded into a folder, as a multipart form of their paths,
+    // and overwrite those which exist, when it's asked to
+    let form: FormData | undefined;
+    let query = '';
+    const client: Client = {
+        base: 'http://localhost/api',
+        fetch: (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+            const u = new URL(String(input));
+            query = `${init.method} ${u.pathname}${u.search}`;
+            form = init.body as FormData;
+            return json(201, { body: [{ name: 'media', path: '/music/Photos/a.jpg' }], skipped: [{ path: '/music/b.txt', exists: true, reason: 'it exists' }] });
+        }) as typeof fetch,
+    };
+    const result = await uploadObjects(client, 'media', '/music', [
+        { file: new Blob(['a']), path: 'Photos/a.jpg' },
+        { file: new Blob(['b']), path: 'b.txt' },
+    ], true);
+    assert.equal(query, 'POST /api/object/media/music?overwrite=true');
+    const files = form?.getAll('file') as File[];
+    assert.deepEqual(files.map((f) => f.name), ['Photos/a.jpg', 'b.txt']);
+    assert.deepEqual(result.skipped?.map((s) => s.path), ['/music/b.txt']);
+
+    // Into the root, without overwriting, and an error is thrown
+    const failing = fakeClient(() => json(403, { code: 403, reason: 'read-only' }));
+    await assert.rejects(uploadObjects(failing.client, 'media', '/', [{ file: new Blob(['a']), path: 'a.txt' }]));
+    assert.deepEqual(failing.requests, [{ method: 'POST', path: '/api/object/media/' }]);
 });

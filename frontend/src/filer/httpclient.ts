@@ -1,8 +1,8 @@
 // The client of the filer's API, which go-filer's registry/httphandler
 // serves, at the client's prefix, such as /api
 
-import { request, type Client } from '@mutablelogic/go-server/api';
-import type { ObjectList, ObjectListQuery, Volume, VolumeList } from './schema.ts';
+import { errorResponse, request, url, type Client } from '@mutablelogic/go-server/api';
+import type { FilerObject, ObjectList, ObjectListQuery, ObjectUpload, Volume, VolumeList } from './schema.ts';
 
 // listVolumes returns the volumes, in order of their names, and the
 // backends volumes can be added of
@@ -50,6 +50,47 @@ export function signInCallback(client: Client): string {
 // returns it
 export async function deleteVolume(client: Client, name: string, signal?: AbortSignal): Promise<Volume> {
     return request<Volume>(client, 'DELETE', `volume/${encodeURIComponent(name)}`, { signal });
+}
+
+// objectPath returns the path of the API of a volume's file, or folder, of
+// its path, beneath the client's base, which is the volume's root of "/"
+function objectPath(name: string, path: string): string {
+    const segments = path.replace(/^\/+/, '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+    return `object/${encodeURIComponent(name)}/${segments}`;
+}
+
+// deleteObject deletes a volume's file, of its path, from its backend, and
+// returns the objects which were deleted
+export async function deleteObject(client: Client, name: string, path: string, signal?: AbortSignal): Promise<FilerObject[]> {
+    const response = await request<{ body?: FilerObject[] }>(client, 'DELETE', objectPath(name, path), { signal });
+    return response?.body ?? [];
+}
+
+// UploadFile is a file which is uploaded, of its path in the folder it's
+// uploaded into, such as its name
+export interface UploadFile {
+    file: Blob;
+    path: string;
+}
+
+// uploadObjects uploads files into a volume's folder, of a multipart form,
+// replacing those which exist, when it overwrites them, and otherwise
+// skipping them, and returns those which were uploaded, and skipped
+export async function uploadObjects(client: Client, name: string, folder: string, files: readonly UploadFile[], overwrite = false, signal?: AbortSignal): Promise<ObjectUpload> {
+    const form = new FormData();
+    for (const { file, path } of files) {
+        form.append('file', file, path);
+    }
+    const response = await (client.fetch ?? fetch)(url(client.base, objectPath(name, folder), overwrite ? { overwrite: 'true' } : undefined), {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        body: form,
+        signal,
+    });
+    if (!response.ok) {
+        throw await errorResponse(response);
+    }
+    return await response.json() as ObjectUpload;
 }
 
 // objectURL returns the URL of the content of a volume's file, of its path,

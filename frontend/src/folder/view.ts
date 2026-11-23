@@ -7,12 +7,18 @@
 // they were changed. It loads more as it's scrolled, in the element it's
 // in, which scrolls, beneath its header, which stays at the top. A row
 // which is clicked is chosen, which is an event of its object, and is shown
-// chosen, until it isn't selected.
+// chosen, until it isn't selected. Of a writable volume, files are added,
+// of the toolbar's Add, and its rows are selected, of their checkboxes, and
+// deleted, of Carbon's batch actions, once it's confirmed.
 
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import iconLoader from '@carbon/web-components/es/globals/internal/icon-loader.js';
 import FileIcon from '@carbon/icons/es/document/16.js';
-import type { Column, TableSetting, TableSettingChange } from '@mutablelogic/go-server/list/view';
+import type { Column, TableAction, TableSetting, TableSettingChange, TableToolbarAction } from '@mutablelogic/go-server/list/view';
+import Add16 from '@carbon/icons/es/add/16.js';
+import TrashCan16 from '@carbon/icons/es/trash-can/16.js';
+import './delete.ts';
+import './upload.ts';
 import '@mutablelogic/go-server/list/view';
 import { artworkURL } from '../filer/httpclient.ts';
 import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
@@ -51,6 +57,7 @@ export class FileViewElement extends LitElement {
         empty: { type: String },
         files: { type: Boolean },
         sortable: { type: Boolean },
+        writable: { type: Boolean },
         columns: { state: true },
         selected: { attribute: false },
         state: { state: true },
@@ -70,6 +77,10 @@ export class FileViewElement extends LitElement {
     // clicked
     declare sortable: boolean;
 
+    // writable is whether files can be added to the folder, and deleted, of
+    // a writable volume
+    declare writable: boolean;
+
     // columns are those which are shown, of those which can be, of the
     // volume of columnsOf
     declare private columns: FileViewColumn[];
@@ -85,6 +96,7 @@ export class FileViewElement extends LitElement {
         super();
         this.files = true;
         this.sortable = false;
+        this.writable = false;
         this.columns = DefaultColumns;
     }
 
@@ -139,6 +151,12 @@ export class FileViewElement extends LitElement {
     private watch() {
         this.unsubscribe?.();
         this.unsubscribe = this.controller?.subscribe((state) => {
+            // Rows which are selected are of their folder, whose paths are
+            // their keys, so they're deselected of another, but not as more
+            // are loaded, or it's loaded again
+            if (this.state && (state.volume !== this.state.volume || state.path !== this.state.path)) {
+                this.querySelector('gs-table')?.clearSelection();
+            }
             const chosen = state.selected;
             if (chosen && chosen !== this.state?.selected && chosen.path !== this.selected) {
                 this.dispatchEvent(new CustomEvent<FilerObject>(FileViewSelected, { detail: chosen, bubbles: true, composed: true }));
@@ -159,11 +177,46 @@ export class FileViewElement extends LitElement {
             disabled: this.columns.length === 1 && this.columns[0] === column,
         }));
         return html`
-            <gs-table scrolls size="sm" class="gf-file-view-table" .controller=${controller.list} .columns=${this.tableColumns()}
+            <gs-table scrolls size="sm" toolbar-size="lg" class="gf-file-view-table" .controller=${controller.list} .columns=${this.tableColumns()}
                 .settings=${settings} .countLabel=${countText} empty=${this.empty || 'No objects'}
+                .itemKey=${(object: FilerObject) => object.path}
+                .actions=${this.writable ? this.deleteActions : undefined}
+                .toolbarActions=${this.writable ? this.addActions : undefined}
                 @gs-table-setting=${(event: CustomEvent<TableSettingChange>) => this.show(event.detail.key as FileViewColumn, event.detail.checked)}></gs-table>
+            <gf-object-delete .client=${controller.client}></gf-object-delete>
+            <gf-object-upload .client=${controller.client}></gf-object-upload>
         `;
     }
+
+    // addActions are Add, in the toolbar, which opens the panel which adds
+    // files to the folder, which is loaded again, once they're added
+    private readonly addActions: TableToolbarAction[] = [{
+        label: 'Add', kind: 'primary', icon: Add16,
+        run: () => {
+            const { volume, path } = this.state ?? {};
+            if (volume && path) {
+                this.querySelector('gf-object-upload')?.open(volume, path, () => void this.controller?.reload());
+            }
+        },
+    }];
+
+    // deleteActions are Delete, of the rows which are selected, of Carbon's
+    // batch actions, whose buttons are primary, on its bar, which asks to
+    // confirm, of a panel whose Delete is danger, and deletes them, and loads the folder again, or keeps them
+    // selected, when it isn't confirmed
+    private readonly deleteActions: TableAction<FilerObject>[] = [{
+        label: 'Delete', kind: 'primary', icon: TrashCan16,
+        run: async (objects) => {
+            const panel = this.querySelector('gf-object-delete');
+            const deleted = panel ? await panel.confirm(objects) : false;
+            if (deleted) {
+                void this.controller?.reload();
+            }
+            if (!deleted) {
+                throw new DeleteCancelled();
+            }
+        },
+    }];
 
     // tableColumns are the table's columns: Name, which has what's left of
     // its width, and those which are shown, of their widths, which sort the
@@ -247,6 +300,10 @@ function cellView(column: FileViewColumn, object: FilerObject) {
             return formatTime(object.mtime);
     }
 }
+
+// DeleteCancelled is why files which are selected aren't deleted, as it
+// wasn't confirmed, which keeps them selected, and isn't an error
+class DeleteCancelled extends Error {}
 
 // countText returns how many objects a folder has
 function countText(count: number): string {
