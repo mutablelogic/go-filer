@@ -254,6 +254,7 @@ func indexState(ctx context.Context, i *indexer.Indexer) *schema.VolumeIndex {
 		index.Error = err.Error()
 	} else {
 		index.IndexState = state
+		index.Sortable = i.Sortable(state)
 	}
 	if task, err := i.Metadata(ctx); err != nil && index.Error == "" {
 		index.Error = err.Error()

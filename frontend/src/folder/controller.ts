@@ -9,7 +9,7 @@
 
 import type { Client } from '@mutablelogic/go-server/api';
 import type { Change } from '@mutablelogic/go-server/broadcaster';
-import { ListController, type ListState, type Page } from '@mutablelogic/go-server/list';
+import { ListController, type ListState, type Page, type Sort } from '@mutablelogic/go-server/list';
 import type { NotificationController } from '@mutablelogic/go-server/notification';
 import { listObjects } from '../filer/httpclient.ts';
 import { ObjectChangeSchema, parentPath, type FilerObject } from '../filer/schema.ts';
@@ -51,6 +51,11 @@ export class FolderController {
 
     private volume?: string;
     private path?: string;
+    private sorted?: Sort;
+
+    // opened is the volume which was last opened, which is kept once it's
+    // closed, so opening it again, such as its root, isn't another volume's
+    private opened?: string;
     private state: FolderState = { count: null, more: false, loading: false, failed: false };
     private readonly listeners = new Set<(state: FolderState) => void>();
     private errorFn?: (title: string, error: unknown) => void;
@@ -63,7 +68,7 @@ export class FolderController {
             scroll: true,
             pageSize: limit,
             same: (a, b) => a.name === b.name && a.path === b.path,
-            list: (_offset, _limit, _sort, after) => this.page(after, limit),
+            list: (_offset, _limit, sort, after) => this.page(after, limit, sort),
             notifications: { error: (title: string, error: unknown) => this.errorFn?.(this.title(title), error) } as unknown as NotificationController,
         });
         this.list.subscribe((state) => this.follow(state));
@@ -88,14 +93,54 @@ export class FolderController {
         return this;
     }
 
-    // open shows a folder, from its first page, unless it's shown
-    open(volume: string, path: string): Promise<void> {
+    // open shows a folder, from its first page, unless it's shown, in the
+    // order it's sorted, or, of another volume, in the order which was last
+    // chosen of it, in the browser, when it can be sorted, or else of its
+    // keys
+    open(volume: string, path: string, sortable = false): Promise<void> {
         if (volume === this.volume && path === this.path) {
             return Promise.resolve();
         }
+        const another = volume !== this.opened;
         this.volume = volume;
         this.path = path;
+        this.opened = volume;
+        if (another) {
+            const sort = sortable ? readSort(volume) : undefined;
+            if (!sameSort(sort, this.list.current.sort)) {
+                this.list.close();
+                this.unsorted(sort);
+                return this.loaded();
+            }
+        }
         return this.list.reset();
+    }
+
+    // unsorted sorts the folder in the order, or of its keys, without one,
+    // without remembering it, such as of a volume which can't be sorted
+    // now, whose order is kept until it can be
+    unsorted(sort?: Sort) {
+        this.sorted = sort;
+        this.list.setSort(sort);
+    }
+
+    // loaded resolves once the list is loaded, such as once it's sorted,
+    // which loads it, without loading it again
+    private loaded(): Promise<void> {
+        return new Promise((resolve) => {
+            let unsubscribe: (() => void) | undefined;
+            let done = false;
+            unsubscribe = this.list.subscribe((state) => {
+                if (state.items && !state.loading && !done) {
+                    done = true;
+                    queueMicrotask(() => unsubscribe?.());
+                    resolve();
+                }
+            });
+            if (done) {
+                unsubscribe();
+            }
+        });
     }
 
     // close shows no folder
@@ -148,24 +193,31 @@ export class FolderController {
 
     // page returns the objects of the folder, which aren't folders, after
     // the object, a page of the listing at a time, until there's one, or no
-    // more, and whether there are more. Without a folder, there are none.
-    private async page(after: FilerObject | undefined, limit: number): Promise<Page<FilerObject>> {
+    // more, and whether there are more, in the order of the sort, when it's
+    // sorted, by the server. Without a folder, there are none.
+    private async page(after: FilerObject | undefined, limit: number, sort?: Sort): Promise<Page<FilerObject>> {
         const { volume, path } = this;
         if (!volume || !path) {
             return { body: [], more: false };
         }
+        const order = sort ? `${sort.direction === 'descending' ? '-' : ''}${sort.key}` : undefined;
         const body: FilerObject[] = [];
         let next = after?.path;
         do {
-            const list = await listObjects(this.client, volume, { path, start_after: next, limit });
+            const list = await listObjects(this.client, volume, { path, start_after: next, limit, sort: order });
             body.push(...list.body.filter((object) => !object.dir));
             next = list.next;
         } while (next && body.length === 0 && volume === this.volume && path === this.path);
         return { body, more: !!next };
     }
 
-    // follow keeps the folder's state, of the list's
+    // follow keeps the folder's state, of the list's, and remembers the
+    // order it's sorted in, of its volume, when it's chosen
     private follow(list: ListState<FilerObject>) {
+        if (this.volume && !sameSort(list.sort, this.sorted)) {
+            writeSort(this.volume, list.sort);
+        }
+        this.sorted = list.sort;
         const more = list.more ?? false;
         this.state = {
             volume: this.volume,
@@ -190,3 +242,41 @@ export class FolderController {
 function within(path: string, dir: string): boolean {
     return dir === '/' || path === dir || path.startsWith(dir + '/');
 }
+
+// The prefix of the key of the order which was chosen of a volume, in the
+// browser's storage, before its name
+const SortKey = 'gf-file-view-sort:';
+
+// sameSort returns whether two orders are the same
+function sameSort(a?: Sort, b?: Sort): boolean {
+    return a?.key === b?.key && a?.direction === b?.direction;
+}
+
+// readSort returns the order which was chosen of a volume, or undefined,
+// when none was, or the browser's storage can't be read
+function readSort(volume: string): Sort | undefined {
+    try {
+        const value = JSON.parse(localStorage.getItem(SortKey + volume) ?? 'null');
+        if (value && typeof value.key === 'string' && (value.direction === 'ascending' || value.direction === 'descending')) {
+            return { key: value.key, direction: value.direction };
+        }
+    } catch {
+        // None was
+    }
+    return undefined;
+}
+
+// writeSort remembers the order which is chosen of a volume, or forgets it,
+// when it isn't sorted, when the browser's storage can be written
+function writeSort(volume: string, sort?: Sort) {
+    try {
+        if (sort) {
+            localStorage.setItem(SortKey + volume, JSON.stringify(sort));
+        } else {
+            localStorage.removeItem(SortKey + volume);
+        }
+    } catch {
+        // It isn't remembered
+    }
+}
+

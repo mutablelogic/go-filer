@@ -25,7 +25,7 @@ import { iconLoader } from '@carbon/web-components/es/globals/internal/icon-load
 import { backendIconURL } from '../filer/httpclient.ts';
 import { ObjectChangeSchema } from '../filer/schema.ts';
 import { FolderController, type FolderState } from '../folder/controller.ts';
-import { baseName, objectTitle, volumeBackend, volumeFileNames, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
+import { baseName, objectTitle, volumeBackend, volumeFileNames, volumeSortable, volumeIndexFailure, volumeIndexing, volumeKinds, volumeLabel, volumeNoun, volumeObjects, volumeObjectsUnknown, volumeScheme, volumeStatus, volumeTitle, type Backend, type Volume } from '../filer/schema.ts';
 import { TreeController } from '../tree/controller.ts';
 import type { TreeSelection } from '../tree/view.ts';
 import { VolumeFilters, VolumesController } from './controller.ts';
@@ -341,7 +341,8 @@ export class VolumeElement extends LitElement {
 
     // follow shows the file whose panel is open as its folder is loaded
     // again, such as once it's changed, or closes the panel, once it isn't
-    // in its folder, when all of the folder is loaded, or the folder closes
+    // in its folder, when all of the folder is loaded, and not while it's
+    // loading, such as once it's sorted, or the folder closes
     private follow(state: FolderState) {
         const panel = this.querySelector('gf-object-panel');
         if (!this.selected || !panel || state.loading || state.failed) {
@@ -350,7 +351,7 @@ export class VolumeElement extends LitElement {
         const object = state.objects?.find((o) => o.path === this.selected);
         if (object) {
             panel.refresh(object);
-        } else if (!state.volume || !state.more) {
+        } else if (!state.volume || (state.objects !== undefined && !state.more)) {
             panel.close();
         }
     }
@@ -379,9 +380,9 @@ export class VolumeElement extends LitElement {
         if (!name || !this.path || !volume?.mounted) {
             this.folder?.close();
         } else if (this.path !== '/') {
-            void this.folder?.open(name, this.path);
+            void this.folder?.open(name, this.path, volumeSortable(volume));
         } else if (this.shown) {
-            void this.folder?.open(name, this.shown);
+            void this.folder?.open(name, this.shown, volumeSortable(volume));
         } else if (!this.starting) {
             void this.openStart(name, volumeScheme(volume));
         }
@@ -408,7 +409,7 @@ export class VolumeElement extends LitElement {
         }
         this.starting = false;
         this.shown = path;
-        void this.folder?.open(name, path);
+        void this.folder?.open(name, path, !!this.volume && volumeSortable(this.volume));
         if (path !== '/' && this.tree) {
             await this.tree.reveal(name, path);
             await this.updateComplete;
@@ -475,7 +476,7 @@ export class VolumeElement extends LitElement {
                 <gf-file-tree class="gf-volume-tree" ?hidden=${!hasFolders} .controller=${this.tree} .changes=${this.changes} volume=${name}
                     .selected=${{ volume: name, path: path === '/' ? this.shown ?? path : path }}
                     @gf-file-tree-selected=${(event: CustomEvent<TreeSelection>) => this.chosen(event.detail)}></gf-file-tree>
-                <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected} ?files=${volumeFileNames(volume)}
+                <gf-file-view class="gf-volume-view" .controller=${this.folder} .selected=${this.selected} ?files=${volumeFileNames(volume)} ?sortable=${volumeSortable(volume)}
                     empty=${hasFolders ? 'Select a folder from the left' : 'No objects'}
                     @gf-file-view-selected=${(event: CustomEvent<FilerObject>) => this.select(event.detail)}></gf-file-view>
             </div>

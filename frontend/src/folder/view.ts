@@ -17,7 +17,7 @@ import '@mutablelogic/go-server/list/view';
 import { artworkURL } from '../filer/httpclient.ts';
 import { objectArtwork, objectFileName, objectFormat, objectKind, objectTitle, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
-import { availableColumns, columnLabel, ColumnWidths, DefaultColumns, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
+import { availableColumns, columnLabel, ColumnSorts, ColumnWidths, DefaultColumns, NameSort, formatSize, formatTime, visibleColumns, type FileViewColumn } from './format.ts';
 
 ///////////////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -50,6 +50,7 @@ export class FileViewElement extends LitElement {
         controller: { attribute: false },
         empty: { type: String },
         files: { type: Boolean },
+        sortable: { type: Boolean },
         columns: { state: true },
         selected: { attribute: false },
         state: { state: true },
@@ -63,6 +64,11 @@ export class FileViewElement extends LitElement {
     // files is whether the objects have file names, and formats, which are
     // shown, such as a folder's, rather than ids, such as a contact's
     declare files: boolean;
+
+    // sortable is whether the objects can be sorted, by the server, of a
+    // volume whose files are indexed, when their columns' headers are
+    // clicked
+    declare sortable: boolean;
 
     // columns are those which are shown, of those which can be, of the
     // volume of columnsOf
@@ -78,6 +84,7 @@ export class FileViewElement extends LitElement {
     constructor() {
         super();
         this.files = true;
+        this.sortable = false;
         this.columns = DefaultColumns;
     }
 
@@ -109,6 +116,17 @@ export class FileViewElement extends LitElement {
             this.columns = visibleColumns(this.files, readColumns(volume));
         }
 
+        // A volume which can't be sorted any more, such as once its index
+        // is changed, isn't, whose order is kept until it can be, and the
+        // order of a column which isn't shown is the first column's, Name,
+        // of the objects' titles
+        const sort = this.controller?.list.current.sort;
+        if (sort && !this.sortable) {
+            this.controller?.unsorted();
+        } else if (sort && sort.key !== NameSort.key && !this.columns.some((column) => ColumnSorts[column]?.key === sort.key)) {
+            this.controller?.list.setSort({ key: NameSort.key, direction: NameSort.first });
+        }
+
         // An object which isn't selected any more, such as once its panel
         // closes, isn't shown chosen
         if (changed.has('selected') && !this.selected && this.state?.selected) {
@@ -135,8 +153,10 @@ export class FileViewElement extends LitElement {
         if (!state?.volume || !controller) {
             return nothing;
         }
+        // The last column which is shown, other than Name, can't be hidden
         const settings: TableSetting[] = availableColumns(this.files).map((column) => ({
             key: column, label: columnLabel(column), checked: this.columns.includes(column),
+            disabled: this.columns.length === 1 && this.columns[0] === column,
         }));
         return html`
             <gs-table scrolls size="sm" class="gf-file-view-table" .controller=${controller.list} .columns=${this.tableColumns()}
@@ -146,15 +166,26 @@ export class FileViewElement extends LitElement {
     }
 
     // tableColumns are the table's columns: Name, which has what's left of
-    // its width, and those which are shown, of their widths
+    // its width, and those which are shown, of their widths, which sort the
+    // objects, by the server, when they're sortable
     private tableColumns(): Column<FilerObject>[] {
-        const name: Column<FilerObject> = { header: 'Name', cell: (object) => this.nameView(object) };
-        return [name, ...this.columns.map((column) => ({
-            header: columnLabel(column),
-            width: `${ColumnWidths[column]}rem`,
-            align: column === 'size' ? 'end' as const : undefined,
-            cell: (object: FilerObject) => cellView(column, object),
-        }))];
+        const name: Column<FilerObject> = {
+            header: 'Name',
+            cell: (object) => this.nameView(object),
+            sort: this.sortable ? NameSort.key : undefined,
+            sortFirst: this.sortable ? NameSort.first : undefined,
+        };
+        return [name, ...this.columns.map((column) => {
+            const sort = this.sortable ? ColumnSorts[column] : undefined;
+            return {
+                header: columnLabel(column),
+                width: `${ColumnWidths[column]}rem`,
+                align: column === 'size' ? 'end' as const : undefined,
+                sort: sort?.key,
+                sortFirst: sort?.first,
+                cell: (object: FilerObject) => cellView(column, object),
+            };
+        })];
     }
 
     // nameView is a file's name: its artwork which shows it best, such as an
@@ -171,7 +202,7 @@ export class FileViewElement extends LitElement {
 
     // show shows, or hides, a column, which is remembered, of the volume
     private show(column: FileViewColumn, shown: boolean) {
-        if (this.columns.includes(column) === shown) {
+        if (this.columns.includes(column) === shown || (!shown && this.columns.length === 1)) {
             return;
         }
         const chosen = shown ? [...this.columns, column] : this.columns.filter((c) => c !== column);

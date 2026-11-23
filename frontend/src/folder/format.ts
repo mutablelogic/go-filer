@@ -18,6 +18,22 @@ const Columns: [FileViewColumn, string][] = [['file', 'File'], ['kind', 'Kind'],
 const FileColumns: FileViewColumn[] = ['file', 'format'];
 export const DefaultColumns: FileViewColumn[] = ['kind', 'size', 'modified'];
 
+// ColumnSorts are the orders of the server's listing which the columns are
+// sorted by, when they can be, and which direction each is sorted in first:
+// the file's name, its kind, and its type, ascending, and its size, and
+// when it was modified, descending, so the largest, and latest, are first
+export const ColumnSorts: Partial<Record<FileViewColumn, { key: string; first: 'ascending' | 'descending' }>> = {
+    file: { key: 'name', first: 'ascending' },
+    kind: { key: 'kind', first: 'ascending' },
+    format: { key: 'type', first: 'ascending' },
+    size: { key: 'size', first: 'descending' },
+    modified: { key: 'modified', first: 'descending' },
+};
+
+// NameSort is the order of the server's listing which the Name column, of
+// the objects' titles, is sorted by
+export const NameSort = { key: 'title', first: 'ascending' as const };
+
 // ColumnWidths are the widths of the columns, in rem, beside Name, which
 // has what's left of the table's
 export const ColumnWidths: Record<FileViewColumn, number> = { file: 12, kind: 7, format: 5, size: 5.5, modified: 10.5 };
@@ -32,10 +48,12 @@ export function availableColumns(files: boolean): FileViewColumn[] {
 }
 
 // visibleColumns returns the columns which are shown, in order, of those
-// which are chosen, which can be, or else the default ones
+// which are chosen, which can be, or else the default ones, of none, as a
+// column, other than Name, is always shown
 export function visibleColumns(files: boolean, chosen?: readonly string[]): FileViewColumn[] {
     const available = availableColumns(files);
-    return available.filter((column) => (chosen ?? DefaultColumns).includes(column));
+    const shown = available.filter((column) => (chosen ?? DefaultColumns).includes(column));
+    return shown.length ? shown : available.filter((column) => DefaultColumns.includes(column));
 }
 
 // columnLabel returns a column's label

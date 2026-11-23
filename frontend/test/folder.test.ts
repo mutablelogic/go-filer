@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { Client } from '@mutablelogic/go-server/api';
 import { FolderController } from '../src/folder/controller.ts';
 import { availableColumns, formatSize, formatTime, visibleColumns } from '../src/folder/format.ts';
-import { objectFormat, objectKind, volumeFileNames } from '../src/filer/schema.ts';
+import { objectFormat, objectKind, volumeFileNames, volumeSortable } from '../src/filer/schema.ts';
 
 // fakeServer is a volume's folders, of their objects' paths, whose listings
 // are paged, and counted, which records each listing's folder and start
@@ -229,5 +229,99 @@ test('fileViewColumns', () => {
     assert.deepEqual(visibleColumns(true), ['kind', 'size', 'modified']);
     assert.deepEqual(visibleColumns(true, ['modified', 'file']), ['file', 'modified']);
     assert.deepEqual(visibleColumns(false, ['file', 'format', 'size']), ['size']);
-    assert.deepEqual(visibleColumns(true, ['unknown']), []);
+    assert.deepEqual(visibleColumns(true, ['unknown']), ['kind', 'size', 'modified'], 'none are the defaults');
+    assert.deepEqual(visibleColumns(true, []), ['kind', 'size', 'modified']);
+});
+
+test('FolderController sort', async () => {
+    // A folder is listed in the order it's sorted, by the server, after the
+    // last object, and another volume's isn't sorted
+    const queries: string[] = [];
+    const client: Client = {
+        base: 'http://localhost/api',
+        fetch: (async (input: RequestInfo | URL) => {
+            const url = new URL(String(input));
+            queries.push(`${url.pathname} ${url.searchParams.get('sort') ?? ''} ${url.searchParams.get('start_after') ?? ''}`);
+            return new Response(JSON.stringify({ name: 'v', count: null, body: [{ name: 'v', path: '/a/1' }, { name: 'v', path: '/a/2' }], next: '/a/2' }), { headers: { 'Content-Type': 'application/json' } });
+        }) as typeof fetch,
+    };
+    const folder = new FolderController(client, { pageLimit: 2 });
+    await folder.open('media', '/a');
+    folder.list.setSort({ key: 'size', direction: 'descending' });
+    await settle();
+    await folder.loadMore();
+    assert.deepEqual(queries, ['/api/object/media  ', '/api/object/media -size ', '/api/object/media -size /a/2']);
+
+    // Of the same volume, once it's closed, such as to find its root's
+    // folder, it's still sorted
+    folder.close();
+    await settle();
+    await folder.open('media', '/b', true);
+    assert.deepEqual(folder.list.current.sort, { key: 'size', direction: 'descending' });
+    queries.length = 0;
+    await folder.open('photos', '/');
+    assert.equal(folder.list.current.sort, undefined);
+    assert.deepEqual(queries, ['/api/object/photos  ']);
+});
+
+test('FolderController remembers the sort of each volume', async () => {
+    // The order which is chosen of a volume is remembered, in the browser,
+    // and is its order when it's opened again, when it can be sorted
+    const storage = new Map<string, string>();
+    const saved = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: {
+            getItem: (key: string) => storage.get(key) ?? null,
+            setItem: (key: string, value: string) => { storage.set(key, value); },
+            removeItem: (key: string) => { storage.delete(key); },
+        },
+    });
+    try {
+        const sorts: string[] = [];
+        const client: Client = {
+            base: 'http://localhost/api',
+            fetch: (async (input: RequestInfo | URL) => {
+                const url = new URL(String(input));
+                sorts.push(`${url.pathname.split('/').pop()} ${url.searchParams.get('sort') ?? ''}`);
+                return new Response(JSON.stringify({ name: 'v', count: 1, body: [{ name: 'v', path: '/1' }] }), { headers: { 'Content-Type': 'application/json' } });
+            }) as typeof fetch,
+        };
+        const folder = new FolderController(client);
+        await folder.open('media', '/', true);
+        folder.list.setSort({ key: 'modified', direction: 'descending' });
+        await settle();
+
+        assert.equal(storage.get('gf-file-view-sort:media'), JSON.stringify({ key: 'modified', direction: 'descending' }));
+        await folder.open('photos', '/', true);
+        await folder.open('media', '/', true);
+        assert.deepEqual(folder.list.current.sort, { key: 'modified', direction: 'descending' });
+        await folder.open('photos', '/', true);
+        await folder.open('media', '/', false);
+        assert.equal(folder.list.current.sort, undefined, "it isn't sorted when it can't be");
+        assert.ok(storage.has('gf-file-view-sort:media'), 'its order is kept until it can be');
+        folder.list.setSort(undefined);
+        await settle();
+        folder.list.setSort({ key: 'size', direction: 'ascending' });
+        await settle();
+        folder.list.setSort(undefined);
+        await settle();
+        assert.equal(storage.has('gf-file-view-sort:media'), false, 'an order which is chosen of none is forgotten');
+        sorts.splice(6);
+        assert.deepEqual(sorts, ['media ', 'media -modified', 'photos ', 'media -modified', 'photos ', 'media ']);
+    } finally {
+        if (saved) {
+            Object.defineProperty(globalThis, 'localStorage', saved);
+        } else {
+            delete (globalThis as { localStorage?: unknown }).localStorage;
+        }
+    }
+});
+
+test('volumeSortable', () => {
+    // A volume whose index says it can be sorted
+    const volume = (index?: { mode: string; sortable?: boolean }) => ({ name: 'v', url: 'file://v/tmp', enabled: true, mounted: true, index });
+    assert.equal(volumeSortable(volume({ mode: 'objects', sortable: true })), true);
+    assert.equal(volumeSortable(volume({ mode: 'objects' })), false, 'until its files are scanned');
+    assert.equal(volumeSortable(volume()), false);
 });
