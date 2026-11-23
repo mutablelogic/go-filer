@@ -177,7 +177,7 @@ export class FileViewElement extends LitElement {
             disabled: this.columns.length === 1 && this.columns[0] === column,
         }));
         return html`
-            <gs-table scrolls size="sm" class="gf-file-view-table" .controller=${controller.list} .columns=${this.tableColumns()}
+            <gs-table scrolls size="sm" toolbar-size="lg" class="gf-file-view-table" .controller=${controller.list} .columns=${this.tableColumns()}
                 .settings=${settings} .countLabel=${countText} empty=${this.empty || 'No objects'}
                 .itemKey=${(object: FilerObject) => object.path}
                 .actions=${this.writable ? this.deleteActions : undefined}
