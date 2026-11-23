@@ -1,5 +1,5 @@
 // The gf-file-view element is the objects of a folder, which aren't folders,
-// as the tree has those, as a table of their names, types, sizes and when
+// as the tree has those, as Carbon's data table of their names, types, sizes and when
 // they were changed, each of its artwork, such as an album's cover, in place
 // of its icon, when it has some, which loads more as it's scrolled, in the element it's in,
 // which scrolls. A row which is clicked is chosen, which is an event of
@@ -15,6 +15,7 @@ import { artworkURL } from '../filer/httpclient.ts';
 import { objectArtwork, objectTitle, objectType, type FilerObject } from '../filer/schema.ts';
 import type { FolderController, FolderState } from './controller.ts';
 import '@carbon/web-components/es/components/button/index.js';
+import '@carbon/web-components/es/components/data-table/index.js';
 
 ///////////////////////////////////////////////////////////////////////////////
 // TYPES
@@ -112,33 +113,32 @@ export class FileViewElement extends LitElement {
                 </div>
             `;
         }
-        // A table of Carbon's styles, rather than its element, whose own
-        // scrolling would keep its header from staying at the top of the
-        // element which scrolls
+        // Carbon's table, whose header stays at the top of the element which
+        // scrolls, as its own scrolling is turned off (see index.html)
         const count = state.count;
         return html`
-            <table class="cds--data-table cds--data-table--sm gf-file-view-table">
-                <thead>
-                    <tr>
-                        <th><div class="cds--table-header-label">Name</div></th>
-                        <th class="gf-file-view-type"><div class="cds--table-header-label">Type</div></th>
-                        <th class="gf-file-view-size"><div class="cds--table-header-label">Size</div></th>
-                        <th><div class="cds--table-header-label">Modified</div></th>
-                    </tr>
-                </thead>
-                <tbody>
+            <cds-table size="sm" class="gf-file-view-table">
+                <cds-table-head>
+                    <cds-table-header-row>
+                        <cds-table-header-cell>Name</cds-table-header-cell>
+                        <cds-table-header-cell class="gf-file-view-type">Type</cds-table-header-cell>
+                        <cds-table-header-cell class="gf-file-view-size">Size</cds-table-header-cell>
+                        <cds-table-header-cell>Modified</cds-table-header-cell>
+                    </cds-table-header-row>
+                </cds-table-head>
+                <cds-table-body>
                     ${repeat(state.objects, (object) => object.path, (object) => html`
-                        <tr class=${object.path === this.selected ? 'cds--data-table--selected' : ''} @click=${() => this.choose(object)}>
-                            <td>
+                        <cds-table-row size="sm" ?selected=${object.path === this.selected} @click=${() => this.choose(object)}>
+                            <cds-table-cell>
                                 <button type="button" class="gf-file-view-name" title=${object.path}><span class="gf-file-view-icon">${this.iconView(object)}</span><span>${objectTitle(object)}</span></button>
-                            </td>
-                            <td class="gf-file-view-type" title=${object.type ?? ''}>${objectType(object)}</td>
-                            <td class="gf-file-view-size">${formatSize(object.size)}</td>
-                            <td>${formatTime(object.mtime)}</td>
-                        </tr>
+                            </cds-table-cell>
+                            <cds-table-cell class="gf-file-view-type" title=${object.type ?? ''}>${objectType(object)}</cds-table-cell>
+                            <cds-table-cell class="gf-file-view-size">${formatSize(object.size)}</cds-table-cell>
+                            <cds-table-cell>${formatTime(object.mtime)}</cds-table-cell>
+                        </cds-table-row>
                     `)}
-                </tbody>
-            </table>
+                </cds-table-body>
+            </cds-table>
             ${state.failed ? this.failedView() : state.more ? html`<p class="gf-file-view-end gf-empty">${state.loading ? 'Loading…' : ''}</p>` : nothing}
             ${count !== null ? html`<p class="gf-file-view-count">${countText(count)}</p>` : nothing}
         `;

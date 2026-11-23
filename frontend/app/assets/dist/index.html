@@ -410,20 +410,34 @@
             overflow-wrap: anywhere;
         }
 
-        /* The file view's header stays at the top, as it's scrolled */
+        /* The file view is Carbon's table, whose own scrolling is turned
+           off, so its header stays at the top of the element which
+           scrolls, as Carbon's sticky header isn't implemented yet */
         .gf-file-view-table {
+            display: block;
             width: 100%;
         }
 
-        /* A row is pointed at, as it's chosen */
-        .gf-file-view-table tbody tr {
-            cursor: pointer;
+        .gf-file-view-table::part(inner-container),
+        .gf-file-view-table::part(content) {
+            overflow: visible;
         }
 
-        .gf-file-view-table thead th {
+        .gf-file-view-table cds-table-head {
             position: sticky;
             top: 0;
             z-index: 1;
+        }
+
+        /* A row is pointed at, as it's chosen, and is of Carbon's small
+           size, with room for a file's artwork */
+        .gf-file-view-table cds-table-row {
+            cursor: pointer;
+        }
+
+        .gf-file-view-table cds-table-row cds-table-cell {
+            padding-block: 0.25rem;
+            vertical-align: middle;
         }
 
         /* A file's name is a button, which chooses it, of its row's click,
