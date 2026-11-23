@@ -10,7 +10,7 @@ require (
 	github.com/aws/smithy-go v1.28.9
 	github.com/mutablelogic/go-auth v0.0.23
 	github.com/mutablelogic/go-client v1.5.1
-	github.com/mutablelogic/go-metadata v1.1.10
+	github.com/mutablelogic/go-metadata v1.1.11
 	github.com/mutablelogic/go-pg v1.5.1
 	github.com/mutablelogic/go-rss v1.0.0
 	github.com/mutablelogic/go-server v1.8.24
